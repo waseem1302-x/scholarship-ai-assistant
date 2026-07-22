@@ -44,7 +44,7 @@
         "url": "https://www.chevening.org/scholarships/application-timeline/",
         "source_type": "official",
         "title": "Chevening application timeline",
-        "relevant_excerpt": "Official timeline states applications open on 4 August 2026 and close on 6 October 2026.",
+        "relevant_excerpt": "Applications open 4 August 2026 and close 6 October 2026.",
         "verification_status": "needs_review"
       },
       "additional_sources": [
@@ -52,15 +52,62 @@
           "url": "https://www.chevening.org/resource-hub/guidance/eligibility/",
           "source_type": "official",
           "title": "Chevening eligibility criteria",
-          "relevant_excerpt": "Official eligibility page lists citizenship, return-home, work experience, degree, and course-choice requirements."
+          "relevant_excerpt": "Eligibility includes citizenship, return commitment, work experience, degree, and course-choice requirements."
         },
         {
           "url": "https://www.chevening.org/faqs/what-does-a-chevening-scholarship-cover/",
           "source_type": "official",
           "title": "What does a Chevening Scholarship cover?",
-          "relevant_excerpt": "Official FAQ lists tuition, travel, allowances, visa application cost, and monthly personal living allowance."
+          "relevant_excerpt": "Coverage includes tuition, travel, allowances, visa cost support, and living allowance."
         }
       ]
+    },
+    {
+      "name": "Commonwealth Master's Scholarships 2026/27",
+      "provider_name": "Commonwealth Scholarship Commission in the UK",
+      "provider_website_url": "https://cscuk.fcdo.gov.uk/",
+      "country": "United Kingdom",
+      "degree_level": "masters",
+      "field_eligibility": "Full-time taught master's study under the CSC development themes.",
+      "nationality_eligibility": "Eligible low and middle income Commonwealth countries listed by CSC.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2026,
+      "funding_type": "full",
+      "tuition_coverage": "Approved tuition fees are covered by agreement between CSC and the UK university.",
+      "monthly_stipend_amount": "1452.00",
+      "monthly_stipend_currency": "GBP",
+      "accommodation_coverage": "A monthly stipend is provided for living costs; higher London rate applies.",
+      "travel_allowance": "Approved return airfare from the scholar's home country to the UK is listed.",
+      "health_insurance": "Health coverage is not the main listed benefit; applicants should verify UK healthcare and visa surcharge implications.",
+      "application_fee_info": "CSC applications are submitted through CSC Central; nominee processes may have separate requirements.",
+      "english_language_requirement": "Applicants must meet admission and English requirements for the chosen UK university.",
+      "standardized_test_requirement": "Not generally stated by CSC; depends on the chosen university and course.",
+      "minimum_academic_requirement": "First degree of at least upper second-class standard, or lower second-class plus relevant postgraduate qualification.",
+      "required_documents": [
+        "CSC Central application",
+        "Academic qualifications",
+        "References",
+        "Development impact statements",
+        "Nominator-specific documents"
+      ],
+      "application_method": "Apply through an eligible nominating agency and CSC Central; direct applications are not accepted.",
+      "application_url": "https://cscuk.fcdo.gov.uk/scholarships/commonwealth-masters-scholarships/",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "The 2026/27 round is closed; this record is included for verified structure and future-cycle monitoring.",
+      "eligibility_warnings": [
+        "Applicants must meet both CSC and nominating-agency deadlines.",
+        "The current cycle shown by CSC is closed; verify the next cycle before applying."
+      ],
+      "source": {
+        "url": "https://cscuk.fcdo.gov.uk/scholarships/commonwealth-masters-scholarships/",
+        "source_type": "official",
+        "title": "Commonwealth Master's Scholarships",
+        "relevant_excerpt": "CSC lists eligibility, nominating routes, tuition, airfare, stipend, and allowances.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": []
     },
     {
       "name": "Knight-Hennessy Scholars 2027 Cohort",
@@ -100,13 +147,13 @@
       "notes": "Seed data verified from official Knight-Hennessy Scholars pages on 2026-07-22.",
       "eligibility_warnings": [
         "Stanford graduate programme deadlines and requirements are separate.",
-        "This seed record uses masters as a representative degree level, but KHS supports multiple graduate degree types."
+        "This seed record uses masters as a representative level; KHS supports multiple graduate degree types."
       ],
       "source": {
         "url": "https://knight-hennessy.stanford.edu/admission",
         "source_type": "official",
         "title": "Knight-Hennessy Scholars admission",
-        "relevant_excerpt": "Official admission page states the 2027 cohort application closes on 6 October 2026 at 1 pm Pacific.",
+        "relevant_excerpt": "The 2027 cohort application closes on 6 October 2026 at 1 pm Pacific.",
         "verification_status": "needs_review"
       },
       "additional_sources": [
@@ -114,13 +161,67 @@
           "url": "https://knight-hennessy.stanford.edu/admission/before-you-apply/eligibility",
           "source_type": "official",
           "title": "Knight-Hennessy Scholars eligibility",
-          "relevant_excerpt": "Official eligibility page lists Stanford admission and undergraduate-degree timing as baseline requirements."
+          "relevant_excerpt": "Eligibility depends on Stanford admission and undergraduate-degree timing rules."
         },
         {
           "url": "https://knight-hennessy.stanford.edu/program-overview/funding",
           "source_type": "official",
           "title": "Knight-Hennessy Scholars funding",
-          "relevant_excerpt": "Official funding page lists tuition fellowship, living stipend, academic-expense support, and travel stipend."
+          "relevant_excerpt": "Funding includes tuition fellowship, living stipend, academic-expense support, and travel stipend."
+        }
+      ]
+    },
+    {
+      "name": "Fulbright Foreign Student Program",
+      "provider_name": "Fulbright Program",
+      "provider_website_url": "https://foreign.fulbrightonline.org/",
+      "country": "United States",
+      "degree_level": "masters",
+      "field_eligibility": "Graduate study or research at U.S. universities; field availability varies by country programme.",
+      "nationality_eligibility": "Non-U.S. citizens from participating countries, administered by Fulbright Commissions or U.S. Embassies.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "unknown",
+      "tuition_coverage": "Grant terms vary by country and award; students must verify local Fulbright office terms.",
+      "monthly_stipend_amount": null,
+      "monthly_stipend_currency": null,
+      "accommodation_coverage": "Living support may vary by country programme and placement model.",
+      "travel_allowance": "Travel support may vary by country programme and grant terms.",
+      "health_insurance": "Health benefits may vary by Fulbright programme rules and host institution.",
+      "application_fee_info": "Applications are not submitted directly to the global site; local offices control process and requirements.",
+      "english_language_requirement": "TOEFL or IELTS may be required for U.S. study; rules vary by country and institution.",
+      "standardized_test_requirement": "GRE, GMAT, or other tests may be required by U.S. graduate programmes.",
+      "minimum_academic_requirement": "Applicants must have completed undergraduate education equivalent to a bachelor's degree.",
+      "required_documents": [
+        "Country-specific Fulbright application",
+        "Academic transcripts",
+        "Recommendations",
+        "Study or research objectives",
+        "English or admissions tests if required"
+      ],
+      "application_method": "Apply through the Fulbright Commission, Foundation, or U.S. Embassy in the applicant's home country.",
+      "application_url": "https://foreign.fulbrightonline.org/apply",
+      "status": "draft",
+      "data_confidence": "medium",
+      "notes": "Fulbright is intentionally marked funding unknown because grant terms vary by citizenship country and award.",
+      "eligibility_warnings": [
+        "Country-specific deadlines and funding terms are required before a student can rely on this record.",
+        "This system must not answer Fulbright funding questions without retrieving the relevant country page."
+      ],
+      "source": {
+        "url": "https://foreign.fulbrightonline.org/about/foreign-student-program",
+        "source_type": "official",
+        "title": "Fulbright Foreign Student Program",
+        "relevant_excerpt": "The programme supports graduate students, young professionals, and artists from abroad.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://exchanges.state.gov/non-us/program/fulbright-foreign-student-program/applying",
+          "source_type": "official",
+          "title": "Fulbright Foreign Student Program eligibility and application",
+          "relevant_excerpt": "Eligibility, application details, and grant terms vary by country."
         }
       ]
     },
@@ -156,7 +257,7 @@
       "application_url": "https://www2.daad.de/deutschland/stipendium/datenbank/en/21148-scholarship-database?detail=50076777",
       "status": "draft",
       "data_confidence": "medium",
-      "notes": "Seed data verified from the official DAAD scholarship database on 2026-07-22. Course-specific deadlines must be checked.",
+      "notes": "Course-specific deadlines must be checked on the DAAD programme/course record.",
       "eligibility_warnings": [
         "Application deadlines vary by postgraduate course.",
         "This seed record stores the graduate monthly stipend; doctoral rates differ."
@@ -165,10 +266,603 @@
         "url": "https://www2.daad.de/deutschland/stipendium/datenbank/en/21148-scholarship-database?detail=50076777",
         "source_type": "official",
         "title": "DAAD EPOS scholarship database record",
-        "relevant_excerpt": "Official DAAD database describes EPOS funding for development-related postgraduate courses in Germany.",
+        "relevant_excerpt": "DAAD describes EPOS funding for development-related postgraduate courses in Germany.",
         "verification_status": "needs_review"
       },
       "additional_sources": []
+    },
+    {
+      "name": "France Excellence Eiffel Scholarship Program 2026",
+      "provider_name": "Campus France",
+      "provider_website_url": "https://www.campusfrance.org/",
+      "country": "France",
+      "degree_level": "masters",
+      "field_eligibility": "Priority science, technology, humanities, and social science fields listed by Campus France.",
+      "nationality_eligibility": "International candidates submitted by French higher education institutions; age limits apply.",
+      "application_opening_date": "2025-10-01T00:00:00Z",
+      "application_deadline": "2026-01-08T23:59:59Z",
+      "intake_year": 2026,
+      "funding_type": "partial",
+      "tuition_coverage": "Campus France states tuition fees are not covered by the Eiffel programme.",
+      "monthly_stipend_amount": "1200.00",
+      "monthly_stipend_currency": "EUR",
+      "accommodation_coverage": "Housing search support is listed, but tuition fees are not covered.",
+      "travel_allowance": "International and national transportation services are listed.",
+      "health_insurance": "Insurance is listed among included services.",
+      "application_fee_info": "Students cannot submit directly; applications are submitted by French institutions.",
+      "english_language_requirement": "Language requirements depend on the French institution and programme.",
+      "standardized_test_requirement": "Depends on the French institution and programme.",
+      "minimum_academic_requirement": "French institutions nominate excellent international candidates for eligible master's or doctoral programmes.",
+      "required_documents": [
+        "Institution-supported nomination",
+        "Academic records",
+        "Programme admission materials",
+        "Institution-required documents"
+      ],
+      "application_method": "Contact a French institution; the institution submits the Eiffel application to Campus France.",
+      "application_url": "https://www.campusfrance.org/en/france-excellence-eiffel-scholarship-program",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "The 2026 call deadline has passed. Keep this record for verified monitoring of the next annual call.",
+      "eligibility_warnings": [
+        "Students cannot apply directly to Campus France.",
+        "The deadline shown is for institutions, not necessarily the student's internal university deadline."
+      ],
+      "source": {
+        "url": "https://www.campusfrance.org/en/the-france-excellence-eiffel-scholarship-program",
+        "source_type": "official",
+        "title": "France Excellence Eiffel Scholarship Program",
+        "relevant_excerpt": "Benefits include monthly allowance, transport, insurance, housing support, and cultural activities.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://www.campusfrance.org/en/france-excellence-eiffel-scholarship-program",
+          "source_type": "official",
+          "title": "France Excellence Eiffel 2026 campaign",
+          "relevant_excerpt": "The 2026 campaign opened 1 October 2025 and closed 8 January 2026."
+        }
+      ]
+    },
+    {
+      "name": "Swiss Government Excellence Scholarships 2027/28",
+      "provider_name": "State Secretariat for Education, Research and Innovation SERI",
+      "provider_website_url": "https://www.sbfi.admin.ch/",
+      "country": "Switzerland",
+      "degree_level": "phd",
+      "field_eligibility": "Research scholarships are available in any discipline at eligible Swiss higher education institutions.",
+      "nationality_eligibility": "Applicants from countries listed by SERI; scholarship types and deadlines vary by country.",
+      "application_opening_date": "2026-08-20T00:00:00Z",
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "partial",
+      "tuition_coverage": "The scholarship is a living-expense grant, not a salary; tuition coverage is not the core listed benefit.",
+      "monthly_stipend_amount": "2450.00",
+      "monthly_stipend_currency": "CHF",
+      "accommodation_coverage": "A one-time CHF 600 rental deposit grant is listed.",
+      "travel_allowance": "Return flight allowance is listed for non-EU/EFTA scholarship holders.",
+      "health_insurance": "FCS covers compulsory health insurance premiums for non-EU/EFTA scholarship holders.",
+      "application_fee_info": "SERI warns the application is free of charge and warns against fake scholarship offers.",
+      "english_language_requirement": "Language requirements depend on the host institution and research supervision.",
+      "standardized_test_requirement": "Not generally stated; depends on host institution or supervisor.",
+      "minimum_academic_requirement": "Research applicants need a master's degree or equivalent by the stated date and a Swiss supervisor.",
+      "required_documents": [
+        "Research plan",
+        "Academic supervisor support letter",
+        "Academic records",
+        "Country-specific application documents"
+      ],
+      "application_method": "Apply through the official SERI/FCS route for the applicant's country of origin.",
+      "application_url": "https://www.sbfi.admin.ch/en/swiss-government-excellence-scholarships",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "Deadlines are country-specific and published by SERI; this record stores the general 2027/28 programme.",
+      "eligibility_warnings": [
+        "Country-specific deadline PDF must be checked before relying on this record.",
+        "A Swiss academic supervisor is mandatory for research scholarship applications."
+      ],
+      "source": {
+        "url": "https://www.sbfi.admin.ch/en/swiss-government-excellence-scholarships",
+        "source_type": "official",
+        "title": "Swiss Government Excellence Scholarships 2027–2028",
+        "relevant_excerpt": "SERI lists research and art scholarships, opening date, and CHF 2450 monthly funding.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://www.sbfi.admin.ch/en/swiss-government-excellence-scholarships-at-a-glance",
+          "source_type": "official",
+          "title": "Swiss Government Excellence Scholarships at a Glance",
+          "relevant_excerpt": "Applicant guide lists eligibility, monthly amount, insurance, deposit grant, and flight allowance."
+        }
+      ]
+    },
+    {
+      "name": "Erasmus Mundus Joint Masters Scholarships",
+      "provider_name": "European Commission Erasmus+",
+      "provider_website_url": "https://erasmus-plus.ec.europa.eu/",
+      "country": "Multiple European Countries",
+      "degree_level": "masters",
+      "field_eligibility": "Eligible fields depend on the selected Erasmus Mundus Joint Master consortium.",
+      "nationality_eligibility": "Students from all over the world may apply to participating master programmes.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "Scholarships cover participation costs for selected Erasmus Mundus Joint Masters.",
+      "monthly_stipend_amount": "1400.00",
+      "monthly_stipend_currency": "EUR",
+      "accommodation_coverage": "The monthly EU scholarship contributes to living costs.",
+      "travel_allowance": "Scholarships contribute to travel and visa costs.",
+      "health_insurance": "Insurance and participation cost details depend on the selected master consortium.",
+      "application_fee_info": "Application fees and participation rules vary by consortium.",
+      "english_language_requirement": "Language requirements depend on the selected joint master's programme.",
+      "standardized_test_requirement": "Programme-specific; applicants must check the selected consortium website.",
+      "minimum_academic_requirement": "Applicants must meet the selected master's admission requirements.",
+      "required_documents": [
+        "Programme-specific application",
+        "Academic transcripts",
+        "Degree certificate",
+        "Language evidence",
+        "Motivation or reference documents if required"
+      ],
+      "application_method": "Search the Erasmus Mundus catalogue and apply directly to the institution running the chosen programme.",
+      "application_url": "https://erasmus-plus.ec.europa.eu/opportunities/individuals/students/erasmus-mundus-joint-masters",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "Deadlines usually vary by consortium; the platform must retrieve the selected programme page for exact dates.",
+      "eligibility_warnings": [
+        "Never infer a deadline from the general Erasmus page.",
+        "A selected consortium may have extra eligibility and document requirements."
+      ],
+      "source": {
+        "url": "https://erasmus-plus.ec.europa.eu/opportunities/individuals/students/erasmus-mundus-joint-masters",
+        "source_type": "official",
+        "title": "Erasmus Mundus Joint Masters for students",
+        "relevant_excerpt": "Students apply directly to the institution running their chosen programme.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://erasmus-plus.ec.europa.eu/programme-guide/part-b/key-action-2/erasmus-mundus-action",
+          "source_type": "official",
+          "title": "Erasmus Mundus action programme guide",
+          "relevant_excerpt": "The programme guide states the scholarship calculation is EUR 1400 per month."
+        }
+      ]
+    },
+    {
+      "name": "Chinese Government Scholarship",
+      "provider_name": "China Scholarship Council",
+      "provider_website_url": "https://www.campuschina.org/",
+      "country": "China",
+      "degree_level": "masters",
+      "field_eligibility": "Designated Chinese universities offer programmes in many academic disciplines; availability depends on university and track.",
+      "nationality_eligibility": "Applicants must generally be non-Chinese citizens in good physical and mental health.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "Full scholarship coverage includes tuition waiver.",
+      "monthly_stipend_amount": "3000.00",
+      "monthly_stipend_currency": "CNY",
+      "accommodation_coverage": "Free university dormitory or accommodation subsidy is listed.",
+      "travel_allowance": "International travel coverage depends on programme route and country-specific scholarship channel.",
+      "health_insurance": "Comprehensive medical insurance is listed.",
+      "application_fee_info": "Application fee policies vary by university or dispatching authority.",
+      "english_language_requirement": "English-taught programmes may require IELTS, TOEFL, or exemptions set by host universities.",
+      "standardized_test_requirement": "Bachelor applicants may need CSCA; graduate requirements vary by university.",
+      "minimum_academic_requirement": "Age and degree requirements vary by study level; master's applicants are commonly under 35.",
+      "required_documents": [
+        "Online CSC application",
+        "Academic documents",
+        "Study plan or research proposal",
+        "Language certificate if required",
+        "Pre-admission or university documents if required"
+      ],
+      "application_method": "Apply through the official Study in China/Campus China portal and the relevant embassy or university channel.",
+      "application_url": "https://www.campuschina.org/",
+      "status": "draft",
+      "data_confidence": "medium",
+      "notes": "CSC has multiple tracks and university-specific pages; this seed stores the general full-scholarship structure.",
+      "eligibility_warnings": [
+        "Deadlines vary by embassy, dispatching authority, university, and programme track.",
+        "Some university pages include language-test thresholds that are not universal CSC requirements."
+      ],
+      "source": {
+        "url": "https://www.studyinchina.org.cn/scholarship/",
+        "source_type": "official",
+        "title": "Chinese Government Scholarship coverage and standard",
+        "relevant_excerpt": "Full scholarship covers tuition, accommodation, stipend, and medical insurance.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://tt.china-embassy.gov.cn/eng/sgxw/202601/t20260107_11807431.htm",
+          "source_type": "official",
+          "title": "Chinese Government Scholarship application notice",
+          "relevant_excerpt": "The embassy identifies Campus China as the official application portal."
+        }
+      ]
+    },
+    {
+      "name": "Japanese Government MEXT Scholarship",
+      "provider_name": "Ministry of Education, Culture, Sports, Science and Technology Japan",
+      "provider_website_url": "https://www.mext.go.jp/",
+      "country": "Japan",
+      "degree_level": "masters",
+      "field_eligibility": "Research students study in their field of specialty or a related field at Japanese universities.",
+      "nationality_eligibility": "Applicants apply through embassy recommendation or university recommendation based on country and category.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "Tuition is exempted for MEXT scholarship categories listed by Study in Japan.",
+      "monthly_stipend_amount": "144000.00",
+      "monthly_stipend_currency": "JPY",
+      "accommodation_coverage": "Monthly allowance is intended for living costs; accommodation details vary by university.",
+      "travel_allowance": "Round-trip travel expenses are listed, with some university-recommendation caveats.",
+      "health_insurance": "Health insurance details depend on Japanese student insurance and university procedures.",
+      "application_fee_info": "Application is through Japanese embassies or universities; beware unofficial paid intermediaries.",
+      "english_language_requirement": "Embassy recommendation exams include Japanese and English for research students.",
+      "standardized_test_requirement": "Required exams vary by scholarship category.",
+      "minimum_academic_requirement": "Research student applicants are generally under 35 and college graduates or equivalent.",
+      "required_documents": [
+        "Embassy or university application forms",
+        "Academic transcripts",
+        "Degree certificate",
+        "Research plan",
+        "Language or examination materials if required"
+      ],
+      "application_method": "Apply through a Japanese diplomatic mission or eligible Japanese university recommendation route.",
+      "application_url": "https://studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "Country embassy deadlines vary; the global Study in Japan page provides programme structure.",
+      "eligibility_warnings": [
+        "Application deadlines and submission method depend on the applicant's country or university route.",
+        "MEXT warns that only embassies or participating universities handle official applications."
+      ],
+      "source": {
+        "url": "https://studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/",
+        "source_type": "official",
+        "title": "Japanese Government MEXT Scholarship",
+        "relevant_excerpt": "Study in Japan lists scholarship types, stipend, tuition exemption, travel, and routes.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://www.mext.go.jp/a_menu/koutou/ryugaku/1423055_00021.htm",
+          "source_type": "official",
+          "title": "MEXT university recommendation notice",
+          "relevant_excerpt": "MEXT publishes university-recommendation submission periods for 2026 arrivals."
+        }
+      ]
+    },
+    {
+      "name": "Global Korea Scholarship Graduate Degrees",
+      "provider_name": "National Institute for International Education Korea",
+      "provider_website_url": "https://www.studyinkorea.go.kr/",
+      "country": "South Korea",
+      "degree_level": "masters",
+      "field_eligibility": "Graduate programmes across GKS universities; programme groups include general, R&D, and global network tracks.",
+      "nationality_eligibility": "Applicant and parents must generally hold non-Korean citizenship; detailed rules vary by programme.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "Study in Korea lists tuition among GKS scholarship benefits.",
+      "monthly_stipend_amount": null,
+      "monthly_stipend_currency": null,
+      "accommodation_coverage": "Study allowances are listed; accommodation is not always described as separately covered.",
+      "travel_allowance": "Airfare is listed among GKS support details.",
+      "health_insurance": "Medical insurance is listed among GKS support details.",
+      "application_fee_info": "Application route depends on embassy or university track.",
+      "english_language_requirement": "Language requirements depend on track, university, and programme; TOPIK or English evidence may matter.",
+      "standardized_test_requirement": "Not generally stated; programme or university-specific requirements may apply.",
+      "minimum_academic_requirement": "Graduate applicants generally need bachelor's or master's graduation and at least 80% GPA.",
+      "required_documents": [
+        "GKS application forms",
+        "Academic documents",
+        "Recommendation letters",
+        "Personal statement or study plan",
+        "Language evidence if required"
+      ],
+      "application_method": "Apply through the Korean Embassy track or directly to designated universities, depending on programme guidelines.",
+      "application_url": "https://www.studyinkorea.go.kr/ko/plan/gksNoticeRead.do?bbsId=BBSMSTR_000000000461&nttId=4420",
+      "status": "draft",
+      "data_confidence": "medium",
+      "notes": "This record uses official Study in Korea general programme data; detailed year guidelines must be retrieved for exact deadlines.",
+      "eligibility_warnings": [
+        "GKS deadlines vary by embassy and university.",
+        "Exact allowance amounts should be confirmed in the current GKS guideline PDF."
+      ],
+      "source": {
+        "url": "https://www.studyinkorea.go.kr/ko/plan/gksNoticeRead.do?bbsId=BBSMSTR_000000000461&nttId=4420",
+        "source_type": "official",
+        "title": "2026 GKS Graduate Degrees notice",
+        "relevant_excerpt": "The notice says 2,000 international students were planned for GKS graduate degrees.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://gks.go.kr/ko/plan/scholarship.do",
+          "source_type": "official",
+          "title": "GKS scholarship overview",
+          "relevant_excerpt": "The overview lists airfare, living allowance, language training, tuition, and insurance."
+        }
+      ]
+    },
+    {
+      "name": "Turkiye Scholarships Full-Time Program",
+      "provider_name": "Turkiye Scholarships",
+      "provider_website_url": "https://www.turkiyeburslari.gov.tr/",
+      "country": "Turkiye",
+      "degree_level": "masters",
+      "field_eligibility": "Full-time associate, bachelor's, master's, PhD, and art programmes; available departments vary by applicant background.",
+      "nationality_eligibility": "Citizens of all countries may apply, excluding Turkish citizens and certain current Turkish university enrolments.",
+      "application_opening_date": "2026-01-10T00:00:00Z",
+      "application_deadline": "2026-02-20T23:59:59Z",
+      "intake_year": 2026,
+      "funding_type": "full",
+      "tuition_coverage": "Tuition fee coverage is listed.",
+      "monthly_stipend_amount": "6500.00",
+      "monthly_stipend_currency": "TRY",
+      "accommodation_coverage": "Accommodation is listed; graduate housing support rules vary by city and year.",
+      "travel_allowance": "Once-off flight ticket at the beginning and graduation is listed.",
+      "health_insurance": "Health insurance is listed.",
+      "application_fee_info": "Applications are received online through the official Turkiye Scholarships system.",
+      "english_language_requirement": "Language certificates are required if the chosen programme requires them; Turkish language course is included.",
+      "standardized_test_requirement": "GRE, GMAT, SAT, or similar scores are required only if chosen programmes require them.",
+      "minimum_academic_requirement": "Minimum achievement is 75% for graduate candidates; age limit under 30 for master's.",
+      "required_documents": [
+        "Identity document or passport",
+        "Recent photograph",
+        "Diploma or temporary graduation certificate",
+        "Transcript",
+        "Exam and language scores if required",
+        "Research proposal for PhD"
+      ],
+      "application_method": "Apply online through the Turkiye Scholarships Application System.",
+      "application_url": "https://www.turkiyeburslari.gov.tr/",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "The 2026 full-time application window has closed. This record is useful for annual monitoring.",
+      "eligibility_warnings": [
+        "This cycle deadline has passed; verify the next cycle before advising a student to apply.",
+        "Programme choices shown in the portal vary by applicant background."
+      ],
+      "source": {
+        "url": "https://turkiyeburslari.gov.tr/fulltimeprograms",
+        "source_type": "official",
+        "title": "Turkiye Scholarships full-time programmes",
+        "relevant_excerpt": "Scope includes placement, stipend, tuition, language course, accommodation, insurance, and flight ticket.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://turkiyeburslari.gov.tr/scholarshipsprograms",
+          "source_type": "official",
+          "title": "Turkiye Scholarships criteria",
+          "relevant_excerpt": "Criteria page lists academic minimums, age limits, eligible groups, and ineligible groups."
+        }
+      ]
+    },
+    {
+      "name": "Australia Awards Scholarships 2027 Intake",
+      "provider_name": "Australian Government Department of Foreign Affairs and Trade",
+      "provider_website_url": "https://www.dfat.gov.au/",
+      "country": "Australia",
+      "degree_level": "masters",
+      "field_eligibility": "Priority fields and eligible courses depend on the applicant's participating country profile.",
+      "nationality_eligibility": "Citizens of participating developing countries, particularly in the Indo-Pacific and listed partner regions.",
+      "application_opening_date": "2026-02-01T09:00:00+11:00",
+      "application_deadline": "2026-04-30T14:00:00+10:00",
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "Full tuition fees generally apply for the minimum period needed to complete the programme.",
+      "monthly_stipend_amount": null,
+      "monthly_stipend_currency": null,
+      "accommodation_coverage": "Establishment allowance and contribution to living expenses are listed.",
+      "travel_allowance": "Return economy air travel is listed.",
+      "health_insurance": "Overseas Student Health Cover is listed for the award holder.",
+      "application_fee_info": "Applications are normally submitted through OASIS or country-specific portals.",
+      "english_language_requirement": "English requirements differ by institution and country profile.",
+      "standardized_test_requirement": "Country profile and institution-specific requirements may apply.",
+      "minimum_academic_requirement": "Eligibility and priority fields vary by participating country profile.",
+      "required_documents": [
+        "Online or hard-copy application",
+        "Country-profile documents",
+        "Academic records",
+        "CV if required",
+        "Referee reports if required"
+      ],
+      "application_method": "Check the country profile, then apply through OASIS or the country-specific portal.",
+      "application_url": "https://www.dfat.gov.au/people-to-people/australia-awards/how-to-apply-for-an-australia-awards-scholarship",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "The 2027 main round has closed for most countries; Palau had a later date. Keep for monitoring next cycle.",
+      "eligibility_warnings": [
+        "The 2027 main deadline has passed as of this dataset date.",
+        "Eligibility, priority fields, and documents differ by country profile."
+      ],
+      "source": {
+        "url": "https://www.dfat.gov.au/people-to-people/australia-awards/australia-awards-scholarships",
+        "source_type": "official",
+        "title": "Australia Awards Scholarships",
+        "relevant_excerpt": "DFAT lists tuition, return travel, establishment allowance, living contribution, OSHC, and support.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://www.dfat.gov.au/people-to-people/australia-awards/australia-awards-scholarships-opening-and-closing-dates",
+          "source_type": "official",
+          "title": "Australia Awards opening and closing dates",
+          "relevant_excerpt": "DFAT lists 2027 country opening and closing dates."
+        }
+      ]
+    },
+    {
+      "name": "Australian Government Research Training Program",
+      "provider_name": "Australian Government Department of Education",
+      "provider_website_url": "https://www.education.gov.au/",
+      "country": "Australia",
+      "degree_level": "phd",
+      "field_eligibility": "Accredited higher degree by research programmes at eligible Australian higher education providers.",
+      "nationality_eligibility": "Domestic and overseas students enrolled in eligible HDR courses may be supported.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2026,
+      "funding_type": "partial",
+      "tuition_coverage": "RTP support may include fees offset for HDR tuition fees.",
+      "monthly_stipend_amount": null,
+      "monthly_stipend_currency": null,
+      "accommodation_coverage": "RTP stipend support assists with general living costs; rates are annual.",
+      "travel_allowance": "RTP allowances may cover ancillary HDR costs; relocation depends on university policy.",
+      "health_insurance": "RTP allowances may include Overseas Student Health Cover costs for international students.",
+      "application_fee_info": "Applications cannot be made through the Department of Education; apply through universities.",
+      "english_language_requirement": "English requirements depend on the chosen Australian university and HDR programme.",
+      "standardized_test_requirement": "Usually university-specific; not set centrally by the RTP page.",
+      "minimum_academic_requirement": "Applicants must be eligible for an accredited research doctorate or research master's degree.",
+      "required_documents": [
+        "University HDR application",
+        "Research proposal if required",
+        "Academic records",
+        "Supervisor or referee documents if required",
+        "English evidence if required"
+      ],
+      "application_method": "Apply directly through eligible Australian universities; each university controls deadlines and selection.",
+      "application_url": "https://www.education.gov.au/research-block-grants/research-training-program",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "The RTP is not a single central application; university-level records should be added for exact deadlines.",
+      "eligibility_warnings": [
+        "Do not show one national deadline for RTP.",
+        "Scholarship amount and benefits vary by Australian university."
+      ],
+      "source": {
+        "url": "https://www.education.gov.au/research-block-grants/research-training-program",
+        "source_type": "official",
+        "title": "Research Training Program",
+        "relevant_excerpt": "RTP may support tuition fees offset, living stipend, and ancillary HDR allowances.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://www.education.gov.au/research-block-grants/research-training-program/research-training-program-frequently-asked-questions-students",
+          "source_type": "official",
+          "title": "RTP student FAQ",
+          "relevant_excerpt": "Universities are responsible for RTP applications, selection, offers, and deadlines."
+        }
+      ]
+    },
+    {
+      "name": "Manaaki New Zealand Scholarships",
+      "provider_name": "Education New Zealand Manapou ki te Ao",
+      "provider_website_url": "https://www.nzscholarships.govt.nz/",
+      "country": "New Zealand",
+      "degree_level": "masters",
+      "field_eligibility": "Recommended subjects and levels depend on the applicant's country and development priorities.",
+      "nationality_eligibility": "Eligible citizens from partner developing countries and regions listed by Manaaki.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "Full tuition fees are listed for Manaaki scholars.",
+      "monthly_stipend_amount": null,
+      "monthly_stipend_currency": null,
+      "accommodation_coverage": "Living allowance and establishment allowance are listed; accommodation is usually organised by the student.",
+      "travel_allowance": "Travel to and from the scholar's country and travel insurance are listed.",
+      "health_insurance": "Medical insurance in New Zealand is listed.",
+      "application_fee_info": "Applications are made through the official online scholarship system when a country round is open.",
+      "english_language_requirement": "Academic entry and English requirements depend on the selected institution and course.",
+      "standardized_test_requirement": "Not generally stated; institution-specific requirements may apply.",
+      "minimum_academic_requirement": "Applicants must meet country eligibility, age, residency, work experience, and development contribution requirements.",
+      "required_documents": [
+        "Online Manaaki application",
+        "Course preferences",
+        "Academic documents if requested",
+        "Work experience details",
+        "English evidence when required"
+      ],
+      "application_method": "Check eligibility by country, research recommended subjects, then apply through the Manaaki online system.",
+      "application_url": "https://www.nzscholarships.govt.nz/",
+      "status": "draft",
+      "data_confidence": "medium",
+      "notes": "The current tertiary application round is closed; country dates must be re-verified for the next round.",
+      "eligibility_warnings": [
+        "Manaaki application dates are country-specific and may close early.",
+        "Postgraduate applicants usually need relevant work experience."
+      ],
+      "source": {
+        "url": "https://www.nzscholarships.govt.nz/scholars-get-ready-to-start-your-scholarship/",
+        "source_type": "official",
+        "title": "Manaaki scholarship start guidance",
+        "relevant_excerpt": "Benefits include tuition, living allowance, establishment allowance, insurance, travel, and research support.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://www.nzscholarships.govt.nz/check-eligibility-criteria/",
+          "source_type": "official",
+          "title": "Manaaki eligibility criteria",
+          "relevant_excerpt": "Eligibility checks include citizenship, residence, work experience, military status, and prior scholarships."
+        }
+      ]
+    },
+    {
+      "name": "ADB-Japan Scholarship Program",
+      "provider_name": "Asian Development Bank",
+      "provider_website_url": "https://www.adb.org/",
+      "country": "Asia-Pacific Partner Institutions",
+      "degree_level": "masters",
+      "field_eligibility": "Economics, business, science, technology, development studies, law, and public policy fields listed by ADB.",
+      "nationality_eligibility": "Citizens of ADB borrowing member countries and Japanese ODA scholarship-eligible countries.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "Full tuition fees are listed.",
+      "monthly_stipend_amount": null,
+      "monthly_stipend_currency": null,
+      "accommodation_coverage": "Monthly subsistence allowance including housing is listed.",
+      "travel_allowance": "Travel expenses are listed.",
+      "health_insurance": "Medical insurance is listed.",
+      "application_fee_info": "Applicants request forms from partner institutions; no separate ADB application is necessary.",
+      "english_language_requirement": "Applicants need oral and written English proficiency for graduate study.",
+      "standardized_test_requirement": "Requirements depend on the designated institution and approved master's course.",
+      "minimum_academic_requirement": "Bachelor's degree, superior academic record, at least two years work experience, and age not over 35.",
+      "required_documents": [
+        "Partner institution application",
+        "ADB-JSP information sheet",
+        "Academic records",
+        "Admission documents",
+        "Work experience evidence"
+      ],
+      "application_method": "Apply to a designated institution; endorsed admitted candidates are considered by ADB.",
+      "application_url": "https://www.adb.org/work-with-us/careers/japan-scholarship-program",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "Deadlines vary by designated institution; students should apply at least six months before programme start.",
+      "eligibility_warnings": [
+        "ADB-JSP is for approved master's courses only.",
+        "Partner institution admission is required before ADB scholarship consideration."
+      ],
+      "source": {
+        "url": "https://www.adb.org/work-with-us/careers/japan-scholarship-program",
+        "source_type": "official",
+        "title": "ADB-Japan Scholarship Program",
+        "relevant_excerpt": "ADB lists tuition, subsistence, books, medical insurance, travel, and thesis support.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://www.adb.org/work-with-us/careers/japan-scholarship-program/faq",
+          "source_type": "official",
+          "title": "ADB-JSP FAQ",
+          "relevant_excerpt": "FAQ says applications should be sent at least six months before planned study."
+        }
+      ]
     }
   ]
 }

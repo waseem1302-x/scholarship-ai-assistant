@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 10: local frontend MVP**.
+The repository is at **vertical slice 10.5: frontend and verified-catalogue polish**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -59,6 +59,12 @@ Implemented so far:
 - local FastAPI-served frontend for login/register, opportunity search,
   official-source detail, student profile editing, explainable matches,
   saved-opportunity tracking, and basic admin curation
+- polished opportunity cards and detail pages that emphasize funding components,
+  deadlines, eligibility warnings, official evidence, and last verification
+- expanded verified seed dataset with 16 official-source records across major
+  destination systems such as Chevening, Commonwealth, Fulbright, DAAD, Eiffel,
+  Swiss Excellence, Erasmus Mundus, CSC, MEXT, GKS, Turkiye Scholarships,
+  Australia Awards, RTP, Manaaki, and ADB-JSP
 - Docker Compose, lint configuration, and automated tests
 
 ## Quick start
@@ -233,7 +239,7 @@ modify another student's applications.
 
 ## Verified seed dataset walkthrough
 
-The repository includes a small source-verified demo dataset:
+The repository includes a manually curated source-verified demo dataset:
 
 ```text
 data/seed/verified_opportunities.json
@@ -248,7 +254,8 @@ docker compose exec api python -m app.cli.seed_verified_opportunities
 The loader skips duplicates, records source verification metadata, and makes the
 seed records public only because the dataset was manually checked against
 official source pages. Use this for local portfolio demos, not as a promise that
-deadlines or eligibility will remain unchanged forever.
+deadlines or eligibility will remain unchanged forever. The dataset is a
+verified flagship sample, not a claim to include every scholarship worldwide.
 
 ## Important limitations
 
@@ -264,8 +271,8 @@ deadlines or eligibility will remain unchanged forever.
 - Access tokens remain valid for their short lifetime after logout. Logout
   revokes the refresh-token family; a future high-security mode can add a token
   version check on every request.
-- Seed records are intentionally small and manually curated; they are not an
-  automatically refreshed scholarship database.
+- Seed records are manually curated; they are not an automatically refreshed
+  scholarship database and do not represent every opportunity in every country.
 - The frontend is an MVP product surface, not the final visual system. It uses
   browser local storage for local demo tokens and should be hardened before
   production use.

@@ -38,6 +38,20 @@
             <a class="button" href="#opportunities">Explore opportunities</a>
             <a class="button secondary" href="#profile">Build profile</a>
           </div>
+          <div class="hero-stats" aria-label="Current product capabilities">
+            <div>
+              <strong>16</strong>
+              <span>official-source seed records</span>
+            </div>
+            <div>
+              <strong>7+</strong>
+              <span>funding fields per scholarship</span>
+            </div>
+            <div>
+              <strong>0</strong>
+              <span>unsupported admission guarantees</span>
+            </div>
+          </div>
         </div>
         <aside class="promise-card">
           <h2>Core promise</h2>
@@ -60,6 +74,10 @@
           <p>
             Tokens are stored only in your browser for local testing. Do not use real passwords in
             demo environments.
+          </p>
+          <p class="helper-note">
+            Register creates a student account. Admin accounts are intentionally created through
+            the local admin bootstrap command so random users cannot self-promote.
           </p>
         </div>
         <form class="auth-form" id="auth-form">
@@ -161,6 +179,25 @@
               </label>
               <button class="button" type="submit">Search</button>
             </form>
+
+            <div class="catalogue-note">
+              <div>
+                <span class="pill good">Official-source first</span>
+                <h3>What each serious record should show</h3>
+                <p>
+                  Funding package, eligibility, documents, deadlines, application route, warnings,
+                  source URL, and last verification date.
+                </p>
+              </div>
+              <div class="chip-row">
+                <span class="pill">Tuition</span>
+                <span class="pill">Stipend</span>
+                <span class="pill">Travel</span>
+                <span class="pill">Insurance</span>
+                <span class="pill">Documents</span>
+                <span class="pill">Warnings</span>
+              </div>
+            </div>
 
             <p class="form-status" id="opportunity-status" role="status"></p>
             <div class="cards" id="opportunity-list"></div>
@@ -299,6 +336,10 @@
               </div>
               <button class="button secondary" id="load-admin" type="button">Refresh admin list</button>
             </div>
+            <p class="helper-note">
+              Admin work is deliberately source-first: create drafts, preserve official evidence,
+              then verify before public search can show the record.
+            </p>
 
             <details class="admin-create">
               <summary>Add a draft opportunity</summary>

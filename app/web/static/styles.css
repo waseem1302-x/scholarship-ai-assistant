@@ -30,12 +30,14 @@ body {
     radial-gradient(circle at top left, rgba(15, 118, 110, 0.16), transparent 30rem),
     linear-gradient(180deg, #fbf7ef 0%, var(--bg) 100%);
   color: var(--ink);
+  overflow-x: hidden;
 }
 
 a {
   color: var(--brand-dark);
   font-weight: 700;
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 a:hover {
@@ -105,7 +107,8 @@ button {
 
 .topbar-actions,
 .hero-actions,
-.pagination-actions {
+.pagination-actions,
+.hero-stats {
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -158,6 +161,31 @@ h3 {
   line-height: 1.7;
 }
 
+.hero-stats {
+  margin-top: 1.25rem;
+}
+
+.hero-stats div {
+  min-width: 10rem;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  border-radius: 1.15rem;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 0.9rem 1rem;
+}
+
+.hero-stats strong {
+  display: block;
+  color: var(--brand-dark);
+  font-size: 1.75rem;
+  letter-spacing: -0.04em;
+}
+
+.hero-stats span {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
 .promise-card,
 .panel {
   background: rgba(255, 253, 247, 0.88);
@@ -199,9 +227,16 @@ h3 {
 }
 
 .auth-panel p,
+.helper-note,
 .footer p {
   color: var(--muted);
   line-height: 1.7;
+}
+
+.helper-note {
+  border-left: 4px solid var(--brand);
+  margin: 1rem 0 0;
+  padding-left: 1rem;
 }
 
 .auth-form,
@@ -323,11 +358,17 @@ textarea:focus {
   align-items: start;
 }
 
+.workspace > *,
+.panel {
+  min-width: 0;
+}
+
 .sidebar {
   position: sticky;
   top: 1rem;
   display: grid;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .sidebar a,
@@ -348,6 +389,17 @@ textarea:focus {
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 0.5rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.user-card > div {
+  min-width: 0;
+}
+
+.user-card strong {
+  display: block;
+  overflow-wrap: anywhere;
 }
 
 .user-card small {
@@ -368,6 +420,28 @@ textarea:focus {
 .cards {
   display: grid;
   gap: 0.85rem;
+}
+
+.catalogue-note {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  border-radius: 1.15rem;
+  background: linear-gradient(135deg, rgba(215, 242, 236, 0.9), rgba(255, 253, 247, 0.92));
+  margin: 1rem 0;
+  padding: 1rem;
+}
+
+.catalogue-note h3 {
+  margin-top: 0.55rem;
+}
+
+.catalogue-note p {
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0.55rem 0 0;
 }
 
 .card {
@@ -462,6 +536,32 @@ textarea:focus {
   grid-column: 1 / -1;
 }
 
+.detail-block.warning {
+  border-color: #f3c66d;
+  background: #fff9e8;
+}
+
+.field-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.field-list li {
+  color: var(--muted);
+  line-height: 1.55;
+  list-style: none;
+}
+
+.source-box {
+  border: 1px dashed rgba(15, 118, 110, 0.35);
+  border-radius: 0.9rem;
+  background: #fbfffd;
+  margin-top: 0.8rem;
+  padding: 0.85rem;
+}
+
 .admin-create {
   border: 1px solid var(--line);
   border-radius: 1rem;
@@ -480,11 +580,8 @@ textarea:focus {
   padding: 0 clamp(1rem, 3vw, 3rem) 2rem;
 }
 
-@media (max-width: 900px) {
-  .hero-grid,
-  .auth-panel,
-  .workspace,
-  .detail-grid {
+@media (max-width: 1100px) {
+  .workspace {
     grid-template-columns: 1fr;
   }
 
@@ -495,6 +592,15 @@ textarea:focus {
 
   .user-card {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .hero-grid,
+  .auth-panel,
+  .detail-grid,
+  .catalogue-note {
+    grid-template-columns: 1fr;
   }
 
   .filters,
@@ -513,7 +619,8 @@ textarea:focus {
 
   .hero-actions,
   .topbar-actions,
-  .pagination-actions {
+  .pagination-actions,
+  .hero-stats {
     align-items: stretch;
     flex-direction: column;
   }
