@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 9: paginated opportunity search responses**.
+The repository is at **vertical slice 10: local frontend MVP**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -56,6 +56,9 @@ Implemented so far:
   text, English requirements, verification freshness, and admin review queues
 - paginated public and admin opportunity search responses with total counts,
   result counts, offsets, and next/previous page indicators
+- local FastAPI-served frontend for login/register, opportunity search,
+  official-source detail, student profile editing, explainable matches,
+  saved-opportunity tracking, and basic admin curation
 - Docker Compose, lint configuration, and automated tests
 
 ## Quick start
@@ -79,10 +82,10 @@ Implemented so far:
    python -m uvicorn app.main:app --reload
    ```
 
-5. Open `http://localhost:8000/docs`.
+5. Open `http://localhost:8000`.
 
-Opening `http://localhost:8000` also redirects to the API documentation. The
-documentation path is `/docs` with a final **s**.
+The product frontend is served at `http://localhost:8000`. The API
+documentation remains available at `http://localhost:8000/docs`.
 
 ### Docker
 
@@ -92,6 +95,36 @@ docker compose up --build
 
 The API is available at `http://localhost:8000`; PostgreSQL is not exposed
 outside the Compose network.
+
+## Frontend walkthrough
+
+The first frontend is intentionally lightweight and served by FastAPI from
+`app/web/static`. It avoids adding a separate JavaScript build system before the
+backend and data model stabilize.
+
+From `http://localhost:8000`, users can:
+
+- register or login as a student
+- search verified public opportunities with structured filters and pagination
+- open opportunity details with official-source excerpts and verification dates
+- create or update a student profile
+- refresh explainable profile matches
+- save opportunities and update tracker status/notes
+
+Administrators can login with an admin account created through the trusted CLI
+and use the admin section to:
+
+- list admin opportunities
+- create a draft opportunity with official-source provenance
+- mark a source as officially verified, which makes the opportunity active
+
+For a useful local demo, create an admin account and load the verified seed
+dataset:
+
+```bash
+docker compose exec api python -m app.cli.create_admin
+docker compose exec api python -m app.cli.seed_verified_opportunities
+```
 
 ## Quality checks
 
@@ -233,6 +266,9 @@ deadlines or eligibility will remain unchanged forever.
   version check on every request.
 - Seed records are intentionally small and manually curated; they are not an
   automatically refreshed scholarship database.
+- The frontend is an MVP product surface, not the final visual system. It uses
+  browser local storage for local demo tokens and should be hardened before
+  production use.
 - Deployment, public users, and evaluation metrics have not been claimed.
 
 ## Documentation
@@ -247,5 +283,6 @@ deadlines or eligibility will remain unchanged forever.
 - [Verified seed dataset slice handoff](docs/slices/07-verified-seed-dataset.md)
 - [Expanded structured search slice handoff](docs/slices/08-expanded-search.md)
 - [Paginated search responses slice handoff](docs/slices/09-paginated-search.md)
+- [Frontend MVP slice handoff](docs/slices/10-frontend-mvp.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)

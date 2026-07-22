@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scholarship AI Assistant</title>
+    <meta
+      name="description"
+      content="Source-first scholarship discovery, matching and application tracking."
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <nav class="topbar" aria-label="Primary navigation">
+        <a class="brand" href="/">
+          <span class="brand-mark">SA</span>
+          <span>
+            <strong>Scholarship AI Assistant</strong>
+            <small>Global Opportunity Intelligence Platform</small>
+          </span>
+        </a>
+        <div class="topbar-actions">
+          <a href="/docs" target="_blank" rel="noreferrer">API Docs</a>
+          <button class="ghost" id="logout-button" type="button" hidden>Logout</button>
+        </div>
+      </nav>
+
+      <section class="hero-grid">
+        <div>
+          <p class="eyebrow">Source-first scholarship intelligence</p>
+          <h1>Find verified opportunities, understand requirements, and track applications.</h1>
+          <p class="hero-copy">
+            Built from the perspective of a Pakistani scholarship-funded CS student in Malaysia:
+            structured data first, explainable matching second, AI only when it can cite evidence.
+          </p>
+          <div class="hero-actions">
+            <a class="button" href="#opportunities">Explore opportunities</a>
+            <a class="button secondary" href="#profile">Build profile</a>
+          </div>
+        </div>
+        <aside class="promise-card">
+          <h2>Core promise</h2>
+          <p>
+            We help students compare opportunities using official-source provenance,
+            transparent eligibility signals, and practical next steps.
+          </p>
+          <p class="disclaimer">
+            This platform does not guarantee admission, scholarship selection, or visa approval.
+          </p>
+        </aside>
+      </section>
+    </header>
+
+    <main class="shell">
+      <section class="panel auth-panel" id="auth-panel">
+        <div>
+          <p class="eyebrow">Start here</p>
+          <h2>Create an account or login</h2>
+          <p>
+            Tokens are stored only in your browser for local testing. Do not use real passwords in
+            demo environments.
+          </p>
+        </div>
+        <form class="auth-form" id="auth-form">
+          <div class="segmented" role="tablist" aria-label="Authentication mode">
+            <button class="active" id="login-tab" type="button">Login</button>
+            <button id="register-tab" type="button">Register</button>
+          </div>
+          <label>
+            Email
+            <input id="auth-email" name="email" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            Password
+            <input
+              id="auth-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              minlength="8"
+              required
+            />
+          </label>
+          <button class="button full" id="auth-submit" type="submit">Login</button>
+          <p class="form-status" id="auth-status" role="status"></p>
+        </form>
+      </section>
+
+      <section class="workspace" id="workspace" hidden>
+        <aside class="sidebar">
+          <div class="user-card">
+            <span class="avatar" id="user-avatar">S</span>
+            <div>
+              <strong id="user-email">student@example.com</strong>
+              <small id="user-role">student</small>
+            </div>
+          </div>
+          <a href="#opportunities">Opportunities</a>
+          <a href="#profile">Profile</a>
+          <a href="#matches">Matches</a>
+          <a href="#tracker">Tracker</a>
+          <a href="#admin" id="admin-nav" hidden>Admin</a>
+        </aside>
+
+        <div class="content">
+          <section class="panel" id="opportunities">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Verified search</p>
+                <h2>Opportunities</h2>
+              </div>
+              <div class="pagination-actions">
+                <button class="ghost" id="previous-page" type="button">Previous</button>
+                <button class="ghost" id="next-page" type="button">Next</button>
+              </div>
+            </div>
+
+            <form class="filters" id="opportunity-filters">
+              <label>
+                Country
+                <input name="country" placeholder="Malaysia, UK, USA..." />
+              </label>
+              <label>
+                Degree
+                <select name="degree_level">
+                  <option value="">Any</option>
+                  <option value="bachelors">Bachelors</option>
+                  <option value="masters">Masters</option>
+                  <option value="phd">PhD</option>
+                  <option value="postdoc">Postdoc</option>
+                  <option value="short_course">Short course</option>
+                </select>
+              </label>
+              <label>
+                Funding
+                <select name="funding_type">
+                  <option value="">Any</option>
+                  <option value="full">Full</option>
+                  <option value="partial">Partial</option>
+                  <option value="tuition_only">Tuition only</option>
+                  <option value="stipend_only">Stipend only</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+              </label>
+              <label>
+                Field
+                <input name="field" placeholder="Computer Science" />
+              </label>
+              <label>
+                Nationality
+                <input name="nationality" placeholder="Pakistan" />
+              </label>
+              <label>
+                Page size
+                <select name="limit">
+                  <option>5</option>
+                  <option selected>10</option>
+                  <option>20</option>
+                </select>
+              </label>
+              <button class="button" type="submit">Search</button>
+            </form>
+
+            <p class="form-status" id="opportunity-status" role="status"></p>
+            <div class="cards" id="opportunity-list"></div>
+          </section>
+
+          <section class="panel detail-panel" id="opportunity-detail" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Official-source detail</p>
+                <h2 id="detail-title">Opportunity detail</h2>
+              </div>
+              <button class="ghost" id="close-detail" type="button">Close</button>
+            </div>
+            <div id="detail-content"></div>
+          </section>
+
+          <section class="panel" id="profile">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Student profile</p>
+                <h2>Your matching profile</h2>
+              </div>
+              <span class="pill" id="profile-completeness">Incomplete</span>
+            </div>
+            <form class="profile-form" id="profile-form">
+              <label>
+                Nationality
+                <input name="nationality" placeholder="Pakistan" />
+              </label>
+              <label>
+                Country of residence
+                <input name="country_of_residence" placeholder="Malaysia" />
+              </label>
+              <label>
+                Current education
+                <select name="current_education_level">
+                  <option value="">Unknown</option>
+                  <option value="high_school">High school</option>
+                  <option value="diploma">Diploma</option>
+                  <option value="bachelors">Bachelors</option>
+                  <option value="masters">Masters</option>
+                  <option value="phd">PhD</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label>
+                Target degree
+                <select name="target_degree_level">
+                  <option value="">Unknown</option>
+                  <option value="bachelors">Bachelors</option>
+                  <option value="masters">Masters</option>
+                  <option value="phd">PhD</option>
+                  <option value="short_course">Short course</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label>
+                Intended field
+                <input name="intended_field" placeholder="AI / Computer Science" />
+              </label>
+              <label>
+                Academic discipline
+                <input name="academic_discipline" placeholder="Computer Science" />
+              </label>
+              <label>
+                CGPA
+                <input name="cgpa" inputmode="decimal" placeholder="3.75" />
+              </label>
+              <label>
+                Grading scale
+                <input name="grading_scale" inputmode="decimal" placeholder="4.00" />
+              </label>
+              <label>
+                English test status
+                <select name="english_test_status">
+                  <option value="unknown">Unknown</option>
+                  <option value="not_taken">Not taken</option>
+                  <option value="planned">Planned</option>
+                  <option value="taken">Taken</option>
+                  <option value="not_required">Not required</option>
+                </select>
+              </label>
+              <label>
+                IELTS score
+                <input name="ielts_score" inputmode="decimal" placeholder="7.0" />
+              </label>
+              <label class="wide">
+                Preferred destination countries
+                <input
+                  name="preferred_destination_countries"
+                  placeholder="UK, Malaysia, Germany"
+                />
+              </label>
+              <label class="wide">
+                Research experience
+                <textarea name="research_experience" rows="3"></textarea>
+              </label>
+              <label class="wide">
+                Leadership experience
+                <textarea name="leadership_experience" rows="3"></textarea>
+              </label>
+              <button class="button" type="submit">Save profile</button>
+              <p class="form-status wide" id="profile-status" role="status"></p>
+            </form>
+          </section>
+
+          <section class="panel" id="matches">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Explainable matching</p>
+                <h2>Profile-based recommendations</h2>
+              </div>
+              <button class="button secondary" id="load-matches" type="button">Refresh matches</button>
+            </div>
+            <p class="form-status" id="match-status" role="status"></p>
+            <div class="cards" id="match-list"></div>
+          </section>
+
+          <section class="panel" id="tracker">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Application tracker</p>
+                <h2>Saved opportunities</h2>
+              </div>
+              <button class="button secondary" id="load-saved" type="button">Refresh tracker</button>
+            </div>
+            <p class="form-status" id="saved-status" role="status"></p>
+            <div class="cards" id="saved-list"></div>
+          </section>
+
+          <section class="panel" id="admin" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Curator workspace</p>
+                <h2>Admin verification console</h2>
+              </div>
+              <button class="button secondary" id="load-admin" type="button">Refresh admin list</button>
+            </div>
+
+            <details class="admin-create">
+              <summary>Add a draft opportunity</summary>
+              <form class="profile-form" id="admin-create-form">
+                <label class="wide">
+                  Name
+                  <input name="name" required />
+                </label>
+                <label>
+                  Provider
+                  <input name="provider_name" required />
+                </label>
+                <label>
+                  Country
+                  <input name="country" required />
+                </label>
+                <label>
+                  Degree
+                  <select name="degree_level" required>
+                    <option value="masters">Masters</option>
+                    <option value="bachelors">Bachelors</option>
+                    <option value="phd">PhD</option>
+                    <option value="postdoc">Postdoc</option>
+                    <option value="short_course">Short course</option>
+                  </select>
+                </label>
+                <label>
+                  Funding
+                  <select name="funding_type">
+                    <option value="unknown">Unknown</option>
+                    <option value="full">Full</option>
+                    <option value="partial">Partial</option>
+                    <option value="tuition_only">Tuition only</option>
+                    <option value="stipend_only">Stipend only</option>
+                  </select>
+                </label>
+                <label>
+                  Deadline
+                  <input name="application_deadline" type="datetime-local" />
+                </label>
+                <label class="wide">
+                  Official source URL
+                  <input name="source_url" type="url" required />
+                </label>
+                <label class="wide">
+                  Source title
+                  <input name="source_title" required />
+                </label>
+                <label class="wide">
+                  Relevant source excerpt
+                  <textarea name="source_excerpt" minlength="20" rows="4" required></textarea>
+                </label>
+                <button class="button" type="submit">Create draft</button>
+              </form>
+            </details>
+
+            <p class="form-status" id="admin-status" role="status"></p>
+            <div class="cards" id="admin-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Built as a serious backend + AI engineering portfolio project:
+        verified sources, explainable matching, and honest uncertainty.
+      </p>
+    </footer>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

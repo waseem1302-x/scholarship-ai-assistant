@@ -146,11 +146,19 @@ def test_health_endpoints(client: TestClient) -> None:
     assert client.get("/health/ready").json() == {"status": "ready"}
 
 
-def test_root_redirects_to_api_documentation(client: TestClient) -> None:
-    response = client.get("/", follow_redirects=False)
+def test_root_serves_frontend(client: TestClient) -> None:
+    response = client.get("/")
 
-    assert response.status_code == 307
-    assert response.headers["location"] == "/docs"
+    assert response.status_code == 200
+    assert "Scholarship AI Assistant" in response.text
+    assert "/static/app.js" in response.text
+
+
+def test_frontend_static_assets_are_served(client: TestClient) -> None:
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "bootstrapSession" in response.text
 
 
 def test_role_dependency_denies_student_and_allows_admin() -> None:

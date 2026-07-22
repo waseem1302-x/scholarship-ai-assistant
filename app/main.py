@@ -4,7 +4,8 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -37,10 +38,11 @@ def create_app() -> FastAPI:
     )
     install_error_handlers(application)
     application.include_router(api_router, prefix="/api/v1")
+    application.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 
     @application.get("/", include_in_schema=False)
-    def documentation_redirect() -> RedirectResponse:
-        return RedirectResponse(url="/docs", status_code=307)
+    def frontend() -> FileResponse:
+        return FileResponse("app/web/static/index.html")
 
     @application.get("/health/live", tags=["operations"])
     def liveness() -> dict[str, str]:
