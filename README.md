@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 6: structured opportunity ingestion**.
+The repository is at **vertical slice 7: verified seed dataset**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -49,6 +49,8 @@ Implemented so far:
 - admin JSON batch import for opportunities with row-level validation,
   duplicate detection, data-quality warnings, dry-run support, and forced human
   review before public visibility
+- curated verified seed dataset with real opportunities from official sources
+  and a CLI loader for local demos
 - Docker Compose, lint configuration, and automated tests
 
 ## Quick start
@@ -169,10 +171,31 @@ Students can only save active opportunities with officially verified official
 sources. Saved trackers are isolated by user, so one student cannot read or
 modify another student's applications.
 
+## Verified seed dataset walkthrough
+
+The repository includes a small source-verified demo dataset:
+
+```text
+data/seed/verified_opportunities.json
+```
+
+Load it only after creating an admin account:
+
+```bash
+docker compose exec api python -m app.cli.seed_verified_opportunities
+```
+
+The loader skips duplicates, records source verification metadata, and makes the
+seed records public only because the dataset was manually checked against
+official source pages. Use this for local portfolio demos, not as a promise that
+deadlines or eligibility will remain unchanged forever.
+
 ## Important limitations
 
 - CSV files are not parsed directly yet. The importer uses a JSON row contract
   that a future CSV parser can feed into.
+- Seed opportunities were verified on 2026-07-22 and need re-verification before
+  any public production use.
 - Matching currently uses explicit baseline rules and simple parsing for some
   free-text requirements. Structured eligibility rules come next.
 - Saved opportunities do not send reminders yet. Notification logic belongs in
@@ -194,5 +217,6 @@ modify another student's applications.
 - [Rule-based matching slice handoff](docs/slices/04-rule-based-matching.md)
 - [Saved opportunity tracker slice handoff](docs/slices/05-saved-opportunities.md)
 - [Structured ingestion slice handoff](docs/slices/06-structured-ingestion.md)
+- [Verified seed dataset slice handoff](docs/slices/07-verified-seed-dataset.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)

@@ -1,0 +1,108 @@
+import uuid
+from pathlib import Path
+
+from sqlalchemy.orm import Session
+
+from app.cli.seed_verified_opportunities import (
+    DEFAULT_SEED_PATH,
+    SeedError,
+    load_seed_payload,
+    seed_verified_opportunities,
+)
+from app.core.security import hash_password
+from app.modules.auth.models import User, UserRole
+from app.modules.opportunities.models import Opportunity, OpportunityStatus, VerificationStatus
+from app.modules.opportunities.schemas import OpportunityCreate
+
+PASSWORD = "SeedPassword123"
+
+
+def create_admin(db_session: Session, *, email: str = "seed-admin@example.com") -> User:
+    admin = User(
+        id=uuid.uuid4(),
+        email=email,
+        password_hash=hash_password(PASSWORD),
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    db_session.add(admin)
+    db_session.commit()
+    db_session.refresh(admin)
+    return admin
+
+
+def test_verified_seed_file_contains_valid_opportunity_records() -> None:
+    payload = load_seed_payload(DEFAULT_SEED_PATH)
+
+    assert payload["dataset_version"] == "2026-07-22"
+    assert len(payload["records"]) >= 3
+    for record in payload["records"]:
+        additional_sources = record.get("additional_sources", [])
+        OpportunityCreate.model_validate(
+            {key: value for key, value in record.items() if key != "additional_sources"}
+        )
+        assert record["source"]["url"].startswith("https://")
+        assert len(record["source"]["relevant_excerpt"].split()) <= 25
+        for source in additional_sources:
+            assert source["url"].startswith("https://")
+            assert len(source["relevant_excerpt"].split()) <= 25
+
+
+def test_seed_loader_requires_admin_user(db_session: Session) -> None:
+    try:
+        seed_verified_opportunities(db_session)
+    except SeedError as exc:
+        assert "Create an admin user" in str(exc)
+    else:
+        raise AssertionError("Expected missing admin to raise SeedError")
+
+
+def test_seed_loader_dry_run_validates_without_creating_records(db_session: Session) -> None:
+    summary = seed_verified_opportunities(db_session, dry_run=True)
+
+    assert summary["validated"] >= 3
+    assert summary["created"] == 0
+    assert db_session.query(Opportunity).count() == 0
+
+
+def test_seed_loader_creates_public_verified_seed_records(db_session: Session) -> None:
+    admin = create_admin(db_session)
+
+    summary = seed_verified_opportunities(db_session, admin_email=admin.email)
+
+    opportunities = db_session.query(Opportunity).all()
+    assert summary["created"] == summary["validated"]
+    assert len(opportunities) == summary["created"]
+    assert all(opportunity.status is OpportunityStatus.ACTIVE for opportunity in opportunities)
+    assert all(
+        any(
+            source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
+            and source.last_verified_at is not None
+            for source in opportunity.sources
+        )
+        for opportunity in opportunities
+    )
+
+
+def test_seed_loader_skips_duplicates_on_second_run(db_session: Session) -> None:
+    admin = create_admin(db_session)
+    first = seed_verified_opportunities(db_session, admin_email=admin.email)
+
+    second = seed_verified_opportunities(db_session, admin_email=admin.email)
+
+    assert first["created"] >= 3
+    assert second["created"] == 0
+    assert second["skipped_duplicates"] == first["validated"]
+
+
+def test_custom_seed_path_must_contain_records(tmp_path: Path, db_session: Session) -> None:
+    create_admin(db_session)
+    invalid_seed = tmp_path / "invalid.json"
+    invalid_seed.write_text("{}", encoding="utf-8")
+
+    try:
+        seed_verified_opportunities(db_session, seed_path=invalid_seed, dry_run=True)
+    except SeedError as exc:
+        assert "records list" in str(exc)
+    else:
+        raise AssertionError("Expected invalid seed file to raise SeedError")

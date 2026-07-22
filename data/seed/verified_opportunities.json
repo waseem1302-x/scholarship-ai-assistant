@@ -1,0 +1,174 @@
+{
+  "dataset_name": "Verified demo opportunity seed dataset",
+  "dataset_version": "2026-07-22",
+  "verified_at": "2026-07-22T00:00:00Z",
+  "records": [
+    {
+      "name": "Chevening Scholarships 2027/28",
+      "provider_name": "Chevening",
+      "provider_website_url": "https://www.chevening.org/",
+      "country": "United Kingdom",
+      "degree_level": "masters",
+      "field_eligibility": "Eligible one-year taught master's courses in the United Kingdom.",
+      "nationality_eligibility": "Citizens of Chevening-eligible countries or territories; applicants must check their country page.",
+      "application_opening_date": "2026-08-04T11:00:00Z",
+      "application_deadline": "2026-10-06T11:00:00Z",
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "Tuition fee payment is listed as part of the award coverage.",
+      "monthly_stipend_amount": null,
+      "monthly_stipend_currency": null,
+      "accommodation_coverage": "A monthly living allowance is intended to cover accommodation and living expenses.",
+      "travel_allowance": "Economy travel to and from the country of residence is listed.",
+      "health_insurance": "Visa-related support is listed; applicants should verify healthcare and visa details for their country.",
+      "application_fee_info": "No Chevening application fee is stated in the verified source excerpts.",
+      "english_language_requirement": "Applicants must meet the English and academic requirements of their chosen UK universities.",
+      "standardized_test_requirement": "No general GRE requirement is stated; requirements depend on chosen university courses.",
+      "minimum_academic_requirement": "Applicants need an undergraduate degree that qualifies them for a UK master's programme.",
+      "required_documents": [
+        "Photo ID",
+        "Undergraduate education certificate or diploma",
+        "Reference letters",
+        "UK university course choices"
+      ],
+      "application_method": "Apply through the Chevening online application system via the applicant's country or territory page.",
+      "application_url": "https://www.chevening.org/apply/",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "Seed data verified from official Chevening pages on 2026-07-22. Students must still check their country page.",
+      "eligibility_warnings": [
+        "Country-specific Chevening pages may contain additional instructions.",
+        "University course admission requirements are separate from Chevening eligibility."
+      ],
+      "source": {
+        "url": "https://www.chevening.org/scholarships/application-timeline/",
+        "source_type": "official",
+        "title": "Chevening application timeline",
+        "relevant_excerpt": "Official timeline states applications open on 4 August 2026 and close on 6 October 2026.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://www.chevening.org/resource-hub/guidance/eligibility/",
+          "source_type": "official",
+          "title": "Chevening eligibility criteria",
+          "relevant_excerpt": "Official eligibility page lists citizenship, return-home, work experience, degree, and course-choice requirements."
+        },
+        {
+          "url": "https://www.chevening.org/faqs/what-does-a-chevening-scholarship-cover/",
+          "source_type": "official",
+          "title": "What does a Chevening Scholarship cover?",
+          "relevant_excerpt": "Official FAQ lists tuition, travel, allowances, visa application cost, and monthly personal living allowance."
+        }
+      ]
+    },
+    {
+      "name": "Knight-Hennessy Scholars 2027 Cohort",
+      "provider_name": "Knight-Hennessy Scholars",
+      "provider_website_url": "https://knight-hennessy.stanford.edu/",
+      "university_name": "Stanford University",
+      "university_website_url": "https://www.stanford.edu/",
+      "country": "United States",
+      "degree_level": "masters",
+      "field_eligibility": "Any Stanford graduate degree field, subject to admission to the chosen Stanford programme.",
+      "nationality_eligibility": "Citizens and residents of all countries may apply.",
+      "application_opening_date": null,
+      "application_deadline": "2026-10-06T20:00:00Z",
+      "intake_year": 2027,
+      "funding_type": "full",
+      "tuition_coverage": "A fellowship is applied directly to cover tuition and associated fees.",
+      "monthly_stipend_amount": null,
+      "monthly_stipend_currency": null,
+      "accommodation_coverage": "A stipend supports living and academic expenses.",
+      "travel_allowance": "A travel stipend is intended for one annual economy-class trip to and from Stanford.",
+      "health_insurance": "Applicants should verify health insurance details with Stanford and programme-specific funding information.",
+      "application_fee_info": "Applicants must also apply to Stanford degree programmes; programme application fees may apply.",
+      "english_language_requirement": "English and test requirements depend on the selected Stanford graduate programme.",
+      "standardized_test_requirement": "Standardized-test requirements depend on the selected Stanford graduate programme.",
+      "minimum_academic_requirement": "Applicants must meet Stanford graduate admission requirements and KHS undergraduate-degree timing rules.",
+      "required_documents": [
+        "Knight-Hennessy Scholars application",
+        "Stanford graduate programme application",
+        "Recommendation materials",
+        "Essays or short answers",
+        "Resume or curriculum vitae"
+      ],
+      "application_method": "Submit the Knight-Hennessy Scholars application and a separate Stanford graduate programme application.",
+      "application_url": "https://knight-hennessy.stanford.edu/admission",
+      "status": "draft",
+      "data_confidence": "high",
+      "notes": "Seed data verified from official Knight-Hennessy Scholars pages on 2026-07-22.",
+      "eligibility_warnings": [
+        "Stanford graduate programme deadlines and requirements are separate.",
+        "This seed record uses masters as a representative degree level, but KHS supports multiple graduate degree types."
+      ],
+      "source": {
+        "url": "https://knight-hennessy.stanford.edu/admission",
+        "source_type": "official",
+        "title": "Knight-Hennessy Scholars admission",
+        "relevant_excerpt": "Official admission page states the 2027 cohort application closes on 6 October 2026 at 1 pm Pacific.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": [
+        {
+          "url": "https://knight-hennessy.stanford.edu/admission/before-you-apply/eligibility",
+          "source_type": "official",
+          "title": "Knight-Hennessy Scholars eligibility",
+          "relevant_excerpt": "Official eligibility page lists Stanford admission and undergraduate-degree timing as baseline requirements."
+        },
+        {
+          "url": "https://knight-hennessy.stanford.edu/program-overview/funding",
+          "source_type": "official",
+          "title": "Knight-Hennessy Scholars funding",
+          "relevant_excerpt": "Official funding page lists tuition fellowship, living stipend, academic-expense support, and travel stipend."
+        }
+      ]
+    },
+    {
+      "name": "DAAD Development-Related Postgraduate Courses EPOS 2027/28",
+      "provider_name": "German Academic Exchange Service DAAD",
+      "provider_website_url": "https://www.daad.de/",
+      "country": "Germany",
+      "degree_level": "masters",
+      "field_eligibility": "Development-related postgraduate courses listed by DAAD.",
+      "nationality_eligibility": "Graduates from developing and newly industrialised countries listed by DAAD.",
+      "application_opening_date": null,
+      "application_deadline": null,
+      "intake_year": 2027,
+      "funding_type": "partial",
+      "tuition_coverage": null,
+      "monthly_stipend_amount": "992.00",
+      "monthly_stipend_currency": "EUR",
+      "accommodation_coverage": "Monthly rent subsidy may be available under certain circumstances.",
+      "travel_allowance": "Travel allowance is listed unless covered by another source.",
+      "health_insurance": "Health, accident, and personal liability insurance payments are listed.",
+      "application_fee_info": "Application fees are not clearly stated in the verified source excerpt.",
+      "english_language_requirement": "Language requirements depend on the selected postgraduate course.",
+      "standardized_test_requirement": "Standardized-test requirements depend on the selected postgraduate course.",
+      "minimum_academic_requirement": "Applicants need a relevant degree and at least two years of professional experience.",
+      "required_documents": [
+        "Course-specific application documents",
+        "Academic records",
+        "Proof of professional experience",
+        "Language evidence if required by course"
+      ],
+      "application_method": "Apply to the selected DAAD-listed postgraduate course; deadlines vary by course.",
+      "application_url": "https://www2.daad.de/deutschland/stipendium/datenbank/en/21148-scholarship-database?detail=50076777",
+      "status": "draft",
+      "data_confidence": "medium",
+      "notes": "Seed data verified from the official DAAD scholarship database on 2026-07-22. Course-specific deadlines must be checked.",
+      "eligibility_warnings": [
+        "Application deadlines vary by postgraduate course.",
+        "This seed record stores the graduate monthly stipend; doctoral rates differ."
+      ],
+      "source": {
+        "url": "https://www2.daad.de/deutschland/stipendium/datenbank/en/21148-scholarship-database?detail=50076777",
+        "source_type": "official",
+        "title": "DAAD EPOS scholarship database record",
+        "relevant_excerpt": "Official DAAD database describes EPOS funding for development-related postgraduate courses in Germany.",
+        "verification_status": "needs_review"
+      },
+      "additional_sources": []
+    }
+  ]
+}

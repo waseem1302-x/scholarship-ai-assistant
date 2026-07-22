@@ -9,6 +9,7 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY data ./data
 COPY alembic.ini ./
 COPY alembic ./alembic
 
@@ -18,4 +19,3 @@ USER app
 EXPOSE 8000
 
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
-
