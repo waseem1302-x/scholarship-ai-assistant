@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 4: rule-based matching**.
+The repository is at **vertical slice 5: saved opportunities and application tracker**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -43,6 +43,9 @@ Implemented so far:
   experience, target countries, and intake preferences
 - deterministic matching endpoint that ranks verified opportunities against the
   student's profile with satisfied, missing, and uncertain explanations
+- saved-opportunity tracker for student notes, application status, document
+  checklists, recommendation letters, test requirements, deadlines, submission
+  dates, and outcomes
 - Docker Compose, lint configuration, and automated tests
 
 ## Quick start
@@ -143,12 +146,27 @@ GET /api/v1/matches/me        Authorization: Bearer <access token>
 The match score ranks profile fit against stated requirements. It is not a
 probability of admission, scholarship selection, or visa approval.
 
+## Saved opportunity tracker walkthrough
+
+```text
+POST   /api/v1/saved-opportunities          student only
+GET    /api/v1/saved-opportunities          student only
+GET    /api/v1/saved-opportunities/{id}     student only
+PATCH  /api/v1/saved-opportunities/{id}     student only
+DELETE /api/v1/saved-opportunities/{id}     student only
+```
+
+Students can only save active opportunities with officially verified official
+sources. Saved trackers are isolated by user, so one student cannot read or
+modify another student's applications.
+
 ## Important limitations
 
 - The catalog supports manual admin entry only; CSV/JSON import comes next.
-- Student profiles are not connected to matching yet; that is the next major
 - Matching currently uses explicit baseline rules and simple parsing for some
   free-text requirements. Structured eligibility rules come next.
+- Saved opportunities do not send reminders yet. Notification logic belongs in
+  a later slice.
 - Email ownership is not yet verified; email delivery belongs in a later slice.
 - Access tokens remain valid for their short lifetime after logout. Logout
   revokes the refresh-token family; a future high-security mode can add a token
@@ -164,5 +182,6 @@ probability of admission, scholarship selection, or visa approval.
 - [Opportunity catalog slice handoff](docs/slices/02-source-first-opportunity-catalog.md)
 - [Student profile slice handoff](docs/slices/03-student-profiles.md)
 - [Rule-based matching slice handoff](docs/slices/04-rule-based-matching.md)
+- [Saved opportunity tracker slice handoff](docs/slices/05-saved-opportunities.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)

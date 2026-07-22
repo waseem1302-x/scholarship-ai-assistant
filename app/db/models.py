@@ -1,5 +1,6 @@
 """Import every ORM model here so Alembic can discover complete metadata."""
 
+from app.modules.applications.models import SavedOpportunity
 from app.modules.auth.models import RefreshToken, User
 from app.modules.opportunities.models import (
     Opportunity,
@@ -14,6 +15,7 @@ __all__ = [
     "Opportunity",
     "Provider",
     "RefreshToken",
+    "SavedOpportunity",
     "Source",
     "StudentProfile",
     "University",
