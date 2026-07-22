@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 3: student profiles**.
+The repository is at **vertical slice 4: rule-based matching**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -41,6 +41,8 @@ Implemented so far:
   support
 - profile completeness metadata and validation for grades, language tests, GRE,
   experience, target countries, and intake preferences
+- deterministic matching endpoint that ranks verified opportunities against the
+  student's profile with satisfied, missing, and uncertain explanations
 - Docker Compose, lint configuration, and automated tests
 
 ## Quick start
@@ -132,11 +134,21 @@ PUT /api/v1/profiles/me       Authorization: Bearer <access token>
 Profiles intentionally allow missing fields. Missing information is returned as
 profile completeness metadata instead of being interpreted as eligibility.
 
+## Matching walkthrough
+
+```text
+GET /api/v1/matches/me        Authorization: Bearer <access token>
+```
+
+The match score ranks profile fit against stated requirements. It is not a
+probability of admission, scholarship selection, or visa approval.
+
 ## Important limitations
 
 - The catalog supports manual admin entry only; CSV/JSON import comes next.
 - Student profiles are not connected to matching yet; that is the next major
-  backend slice.
+- Matching currently uses explicit baseline rules and simple parsing for some
+  free-text requirements. Structured eligibility rules come next.
 - Email ownership is not yet verified; email delivery belongs in a later slice.
 - Access tokens remain valid for their short lifetime after logout. Logout
   revokes the refresh-token family; a future high-security mode can add a token
@@ -151,5 +163,6 @@ profile completeness metadata instead of being interpreted as eligibility.
 - [Authentication slice handoff](docs/slices/01-authentication.md)
 - [Opportunity catalog slice handoff](docs/slices/02-source-first-opportunity-catalog.md)
 - [Student profile slice handoff](docs/slices/03-student-profiles.md)
+- [Rule-based matching slice handoff](docs/slices/04-rule-based-matching.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)
