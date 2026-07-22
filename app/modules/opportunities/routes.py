@@ -9,7 +9,12 @@ from app.core.errors import ErrorResponse
 from app.db.session import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.auth.models import User, UserRole
-from app.modules.opportunities.models import DegreeLevel, FundingType
+from app.modules.opportunities.models import (
+    DegreeLevel,
+    FundingType,
+    OpportunityStatus,
+    VerificationStatus,
+)
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
     OpportunityCreate,
@@ -76,8 +81,27 @@ def create_opportunity(
 def list_admin_opportunities(
     _admin: AdminUser,
     service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+    country: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
+    degree_level: DegreeLevel | None = None,
+    status: OpportunityStatus | None = None,
+    verification_status: VerificationStatus | None = None,
+    needs_review: bool | None = None,
+    provider_query: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
+    search_query: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
+    deadline_after: datetime | None = None,
+    deadline_before: datetime | None = None,
 ) -> list[AdminOpportunityResponse]:
-    return service.list_admin_opportunities()
+    return service.list_admin_opportunities(
+        country=country,
+        degree_level=degree_level,
+        status=status,
+        verification_status=verification_status,
+        needs_review=needs_review,
+        provider_query=provider_query,
+        search_query=search_query,
+        deadline_after=deadline_after,
+        deadline_before=deadline_before,
+    )
 
 
 @router.post(
@@ -126,13 +150,29 @@ def search_opportunities(
     country: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     degree_level: DegreeLevel | None = None,
     funding_type: FundingType | None = None,
+    field: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
+    nationality: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
+    intake_year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+    deadline_after: datetime | None = None,
     deadline_before: datetime | None = None,
+    funding_coverage: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
+    application_fee: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
+    english_requirement: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
+    verified_after: datetime | None = None,
 ) -> list[OpportunitySummaryResponse]:
     return service.list_public_opportunities(
         country=country,
         degree_level=degree_level,
         funding_type=funding_type,
+        field=field,
+        nationality=nationality,
+        intake_year=intake_year,
+        deadline_after=deadline_after,
         deadline_before=deadline_before,
+        funding_coverage=funding_coverage,
+        application_fee=application_fee,
+        english_requirement=english_requirement,
+        verified_after=verified_after,
     )
 
 

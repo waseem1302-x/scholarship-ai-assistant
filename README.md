@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 7: verified seed dataset**.
+The repository is at **vertical slice 8: expanded structured search filters**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -51,6 +51,9 @@ Implemented so far:
   review before public visibility
 - curated verified seed dataset with real opportunities from official sources
   and a CLI loader for local demos
+- expanded database-backed public and admin opportunity filters for field,
+  nationality, intake year, deadline windows, funding coverage, application-fee
+  text, English requirements, verification freshness, and admin review queues
 - Docker Compose, lint configuration, and automated tests
 
 ## Quick start
@@ -138,6 +141,12 @@ Imported opportunities are always created as drafts with sources marked
 This keeps imported data out of public search until a human curator verifies the
 official source.
 
+Public search supports structured filters such as `country`, `degree_level`,
+`funding_type`, `field`, `nationality`, `intake_year`, `deadline_after`,
+`deadline_before`, `funding_coverage`, `application_fee`, `english_requirement`,
+and `verified_after`. Admin search also supports `status`,
+`verification_status`, `needs_review`, `provider_query`, and `search_query`.
+
 ## Student profile walkthrough
 
 ```text
@@ -204,8 +213,8 @@ deadlines or eligibility will remain unchanged forever.
 - Access tokens remain valid for their short lifetime after logout. Logout
   revokes the refresh-token family; a future high-security mode can add a token
   version check on every request.
-- No real scholarship record is included yet. Seed records will be added only
-  after verification against official sources.
+- Seed records are intentionally small and manually curated; they are not an
+  automatically refreshed scholarship database.
 - Deployment, public users, and evaluation metrics have not been claimed.
 
 ## Documentation
@@ -218,5 +227,6 @@ deadlines or eligibility will remain unchanged forever.
 - [Saved opportunity tracker slice handoff](docs/slices/05-saved-opportunities.md)
 - [Structured ingestion slice handoff](docs/slices/06-structured-ingestion.md)
 - [Verified seed dataset slice handoff](docs/slices/07-verified-seed-dataset.md)
+- [Expanded structured search slice handoff](docs/slices/08-expanded-search.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)

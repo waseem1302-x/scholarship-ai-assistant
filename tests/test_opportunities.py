@@ -183,6 +183,139 @@ def test_public_search_filters_verified_opportunities(
     assert [item["name"] for item in filtered.json()] == ["Malaysia International Scholarship"]
 
 
+def test_public_search_supports_advanced_structured_filters(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    ai = create_opportunity(
+        client,
+        headers,
+        name="AI Access Scholarship",
+        provider_name="AI Access Foundation",
+        country="Canada",
+        degree_level="masters",
+        field_eligibility="Artificial Intelligence and Computer Science",
+        nationality_eligibility="Pakistani and international applicants",
+        application_deadline="2027-04-30T23:59:59Z",
+        intake_year=2027,
+        funding_type="full",
+        tuition_coverage="Full tuition waiver",
+        accommodation_coverage="Monthly living support for rent",
+        application_fee_info="No application fee is charged",
+        english_language_requirement="IELTS accepted; TOEFL accepted",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/ai-access",
+            "title": "AI Access official page",
+        },
+    )
+    history = create_opportunity(
+        client,
+        headers,
+        name="History Partial Award",
+        provider_name="Humanities Foundation",
+        country="Germany",
+        degree_level="phd",
+        field_eligibility="History and cultural studies",
+        nationality_eligibility="European applicants",
+        application_deadline="2027-01-15T23:59:59Z",
+        intake_year=2027,
+        funding_type="partial",
+        tuition_coverage="Partial tuition support",
+        accommodation_coverage=None,
+        application_fee_info="Application fee may apply",
+        english_language_requirement="German proof required",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/history-award",
+            "title": "History award official page",
+        },
+    )
+    for opportunity_id in [ai["id"], history["id"]]:
+        response = client.patch(
+            f"/api/v1/admin/opportunities/{opportunity_id}/verification",
+            json={"verification_status": "officially_verified"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+    filtered = client.get(
+        "/api/v1/opportunities"
+        "?field=Artificial"
+        "&nationality=Pakistani"
+        "&intake_year=2027"
+        "&deadline_after=2027-03-01T00:00:00Z"
+        "&funding_coverage=rent"
+        "&application_fee=No application fee"
+        "&english_requirement=IELTS"
+        "&verified_after=2026-01-01T00:00:00Z"
+    )
+
+    assert filtered.status_code == 200
+    assert [item["name"] for item in filtered.json()] == ["AI Access Scholarship"]
+
+
+def test_admin_opportunity_list_supports_review_and_status_filters(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    active = create_opportunity(
+        client,
+        headers,
+        name="Verified Admin Search Scholarship",
+        provider_name="Verified Provider",
+        country="Malaysia",
+        degree_level="masters",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/verified-admin-search",
+            "title": "Verified admin search source",
+        },
+    )
+    draft = create_opportunity(
+        client,
+        headers,
+        name="Draft Review Scholarship",
+        provider_name="Review Provider",
+        country="Canada",
+        degree_level="phd",
+        field_eligibility="Robotics and AI",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/draft-review",
+            "title": "Draft review source",
+        },
+    )
+    verified = client.patch(
+        f"/api/v1/admin/opportunities/{active['id']}/verification",
+        json={"verification_status": "officially_verified"},
+        headers=headers,
+    )
+    assert verified.status_code == 200
+
+    active_filter = client.get("/api/v1/admin/opportunities?status=active", headers=headers)
+    review_filter = client.get("/api/v1/admin/opportunities?needs_review=true", headers=headers)
+    provider_filter = client.get(
+        "/api/v1/admin/opportunities?provider_query=Review", headers=headers
+    )
+    verification_filter = client.get(
+        "/api/v1/admin/opportunities?verification_status=needs_review",
+        headers=headers,
+    )
+    search_filter = client.get("/api/v1/admin/opportunities?search_query=Robotics", headers=headers)
+
+    assert active_filter.status_code == 200
+    assert [item["id"] for item in active_filter.json()] == [active["id"]]
+    assert review_filter.status_code == 200
+    assert [item["id"] for item in review_filter.json()] == [draft["id"]]
+    assert provider_filter.status_code == 200
+    assert [item["id"] for item in provider_filter.json()] == [draft["id"]]
+    assert verification_filter.status_code == 200
+    assert [item["id"] for item in verification_filter.json()] == [draft["id"]]
+    assert search_filter.status_code == 200
+    assert [item["id"] for item in search_filter.json()] == [draft["id"]]
+
+
 def test_duplicate_opportunity_is_rejected(client: TestClient, db_session: Session) -> None:
     headers = admin_headers(client, db_session)
     create_opportunity(client, headers)

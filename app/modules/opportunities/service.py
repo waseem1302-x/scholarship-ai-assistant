@@ -241,10 +241,10 @@ class OpportunityService:
         self.session.refresh(opportunity)
         return self.to_admin_response(opportunity)
 
-    def list_admin_opportunities(self) -> list[AdminOpportunityResponse]:
+    def list_admin_opportunities(self, **filters: object) -> list[AdminOpportunityResponse]:
         return [
             self.to_admin_response(opportunity)
-            for opportunity in self.repository.list_admin_opportunities()
+            for opportunity in self.repository.list_admin_opportunities(**filters)
         ]
 
     def list_public_opportunities(self, **filters: object) -> list[OpportunitySummaryResponse]:
