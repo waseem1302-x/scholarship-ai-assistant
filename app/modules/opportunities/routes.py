@@ -17,11 +17,12 @@ from app.modules.opportunities.models import (
 )
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
+    AdminOpportunitySearchResponse,
     OpportunityCreate,
     OpportunityDetailResponse,
     OpportunityImportRequest,
     OpportunityImportResponse,
-    OpportunitySummaryResponse,
+    OpportunitySearchResponse,
     VerificationUpdate,
 )
 from app.modules.opportunities.service import OpportunityService
@@ -75,7 +76,7 @@ def create_opportunity(
 
 @router.get(
     "/admin/opportunities",
-    response_model=list[AdminOpportunityResponse],
+    response_model=AdminOpportunitySearchResponse,
     responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
 )
 def list_admin_opportunities(
@@ -90,7 +91,9 @@ def list_admin_opportunities(
     search_query: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     deadline_after: datetime | None = None,
     deadline_before: datetime | None = None,
-) -> list[AdminOpportunityResponse]:
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> AdminOpportunitySearchResponse:
     return service.list_admin_opportunities(
         country=country,
         degree_level=degree_level,
@@ -101,6 +104,8 @@ def list_admin_opportunities(
         search_query=search_query,
         deadline_after=deadline_after,
         deadline_before=deadline_before,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -142,7 +147,7 @@ def update_verification(
 
 @router.get(
     "/opportunities",
-    response_model=list[OpportunitySummaryResponse],
+    response_model=OpportunitySearchResponse,
     responses={422: VALIDATION_RESPONSE},
 )
 def search_opportunities(
@@ -159,7 +164,9 @@ def search_opportunities(
     application_fee: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     english_requirement: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     verified_after: datetime | None = None,
-) -> list[OpportunitySummaryResponse]:
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> OpportunitySearchResponse:
     return service.list_public_opportunities(
         country=country,
         degree_level=degree_level,
@@ -173,6 +180,8 @@ def search_opportunities(
         application_fee=application_fee,
         english_requirement=english_requirement,
         verified_after=verified_after,
+        limit=limit,
+        offset=offset,
     )
 
 

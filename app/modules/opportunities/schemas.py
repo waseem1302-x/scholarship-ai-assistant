@@ -168,6 +168,20 @@ class OpportunitySummaryResponse(BaseModel):
     official_source_url: str
 
 
+class PaginationMeta(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    count: int
+    has_next: bool
+    has_previous: bool
+
+
+class OpportunitySearchResponse(BaseModel):
+    items: list[OpportunitySummaryResponse]
+    pagination: PaginationMeta
+
+
 class OpportunityDetailResponse(OpportunitySummaryResponse):
     field_eligibility: str | None
     nationality_eligibility: str | None
@@ -194,3 +208,8 @@ class OpportunityDetailResponse(OpportunitySummaryResponse):
 
 class AdminOpportunityResponse(OpportunityDetailResponse):
     sources: list[SourceResponse]
+
+
+class AdminOpportunitySearchResponse(BaseModel):
+    items: list[AdminOpportunityResponse]
+    pagination: PaginationMeta

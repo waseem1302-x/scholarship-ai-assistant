@@ -94,6 +94,14 @@ def create_opportunity(client: TestClient, headers: dict[str, str], **overrides:
     return response.json()
 
 
+def response_items(response) -> list[dict]:
+    return response.json()["items"]
+
+
+def response_pagination(response) -> dict:
+    return response.json()["pagination"]
+
+
 def test_student_cannot_create_opportunity(client: TestClient, db_session: Session) -> None:
     create_user(db_session, email=STUDENT_EMAIL, role=UserRole.STUDENT)
     student_token = login(client, email=STUDENT_EMAIL)
@@ -130,7 +138,7 @@ def test_unverified_opportunity_is_hidden_until_admin_verifies_source(
 
     hidden = client.get("/api/v1/opportunities")
     assert hidden.status_code == 200
-    assert hidden.json() == []
+    assert response_items(hidden) == []
 
     verified = client.patch(
         f"/api/v1/admin/opportunities/{created['id']}/verification",
@@ -148,7 +156,8 @@ def test_unverified_opportunity_is_hidden_until_admin_verifies_source(
 
     public = client.get("/api/v1/opportunities")
     assert public.status_code == 200
-    assert public.json()[0]["official_source_url"] == created["official_source_url"]
+    assert response_items(public)[0]["official_source_url"] == created["official_source_url"]
+    assert response_pagination(public)["total"] == 1
 
 
 def test_public_search_filters_verified_opportunities(
@@ -180,7 +189,72 @@ def test_public_search_filters_verified_opportunities(
 
     filtered = client.get("/api/v1/opportunities?country=Malaysia&degree_level=masters")
     assert filtered.status_code == 200
-    assert [item["name"] for item in filtered.json()] == ["Malaysia International Scholarship"]
+    assert [item["name"] for item in response_items(filtered)] == [
+        "Malaysia International Scholarship"
+    ]
+
+
+def test_public_search_returns_pagination_metadata(client: TestClient, db_session: Session) -> None:
+    headers = admin_headers(client, db_session)
+    first = create_opportunity(
+        client,
+        headers,
+        name="A First Scholarship",
+        provider_name="First Provider",
+        application_deadline="2027-01-01T00:00:00Z",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/a-first",
+            "title": "A first source",
+        },
+    )
+    second = create_opportunity(
+        client,
+        headers,
+        name="B Second Scholarship",
+        provider_name="Second Provider",
+        application_deadline="2027-02-01T00:00:00Z",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/b-second",
+            "title": "B second source",
+        },
+    )
+    third = create_opportunity(
+        client,
+        headers,
+        name="C Third Scholarship",
+        provider_name="Third Provider",
+        application_deadline="2027-03-01T00:00:00Z",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/c-third",
+            "title": "C third source",
+        },
+    )
+    for opportunity_id in [first["id"], second["id"], third["id"]]:
+        response = client.patch(
+            f"/api/v1/admin/opportunities/{opportunity_id}/verification",
+            json={"verification_status": "officially_verified"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+    page = client.get("/api/v1/opportunities?limit=2&offset=1")
+
+    assert page.status_code == 200
+    assert [item["name"] for item in response_items(page)] == [
+        "B Second Scholarship",
+        "C Third Scholarship",
+    ]
+    assert response_pagination(page) == {
+        "total": 3,
+        "limit": 2,
+        "offset": 1,
+        "count": 2,
+        "has_next": False,
+        "has_previous": True,
+    }
 
 
 def test_public_search_supports_advanced_structured_filters(
@@ -252,7 +326,8 @@ def test_public_search_supports_advanced_structured_filters(
     )
 
     assert filtered.status_code == 200
-    assert [item["name"] for item in filtered.json()] == ["AI Access Scholarship"]
+    assert [item["name"] for item in response_items(filtered)] == ["AI Access Scholarship"]
+    assert response_pagination(filtered)["total"] == 1
 
 
 def test_admin_opportunity_list_supports_review_and_status_filters(
@@ -305,15 +380,16 @@ def test_admin_opportunity_list_supports_review_and_status_filters(
     search_filter = client.get("/api/v1/admin/opportunities?search_query=Robotics", headers=headers)
 
     assert active_filter.status_code == 200
-    assert [item["id"] for item in active_filter.json()] == [active["id"]]
+    assert [item["id"] for item in response_items(active_filter)] == [active["id"]]
+    assert response_pagination(active_filter)["total"] == 1
     assert review_filter.status_code == 200
-    assert [item["id"] for item in review_filter.json()] == [draft["id"]]
+    assert [item["id"] for item in response_items(review_filter)] == [draft["id"]]
     assert provider_filter.status_code == 200
-    assert [item["id"] for item in provider_filter.json()] == [draft["id"]]
+    assert [item["id"] for item in response_items(provider_filter)] == [draft["id"]]
     assert verification_filter.status_code == 200
-    assert [item["id"] for item in verification_filter.json()] == [draft["id"]]
+    assert [item["id"] for item in response_items(verification_filter)] == [draft["id"]]
     assert search_filter.status_code == 200
-    assert [item["id"] for item in search_filter.json()] == [draft["id"]]
+    assert [item["id"] for item in response_items(search_filter)] == [draft["id"]]
 
 
 def test_duplicate_opportunity_is_rejected(client: TestClient, db_session: Session) -> None:
@@ -363,14 +439,14 @@ def test_admin_imports_opportunities_as_drafts_requiring_review(
 
     admin_list = client.get("/api/v1/admin/opportunities", headers=headers)
     assert admin_list.status_code == 200
-    imported = admin_list.json()[0]
+    imported = response_items(admin_list)[0]
     assert imported["name"] == "Imported Review Scholarship"
     assert imported["status"] == "draft"
     assert imported["verification_status"] == "needs_review"
 
     public = client.get("/api/v1/opportunities")
     assert public.status_code == 200
-    assert public.json() == []
+    assert response_items(public) == []
 
 
 def test_import_dry_run_validates_without_creating_records(
@@ -401,7 +477,7 @@ def test_import_dry_run_validates_without_creating_records(
     assert response.json()["results"][0]["status"] == "dry_run_ready"
     admin_list = client.get("/api/v1/admin/opportunities", headers=headers)
     assert admin_list.status_code == 200
-    assert admin_list.json() == []
+    assert response_items(admin_list) == []
 
 
 def test_import_reports_existing_duplicate_without_failing_whole_batch(

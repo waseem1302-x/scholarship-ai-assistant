@@ -18,13 +18,16 @@ from app.modules.opportunities.models import (
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
+    AdminOpportunitySearchResponse,
     ImportRowStatus,
     OpportunityCreate,
     OpportunityDetailResponse,
     OpportunityImportRequest,
     OpportunityImportResponse,
     OpportunityImportRowResult,
+    OpportunitySearchResponse,
     OpportunitySummaryResponse,
+    PaginationMeta,
     SourceResponse,
     VerificationUpdate,
 )
@@ -241,17 +244,31 @@ class OpportunityService:
         self.session.refresh(opportunity)
         return self.to_admin_response(opportunity)
 
-    def list_admin_opportunities(self, **filters: object) -> list[AdminOpportunityResponse]:
-        return [
-            self.to_admin_response(opportunity)
-            for opportunity in self.repository.list_admin_opportunities(**filters)
-        ]
+    def list_admin_opportunities(
+        self, *, limit: int, offset: int, **filters: object
+    ) -> AdminOpportunitySearchResponse:
+        opportunities = self.repository.list_admin_opportunities(
+            **filters, limit=limit, offset=offset
+        )
+        total = self.repository.count_admin_opportunities(**filters)
+        items = [self.to_admin_response(opportunity) for opportunity in opportunities]
+        return AdminOpportunitySearchResponse(
+            items=items,
+            pagination=self._pagination(total=total, limit=limit, offset=offset, count=len(items)),
+        )
 
-    def list_public_opportunities(self, **filters: object) -> list[OpportunitySummaryResponse]:
-        return [
-            self.to_summary_response(opportunity)
-            for opportunity in self.repository.list_public_opportunities(**filters)
-        ]
+    def list_public_opportunities(
+        self, *, limit: int, offset: int, **filters: object
+    ) -> OpportunitySearchResponse:
+        opportunities = self.repository.list_public_opportunities(
+            **filters, limit=limit, offset=offset
+        )
+        total = self.repository.count_public_opportunities(**filters)
+        items = [self.to_summary_response(opportunity) for opportunity in opportunities]
+        return OpportunitySearchResponse(
+            items=items,
+            pagination=self._pagination(total=total, limit=limit, offset=offset, count=len(items)),
+        )
 
     def get_public_opportunity(self, opportunity_id: uuid.UUID) -> OpportunityDetailResponse:
         opportunity = self.repository.get_opportunity(opportunity_id)
@@ -438,3 +455,14 @@ class OpportunityService:
         if payload.data_confidence.value == "low":
             warnings.append("Data confidence is low; curator review is important")
         return warnings
+
+    @staticmethod
+    def _pagination(*, total: int, limit: int, offset: int, count: int) -> PaginationMeta:
+        return PaginationMeta(
+            total=total,
+            limit=limit,
+            offset=offset,
+            count=count,
+            has_next=offset + count < total,
+            has_previous=offset > 0,
+        )

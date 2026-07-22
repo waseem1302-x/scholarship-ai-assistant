@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.modules.opportunities.models import (
@@ -108,18 +108,71 @@ class OpportunityRepository:
         search_query: str | None = None,
         deadline_after: datetime | None = None,
         deadline_before: datetime | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[Opportunity]:
-        statement: Select[tuple[Opportunity]] = (
-            select(Opportunity)
-            .options(
-                joinedload(Opportunity.provider),
-                joinedload(Opportunity.university),
-                selectinload(Opportunity.sources),
-            )
-            .order_by(Opportunity.created_at.desc())
+        statement = self._admin_opportunities_statement(
+            country=country,
+            degree_level=degree_level,
+            status=status,
+            verification_status=verification_status,
+            needs_review=needs_review,
+            provider_query=provider_query,
+            search_query=search_query,
+            deadline_after=deadline_after,
+            deadline_before=deadline_before,
+        ).order_by(Opportunity.created_at.desc())
+        if offset:
+            statement = statement.offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
+
+        return list(self.session.scalars(statement))
+
+    def count_admin_opportunities(
+        self,
+        *,
+        country: str | None = None,
+        degree_level: DegreeLevel | None = None,
+        status: OpportunityStatus | None = None,
+        verification_status: VerificationStatus | None = None,
+        needs_review: bool | None = None,
+        provider_query: str | None = None,
+        search_query: str | None = None,
+        deadline_after: datetime | None = None,
+        deadline_before: datetime | None = None,
+    ) -> int:
+        statement = self._admin_opportunities_statement(
+            country=country,
+            degree_level=degree_level,
+            status=status,
+            verification_status=verification_status,
+            needs_review=needs_review,
+            provider_query=provider_query,
+            search_query=search_query,
+            deadline_after=deadline_after,
+            deadline_before=deadline_before,
         )
-        if verification_status is not None or needs_review is not None:
-            statement = statement.join(Source)
+        return self._count_statement(statement)
+
+    def _admin_opportunities_statement(
+        self,
+        *,
+        country: str | None = None,
+        degree_level: DegreeLevel | None = None,
+        status: OpportunityStatus | None = None,
+        verification_status: VerificationStatus | None = None,
+        needs_review: bool | None = None,
+        provider_query: str | None = None,
+        search_query: str | None = None,
+        deadline_after: datetime | None = None,
+        deadline_before: datetime | None = None,
+    ) -> Select[tuple[Opportunity]]:
+        statement: Select[tuple[Opportunity]] = select(Opportunity).options(
+            joinedload(Opportunity.provider),
+            joinedload(Opportunity.university),
+            selectinload(Opportunity.sources),
+        )
         if country is not None:
             statement = statement.where(func.lower(Opportunity.country) == country.lower())
         if degree_level is not None:
@@ -127,17 +180,21 @@ class OpportunityRepository:
         if status is not None:
             statement = statement.where(Opportunity.status == status)
         if verification_status is not None:
-            statement = statement.where(Source.verification_status == verification_status)
+            statement = statement.where(
+                Opportunity.sources.any(Source.verification_status == verification_status)
+            )
         if needs_review is True:
             statement = statement.where(
                 or_(
                     Opportunity.status == OpportunityStatus.DRAFT,
-                    Source.verification_status.in_(
-                        [
-                            VerificationStatus.UNVERIFIED,
-                            VerificationStatus.NEEDS_REVIEW,
-                            VerificationStatus.CONFLICTING_INFORMATION,
-                        ]
+                    Opportunity.sources.any(
+                        Source.verification_status.in_(
+                            [
+                                VerificationStatus.UNVERIFIED,
+                                VerificationStatus.NEEDS_REVIEW,
+                                VerificationStatus.CONFLICTING_INFORMATION,
+                            ]
+                        )
                     ),
                 )
             )
@@ -161,7 +218,7 @@ class OpportunityRepository:
         if deadline_before is not None:
             statement = statement.where(Opportunity.application_deadline <= deadline_before)
 
-        return list(self.session.scalars(statement.distinct()))
+        return statement
 
     def list_public_opportunities(
         self,
@@ -178,22 +235,96 @@ class OpportunityRepository:
         application_fee: str | None = None,
         english_requirement: str | None = None,
         verified_after: datetime | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[Opportunity]:
+        statement = self._public_opportunities_statement(
+            country=country,
+            degree_level=degree_level,
+            funding_type=funding_type,
+            field=field,
+            nationality=nationality,
+            intake_year=intake_year,
+            deadline_after=deadline_after,
+            deadline_before=deadline_before,
+            funding_coverage=funding_coverage,
+            application_fee=application_fee,
+            english_requirement=english_requirement,
+            verified_after=verified_after,
+        ).order_by(Opportunity.application_deadline.asc().nulls_last(), Opportunity.name)
+        if offset:
+            statement = statement.offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
+
+        return list(self.session.scalars(statement))
+
+    def count_public_opportunities(
+        self,
+        *,
+        country: str | None = None,
+        degree_level: DegreeLevel | None = None,
+        funding_type: FundingType | None = None,
+        field: str | None = None,
+        nationality: str | None = None,
+        intake_year: int | None = None,
+        deadline_after: datetime | None = None,
+        deadline_before: datetime | None = None,
+        funding_coverage: str | None = None,
+        application_fee: str | None = None,
+        english_requirement: str | None = None,
+        verified_after: datetime | None = None,
+    ) -> int:
+        statement = self._public_opportunities_statement(
+            country=country,
+            degree_level=degree_level,
+            funding_type=funding_type,
+            field=field,
+            nationality=nationality,
+            intake_year=intake_year,
+            deadline_after=deadline_after,
+            deadline_before=deadline_before,
+            funding_coverage=funding_coverage,
+            application_fee=application_fee,
+            english_requirement=english_requirement,
+            verified_after=verified_after,
+        )
+        return self._count_statement(statement)
+
+    def _public_opportunities_statement(
+        self,
+        *,
+        country: str | None = None,
+        degree_level: DegreeLevel | None = None,
+        funding_type: FundingType | None = None,
+        field: str | None = None,
+        nationality: str | None = None,
+        intake_year: int | None = None,
+        deadline_after: datetime | None = None,
+        deadline_before: datetime | None = None,
+        funding_coverage: str | None = None,
+        application_fee: str | None = None,
+        english_requirement: str | None = None,
+        verified_after: datetime | None = None,
+    ) -> Select[tuple[Opportunity]]:
+        official_source_filters = [
+            Source.source_type == SourceType.OFFICIAL,
+            Source.verification_status == VerificationStatus.OFFICIALLY_VERIFIED,
+        ]
+        if verified_after is not None:
+            official_source_filters.append(Source.last_verified_at >= verified_after)
+
         statement: Select[tuple[Opportunity]] = (
             select(Opportunity)
-            .join(Source)
             .where(
                 Opportunity.status == OpportunityStatus.ACTIVE,
-                Source.source_type == SourceType.OFFICIAL,
-                Source.verification_status == VerificationStatus.OFFICIALLY_VERIFIED,
+                Opportunity.sources.any(and_(*official_source_filters)),
             )
             .options(
                 joinedload(Opportunity.provider),
                 joinedload(Opportunity.university),
                 selectinload(Opportunity.sources),
             )
-            .order_by(Opportunity.application_deadline.asc().nulls_last(), Opportunity.name)
-            .distinct()
         )
         if country is not None:
             statement = statement.where(func.lower(Opportunity.country) == country.lower())
@@ -236,10 +367,13 @@ class OpportunityRepository:
                     Opportunity.english_language_requirement, english_requirement
                 )
             )
-        if verified_after is not None:
-            statement = statement.where(Source.last_verified_at >= verified_after)
+        return statement
 
-        return list(self.session.scalars(statement))
+    def _count_statement(self, statement: Select[tuple[Opportunity]]) -> int:
+        count_statement = select(func.count()).select_from(
+            statement.with_only_columns(Opportunity.id).order_by(None).distinct().subquery()
+        )
+        return self.session.scalar(count_statement) or 0
 
     @staticmethod
     def _contains_case_insensitive(column: object, value: str) -> object:

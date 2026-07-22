@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 8: expanded structured search filters**.
+The repository is at **vertical slice 9: paginated opportunity search responses**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -54,6 +54,8 @@ Implemented so far:
 - expanded database-backed public and admin opportunity filters for field,
   nationality, intake year, deadline windows, funding coverage, application-fee
   text, English requirements, verification freshness, and admin review queues
+- paginated public and admin opportunity search responses with total counts,
+  result counts, offsets, and next/previous page indicators
 - Docker Compose, lint configuration, and automated tests
 
 ## Quick start
@@ -147,6 +149,22 @@ Public search supports structured filters such as `country`, `degree_level`,
 and `verified_after`. Admin search also supports `status`,
 `verification_status`, `needs_review`, `provider_query`, and `search_query`.
 
+Opportunity list responses use this envelope:
+
+```json
+{
+  "items": [],
+  "pagination": {
+    "total": 0,
+    "limit": 20,
+    "offset": 0,
+    "count": 0,
+    "has_next": false,
+    "has_previous": false
+  }
+}
+```
+
 ## Student profile walkthrough
 
 ```text
@@ -228,5 +246,6 @@ deadlines or eligibility will remain unchanged forever.
 - [Structured ingestion slice handoff](docs/slices/06-structured-ingestion.md)
 - [Verified seed dataset slice handoff](docs/slices/07-verified-seed-dataset.md)
 - [Expanded structured search slice handoff](docs/slices/08-expanded-search.md)
+- [Paginated search responses slice handoff](docs/slices/09-paginated-search.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)
