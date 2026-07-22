@@ -537,8 +537,8 @@ async function updateSaved(id) {
         personal_notes: document.querySelector(`[data-saved-notes="${id}"]`).value || null,
       }),
     });
+    await loadSaved();
     setStatus("#saved-status", "Tracker updated.", "success");
-    loadSaved();
   } catch (error) {
     setStatus("#saved-status", error.message, "error");
   }
@@ -547,8 +547,8 @@ async function updateSaved(id) {
 async function deleteSaved(id) {
   try {
     await api(`/saved-opportunities/${id}`, { method: "DELETE" });
+    await loadSaved();
     setStatus("#saved-status", "Saved opportunity removed.", "success");
-    loadSaved();
   } catch (error) {
     setStatus("#saved-status", error.message, "error");
   }
@@ -568,6 +568,7 @@ async function loadAdminOpportunities() {
       list.innerHTML = data.items
         .map((item) => {
           const source = item.sources?.[0] || item.source;
+          const canVerify = source && source.verification_status !== "officially_verified";
           return `
             <article class="card">
               <div class="card-header">
@@ -579,7 +580,7 @@ async function loadAdminOpportunities() {
               </div>
               <p>Source: ${escapeHtml(source?.title || "No source title")} · ${humanize(source?.verification_status)}</p>
               <div class="card-actions">
-                ${source ? `<button class="button secondary" type="button" data-verify="${item.id}" data-source="${source.id}">Mark officially verified</button>` : ""}
+                ${canVerify ? `<button class="button secondary" type="button" data-verify="${item.id}" data-source="${source.id}">Mark officially verified</button>` : ""}
               </div>
             </article>
           `;
@@ -599,7 +600,8 @@ async function loadAdminOpportunities() {
 
 async function createAdminOpportunity(event) {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+  const form = event.currentTarget;
+  const data = Object.fromEntries(new FormData(form).entries());
   const deadline = optional(data.application_deadline);
   const payload = {
     name: data.name,
@@ -625,9 +627,9 @@ async function createAdminOpportunity(event) {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    event.currentTarget.reset();
+    form.reset();
+    await loadAdminOpportunities();
     setStatus("#admin-status", "Draft created. Review and verify before it becomes public.", "success");
-    loadAdminOpportunities();
   } catch (error) {
     setStatus("#admin-status", error.message, "error");
   }
@@ -643,9 +645,8 @@ async function verifyOpportunity(opportunityId, sourceId) {
         notes: "Verified from frontend admin console.",
       }),
     });
+    await Promise.all([loadAdminOpportunities(), loadOpportunities()]);
     setStatus("#admin-status", "Opportunity marked officially verified and active.", "success");
-    loadAdminOpportunities();
-    loadOpportunities();
   } catch (error) {
     setStatus("#admin-status", error.message, "error");
   }
@@ -701,6 +702,9 @@ $("#auth-form").addEventListener("submit", async (event) => {
 $("#logout-button").addEventListener("click", async () => {
   const refreshToken = state.refreshToken;
   clearSession();
+  updateAuthMode("login");
+  $("#auth-form").reset();
+  setStatus("#auth-status", "Logged out.", "success");
   updateSessionUi();
   if (refreshToken) {
     await fetch("/api/v1/auth/logout", {
