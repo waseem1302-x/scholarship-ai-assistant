@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 10.5: frontend and verified-catalogue polish**.
+The repository is at **vertical slice 10 complete: frontend MVP and verified-catalogue polish**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -61,6 +61,8 @@ Implemented so far:
   saved-opportunity tracking, and basic admin curation
 - polished opportunity cards and detail pages that emphasize funding components,
   deadlines, eligibility warnings, official evidence, and last verification
+- frontend regression tests for the static product shell, required flows,
+  encoding artifacts, and duplicate JavaScript function definitions
 - expanded verified seed dataset with 16 official-source records across major
   destination systems such as Chevening, Commonwealth, Fulbright, DAAD, Eiffel,
   Swiss Excellence, Erasmus Mundus, CSC, MEXT, GKS, Turkiye Scholarships,

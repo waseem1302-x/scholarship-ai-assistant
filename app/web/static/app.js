@@ -241,84 +241,6 @@ function renderOpportunities(data) {
   });
 }
 
-function opportunityCard(opportunity) {
-  return `
-    <article class="card">
-      <div class="card-header">
-        <div>
-          <h3>${escapeHtml(opportunity.name)}</h3>
-          <p>${escapeHtml(opportunity.provider_name)}${opportunity.university_name ? ` · ${escapeHtml(opportunity.university_name)}` : ""}</p>
-        </div>
-        <span class="pill good">${humanize(opportunity.verification_status)}</span>
-      </div>
-      <div class="card-meta">
-        <span class="pill">${escapeHtml(opportunity.country)}</span>
-        <span class="pill">${humanize(opportunity.degree_level)}</span>
-        <span class="pill">${humanize(opportunity.funding_type)}</span>
-        <span class="pill warn">Deadline: ${formatDate(opportunity.application_deadline)}</span>
-      </div>
-      <p>${escapeHtml(opportunity.funding_summary)}</p>
-      <p>Last verified: ${formatDate(opportunity.last_verified_at)}</p>
-      <div class="card-actions">
-        <button class="button secondary" type="button" data-detail="${opportunity.id}">View details</button>
-        <button class="ghost" type="button" data-save="${opportunity.id}">Save</button>
-        <a class="ghost" href="${escapeAttribute(opportunity.official_source_url)}" target="_blank" rel="noreferrer">Official source</a>
-      </div>
-    </article>
-  `;
-}
-
-async function loadOpportunityDetail(id) {
-  setStatus("#opportunity-status", "Loading opportunity detail...");
-  try {
-    const opportunity = await api(`/opportunities/${id}`);
-    $("#opportunity-detail").hidden = false;
-    $("#detail-title").textContent = opportunity.name;
-    $("#detail-content").innerHTML = `
-      <div class="detail-grid">
-        ${detailBlock("Funding package", [
-          ["Tuition", opportunity.tuition_coverage],
-          ["Monthly stipend", opportunity.monthly_stipend_amount ? `${opportunity.monthly_stipend_amount} ${opportunity.monthly_stipend_currency || ""}` : null],
-          ["Accommodation", opportunity.accommodation_coverage],
-          ["Travel", opportunity.travel_allowance],
-          ["Health insurance", opportunity.health_insurance],
-          ["Application fee", opportunity.application_fee_info],
-        ])}
-        ${detailBlock("Eligibility", [
-          ["Field", opportunity.field_eligibility],
-          ["Nationality", opportunity.nationality_eligibility],
-          ["Minimum academics", opportunity.minimum_academic_requirement],
-          ["English", opportunity.english_language_requirement],
-          ["Standardized test", opportunity.standardized_test_requirement],
-        ])}
-        ${detailBlock("Required documents", opportunity.required_documents?.length ? opportunity.required_documents.map((item) => ["Document", item]) : [["Documents", null]])}
-        ${detailBlock("Application", [
-          ["Method", opportunity.application_method],
-          ["Deadline", formatDate(opportunity.application_deadline)],
-          ["Intake", opportunity.intake_year],
-          ["Apply", opportunity.application_url ? `<a href="${escapeAttribute(opportunity.application_url)}" target="_blank" rel="noreferrer">${escapeHtml(opportunity.application_url)}</a>` : null],
-        ])}
-        <div class="detail-block full">
-          <h3>Official source evidence</h3>
-          <p><strong>${escapeHtml(opportunity.source.title)}</strong></p>
-          <p>${escapeHtml(opportunity.source.relevant_excerpt)}</p>
-          <p>Verification: ${humanize(opportunity.source.verification_status)} · Last verified: ${formatDate(opportunity.source.last_verified_at)}</p>
-          <p><a href="${escapeAttribute(opportunity.source.url)}" target="_blank" rel="noreferrer">Open official source</a></p>
-        </div>
-      </div>
-    `;
-    setStatus("#opportunity-status", "Detail loaded.", "success");
-  } catch (error) {
-    setStatus("#opportunity-status", error.message, "error");
-  }
-}
-
-function detailBlock(title, rows) {
-  const body = rows
-    .map(([label, value]) => `<p><strong>${escapeHtml(label)}:</strong> ${renderValue(value)}</p>`)
-    .join("");
-  return `<div class="detail-block"><h3>${escapeHtml(title)}</h3>${body}</div>`;
-}
 
 function opportunityCard(opportunity) {
   const deadline = deadlineTone(opportunity.application_deadline);
@@ -546,56 +468,6 @@ async function saveProfile(event) {
   }
 }
 
-async function loadMatches() {
-  setStatus("#match-status", "Loading matches...");
-  try {
-    const data = await api("/matches/me");
-    const list = $("#match-list");
-    if (!data.results.length) {
-      list.innerHTML = emptyCard(
-        "No matches yet",
-        "Create a profile and make sure verified opportunities exist.",
-      );
-    } else {
-      list.innerHTML = data.results
-        .map((match) => {
-          const opportunity = match.opportunity;
-          return `
-            <article class="card">
-              <div class="card-header">
-                <div>
-                  <h3>${escapeHtml(opportunity.name)}</h3>
-                  <p>${escapeHtml(opportunity.country)} · ${humanize(opportunity.degree_level)}</p>
-                </div>
-                <span class="pill good">${match.match_score}/100 · ${escapeHtml(match.score_label)}</span>
-              </div>
-              <p>${escapeHtml(match.disclaimer)}</p>
-              ${explanationList("Satisfied", match.explanation.satisfied, "good")}
-              ${explanationList("Missing", match.explanation.missing, "danger")}
-              ${explanationList("Uncertain", match.explanation.uncertain, "warn")}
-              ${explanationList("Next steps", match.explanation.next_steps, "")}
-            </article>
-          `;
-        })
-        .join("");
-    }
-    setStatus("#match-status", "Matches refreshed.", "success");
-  } catch (error) {
-    setStatus("#match-status", error.message, "error");
-  }
-}
-
-function explanationList(title, items, tone) {
-  if (!items?.length) {
-    return "";
-  }
-  return `
-    <div>
-      <span class="pill ${tone}">${escapeHtml(title)}</span>
-      <p>${items.map(escapeHtml).join(" · ")}</p>
-    </div>
-  `;
-}
 
 async function loadSaved() {
   if (!state.user || state.user.role !== "student") {
@@ -611,51 +483,6 @@ async function loadSaved() {
   }
 }
 
-function renderSaved(saved) {
-  const list = $("#saved-list");
-  if (!saved.length) {
-    list.innerHTML = emptyCard("Tracker is empty", "Save an opportunity to start tracking it.");
-    return;
-  }
-  list.innerHTML = saved
-    .map(
-      (item) => `
-        <article class="card">
-          <div class="card-header">
-            <div>
-              <h3>${escapeHtml(item.opportunity.name)}</h3>
-              <p>${escapeHtml(item.opportunity.country)} · Deadline: ${formatDate(item.opportunity.application_deadline)}</p>
-            </div>
-            <span class="pill">${humanize(item.status)}</span>
-          </div>
-          <label>
-            Status
-            <select data-saved-status="${item.id}">
-              ${applicationStatuses
-                .map((status) => `<option value="${status}" ${status === item.status ? "selected" : ""}>${humanize(status)}</option>`)
-                .join("")}
-            </select>
-          </label>
-          <label>
-            Personal notes
-            <textarea rows="2" data-saved-notes="${item.id}">${escapeHtml(item.personal_notes || "")}</textarea>
-          </label>
-          <div class="card-actions">
-            <button class="button secondary" type="button" data-update-saved="${item.id}">Update</button>
-            <button class="ghost" type="button" data-delete-saved="${item.id}">Remove</button>
-          </div>
-        </article>
-      `,
-    )
-    .join("");
-
-  list.querySelectorAll("[data-update-saved]").forEach((button) => {
-    button.addEventListener("click", () => updateSaved(button.dataset.updateSaved));
-  });
-  list.querySelectorAll("[data-delete-saved]").forEach((button) => {
-    button.addEventListener("click", () => deleteSaved(button.dataset.deleteSaved));
-  });
-}
 
 async function updateSaved(id) {
   try {
@@ -683,49 +510,6 @@ async function deleteSaved(id) {
   }
 }
 
-async function loadAdminOpportunities() {
-  if (!state.user || state.user.role !== "admin") {
-    return;
-  }
-  setStatus("#admin-status", "Loading admin opportunities...");
-  try {
-    const data = await api("/admin/opportunities?limit=20&offset=0");
-    const list = $("#admin-list");
-    if (!data.items.length) {
-      list.innerHTML = emptyCard("No admin records", "Create or import opportunities to begin review.");
-    } else {
-      list.innerHTML = data.items
-        .map((item) => {
-          const source = item.sources?.[0] || item.source;
-          const canVerify = source && source.verification_status !== "officially_verified";
-          return `
-            <article class="card">
-              <div class="card-header">
-                <div>
-                  <h3>${escapeHtml(item.name)}</h3>
-                  <p>${escapeHtml(item.provider_name)} · ${escapeHtml(item.country)}</p>
-                </div>
-                <span class="pill ${item.status === "active" ? "good" : "warn"}">${humanize(item.status)}</span>
-              </div>
-              <p>Source: ${escapeHtml(source?.title || "No source title")} · ${humanize(source?.verification_status)}</p>
-              <div class="card-actions">
-                ${canVerify ? `<button class="button secondary" type="button" data-verify="${item.id}" data-source="${source.id}">Mark officially verified</button>` : ""}
-              </div>
-            </article>
-          `;
-        })
-        .join("");
-      list.querySelectorAll("[data-verify]").forEach((button) => {
-        button.addEventListener("click", () =>
-          verifyOpportunity(button.dataset.verify, button.dataset.source),
-        );
-      });
-    }
-    setStatus("#admin-status", `${data.pagination.total} admin records loaded.`, "success");
-  } catch (error) {
-    setStatus("#admin-status", error.message, "error");
-  }
-}
 
 async function loadMatches() {
   setStatus("#match-status", "Loading matches...");

@@ -16,6 +16,13 @@ Docker entry point.
 - Added static assets under `app/web/static`.
 - Mounted `/static` through FastAPI.
 - Updated tests so the root route is now the product UI.
+- Polished opportunity cards and detail pages to highlight funding fields,
+  eligibility warnings, official-source evidence, and last verification dates.
+- Added responsive layout hardening for embedded browser and narrow laptop
+  widths.
+- Added frontend regression tests for required page sections, static assets,
+  duplicate HTML IDs, encoding artifacts, and duplicate JavaScript function
+  definitions.
 - Updated README instructions and limitations.
 
 ## User-facing features
@@ -94,6 +101,7 @@ This slice demonstrates:
 - A student can refresh explainable matches.
 - An administrator can create a draft and mark it verified.
 - Tests cover frontend serving.
+- Tests cover core frontend structure and asset regressions.
 - Existing backend tests still pass.
 
 ## Known limitations
@@ -103,7 +111,8 @@ This slice demonstrates:
 - The UI does not include the future AI assistant chat interface yet.
 - Admin creation is intentionally minimal; CSV/JSON import remains better
   tested through the API for now.
-- There is no automated browser end-to-end test yet.
+- There is no Playwright-style browser end-to-end test yet; current frontend
+  tests are static structural regressions plus backend integration tests.
 - Visual design is polished enough for a demo but not a final design system.
 
 ## Recommended next slice
