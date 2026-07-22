@@ -18,7 +18,7 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 5: saved opportunities and application tracker**.
+The repository is at **vertical slice 6: structured opportunity ingestion**.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -46,6 +46,9 @@ Implemented so far:
 - saved-opportunity tracker for student notes, application status, document
   checklists, recommendation letters, test requirements, deadlines, submission
   dates, and outcomes
+- admin JSON batch import for opportunities with row-level validation,
+  duplicate detection, data-quality warnings, dry-run support, and forced human
+  review before public visibility
 - Docker Compose, lint configuration, and automated tests
 
 ## Quick start
@@ -119,6 +122,7 @@ registration to the API.
 ```text
 POST  /api/v1/admin/opportunities                       admin only
 GET   /api/v1/admin/opportunities                       admin only
+POST  /api/v1/admin/opportunities/import                admin only
 PATCH /api/v1/admin/opportunities/{id}/verification     admin only
 GET   /api/v1/opportunities                             public verified search
 GET   /api/v1/opportunities/{id}                        public verified detail
@@ -126,6 +130,11 @@ GET   /api/v1/opportunities/{id}                        public verified detail
 
 Draft and unverified opportunities are hidden from public search. A public
 opportunity must have an official source marked `officially_verified`.
+
+Imported opportunities are always created as drafts with sources marked
+`needs_review`, even when the import file claims they are active or verified.
+This keeps imported data out of public search until a human curator verifies the
+official source.
 
 ## Student profile walkthrough
 
@@ -162,7 +171,8 @@ modify another student's applications.
 
 ## Important limitations
 
-- The catalog supports manual admin entry only; CSV/JSON import comes next.
+- CSV files are not parsed directly yet. The importer uses a JSON row contract
+  that a future CSV parser can feed into.
 - Matching currently uses explicit baseline rules and simple parsing for some
   free-text requirements. Structured eligibility rules come next.
 - Saved opportunities do not send reminders yet. Notification logic belongs in
@@ -183,5 +193,6 @@ modify another student's applications.
 - [Student profile slice handoff](docs/slices/03-student-profiles.md)
 - [Rule-based matching slice handoff](docs/slices/04-rule-based-matching.md)
 - [Saved opportunity tracker slice handoff](docs/slices/05-saved-opportunities.md)
+- [Structured ingestion slice handoff](docs/slices/06-structured-ingestion.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)

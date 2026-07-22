@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,8 +18,12 @@ from app.modules.opportunities.models import (
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
+    ImportRowStatus,
     OpportunityCreate,
     OpportunityDetailResponse,
+    OpportunityImportRequest,
+    OpportunityImportResponse,
+    OpportunityImportRowResult,
     OpportunitySummaryResponse,
     SourceResponse,
     VerificationUpdate,
@@ -103,6 +108,109 @@ class OpportunityService:
                 "duplicate_opportunity",
                 "An opportunity with the same provider, name, country, and intake already exists",
             ) from exc
+
+    def import_opportunities(
+        self, payload: OpportunityImportRequest, *, created_by: User
+    ) -> OpportunityImportResponse:
+        results: list[OpportunityImportRowResult] = []
+        seen_keys: set[tuple[str, str, str, int | None]] = set()
+
+        for row_number, raw_row in enumerate(payload.rows, start=1):
+            prepared_row, preparation_warnings = self._prepare_import_row(raw_row)
+            try:
+                opportunity_payload = OpportunityCreate.model_validate(prepared_row)
+            except ValidationError as exc:
+                results.append(
+                    OpportunityImportRowResult(
+                        row_number=row_number,
+                        status=ImportRowStatus.FAILED_VALIDATION,
+                        errors=self._validation_messages(exc),
+                        warnings=preparation_warnings,
+                    )
+                )
+                continue
+
+            warnings = preparation_warnings + self._data_quality_warnings(opportunity_payload)
+            duplicate_key = self._duplicate_key(opportunity_payload)
+            if duplicate_key in seen_keys:
+                results.append(
+                    OpportunityImportRowResult(
+                        row_number=row_number,
+                        status=ImportRowStatus.SKIPPED_DUPLICATE,
+                        errors=["Duplicate row in the same import batch"],
+                        warnings=warnings,
+                    )
+                )
+                continue
+            seen_keys.add(duplicate_key)
+
+            duplicate = self.repository.find_duplicate_opportunity(
+                provider_name=opportunity_payload.provider_name,
+                name=opportunity_payload.name,
+                country=opportunity_payload.country,
+                intake_year=opportunity_payload.intake_year,
+            )
+            if duplicate is not None:
+                results.append(
+                    OpportunityImportRowResult(
+                        row_number=row_number,
+                        status=ImportRowStatus.SKIPPED_DUPLICATE,
+                        opportunity_id=duplicate.id,
+                        errors=[
+                            "Opportunity already exists for provider, name, country, and intake"
+                        ],
+                        warnings=warnings,
+                    )
+                )
+                continue
+
+            if payload.dry_run:
+                results.append(
+                    OpportunityImportRowResult(
+                        row_number=row_number,
+                        status=ImportRowStatus.DRY_RUN_READY,
+                        warnings=warnings,
+                    )
+                )
+                continue
+
+            try:
+                created = self.create_opportunity(opportunity_payload, created_by=created_by)
+            except AppError as exc:
+                results.append(
+                    OpportunityImportRowResult(
+                        row_number=row_number,
+                        status=ImportRowStatus.FAILED_VALIDATION,
+                        errors=[exc.message],
+                        warnings=warnings,
+                    )
+                )
+                continue
+
+            results.append(
+                OpportunityImportRowResult(
+                    row_number=row_number,
+                    status=ImportRowStatus.IMPORTED,
+                    opportunity_id=created.id,
+                    warnings=warnings,
+                )
+            )
+
+        return OpportunityImportResponse(
+            source_format=payload.source_format,
+            dry_run=payload.dry_run,
+            total_rows=len(payload.rows),
+            imported_count=sum(
+                1 for result in results if result.status is ImportRowStatus.IMPORTED
+            ),
+            duplicate_count=sum(
+                1 for result in results if result.status is ImportRowStatus.SKIPPED_DUPLICATE
+            ),
+            failed_count=sum(
+                1 for result in results if result.status is ImportRowStatus.FAILED_VALIDATION
+            ),
+            results=results,
+        )
 
     def verify_source(
         self, opportunity_id: uuid.UUID, payload: VerificationUpdate, *, checked_by: User
@@ -272,3 +380,61 @@ class OpportunityService:
         if opportunity.travel_allowance:
             parts.append("travel mentioned")
         return "; ".join(parts)
+
+    @staticmethod
+    def _prepare_import_row(raw_row: dict[str, object]) -> tuple[dict[str, object], list[str]]:
+        prepared = dict(raw_row)
+        warnings: list[str] = []
+
+        if prepared.get("status") not in {
+            None,
+            OpportunityStatus.DRAFT.value,
+            OpportunityStatus.DRAFT,
+        }:
+            warnings.append("Imported opportunities are forced to draft until human verification")
+        prepared["status"] = OpportunityStatus.DRAFT.value
+
+        source = dict(prepared.get("source") or {})
+        if source.get("verification_status") not in {
+            None,
+            VerificationStatus.NEEDS_REVIEW.value,
+            VerificationStatus.NEEDS_REVIEW,
+        }:
+            warnings.append("Imported sources are forced to needs_review until human verification")
+        source["verification_status"] = VerificationStatus.NEEDS_REVIEW.value
+        prepared["source"] = source
+        return prepared, warnings
+
+    @staticmethod
+    def _validation_messages(exc: ValidationError) -> list[str]:
+        messages: list[str] = []
+        for error in exc.errors():
+            field = ".".join(str(part) for part in error["loc"])
+            messages.append(f"{field}: {error['msg']}")
+        return messages
+
+    @staticmethod
+    def _duplicate_key(payload: OpportunityCreate) -> tuple[str, str, str, int | None]:
+        return (
+            payload.provider_name.lower(),
+            payload.name.lower(),
+            payload.country.lower(),
+            payload.intake_year,
+        )
+
+    @staticmethod
+    def _data_quality_warnings(payload: OpportunityCreate) -> list[str]:
+        warnings: list[str] = []
+        if payload.application_deadline is None:
+            warnings.append("Missing application deadline")
+        if payload.funding_type.value == "unknown":
+            warnings.append("Funding type is unknown")
+        if not payload.required_documents:
+            warnings.append("No required documents listed")
+        if payload.english_language_requirement is None:
+            warnings.append("English-language requirement is missing")
+        if payload.minimum_academic_requirement is None:
+            warnings.append("Minimum academic requirement is missing")
+        if payload.data_confidence.value == "low":
+            warnings.append("Data confidence is low; curator review is important")
+        return warnings

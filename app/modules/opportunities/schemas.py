@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -101,6 +103,42 @@ class VerificationUpdate(BaseModel):
     source_id: uuid.UUID | None = None
     verification_status: VerificationStatus
     notes: str | None = None
+
+
+class ImportFormat(StrEnum):
+    JSON = "json"
+    CSV = "csv"
+
+
+class ImportRowStatus(StrEnum):
+    IMPORTED = "imported"
+    DRY_RUN_READY = "dry_run_ready"
+    SKIPPED_DUPLICATE = "skipped_duplicate"
+    FAILED_VALIDATION = "failed_validation"
+
+
+class OpportunityImportRequest(BaseModel):
+    source_format: ImportFormat = ImportFormat.JSON
+    dry_run: bool = False
+    rows: list[dict[str, Any]] = Field(min_length=1, max_length=100)
+
+
+class OpportunityImportRowResult(BaseModel):
+    row_number: int
+    status: ImportRowStatus
+    opportunity_id: uuid.UUID | None = None
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class OpportunityImportResponse(BaseModel):
+    source_format: ImportFormat
+    dry_run: bool
+    total_rows: int
+    imported_count: int
+    duplicate_count: int
+    failed_count: int
+    results: list[OpportunityImportRowResult]
 
 
 class SourceResponse(BaseModel):

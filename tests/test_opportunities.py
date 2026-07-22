@@ -197,6 +197,163 @@ def test_duplicate_opportunity_is_rejected(client: TestClient, db_session: Sessi
     assert duplicate.json()["error"]["code"] == "duplicate_opportunity"
 
 
+def test_admin_imports_opportunities_as_drafts_requiring_review(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={
+            "source_format": "json",
+            "rows": [
+                opportunity_payload(
+                    name="Imported Review Scholarship",
+                    status="active",
+                    source={
+                        **opportunity_payload()["source"],
+                        "url": "https://example.edu/imported-review",
+                        "verification_status": "officially_verified",
+                    },
+                )
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["imported_count"] == 1
+    assert body["results"][0]["status"] == "imported"
+    assert any("forced to draft" in warning for warning in body["results"][0]["warnings"])
+    assert any("forced to needs_review" in warning for warning in body["results"][0]["warnings"])
+
+    admin_list = client.get("/api/v1/admin/opportunities", headers=headers)
+    assert admin_list.status_code == 200
+    imported = admin_list.json()[0]
+    assert imported["name"] == "Imported Review Scholarship"
+    assert imported["status"] == "draft"
+    assert imported["verification_status"] == "needs_review"
+
+    public = client.get("/api/v1/opportunities")
+    assert public.status_code == 200
+    assert public.json() == []
+
+
+def test_import_dry_run_validates_without_creating_records(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={
+            "source_format": "json",
+            "dry_run": True,
+            "rows": [
+                opportunity_payload(
+                    name="Dry Run Scholarship",
+                    source={
+                        **opportunity_payload()["source"],
+                        "url": "https://example.edu/dry-run",
+                    },
+                )
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["imported_count"] == 0
+    assert response.json()["results"][0]["status"] == "dry_run_ready"
+    admin_list = client.get("/api/v1/admin/opportunities", headers=headers)
+    assert admin_list.status_code == 200
+    assert admin_list.json() == []
+
+
+def test_import_reports_existing_duplicate_without_failing_whole_batch(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    create_opportunity(client, headers)
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={
+            "source_format": "json",
+            "rows": [
+                opportunity_payload(),
+                opportunity_payload(
+                    name="Fresh Import Scholarship",
+                    source={
+                        **opportunity_payload()["source"],
+                        "url": "https://example.edu/fresh-import",
+                    },
+                ),
+            ],
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_rows"] == 2
+    assert body["duplicate_count"] == 1
+    assert body["imported_count"] == 1
+    assert body["results"][0]["status"] == "skipped_duplicate"
+    assert body["results"][1]["status"] == "imported"
+
+
+def test_import_reports_validation_errors_per_row(client: TestClient, db_session: Session) -> None:
+    headers = admin_headers(client, db_session)
+    invalid = opportunity_payload(
+        name="Invalid Import Scholarship",
+        tuition_coverage=None,
+        monthly_stipend_amount=None,
+        accommodation_coverage=None,
+        travel_allowance=None,
+        health_insurance=None,
+    )
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={"source_format": "json", "rows": [invalid]},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["failed_count"] == 1
+    assert body["results"][0]["status"] == "failed_validation"
+    assert any("Full funding requires" in error for error in body["results"][0]["errors"])
+
+
+def test_import_detects_duplicate_rows_inside_same_batch(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    duplicate_row = opportunity_payload(
+        name="Same File Duplicate Scholarship",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/same-file-duplicate",
+        },
+    )
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={"source_format": "json", "rows": [duplicate_row, duplicate_row]},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["imported_count"] == 1
+    assert body["duplicate_count"] == 1
+    assert body["results"][1]["status"] == "skipped_duplicate"
+    assert "same import batch" in body["results"][1]["errors"][0]
+
+
 def test_full_funding_requires_structured_coverage_evidence(
     client: TestClient, db_session: Session
 ) -> None:

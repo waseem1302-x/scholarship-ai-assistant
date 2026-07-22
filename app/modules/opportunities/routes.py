@@ -14,6 +14,8 @@ from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
     OpportunityCreate,
     OpportunityDetailResponse,
+    OpportunityImportRequest,
+    OpportunityImportResponse,
     OpportunitySummaryResponse,
     VerificationUpdate,
 )
@@ -76,6 +78,23 @@ def list_admin_opportunities(
     service: Annotated[OpportunityService, Depends(get_opportunity_service)],
 ) -> list[AdminOpportunityResponse]:
     return service.list_admin_opportunities()
+
+
+@router.post(
+    "/admin/opportunities/import",
+    response_model=OpportunityImportResponse,
+    responses={
+        401: AUTHENTICATION_RESPONSE,
+        403: FORBIDDEN_RESPONSE,
+        422: VALIDATION_RESPONSE,
+    },
+)
+def import_opportunities(
+    payload: OpportunityImportRequest,
+    admin: AdminUser,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> OpportunityImportResponse:
+    return service.import_opportunities(payload, created_by=admin)
 
 
 @router.patch(

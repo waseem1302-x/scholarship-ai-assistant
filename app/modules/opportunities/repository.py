@@ -26,6 +26,25 @@ class OpportunityRepository:
             select(Provider).where(func.lower(Provider.name) == name.lower())
         )
 
+    def find_duplicate_opportunity(
+        self,
+        *,
+        provider_name: str,
+        name: str,
+        country: str,
+        intake_year: int | None,
+    ) -> Opportunity | None:
+        return self.session.scalar(
+            select(Opportunity)
+            .join(Provider)
+            .where(
+                func.lower(Provider.name) == provider_name.lower(),
+                func.lower(Opportunity.name) == name.lower(),
+                func.lower(Opportunity.country) == country.lower(),
+                Opportunity.intake_year == intake_year,
+            )
+        )
+
     def get_or_create_provider(self, name: str, website_url: str | None) -> Provider:
         provider = self.get_provider_by_name(name)
         if provider is not None:
