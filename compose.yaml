@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: scholarship
+      POSTGRES_USER: scholarship
+      POSTGRES_PASSWORD: scholarship
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scholarship -d scholarship"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build: .
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
+      APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
+      APP_CORS_ORIGINS: http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_data:
+
