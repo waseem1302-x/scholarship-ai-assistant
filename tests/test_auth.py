@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.core.security import hash_password
 from app.main import app
 from app.modules.auth.dependencies import require_roles
 from app.modules.auth.models import RefreshToken, User, UserRole
@@ -139,6 +140,75 @@ def test_inactive_user_cannot_use_access_or_refresh_tokens(
     )
 
     assert access_response.status_code == refresh_response.status_code == 401
+
+
+def test_email_verification_uses_single_use_hashed_tokens(client: TestClient) -> None:
+    tokens = register(client)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    issued = client.post("/api/v1/auth/email-verifications", headers=headers)
+    assert issued.status_code == 200
+    debug_token = issued.json()["debug_token"]
+    assert debug_token
+
+    confirmed = client.post("/api/v1/auth/email-verifications/confirm", json={"token": debug_token})
+    assert confirmed.status_code == 200
+    assert confirmed.json()["email_verified_at"] is not None
+    assert (
+        client.post(
+            "/api/v1/auth/email-verifications/confirm", json={"token": debug_token}
+        ).status_code
+        == 401
+    )
+
+
+def test_password_reset_revokes_refresh_sessions_and_accepts_new_password(
+    client: TestClient,
+) -> None:
+    tokens = register(client)
+    issued = client.post("/api/v1/auth/password-resets", json={"email": EMAIL})
+    debug_token = issued.json()["debug_token"]
+    assert debug_token
+
+    completed = client.post(
+        "/api/v1/auth/password-resets/confirm",
+        json={"token": debug_token, "new_password": "updated-password-42"},
+    )
+    assert completed.status_code == 204
+    assert (
+        client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": EMAIL, "password": "updated-password-42"}
+        ).status_code
+        == 200
+    )
+
+
+def test_admin_step_up_requires_an_administrator(client: TestClient, db_session: Session) -> None:
+    admin = User(
+        id=uuid.uuid4(),
+        email="step-up-admin@example.com",
+        password_hash=hash_password(PASSWORD),
+        role=UserRole.ADMIN,
+    )
+    db_session.add(admin)
+    db_session.commit()
+    login = client.post(
+        "/api/v1/auth/login", json={"email": admin.email, "password": PASSWORD}
+    ).json()
+
+    response = client.post(
+        "/api/v1/auth/admin/step-up",
+        json={"password": PASSWORD},
+        headers={"Authorization": f"Bearer {login['access_token']}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["step_up_token"]
 
 
 def test_health_endpoints(client: TestClient) -> None:

@@ -1,16 +1,26 @@
+import csv
+import io
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError
-from app.modules.auth.models import User
+from app.modules.auth.models import AuditLog, User
+from app.modules.opportunities.lifecycle import (
+    SOURCE_FRESHNESS_DAYS,
+    effective_application_window,
+    is_open_now,
+)
 from app.modules.opportunities.models import (
+    EligibilityRule,
     Opportunity,
+    OpportunityCycle,
     OpportunityStatus,
     Source,
+    SourceExcerpt,
     SourceType,
     VerificationRecord,
     VerificationStatus,
@@ -19,6 +29,10 @@ from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
     AdminOpportunitySearchResponse,
+    DataQualityIssueResponse,
+    DataQualityIssueSearchResponse,
+    DataQualitySeverity,
+    EligibilityRuleCreate,
     ImportRowStatus,
     OpportunityCreate,
     OpportunityDetailResponse,
@@ -28,9 +42,29 @@ from app.modules.opportunities.schemas import (
     OpportunitySearchResponse,
     OpportunitySummaryResponse,
     PaginationMeta,
+    ReviewAction,
+    ReviewActionRequest,
+    ReviewQueueItemResponse,
+    ReviewQueueResponse,
+    SourceCheckRequest,
+    SourceCheckResponse,
+    SourceExcerptResponse,
     SourceResponse,
     VerificationUpdate,
 )
+
+CSV_COLUMN_ALIASES = {
+    "official_source_url": "source.url",
+    "source_url": "source.url",
+    "source_title": "source.title",
+    "source_excerpt": "source.relevant_excerpt",
+    "source_relevant_excerpt": "source.relevant_excerpt",
+    "source_type": "source.source_type",
+    "source_publication_date": "source.publication_date",
+    "source_content_hash": "source.content_hash",
+    "source_verification_status": "source.verification_status",
+}
+CSV_LIST_FIELDS = {"required_documents", "eligibility_warnings"}
 
 
 class OpportunityService:
@@ -99,7 +133,40 @@ class OpportunityService:
                 else None,
             )
         )
+        for rule in payload.eligibility_rules:
+            opportunity.eligibility_rules.append(
+                EligibilityRule(
+                    rule_type=rule.rule_type,
+                    operator=rule.operator,
+                    value_json=rule.value,
+                    unit=rule.unit,
+                    grading_scale=rule.grading_scale,
+                    required=rule.required,
+                    source_id=rule.source_id,
+                    confidence=rule.confidence,
+                    curator_notes=rule.curator_notes,
+                )
+            )
+        for cycle in payload.application_cycles:
+            opportunity.cycles.append(
+                OpportunityCycle(
+                    intake_year=cycle.intake_year,
+                    application_opening_date=cycle.application_opening_date,
+                    application_deadline=cycle.application_deadline,
+                    timezone=cycle.timezone,
+                    is_rolling=cycle.is_rolling,
+                    is_archived=cycle.is_archived,
+                )
+            )
         self.repository.add_opportunity(opportunity)
+        self.session.add(
+            AuditLog(
+                actor_user_id=created_by.id,
+                action="opportunity_created",
+                entity_type="opportunity",
+                entity_id=str(opportunity.id),
+            )
+        )
 
         try:
             self.session.commit()
@@ -117,8 +184,9 @@ class OpportunityService:
     ) -> OpportunityImportResponse:
         results: list[OpportunityImportRowResult] = []
         seen_keys: set[tuple[str, str, str, int | None]] = set()
+        import_rows = self._import_rows(payload)
 
-        for row_number, raw_row in enumerate(payload.rows, start=1):
+        for row_number, raw_row, row_warnings in import_rows:
             prepared_row, preparation_warnings = self._prepare_import_row(raw_row)
             try:
                 opportunity_payload = OpportunityCreate.model_validate(prepared_row)
@@ -128,12 +196,16 @@ class OpportunityService:
                         row_number=row_number,
                         status=ImportRowStatus.FAILED_VALIDATION,
                         errors=self._validation_messages(exc),
-                        warnings=preparation_warnings,
+                        warnings=row_warnings + preparation_warnings,
                     )
                 )
                 continue
 
-            warnings = preparation_warnings + self._data_quality_warnings(opportunity_payload)
+            warnings = (
+                row_warnings
+                + preparation_warnings
+                + self._data_quality_warnings(opportunity_payload)
+            )
             duplicate_key = self._duplicate_key(opportunity_payload)
             if duplicate_key in seen_keys:
                 results.append(
@@ -202,7 +274,7 @@ class OpportunityService:
         return OpportunityImportResponse(
             source_format=payload.source_format,
             dry_run=payload.dry_run,
-            total_rows=len(payload.rows),
+            total_rows=len(import_rows),
             imported_count=sum(
                 1 for result in results if result.status is ImportRowStatus.IMPORTED
             ),
@@ -240,9 +312,137 @@ class OpportunityService:
                 notes=payload.notes,
             )
         )
+        self.session.add(
+            AuditLog(
+                actor_user_id=checked_by.id,
+                action="source_verification_updated",
+                entity_type="opportunity",
+                entity_id=str(opportunity.id),
+                metadata_json={"verification_status": payload.verification_status.value},
+            )
+        )
         self.session.commit()
         self.session.refresh(opportunity)
         return self.to_admin_response(opportunity)
+
+    def apply_review_action(
+        self, opportunity_id: uuid.UUID, payload: ReviewActionRequest, *, reviewed_by: User
+    ) -> AdminOpportunityResponse:
+        opportunity = self.repository.get_opportunity(opportunity_id)
+        if opportunity is None:
+            raise AppError("opportunity_not_found", "Opportunity was not found", 404)
+
+        source = self._select_source(opportunity, payload.source_id)
+        self._validate_review_action(payload)
+
+        status = self._apply_review_transition(opportunity, source, payload, reviewed_by)
+        self.session.add(
+            VerificationRecord(
+                opportunity_id=opportunity.id,
+                source_id=source.id,
+                status=status,
+                checked_by_user_id=reviewed_by.id,
+                notes=payload.notes,
+                metadata_json={
+                    "action": payload.action.value,
+                    "opportunity_status": opportunity.status.value,
+                    "source_status": source.verification_status.value,
+                },
+            )
+        )
+        self.session.add(
+            AuditLog(
+                actor_user_id=reviewed_by.id,
+                action="opportunity_review_action",
+                entity_type="opportunity",
+                entity_id=str(opportunity.id),
+                metadata_json={
+                    "review_action": payload.action.value,
+                    "source_id": str(source.id),
+                    "opportunity_status": opportunity.status.value,
+                    "source_status": source.verification_status.value,
+                },
+            )
+        )
+        self.session.commit()
+        self.session.refresh(opportunity)
+        return self.to_admin_response(opportunity)
+
+    def record_source_check(
+        self, source_id: uuid.UUID, payload: SourceCheckRequest, *, checked_by: User | None
+    ) -> SourceCheckResponse:
+        source = self.repository.get_source(source_id)
+        if source is None:
+            raise AppError("source_not_found", "Source was not found", 404)
+
+        previous_hash = source.content_hash
+        changed = (
+            payload.content_hash is not None
+            and previous_hash is not None
+            and payload.content_hash != previous_hash
+        )
+        if payload.content_hash is not None:
+            source.content_hash = payload.content_hash
+        source.last_updated_at = payload.observed_at or datetime.now(UTC)
+
+        captured_excerpt: SourceExcerpt | None = None
+        if payload.excerpt is not None:
+            captured_excerpt = SourceExcerpt(
+                source_id=source.id,
+                section_label=payload.excerpt.section_label,
+                locator=payload.excerpt.locator,
+                text=payload.excerpt.text,
+                content_hash=payload.excerpt.content_hash or payload.content_hash,
+                captured_by_user_id=checked_by.id if checked_by else None,
+            )
+            self.session.add(captured_excerpt)
+
+        if changed:
+            source.verification_status = VerificationStatus.NEEDS_REVIEW
+
+        status = VerificationStatus.NEEDS_REVIEW if changed else source.verification_status
+        self.session.add(
+            VerificationRecord(
+                opportunity_id=source.opportunity_id,
+                source_id=source.id,
+                status=status,
+                checked_by_user_id=checked_by.id if checked_by else None,
+                notes=payload.change_summary,
+                metadata_json={
+                    "action": "source_check_recorded",
+                    "changed": changed,
+                    "previous_hash": previous_hash,
+                    "current_hash": source.content_hash,
+                    "observed_at": (payload.observed_at or source.last_updated_at).isoformat(),
+                },
+            )
+        )
+        self.session.add(
+            AuditLog(
+                actor_user_id=checked_by.id if checked_by else None,
+                action="source_check_recorded",
+                entity_type="source",
+                entity_id=str(source.id),
+                metadata_json={"changed": changed, "opportunity_id": str(source.opportunity_id)},
+            )
+        )
+        self.session.commit()
+        self.session.refresh(source)
+        if captured_excerpt is not None:
+            self.session.refresh(captured_excerpt)
+
+        return SourceCheckResponse(
+            source=SourceResponse.model_validate(source),
+            changed=changed,
+            previous_hash=previous_hash,
+            current_hash=source.content_hash,
+            public_visibility_blocked=not self._source_can_publish(source),
+            excerpt=(
+                SourceExcerptResponse.model_validate(captured_excerpt)
+                if captured_excerpt is not None
+                else None
+            ),
+        )
 
     def list_admin_opportunities(
         self, *, limit: int, offset: int, **filters: object
@@ -257,9 +457,70 @@ class OpportunityService:
             pagination=self._pagination(total=total, limit=limit, offset=offset, count=len(items)),
         )
 
+    def list_data_quality_issues(
+        self, *, limit: int, offset: int
+    ) -> DataQualityIssueSearchResponse:
+        opportunities = self.repository.list_admin_opportunities(limit=None)
+        issues = self._sorted_issues(
+            issue
+            for opportunity in opportunities
+            for issue in self._data_quality_issues_for_opportunity(opportunity)
+        )
+        page = issues[offset : offset + limit]
+        return DataQualityIssueSearchResponse(
+            items=page,
+            pagination=self._pagination(
+                total=len(issues), limit=limit, offset=offset, count=len(page)
+            ),
+        )
+
+    def list_review_queue(self, *, limit: int, offset: int) -> ReviewQueueResponse:
+        opportunities = self.repository.list_admin_opportunities(limit=None)
+        items: list[ReviewQueueItemResponse] = []
+        for opportunity in opportunities:
+            reasons = self._sorted_issues(self._data_quality_issues_for_opportunity(opportunity))
+            review_reasons = [
+                reason
+                for reason in reasons
+                if reason.severity in {DataQualitySeverity.HIGH, DataQualitySeverity.MEDIUM}
+            ]
+            if review_reasons:
+                items.append(
+                    ReviewQueueItemResponse(
+                        opportunity=self.to_admin_response(opportunity),
+                        reasons=review_reasons,
+                    )
+                )
+        page = items[offset : offset + limit]
+        return ReviewQueueResponse(
+            items=page,
+            pagination=self._pagination(
+                total=len(items), limit=limit, offset=offset, count=len(page)
+            ),
+        )
+
     def list_public_opportunities(
         self, *, limit: int, offset: int, **filters: object
     ) -> OpportunitySearchResponse:
+        open_now = bool(filters.pop("open_now", False))
+        if open_now:
+            opportunities = self.repository.list_public_opportunities(**filters)
+            opportunities = [
+                opportunity
+                for opportunity in opportunities
+                if is_open_now(opportunity, self._official_source(opportunity))
+            ]
+            total = len(opportunities)
+            items = [
+                self.to_summary_response(opportunity)
+                for opportunity in opportunities[offset : offset + limit]
+            ]
+            return OpportunitySearchResponse(
+                items=items,
+                pagination=self._pagination(
+                    total=total, limit=limit, offset=offset, count=len(items)
+                ),
+            )
         opportunities = self.repository.list_public_opportunities(
             **filters, limit=limit, offset=offset
         )
@@ -315,6 +576,8 @@ class OpportunityService:
             verification_status=source.verification_status,
             last_verified_at=source.last_verified_at,
             official_source_url=source.url,
+            application_window_state=effective_application_window(opportunity, source).state,
+            source_is_fresh=effective_application_window(opportunity, source).source_is_fresh,
         )
 
     def _response_base(
@@ -348,6 +611,20 @@ class OpportunityService:
             "notes": opportunity.notes,
             "eligibility_warnings": opportunity.eligibility_warnings,
             "source": SourceResponse.model_validate(source),
+            "eligibility_rules": [
+                EligibilityRuleCreate(
+                    rule_type=rule.rule_type,
+                    operator=rule.operator,
+                    value=rule.value_json,
+                    unit=rule.unit,
+                    grading_scale=rule.grading_scale,
+                    required=rule.required,
+                    source_id=rule.source_id,
+                    confidence=rule.confidence,
+                    curator_notes=rule.curator_notes,
+                )
+                for rule in opportunity.eligibility_rules
+            ],
         }
 
     def _select_source(self, opportunity: Opportunity, source_id: uuid.UUID | None) -> Source:
@@ -360,6 +637,73 @@ class OpportunityService:
         if source is None or source.opportunity_id != opportunity.id:
             raise AppError("source_not_found", "Source was not found", 404)
         return source
+
+    @staticmethod
+    def _validate_review_action(payload: ReviewActionRequest) -> None:
+        note_required_actions = {
+            ReviewAction.HOLD_FOR_REVIEW,
+            ReviewAction.FLAG_CONFLICT,
+            ReviewAction.REQUEST_RECHECK,
+            ReviewAction.RESOLVE_CONFLICT,
+            ReviewAction.EXPIRE,
+            ReviewAction.ARCHIVE,
+        }
+        if payload.action in note_required_actions and not (payload.notes or "").strip():
+            raise AppError(
+                "review_notes_required",
+                "Reviewer notes are required for this action",
+                422,
+            )
+
+    @staticmethod
+    def _apply_review_transition(
+        opportunity: Opportunity,
+        source: Source,
+        payload: ReviewActionRequest,
+        reviewed_by: User,
+    ) -> VerificationStatus:
+        now = datetime.now(UTC)
+
+        if payload.action is ReviewAction.PUBLISH:
+            source.verification_status = VerificationStatus.OFFICIALLY_VERIFIED
+            source.verified_by_user_id = reviewed_by.id
+            source.last_verified_at = now
+            opportunity.status = OpportunityStatus.ACTIVE
+            return VerificationStatus.OFFICIALLY_VERIFIED
+
+        if payload.action is ReviewAction.RESOLVE_CONFLICT:
+            source.verification_status = VerificationStatus.OFFICIALLY_VERIFIED
+            source.verified_by_user_id = reviewed_by.id
+            source.last_verified_at = now
+            opportunity.status = OpportunityStatus.ACTIVE
+            return VerificationStatus.OFFICIALLY_VERIFIED
+
+        if payload.action is ReviewAction.HOLD_FOR_REVIEW:
+            source.verification_status = VerificationStatus.NEEDS_REVIEW
+            opportunity.status = OpportunityStatus.DRAFT
+            return VerificationStatus.NEEDS_REVIEW
+
+        if payload.action is ReviewAction.REQUEST_RECHECK:
+            source.verification_status = VerificationStatus.NEEDS_REVIEW
+            opportunity.status = OpportunityStatus.DRAFT
+            return VerificationStatus.NEEDS_REVIEW
+
+        if payload.action is ReviewAction.FLAG_CONFLICT:
+            source.verification_status = VerificationStatus.CONFLICTING_INFORMATION
+            opportunity.status = OpportunityStatus.DRAFT
+            return VerificationStatus.CONFLICTING_INFORMATION
+
+        if payload.action is ReviewAction.EXPIRE:
+            source.verification_status = VerificationStatus.EXPIRED
+            opportunity.status = OpportunityStatus.EXPIRED
+            return VerificationStatus.EXPIRED
+
+        if payload.action is ReviewAction.ARCHIVE:
+            source.verification_status = VerificationStatus.ARCHIVED
+            opportunity.status = OpportunityStatus.ARCHIVED
+            return VerificationStatus.ARCHIVED
+
+        raise AppError("unsupported_review_action", "Review action is not supported", 422)
 
     @staticmethod
     def _official_source(opportunity: Opportunity) -> Source | None:
@@ -397,6 +741,89 @@ class OpportunityService:
         if opportunity.travel_allowance:
             parts.append("travel mentioned")
         return "; ".join(parts)
+
+    def _import_rows(
+        self, payload: OpportunityImportRequest
+    ) -> list[tuple[int, dict[str, object], list[str]]]:
+        if payload.source_format.value == "csv":
+            return self._csv_import_rows(payload.csv_content or "")
+        return [(row_number, row, []) for row_number, row in enumerate(payload.rows, start=1)]
+
+    @classmethod
+    def _csv_import_rows(cls, csv_content: str) -> list[tuple[int, dict[str, object], list[str]]]:
+        try:
+            reader = csv.DictReader(io.StringIO(csv_content.lstrip("\ufeff")))
+        except csv.Error as exc:
+            raise AppError("csv_import_invalid", f"CSV could not be parsed: {exc}", 422) from exc
+
+        if not reader.fieldnames:
+            raise AppError("csv_import_invalid", "CSV must include a header row", 422)
+
+        fieldnames = [cls._csv_header_name(name) for name in reader.fieldnames]
+        if any(not name for name in fieldnames):
+            raise AppError("csv_import_invalid", "CSV headers cannot be blank", 422)
+        if len(set(fieldnames)) != len(fieldnames):
+            raise AppError("csv_import_invalid", "CSV headers must be unique", 422)
+
+        rows: list[tuple[int, dict[str, object], list[str]]] = []
+        for csv_index, raw_row in enumerate(reader, start=2):
+            mapped, warnings = cls._csv_row_to_import_row(raw_row)
+            if not mapped:
+                continue
+            rows.append((csv_index, mapped, warnings))
+            if len(rows) > 100:
+                raise AppError("csv_import_too_large", "CSV imports are limited to 100 rows", 422)
+
+        if not rows:
+            raise AppError("csv_import_invalid", "CSV must include at least one data row", 422)
+        return rows
+
+    @classmethod
+    def _csv_row_to_import_row(
+        cls, raw_row: dict[str, str | None]
+    ) -> tuple[dict[str, object], list[str]]:
+        row: dict[str, object] = {}
+        source: dict[str, object] = {"source_type": SourceType.OFFICIAL.value}
+        warnings: list[str] = []
+
+        for header, raw_value in raw_row.items():
+            key = cls._csv_header_name(header)
+            value, cell_warning = cls._clean_csv_cell(raw_value)
+            if cell_warning:
+                warnings.append(f"{key}: {cell_warning}")
+            if value is None:
+                continue
+            target = CSV_COLUMN_ALIASES.get(key, key)
+            if target in CSV_LIST_FIELDS:
+                row[target] = cls._csv_list(value)
+            elif target.startswith("source."):
+                source[target.removeprefix("source.")] = value
+            else:
+                row[target] = value
+
+        if any(value for key, value in source.items() if key != "source_type"):
+            source.setdefault("verification_status", VerificationStatus.NEEDS_REVIEW.value)
+            row["source"] = source
+        return row, warnings
+
+    @staticmethod
+    def _csv_header_name(value: str | None) -> str:
+        return (value or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+    @staticmethod
+    def _clean_csv_cell(value: str | None) -> tuple[str | None, str | None]:
+        if value is None:
+            return None, None
+        cleaned = value.strip()
+        if cleaned == "":
+            return None, None
+        if cleaned[0] in {"=", "+", "-", "@"}:
+            return f"'{cleaned}", "Formula-like value was neutralized"
+        return cleaned, None
+
+    @staticmethod
+    def _csv_list(value: str) -> list[str]:
+        return [item.strip() for item in value.split(";") if item.strip()]
 
     @staticmethod
     def _prepare_import_row(raw_row: dict[str, object]) -> tuple[dict[str, object], list[str]]:
@@ -455,6 +882,185 @@ class OpportunityService:
         if payload.data_confidence.value == "low":
             warnings.append("Data confidence is low; curator review is important")
         return warnings
+
+    def _data_quality_issues_for_opportunity(
+        self, opportunity: Opportunity
+    ) -> list[DataQualityIssueResponse]:
+        issues: list[DataQualityIssueResponse] = []
+        best_source = self._best_source(opportunity) if opportunity.sources else None
+
+        if not opportunity.sources:
+            issues.append(
+                self._issue(
+                    opportunity,
+                    code="official_source_missing",
+                    severity=DataQualitySeverity.HIGH,
+                    message="Opportunity has no source evidence attached.",
+                )
+            )
+        for source in opportunity.sources:
+            if source.verification_status in {
+                VerificationStatus.UNVERIFIED,
+                VerificationStatus.NEEDS_REVIEW,
+            }:
+                issues.append(
+                    self._issue(
+                        opportunity,
+                        source=source,
+                        code="source_requires_review",
+                        severity=DataQualitySeverity.HIGH,
+                        message="Source is not verified and requires curator review.",
+                    )
+                )
+            if source.verification_status is VerificationStatus.CONFLICTING_INFORMATION:
+                issues.append(
+                    self._issue(
+                        opportunity,
+                        source=source,
+                        code="source_conflict",
+                        severity=DataQualitySeverity.HIGH,
+                        message="Source has conflicting information that must be resolved.",
+                    )
+                )
+            if source.last_verified_at is None:
+                issues.append(
+                    self._issue(
+                        opportunity,
+                        source=source,
+                        code="source_never_verified",
+                        severity=DataQualitySeverity.MEDIUM,
+                        message="Source has no recorded verification timestamp.",
+                    )
+                )
+            elif self._as_utc(source.last_verified_at) < datetime.now(UTC) - timedelta(
+                days=SOURCE_FRESHNESS_DAYS
+            ):
+                issues.append(
+                    self._issue(
+                        opportunity,
+                        source=source,
+                        code="source_stale",
+                        severity=DataQualitySeverity.HIGH,
+                        message=(
+                            f"Source has not been reverified within {SOURCE_FRESHNESS_DAYS} days."
+                        ),
+                    )
+                )
+            if source.content_hash is None:
+                issues.append(
+                    self._issue(
+                        opportunity,
+                        source=source,
+                        code="source_hash_missing",
+                        severity=DataQualitySeverity.LOW,
+                        message="Source has no stored content hash for change monitoring.",
+                    )
+                )
+
+        if opportunity.application_deadline is None:
+            issues.append(
+                self._issue(
+                    opportunity,
+                    source=best_source,
+                    code="deadline_missing",
+                    severity=DataQualitySeverity.HIGH,
+                    message="Application deadline is missing or unknown.",
+                )
+            )
+        if not opportunity.required_documents:
+            issues.append(
+                self._issue(
+                    opportunity,
+                    source=best_source,
+                    code="required_documents_missing",
+                    severity=DataQualitySeverity.MEDIUM,
+                    message="Required documents are not structured.",
+                )
+            )
+        if opportunity.english_language_requirement is None:
+            issues.append(
+                self._issue(
+                    opportunity,
+                    source=best_source,
+                    code="english_requirement_missing",
+                    severity=DataQualitySeverity.MEDIUM,
+                    message="English-language requirement is missing.",
+                )
+            )
+        if opportunity.minimum_academic_requirement is None:
+            issues.append(
+                self._issue(
+                    opportunity,
+                    source=best_source,
+                    code="academic_requirement_missing",
+                    severity=DataQualitySeverity.MEDIUM,
+                    message="Minimum academic requirement is missing.",
+                )
+            )
+        if opportunity.funding_type.value == "unknown":
+            issues.append(
+                self._issue(
+                    opportunity,
+                    source=best_source,
+                    code="funding_type_unknown",
+                    severity=DataQualitySeverity.MEDIUM,
+                    message="Funding type is unknown.",
+                )
+            )
+        if opportunity.data_confidence.value == "low":
+            issues.append(
+                self._issue(
+                    opportunity,
+                    source=best_source,
+                    code="low_data_confidence",
+                    severity=DataQualitySeverity.MEDIUM,
+                    message="Data confidence is low.",
+                )
+            )
+        return issues
+
+    @staticmethod
+    def _issue(
+        opportunity: Opportunity,
+        *,
+        code: str,
+        severity: DataQualitySeverity,
+        message: str,
+        source: Source | None = None,
+    ) -> DataQualityIssueResponse:
+        return DataQualityIssueResponse(
+            code=code,
+            severity=severity,
+            message=message,
+            opportunity_id=opportunity.id,
+            opportunity_name=opportunity.name,
+            source_id=source.id if source else None,
+        )
+
+    @staticmethod
+    def _sorted_issues(
+        issues: list[DataQualityIssueResponse] | object,
+    ) -> list[DataQualityIssueResponse]:
+        severity_rank = {
+            DataQualitySeverity.HIGH: 0,
+            DataQualitySeverity.MEDIUM: 1,
+            DataQualitySeverity.LOW: 2,
+        }
+        return sorted(
+            list(issues),
+            key=lambda issue: (severity_rank[issue.severity], issue.opportunity_name, issue.code),
+        )
+
+    @staticmethod
+    def _source_can_publish(source: Source) -> bool:
+        return (
+            source.source_type is SourceType.OFFICIAL
+            and source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
+        )
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
     @staticmethod
     def _pagination(*, total: int, limit: int, offset: int, count: int) -> PaginationMeta:

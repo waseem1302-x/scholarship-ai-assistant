@@ -1,8 +1,7 @@
 const state = {
   mode: "login",
   user: null,
-  accessToken: localStorage.getItem("saa_access_token"),
-  refreshToken: localStorage.getItem("saa_refresh_token"),
+  accessToken: null,
   opportunities: { limit: 10, offset: 0, total: 0 },
 };
 
@@ -66,16 +65,25 @@ function authHeaders() {
   return state.accessToken ? { Authorization: `Bearer ${state.accessToken}` } : {};
 }
 
+function csrfHeaders() {
+  const token = document.cookie
+    .split("; ")
+    .find((item) => item.startsWith("csrf_token="))
+    ?.split("=")[1];
+  return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {};
+}
+
 async function api(path, options = {}, retry = true) {
   const headers = {
     Accept: "application/json",
     ...(options.body ? { "Content-Type": "application/json" } : {}),
     ...authHeaders(),
+    ...(options.method && options.method !== "GET" ? csrfHeaders() : {}),
     ...(options.headers || {}),
   };
-  const response = await fetch(`/api/v1${path}`, { ...options, headers });
+  const response = await fetch(`/api/v1${path}`, { ...options, headers, credentials: "same-origin" });
 
-  if (response.status === 401 && retry && state.refreshToken) {
+  if (response.status === 401 && retry && !path.startsWith("/auth/")) {
     const refreshed = await refreshTokens();
     if (refreshed) {
       return api(path, options, false);
@@ -89,10 +97,10 @@ async function api(path, options = {}, retry = true) {
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    const detail = data?.detail;
+    const detail = data?.error?.details || data?.detail;
     const message = Array.isArray(detail)
-      ? detail.map((item) => item.msg || JSON.stringify(item)).join("; ")
-      : detail || data?.message || `Request failed with ${response.status}`;
+      ? detail.map((item) => item.message || item.msg || JSON.stringify(item)).join("; ")
+      : detail || data?.error?.message || data?.message || `Request failed with ${response.status}`;
     throw new Error(message);
   }
   return data;
@@ -102,8 +110,9 @@ async function refreshTokens() {
   try {
     const response = await fetch("/api/v1/auth/refresh", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ refresh_token: state.refreshToken }),
+      headers: { "Content-Type": "application/json", Accept: "application/json", ...csrfHeaders() },
+      body: JSON.stringify({}),
+      credentials: "same-origin",
     });
     if (!response.ok) {
       clearSession();
@@ -120,18 +129,12 @@ async function refreshTokens() {
 
 function storeSession(data) {
   state.accessToken = data.access_token;
-  state.refreshToken = data.refresh_token;
   state.user = data.user;
-  localStorage.setItem("saa_access_token", data.access_token);
-  localStorage.setItem("saa_refresh_token", data.refresh_token);
 }
 
 function clearSession() {
   state.accessToken = null;
-  state.refreshToken = null;
   state.user = null;
-  localStorage.removeItem("saa_access_token");
-  localStorage.removeItem("saa_refresh_token");
 }
 
 function updateAuthMode(mode) {
@@ -162,9 +165,7 @@ function updateSessionUi() {
 
 async function bootstrapSession() {
   if (!state.accessToken) {
-    updateSessionUi();
-    loadOpportunities();
-    return;
+    await refreshTokens();
   }
 
   try {
@@ -202,7 +203,7 @@ async function loadOpportunities() {
   const form = $("#opportunity-filters");
   const limit = Number(new FormData(form).get("limit") || state.opportunities.limit);
   state.opportunities.limit = limit;
-  const query = queryFromForm(form, { limit, offset: state.opportunities.offset });
+  const query = queryFromForm(form, { limit, offset: state.opportunities.offset, open_now: true });
 
   try {
     const data = await api(`/opportunities?${query}`);
@@ -360,7 +361,7 @@ function renderValue(value) {
     return "Not stated";
   }
   const stringValue = String(value);
-  return stringValue.includes("<a ") ? stringValue : escapeHtml(stringValue);
+  return escapeHtml(stringValue);
 }
 
 async function saveOpportunity(opportunityId) {
@@ -622,7 +623,6 @@ async function loadAdminOpportunities() {
       list.innerHTML = data.items
         .map((item) => {
           const source = item.sources?.[0] || item.source;
-          const canVerify = source && source.verification_status !== "officially_verified";
           return `
             <article class="card">
               <div class="card-header">
@@ -635,22 +635,134 @@ async function loadAdminOpportunities() {
               <p>Source: ${escapeHtml(source?.title || "No source title")} · ${humanize(source?.verification_status)}</p>
               <p>Last verified: ${formatDate(source?.last_verified_at)}</p>
               <div class="card-actions">
-                ${canVerify ? `<button class="button secondary" type="button" data-verify="${item.id}" data-source="${source.id}">Mark officially verified</button>` : ""}
+                ${reviewActionButtons(item, source)}
               </div>
             </article>
           `;
         })
         .join("");
-      list.querySelectorAll("[data-verify]").forEach((button) => {
-        button.addEventListener("click", () =>
-          verifyOpportunity(button.dataset.verify, button.dataset.source),
-        );
+      list.querySelectorAll("[data-review-action]").forEach((button) => {
+        button.addEventListener("click", () => applyReviewAction(button));
       });
     }
     setStatus("#admin-status", `${data.pagination.total} admin records loaded.`, "success");
+    await Promise.allSettled([loadReviewQueue(), loadDataQualityIssues()]);
   } catch (error) {
     setStatus("#admin-status", error.message, "error");
   }
+}
+
+async function loadReviewQueue() {
+  if (!state.user || state.user.role !== "admin") {
+    return;
+  }
+  setStatus("#review-status", "Loading review queue...");
+  try {
+    const data = await api("/admin/review-queue?limit=5&offset=0");
+    const list = $("#review-list");
+    if (!data.items.length) {
+      list.innerHTML = emptyIssue("Review queue is clear", "No high or medium priority curation work.");
+    } else {
+      list.innerHTML = data.items
+        .map((item) => {
+          const reasons = item.reasons.slice(0, 4).map(renderIssuePill).join("");
+          return `
+            <article class="issue-row">
+              <div>
+                <h4>${escapeHtml(item.opportunity.name)}</h4>
+                <p>${escapeHtml(item.opportunity.provider_name)} - ${escapeHtml(item.opportunity.country)}</p>
+              </div>
+              <div class="issue-pills">${reasons}</div>
+            </article>
+          `;
+        })
+        .join("");
+    }
+    setStatus("#review-status", `${data.pagination.total} records need review.`, "success");
+  } catch (error) {
+    setStatus("#review-status", error.message, "error");
+  }
+}
+
+async function loadDataQualityIssues() {
+  if (!state.user || state.user.role !== "admin") {
+    return;
+  }
+  setStatus("#quality-status", "Loading data-quality issues...");
+  try {
+    const data = await api("/admin/data-quality-issues?limit=8&offset=0");
+    const list = $("#quality-list");
+    if (!data.items.length) {
+      list.innerHTML = emptyIssue("No issues found", "Current admin records pass the Phase 2 checks.");
+    } else {
+      list.innerHTML = data.items
+        .map(
+          (issue) => `
+            <article class="issue-row">
+              <div>
+                <h4>${escapeHtml(issue.opportunity_name)}</h4>
+                <p>${escapeHtml(issue.message)}</p>
+              </div>
+              ${renderIssuePill(issue)}
+            </article>
+          `,
+        )
+        .join("");
+    }
+    setStatus("#quality-status", `${data.pagination.total} issues found.`, "success");
+  } catch (error) {
+    setStatus("#quality-status", error.message, "error");
+  }
+}
+
+function renderIssuePill(issue) {
+  return `<span class="pill ${escapeAttribute(issue.severity)}">${humanize(issue.code)}</span>`;
+}
+
+function emptyIssue(title, message) {
+  return `
+    <article class="issue-row">
+      <div>
+        <h4>${escapeHtml(title)}</h4>
+        <p>${escapeHtml(message)}</p>
+      </div>
+    </article>
+  `;
+}
+
+function reviewActionButtons(item, source) {
+  if (!source) {
+    return "";
+  }
+  const sourceId = escapeAttribute(source.id);
+  const opportunityId = escapeAttribute(item.id);
+  const buttons = [];
+  if (source.verification_status !== "officially_verified" || item.status !== "active") {
+    buttons.push(reviewButton("Publish", "publish", opportunityId, sourceId, "button secondary"));
+  }
+  if (source.verification_status === "conflicting_information") {
+    buttons.push(
+      reviewButton("Resolve conflict", "resolve_conflict", opportunityId, sourceId, "button secondary"),
+    );
+  }
+  buttons.push(reviewButton("Hold", "hold_for_review", opportunityId, sourceId, "ghost"));
+  buttons.push(reviewButton("Conflict", "flag_conflict", opportunityId, sourceId, "ghost"));
+  buttons.push(reviewButton("Recheck", "request_recheck", opportunityId, sourceId, "ghost"));
+  buttons.push(reviewButton("Expire", "expire", opportunityId, sourceId, "ghost"));
+  buttons.push(reviewButton("Archive", "archive", opportunityId, sourceId, "ghost"));
+  return buttons.join("");
+}
+
+function reviewButton(label, action, opportunityId, sourceId, className) {
+  return `
+    <button
+      class="${className}"
+      type="button"
+      data-review-action="${escapeAttribute(action)}"
+      data-opportunity="${opportunityId}"
+      data-source="${sourceId}"
+    >${escapeHtml(label)}</button>
+  `;
 }
 
 async function createAdminOpportunity(event) {
@@ -690,21 +802,35 @@ async function createAdminOpportunity(event) {
   }
 }
 
-async function verifyOpportunity(opportunityId, sourceId) {
+async function applyReviewAction(button) {
+  const action = button.dataset.reviewAction;
   try {
-    await api(`/admin/opportunities/${opportunityId}/verification`, {
-      method: "PATCH",
+    await api(`/admin/opportunities/${button.dataset.opportunity}/review-actions`, {
+      method: "POST",
       body: JSON.stringify({
-        source_id: sourceId,
-        verification_status: "officially_verified",
-        notes: "Verified from frontend admin console.",
+        action,
+        source_id: button.dataset.source,
+        notes: reviewActionNote(action),
       }),
     });
     await Promise.all([loadAdminOpportunities(), loadOpportunities()]);
-    setStatus("#admin-status", "Opportunity marked officially verified and active.", "success");
+    setStatus("#admin-status", `Reviewer action applied: ${humanize(action)}.`, "success");
   } catch (error) {
     setStatus("#admin-status", error.message, "error");
   }
+}
+
+function reviewActionNote(action) {
+  const notes = {
+    publish: "Published from frontend reviewer console after official source review.",
+    hold_for_review: "Held for curator review from frontend reviewer console.",
+    flag_conflict: "Flagged conflicting information from frontend reviewer console.",
+    request_recheck: "Requested source recheck from frontend reviewer console.",
+    resolve_conflict: "Resolved conflict from frontend reviewer console after official source review.",
+    expire: "Expired from frontend reviewer console after reviewing the application cycle.",
+    archive: "Archived from frontend reviewer console.",
+  };
+  return notes[action] || "Reviewer action from frontend console.";
 }
 
 function emptyCard(title, message) {
@@ -755,19 +881,17 @@ $("#auth-form").addEventListener("submit", async (event) => {
 });
 
 $("#logout-button").addEventListener("click", async () => {
-  const refreshToken = state.refreshToken;
   clearSession();
   updateAuthMode("login");
   $("#auth-form").reset();
   setStatus("#auth-status", "Logged out.", "success");
   updateSessionUi();
-  if (refreshToken) {
-    await fetch("/api/v1/auth/logout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    }).catch(() => null);
-  }
+  await fetch("/api/v1/auth/logout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...csrfHeaders() },
+    body: JSON.stringify({}),
+    credentials: "same-origin",
+  }).catch(() => null);
 });
 
 $("#opportunity-filters").addEventListener("submit", (event) => {
@@ -794,6 +918,8 @@ $("#profile-form").addEventListener("submit", saveProfile);
 $("#load-matches").addEventListener("click", loadMatches);
 $("#load-saved").addEventListener("click", loadSaved);
 $("#load-admin").addEventListener("click", loadAdminOpportunities);
+$("#load-review-queue").addEventListener("click", loadReviewQueue);
+$("#load-quality-issues").addEventListener("click", loadDataQualityIssues);
 $("#admin-create-form").addEventListener("submit", createAdminOpportunity);
 
 bootstrapSession();

@@ -5,8 +5,9 @@
 Help administrators add opportunity records in batches without weakening the
 project's source-first trust model.
 
-The importer supports structured JSON rows now. CSV support can be added later
-by parsing CSV rows into the same row contract.
+The importer supports structured JSON rows and CSV text. CSV rows are parsed
+into the same row contract so validation, duplicate detection, forced review,
+and row-level reporting stay consistent.
 
 ## Implemented API
 
@@ -37,6 +38,26 @@ Request shape:
   ]
 }
 ```
+
+CSV request shape:
+
+```json
+{
+  "source_format": "csv",
+  "dry_run": true,
+  "csv_content": "name,provider_name,country,degree_level,source_url,source_title,source_relevant_excerpt\nExample Scholarship,Example Provider,Malaysia,masters,https://example.edu/scholarship,Official scholarship page,Official source excerpt with eligibility and deadline details."
+}
+```
+
+CSV column notes:
+
+- regular opportunity fields use their API names, such as `name`,
+  `provider_name`, `country`, `degree_level`, and `funding_type`
+- source fields can use `source_url`, `source_title`,
+  `source_relevant_excerpt`, `source_type`, `source_content_hash`, and
+  `source_verification_status`
+- `required_documents` and `eligibility_warnings` use semicolon-separated
+  values
 
 Response shape:
 
@@ -99,13 +120,14 @@ new records to the database.
 
 ## Decision
 
-Build JSON batch import first, not direct CSV file upload.
+Build JSON batch import first, then add CSV parsing as a layer that maps
+spreadsheet columns into the same validated row format.
 
 ## Reason
 
 The hard part is not reading CSV bytes. The hard part is trusted validation,
-duplicate detection, forced review, and row-level reporting. A future CSV parser
-can map spreadsheet columns into the same JSON row format.
+duplicate detection, forced review, and row-level reporting. The CSV parser now
+feeds that same JSON row format instead of bypassing it.
 
 ## Alternative considered
 
@@ -113,9 +135,9 @@ Add multipart CSV upload immediately.
 
 ## Tradeoff
 
-Direct CSV upload would feel more complete in the UI, but it would add file
-handling, column mapping, encoding issues, and spreadsheet edge cases before the
-core ingestion rules are proven.
+Multipart CSV upload would feel more complete in the UI, but it would add file
+handling before the core parser and safety behavior need it. The API accepts
+CSV text now; file upload UI can wrap this later.
 
 ## What this teaches
 
@@ -140,14 +162,17 @@ core promise: public records must be verified against official sources.
 - Existing duplicates are skipped without failing the whole batch.
 - Invalid rows return row-level validation errors.
 - Duplicate rows inside the same batch are detected.
+- CSV rows are parsed into the same safe import contract.
+- Formula-like CSV cells are neutralized and reported as row warnings.
 
 ## Known limitations
 
-- No direct `.csv` file upload yet.
+- No multipart `.csv` file upload UI yet.
 - No column-mapping UI yet.
 - No persistent import-job history table yet.
 - No assisted webpage/PDF extraction yet.
-- No scheduled source monitoring yet.
+- Deployment scheduling for source monitoring depends on the eventual hosting
+  environment.
 
 ## Recommended next slice
 

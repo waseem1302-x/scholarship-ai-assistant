@@ -1,6 +1,7 @@
 import getpass
 import os
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -24,12 +25,14 @@ def upsert_admin(session: Session, *, email: str, password: str) -> User:
             password_hash=hash_password(password),
             role=UserRole.ADMIN,
             is_active=True,
+            email_verified_at=datetime.now(UTC),
         )
         repository.add_user(user)
     else:
         user.role = UserRole.ADMIN
         user.is_active = True
         user.password_hash = hash_password(password)
+        user.email_verified_at = datetime.now(UTC)
 
     session.commit()
     session.refresh(user)

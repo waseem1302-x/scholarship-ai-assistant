@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorResponse
 from app.db.session import get_db
-from app.modules.auth.dependencies import require_roles
-from app.modules.auth.models import User, UserRole
+from app.modules.auth.dependencies import require_admin_step_up
+from app.modules.auth.models import User
 from app.modules.opportunities.models import (
     DegreeLevel,
     FundingType,
@@ -18,11 +18,16 @@ from app.modules.opportunities.models import (
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
     AdminOpportunitySearchResponse,
+    DataQualityIssueSearchResponse,
     OpportunityCreate,
     OpportunityDetailResponse,
     OpportunityImportRequest,
     OpportunityImportResponse,
     OpportunitySearchResponse,
+    ReviewActionRequest,
+    ReviewQueueResponse,
+    SourceCheckRequest,
+    SourceCheckResponse,
     VerificationUpdate,
 )
 from app.modules.opportunities.service import OpportunityService
@@ -52,7 +57,7 @@ def get_opportunity_service(session: Annotated[Session, Depends(get_db)]) -> Opp
     return OpportunityService(session)
 
 
-AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
+AdminUser = Annotated[User, Depends(require_admin_step_up)]
 
 
 @router.post(
@@ -109,6 +114,34 @@ def list_admin_opportunities(
     )
 
 
+@router.get(
+    "/admin/review-queue",
+    response_model=ReviewQueueResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
+)
+def list_review_queue(
+    _admin: AdminUser,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> ReviewQueueResponse:
+    return service.list_review_queue(limit=limit, offset=offset)
+
+
+@router.get(
+    "/admin/data-quality-issues",
+    response_model=DataQualityIssueSearchResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
+)
+def list_data_quality_issues(
+    _admin: AdminUser,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DataQualityIssueSearchResponse:
+    return service.list_data_quality_issues(limit=limit, offset=offset)
+
+
 @router.post(
     "/admin/opportunities/import",
     response_model=OpportunityImportResponse,
@@ -124,6 +157,44 @@ def import_opportunities(
     service: Annotated[OpportunityService, Depends(get_opportunity_service)],
 ) -> OpportunityImportResponse:
     return service.import_opportunities(payload, created_by=admin)
+
+
+@router.post(
+    "/admin/opportunities/{opportunity_id}/review-actions",
+    response_model=AdminOpportunityResponse,
+    responses={
+        401: AUTHENTICATION_RESPONSE,
+        403: FORBIDDEN_RESPONSE,
+        404: NOT_FOUND_RESPONSE,
+        422: VALIDATION_RESPONSE,
+    },
+)
+def apply_review_action(
+    opportunity_id: uuid.UUID,
+    payload: ReviewActionRequest,
+    admin: AdminUser,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> AdminOpportunityResponse:
+    return service.apply_review_action(opportunity_id, payload, reviewed_by=admin)
+
+
+@router.post(
+    "/admin/sources/{source_id}/checks",
+    response_model=SourceCheckResponse,
+    responses={
+        401: AUTHENTICATION_RESPONSE,
+        403: FORBIDDEN_RESPONSE,
+        404: NOT_FOUND_RESPONSE,
+        422: VALIDATION_RESPONSE,
+    },
+)
+def record_source_check(
+    source_id: uuid.UUID,
+    payload: SourceCheckRequest,
+    admin: AdminUser,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> SourceCheckResponse:
+    return service.record_source_check(source_id, payload, checked_by=admin)
 
 
 @router.patch(
@@ -164,6 +235,7 @@ def search_opportunities(
     application_fee: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     english_requirement: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     verified_after: datetime | None = None,
+    open_now: bool = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> OpportunitySearchResponse:
@@ -180,6 +252,7 @@ def search_opportunities(
         application_fee=application_fee,
         english_requirement=english_requirement,
         verified_after=verified_after,
+        open_now=open_now,
         limit=limit,
         offset=offset,
     )

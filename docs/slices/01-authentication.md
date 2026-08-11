@@ -67,15 +67,16 @@ student profiles or allowing administrators to curate public opportunity data.
 - PostgreSQL migration SQL was generated offline for review.
 - OpenAPI generation succeeds with seven paths in the current slice.
 
-The local machine does not have Docker or Git on its command path, so the Docker
-Compose workflow and Git state were not executed here. PostgreSQL migration
-execution remains a next-environment check; SQLite is only the isolated test
-database, not the production storage decision.
+Docker Compose and PostgreSQL migration execution have since been verified
+locally as part of the Phase 1 release check.
 
 ## Known limitations
 
-- No email ownership verification, password reset, MFA, or compromised-password check yet.
-- No request-rate limiter is implemented yet.
+- Email verification and password reset are implemented with hashed, single-use
+  token records; production email sending needs a configured provider.
+- The request-rate limiter is in-process only; a shared backend is required for
+  multiple application instances.
+- MFA/WebAuthn and compromised-password checks are not implemented yet.
 - Access tokens are not denylisted on logout; their maximum remaining life is 15 minutes.
 - Administrator assignment needs a trusted bootstrap/runbook before admin CRUD is built.
 - The test client currently emits one upstream Starlette deprecation warning about its HTTP

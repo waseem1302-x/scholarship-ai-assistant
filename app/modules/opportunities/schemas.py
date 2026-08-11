@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -7,13 +9,65 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from app.modules.opportunities.models import (
+    ApplicationWindowState,
     DataConfidence,
     DegreeLevel,
+    EligibilityOperator,
+    EligibilityRuleType,
     FundingType,
     OpportunityStatus,
     SourceType,
     VerificationStatus,
 )
+
+
+class EligibilityRuleCreate(BaseModel):
+    rule_type: EligibilityRuleType
+    operator: EligibilityOperator
+    value: str | int | float | list[str]
+    unit: str | None = Field(default=None, max_length=64)
+    grading_scale: Decimal | None = Field(default=None, gt=0, le=100)
+    required: bool = True
+    source_id: uuid.UUID | None = None
+    confidence: DataConfidence = DataConfidence.MEDIUM
+    curator_notes: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_rule_shape(self) -> EligibilityRuleCreate:
+        set_operators = {EligibilityOperator.IN, EligibilityOperator.NOT_IN}
+        numeric_rules = {
+            EligibilityRuleType.CGPA,
+            EligibilityRuleType.PERCENTAGE,
+            EligibilityRuleType.IELTS,
+            EligibilityRuleType.TOEFL,
+            EligibilityRuleType.WORK_EXPERIENCE_MONTHS,
+        }
+        if self.operator in set_operators and not isinstance(self.value, list):
+            raise ValueError("IN and NOT_IN rules require a list value")
+        if self.rule_type in numeric_rules and not isinstance(self.value, (int, float)):
+            raise ValueError("Numeric eligibility rules require a numeric value")
+        if self.rule_type is EligibilityRuleType.CGPA and self.grading_scale is None:
+            raise ValueError("CGPA rules require a grading_scale")
+        return self
+
+
+class OpportunityCycleCreate(BaseModel):
+    intake_year: int | None = Field(default=None, ge=2000, le=2100)
+    application_opening_date: datetime | None = None
+    application_deadline: datetime | None = None
+    timezone: str = Field(default="UTC", min_length=1, max_length=64)
+    is_rolling: bool = False
+    is_archived: bool = False
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> OpportunityCycleCreate:
+        if (
+            self.application_opening_date
+            and self.application_deadline
+            and self.application_deadline < self.application_opening_date
+        ):
+            raise ValueError("Application deadline cannot be before the opening date")
+        return self
 
 
 class SourceCreate(BaseModel):
@@ -57,6 +111,8 @@ class OpportunityCreate(BaseModel):
     data_confidence: DataConfidence = DataConfidence.LOW
     notes: str | None = None
     eligibility_warnings: list[str] = Field(default_factory=list)
+    eligibility_rules: list[EligibilityRuleCreate] = Field(default_factory=list)
+    application_cycles: list[OpportunityCycleCreate] = Field(default_factory=list)
     source: SourceCreate
 
     @field_validator("name", "provider_name", "university_name", "country", mode="before")
@@ -75,7 +131,7 @@ class OpportunityCreate(BaseModel):
         return [item.strip() for item in values if item.strip()]
 
     @model_validator(mode="after")
-    def validate_dates_and_funding(self) -> "OpportunityCreate":
+    def validate_dates_and_funding(self) -> OpportunityCreate:
         if (
             self.application_opening_date is not None
             and self.application_deadline is not None
@@ -105,6 +161,22 @@ class VerificationUpdate(BaseModel):
     notes: str | None = None
 
 
+class ReviewAction(StrEnum):
+    PUBLISH = "publish"
+    HOLD_FOR_REVIEW = "hold_for_review"
+    FLAG_CONFLICT = "flag_conflict"
+    REQUEST_RECHECK = "request_recheck"
+    RESOLVE_CONFLICT = "resolve_conflict"
+    EXPIRE = "expire"
+    ARCHIVE = "archive"
+
+
+class ReviewActionRequest(BaseModel):
+    action: ReviewAction
+    source_id: uuid.UUID | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class ImportFormat(StrEnum):
     JSON = "json"
     CSV = "csv"
@@ -120,7 +192,16 @@ class ImportRowStatus(StrEnum):
 class OpportunityImportRequest(BaseModel):
     source_format: ImportFormat = ImportFormat.JSON
     dry_run: bool = False
-    rows: list[dict[str, Any]] = Field(min_length=1, max_length=100)
+    rows: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    csv_content: str | None = Field(default=None, max_length=200_000)
+
+    @model_validator(mode="after")
+    def validate_import_payload(self) -> OpportunityImportRequest:
+        if self.source_format is ImportFormat.JSON and not self.rows:
+            raise ValueError("JSON imports require at least one row")
+        if self.source_format is ImportFormat.CSV and not (self.csv_content or "").strip():
+            raise ValueError("CSV imports require csv_content")
+        return self
 
 
 class OpportunityImportRowResult(BaseModel):
@@ -153,6 +234,75 @@ class SourceResponse(BaseModel):
     last_verified_at: datetime | None
 
 
+class SourceExcerptCreate(BaseModel):
+    section_label: str | None = Field(default=None, max_length=255)
+    locator: str | None = Field(default=None, max_length=255)
+    text: str = Field(min_length=20)
+    content_hash: str | None = Field(default=None, min_length=32, max_length=64)
+
+    @field_validator("text", "section_label", "locator", mode="before")
+    @classmethod
+    def strip_excerpt_text(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
+
+
+class SourceExcerptResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    source_id: uuid.UUID
+    section_label: str | None
+    locator: str | None
+    text: str
+    content_hash: str | None
+    captured_at: datetime
+
+
+class SourceCheckRequest(BaseModel):
+    content_hash: str | None = Field(default=None, min_length=32, max_length=64)
+    observed_at: datetime | None = None
+    change_summary: str | None = Field(default=None, max_length=2000)
+    excerpt: SourceExcerptCreate | None = None
+
+
+class SourceCheckResponse(BaseModel):
+    source: SourceResponse
+    changed: bool
+    previous_hash: str | None
+    current_hash: str | None
+    public_visibility_blocked: bool
+    excerpt: SourceExcerptResponse | None = None
+
+
+class PaginationMeta(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    count: int
+    has_next: bool
+    has_previous: bool
+
+
+class DataQualitySeverity(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class DataQualityIssueResponse(BaseModel):
+    code: str
+    severity: DataQualitySeverity
+    message: str
+    opportunity_id: uuid.UUID
+    opportunity_name: str
+    source_id: uuid.UUID | None = None
+
+
+class DataQualityIssueSearchResponse(BaseModel):
+    items: list[DataQualityIssueResponse]
+    pagination: PaginationMeta
+
+
 class OpportunitySummaryResponse(BaseModel):
     id: uuid.UUID
     name: str
@@ -166,15 +316,8 @@ class OpportunitySummaryResponse(BaseModel):
     verification_status: VerificationStatus
     last_verified_at: datetime | None
     official_source_url: str
-
-
-class PaginationMeta(BaseModel):
-    total: int
-    limit: int
-    offset: int
-    count: int
-    has_next: bool
-    has_previous: bool
+    application_window_state: ApplicationWindowState
+    source_is_fresh: bool
 
 
 class OpportunitySearchResponse(BaseModel):
@@ -204,6 +347,7 @@ class OpportunityDetailResponse(OpportunitySummaryResponse):
     notes: str | None
     eligibility_warnings: list[str]
     source: SourceResponse
+    eligibility_rules: list[EligibilityRuleCreate]
 
 
 class AdminOpportunityResponse(OpportunityDetailResponse):
@@ -212,4 +356,14 @@ class AdminOpportunityResponse(OpportunityDetailResponse):
 
 class AdminOpportunitySearchResponse(BaseModel):
     items: list[AdminOpportunityResponse]
+    pagination: PaginationMeta
+
+
+class ReviewQueueItemResponse(BaseModel):
+    opportunity: AdminOpportunityResponse
+    reasons: list[DataQualityIssueResponse]
+
+
+class ReviewQueueResponse(BaseModel):
+    items: list[ReviewQueueItemResponse]
     pagination: PaginationMeta

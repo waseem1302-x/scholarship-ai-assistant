@@ -18,7 +18,8 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository is at **vertical slice 10 complete: frontend MVP and verified-catalogue polish**.
+The repository has completed **Phase 1: correctness and security repairs**.
+Phase 2 has started with the opportunity data-platform trust layer.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -49,6 +50,8 @@ Implemented so far:
 - admin JSON batch import for opportunities with row-level validation,
   duplicate detection, data-quality warnings, dry-run support, and forced human
   review before public visibility
+- CSV batch import parsing that maps spreadsheet columns into the same
+  review-safe import contract and reports row-level warnings
 - curated verified seed dataset with real opportunities from official sources
   and a CLI loader for local demos
 - expanded database-backed public and admin opportunity filters for field,
@@ -63,11 +66,28 @@ Implemented so far:
   deadlines, eligibility warnings, official evidence, and last verification
 - frontend regression tests for the static product shell, required flows,
   encoding artifacts, and duplicate JavaScript function definitions
+- Playwright/Chromium end-to-end tests for registration, catalogue loading,
+  logout, and keyboard form navigation
 - expanded verified seed dataset with 16 official-source records across major
   destination systems such as Chevening, Commonwealth, Fulbright, DAAD, Eiffel,
   Swiss Excellence, Erasmus Mundus, CSC, MEXT, GKS, Turkiye Scholarships,
   Australia Awards, RTP, Manaaki, and ADB-JSP
 - Docker Compose, lint configuration, and automated tests
+- effective application-window states with a safe `open_now` catalogue filter
+- historical opportunity cycles and structured eligibility-rule foundation
+- hard eligibility gates that suppress fit scores for failed requirements
+- production secret validation, security headers, auth abuse limiting, and
+  cookie-based browser refresh sessions
+- immutable source-excerpt snapshots for official evidence captured during
+  curation
+- admin source-check workflow that records content-hash changes, creates audit
+  history, and returns changed sources to `needs_review`
+- scheduled source-monitor runner with HTTPS-only fetching, private-network
+  blocking, timeouts, byte limits, and dry-run support
+- admin reviewer actions for publishing, holding, flagging conflicts,
+  requesting rechecks, resolving conflicts, expiring, and archiving records
+- admin review queue and data-quality issue APIs plus frontend panels for
+  curation work
 
 ## Quick start
 
@@ -150,7 +170,18 @@ POST /api/v1/auth/login
 GET  /api/v1/auth/me              Authorization: Bearer <access token>
 POST /api/v1/auth/refresh
 POST /api/v1/auth/logout
+POST /api/v1/auth/email-verifications       Authorization: Bearer <access token>
+POST /api/v1/auth/email-verifications/confirm
+POST /api/v1/auth/password-resets
+POST /api/v1/auth/password-resets/confirm
+POST /api/v1/auth/admin/step-up             Authorization: Bearer <access token>
 ```
+
+Verification and reset tokens are hashed, single-use, and expiring. In local
+development/test the API returns a debug token so the flow can be tested. In
+production it intentionally returns no token until a transactional email sender
+is configured. Production administrator changes additionally require a
+password re-authentication token supplied in `X-Admin-Step-Up`.
 
 Registration creates students only. Administrator roles must be assigned by a
 trusted operational process; public clients cannot self-promote.
@@ -170,8 +201,12 @@ registration to the API.
 ```text
 POST  /api/v1/admin/opportunities                       admin only
 GET   /api/v1/admin/opportunities                       admin only
-POST  /api/v1/admin/opportunities/import                admin only
+POST  /api/v1/admin/opportunities/import                admin only, JSON or CSV text
 PATCH /api/v1/admin/opportunities/{id}/verification     admin only
+POST  /api/v1/admin/opportunities/{id}/review-actions   admin only
+GET   /api/v1/admin/review-queue                        admin only
+GET   /api/v1/admin/data-quality-issues                 admin only
+POST  /api/v1/admin/sources/{id}/checks                 admin only
 GET   /api/v1/opportunities                             public verified search
 GET   /api/v1/opportunities/{id}                        public verified detail
 ```
@@ -181,14 +216,36 @@ opportunity must have an official source marked `officially_verified`.
 
 Imported opportunities are always created as drafts with sources marked
 `needs_review`, even when the import file claims they are active or verified.
-This keeps imported data out of public search until a human curator verifies the
-official source.
+This applies to JSON rows and CSV text imports, keeping imported data out of
+public search until a human curator verifies the official source.
+
+When a source-check records a changed content hash, the source is returned to
+`needs_review`. Public search then hides the record until a curator verifies the
+official source again.
+
+Run due source monitoring locally with:
+
+```bash
+python -m app.cli.monitor_sources
+```
+
+Useful environment controls:
+
+```bash
+APP_SOURCE_MONITOR_DRY_RUN=true
+APP_SOURCE_MONITOR_LIMIT=20
+APP_SOURCE_MONITOR_INTERVAL_DAYS=7
+```
 
 Public search supports structured filters such as `country`, `degree_level`,
 `funding_type`, `field`, `nationality`, `intake_year`, `deadline_after`,
 `deadline_before`, `funding_coverage`, `application_fee`, `english_requirement`,
 and `verified_after`. Admin search also supports `status`,
 `verification_status`, `needs_review`, `provider_query`, and `search_query`.
+
+Use `open_now=true` for the authoritative currently-open view. It excludes
+future, closed, archived, unknown-deadline, and stale-source records; historical
+records remain discoverable when a user intentionally searches without it.
 
 Opportunity list responses use this envelope:
 
@@ -261,23 +318,28 @@ verified flagship sample, not a claim to include every scholarship worldwide.
 
 ## Important limitations
 
-- CSV files are not parsed directly yet. The importer uses a JSON row contract
-  that a future CSV parser can feed into.
+- CSV text is parsed directly through the admin import endpoint. Multipart file
+  upload UI and custom column mapping are not implemented yet.
+- Source checks can be recorded through the admin API or monitor runner, but
+  production scheduling still depends on the eventual hosting environment.
 - Seed opportunities were verified on 2026-07-22 and need re-verification before
   any public production use.
 - Matching currently uses explicit baseline rules and simple parsing for some
   free-text requirements. Structured eligibility rules come next.
 - Saved opportunities do not send reminders yet. Notification logic belongs in
   a later slice.
-- Email ownership is not yet verified; email delivery belongs in a later slice.
+- Email ownership verification and password reset are implemented. A
+  transactional email provider still must be configured before public release.
 - Access tokens remain valid for their short lifetime after logout. Logout
   revokes the refresh-token family; a future high-security mode can add a token
   version check on every request.
 - Seed records are manually curated; they are not an automatically refreshed
   scholarship database and do not represent every opportunity in every country.
 - The frontend is an MVP product surface, not the final visual system. It uses
-  browser local storage for local demo tokens and should be hardened before
-  production use.
+  an in-memory access token and a cookie-backed refresh session. Email
+  verification and password reset are implemented, but a transactional email
+  provider, MFA/WebAuthn, and a distributed rate-limit store are still required
+  before public production use.
 - Deployment, public users, and evaluation metrics have not been claimed.
 
 ## Documentation
@@ -293,5 +355,8 @@ verified flagship sample, not a claim to include every scholarship worldwide.
 - [Expanded structured search slice handoff](docs/slices/08-expanded-search.md)
 - [Paginated search responses slice handoff](docs/slices/09-paginated-search.md)
 - [Frontend MVP slice handoff](docs/slices/10-frontend-mvp.md)
+- [Phase 1 correctness/security increment](docs/slices/11-phase1-correctness-security.md)
+- [Phase 2 opportunity data platform increment](docs/slices/12-phase2-opportunity-data-platform.md)
+- [Phased implementation roadmap](docs/implementation-roadmap.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)

@@ -1,12 +1,14 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.cli.create_admin import upsert_admin
 from app.core.security import hash_password
-from app.modules.auth.models import User, UserRole
+from app.modules.auth.models import AuditLog, User, UserRole
+from app.modules.opportunities.models import SourceExcerpt, VerificationRecord
 
 ADMIN_EMAIL = "admin@example.com"
 STUDENT_EMAIL = "student-catalog@example.com"
@@ -158,6 +160,57 @@ def test_unverified_opportunity_is_hidden_until_admin_verifies_source(
     assert public.status_code == 200
     assert response_items(public)[0]["official_source_url"] == created["official_source_url"]
     assert response_pagination(public)["total"] == 1
+
+
+def test_open_now_excludes_closed_future_and_unknown_deadline_records(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    now = datetime.now(UTC)
+    records = [
+        create_opportunity(
+            client,
+            headers,
+            name="Open-now scholarship",
+            application_opening_date=(now - timedelta(days=1)).isoformat(),
+            application_deadline=(now + timedelta(days=1)).isoformat(),
+        ),
+        create_opportunity(
+            client,
+            headers,
+            name="Closed scholarship",
+            application_deadline=(now - timedelta(seconds=1)).isoformat(),
+        ),
+        create_opportunity(
+            client,
+            headers,
+            name="Future scholarship",
+            application_opening_date=(now + timedelta(days=1)).isoformat(),
+            application_deadline=(now + timedelta(days=2)).isoformat(),
+        ),
+        create_opportunity(
+            client,
+            headers,
+            name="Unknown-deadline scholarship",
+            application_opening_date=None,
+            application_deadline=None,
+        ),
+    ]
+    for record in records:
+        assert (
+            client.patch(
+                f"/api/v1/admin/opportunities/{record['id']}/verification",
+                json={"verification_status": "officially_verified"},
+                headers=headers,
+            ).status_code
+            == 200
+        )
+
+    response = client.get("/api/v1/opportunities?open_now=true")
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response_items(response)] == ["Open-now scholarship"]
+    assert response_items(response)[0]["application_window_state"] == "open"
 
 
 def test_public_search_filters_verified_opportunities(
@@ -561,6 +614,364 @@ def test_import_detects_duplicate_rows_inside_same_batch(
     assert body["duplicate_count"] == 1
     assert body["results"][1]["status"] == "skipped_duplicate"
     assert "same import batch" in body["results"][1]["errors"][0]
+
+
+def test_csv_import_parses_rows_as_drafts_requiring_review(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    csv_content = (
+        "name,provider_name,country,degree_level,funding_type,tuition_coverage,"
+        "application_deadline,required_documents,english_language_requirement,"
+        "minimum_academic_requirement,status,source_url,source_title,"
+        "source_relevant_excerpt,source_verification_status\n"
+        "CSV Review Scholarship,CSV Provider,Malaysia,masters,full,"
+        "Full tuition stated by the official source,2027-05-30T23:59:59Z,"
+        "Transcript;Passport,English proof may be required,"
+        "Strong academic record required,active,https://example.edu/csv-review,"
+        "CSV official source,"
+        "Official source lists scholarship deadline funding eligibility and application route.,"
+        "officially_verified\n"
+    )
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={"source_format": "csv", "csv_content": csv_content},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_format"] == "csv"
+    assert body["total_rows"] == 1
+    assert body["imported_count"] == 1
+    assert body["results"][0]["row_number"] == 2
+    assert any("forced to draft" in warning for warning in body["results"][0]["warnings"])
+    assert any("forced to needs_review" in warning for warning in body["results"][0]["warnings"])
+
+    admin_list = client.get("/api/v1/admin/opportunities", headers=headers)
+    imported = response_items(admin_list)[0]
+    assert imported["name"] == "CSV Review Scholarship"
+    assert imported["status"] == "draft"
+    assert imported["verification_status"] == "needs_review"
+    assert imported["required_documents"] == ["Transcript", "Passport"]
+    assert response_items(client.get("/api/v1/opportunities")) == []
+
+
+def test_csv_import_dry_run_reports_formula_cell_neutralization(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    csv_content = (
+        "name,provider_name,country,degree_level,funding_type,tuition_coverage,"
+        "source_url,source_title,source_relevant_excerpt\n"
+        "Formula CSV Scholarship,Formula Provider,Malaysia,masters,full,"
+        "Full tuition stated by the official source,https://example.edu/formula,"
+        "=Official source,"
+        "Official source lists scholarship deadline funding eligibility and application route.\n"
+    )
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={"source_format": "csv", "dry_run": True, "csv_content": csv_content},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["imported_count"] == 0
+    assert body["results"][0]["status"] == "dry_run_ready"
+    assert any(
+        "Formula-like value was neutralized" in warning
+        for warning in body["results"][0]["warnings"]
+    )
+    assert response_items(client.get("/api/v1/admin/opportunities", headers=headers)) == []
+
+
+def test_csv_import_reports_row_level_validation_errors(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    csv_content = (
+        "name,provider_name,country,degree_level,funding_type,source_title,"
+        "source_relevant_excerpt\n"
+        "Broken CSV Scholarship,Broken Provider,Malaysia,masters,unknown,"
+        "Broken official source,"
+        "Official source excerpt is present but URL is intentionally missing.\n"
+    )
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={"source_format": "csv", "csv_content": csv_content},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["failed_count"] == 1
+    assert body["results"][0]["row_number"] == 2
+    assert body["results"][0]["status"] == "failed_validation"
+    assert any("source.url" in error for error in body["results"][0]["errors"])
+
+
+def test_admin_data_quality_dashboard_reports_review_reasons(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = create_opportunity(
+        client,
+        headers,
+        name="Quality Review Scholarship",
+        application_deadline=None,
+        funding_type="unknown",
+        required_documents=[],
+        english_language_requirement=None,
+        minimum_academic_requirement=None,
+        data_confidence="low",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/quality-review",
+        },
+    )
+
+    issues = client.get("/api/v1/admin/data-quality-issues", headers=headers)
+    queue = client.get("/api/v1/admin/review-queue", headers=headers)
+
+    assert issues.status_code == 200
+    issue_codes = {item["code"] for item in response_items(issues)}
+    assert {
+        "source_requires_review",
+        "source_never_verified",
+        "deadline_missing",
+        "funding_type_unknown",
+        "required_documents_missing",
+        "english_requirement_missing",
+        "academic_requirement_missing",
+        "low_data_confidence",
+    }.issubset(issue_codes)
+    assert issues.json()["pagination"]["total"] >= 8
+
+    assert queue.status_code == 200
+    assert response_items(queue)[0]["opportunity"]["id"] == created["id"]
+    assert any(reason["severity"] == "high" for reason in response_items(queue)[0]["reasons"])
+
+
+def test_source_hash_change_blocks_public_visibility_until_reverified(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = create_opportunity(
+        client,
+        headers,
+        name="Changed Source Scholarship",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/changed-source",
+            "content_hash": "a" * 64,
+        },
+    )
+    verified = client.patch(
+        f"/api/v1/admin/opportunities/{created['id']}/verification",
+        json={"verification_status": "officially_verified"},
+        headers=headers,
+    )
+    assert verified.status_code == 200
+    assert response_items(client.get("/api/v1/opportunities"))[0]["id"] == created["id"]
+
+    source_id = created["sources"][0]["id"]
+    check = client.post(
+        f"/api/v1/admin/sources/{source_id}/checks",
+        json={
+            "content_hash": "b" * 64,
+            "change_summary": "Official page content changed during monitoring.",
+            "excerpt": {
+                "section_label": "Eligibility",
+                "locator": "#eligibility",
+                "text": (
+                    "Official source now shows changed scholarship eligibility "
+                    "and deadline language for curator review."
+                ),
+            },
+        },
+        headers=headers,
+    )
+
+    assert check.status_code == 200
+    body = check.json()
+    assert body["changed"] is True
+    assert body["previous_hash"] == "a" * 64
+    assert body["current_hash"] == "b" * 64
+    assert body["public_visibility_blocked"] is True
+    assert body["source"]["verification_status"] == "needs_review"
+    assert body["excerpt"]["section_label"] == "Eligibility"
+
+    public = client.get("/api/v1/opportunities")
+    assert public.status_code == 200
+    assert response_items(public) == []
+
+    records = db_session.scalars(select(VerificationRecord)).all()
+    assert any(record.metadata_json.get("changed") is True for record in records)
+    excerpts = db_session.scalars(select(SourceExcerpt)).all()
+    assert len(excerpts) == 1
+    assert excerpts[0].content_hash == "b" * 64
+
+
+def test_admin_review_action_publish_and_flag_conflict_control_public_visibility(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = create_opportunity(
+        client,
+        headers,
+        name="Reviewer Action Scholarship",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/reviewer-action",
+        },
+    )
+    source_id = created["sources"][0]["id"]
+
+    published = client.post(
+        f"/api/v1/admin/opportunities/{created['id']}/review-actions",
+        json={
+            "action": "publish",
+            "source_id": source_id,
+            "notes": "Official source checked and ready for public search.",
+        },
+        headers=headers,
+    )
+    assert published.status_code == 200
+    assert published.json()["status"] == "active"
+    assert published.json()["verification_status"] == "officially_verified"
+    assert response_items(client.get("/api/v1/opportunities"))[0]["id"] == created["id"]
+
+    conflict = client.post(
+        f"/api/v1/admin/opportunities/{created['id']}/review-actions",
+        json={
+            "action": "flag_conflict",
+            "source_id": source_id,
+            "notes": "Deadline differs between official pages.",
+        },
+        headers=headers,
+    )
+
+    assert conflict.status_code == 200
+    assert conflict.json()["status"] == "draft"
+    assert conflict.json()["verification_status"] == "conflicting_information"
+    assert response_items(client.get("/api/v1/opportunities")) == []
+
+    records = db_session.scalars(select(VerificationRecord)).all()
+    assert [record.metadata_json.get("action") for record in records] == [
+        "publish",
+        "flag_conflict",
+    ]
+    audit_logs = db_session.scalars(select(AuditLog)).all()
+    assert any(log.action == "opportunity_review_action" for log in audit_logs)
+
+
+def test_admin_review_action_resolves_conflict_and_request_recheck(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = create_opportunity(
+        client,
+        headers,
+        name="Resolve Conflict Scholarship",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/resolve-conflict",
+        },
+    )
+    source_id = created["sources"][0]["id"]
+    assert (
+        client.post(
+            f"/api/v1/admin/opportunities/{created['id']}/review-actions",
+            json={
+                "action": "flag_conflict",
+                "source_id": source_id,
+                "notes": "Funding details conflict with another source.",
+            },
+            headers=headers,
+        ).status_code
+        == 200
+    )
+
+    resolved = client.post(
+        f"/api/v1/admin/opportunities/{created['id']}/review-actions",
+        json={
+            "action": "resolve_conflict",
+            "source_id": source_id,
+            "notes": "Official source now matches the structured record.",
+        },
+        headers=headers,
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["status"] == "active"
+    assert resolved.json()["verification_status"] == "officially_verified"
+
+    recheck = client.post(
+        f"/api/v1/admin/opportunities/{created['id']}/review-actions",
+        json={
+            "action": "request_recheck",
+            "source_id": source_id,
+            "notes": "Source monitor found a changed hash.",
+        },
+        headers=headers,
+    )
+    assert recheck.status_code == 200
+    assert recheck.json()["status"] == "draft"
+    assert recheck.json()["verification_status"] == "needs_review"
+    assert response_items(client.get("/api/v1/opportunities")) == []
+
+
+def test_admin_review_actions_expire_archive_and_require_notes(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = create_opportunity(
+        client,
+        headers,
+        name="Expire Archive Scholarship",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/expire-archive",
+        },
+    )
+    source_id = created["sources"][0]["id"]
+
+    missing_notes = client.post(
+        f"/api/v1/admin/opportunities/{created['id']}/review-actions",
+        json={"action": "expire", "source_id": source_id},
+        headers=headers,
+    )
+    assert missing_notes.status_code == 422
+    assert missing_notes.json()["error"]["code"] == "review_notes_required"
+
+    expired = client.post(
+        f"/api/v1/admin/opportunities/{created['id']}/review-actions",
+        json={
+            "action": "expire",
+            "source_id": source_id,
+            "notes": "Official application cycle is closed.",
+        },
+        headers=headers,
+    )
+    assert expired.status_code == 200
+    assert expired.json()["status"] == "expired"
+    assert expired.json()["verification_status"] == "expired"
+
+    archived = client.post(
+        f"/api/v1/admin/opportunities/{created['id']}/review-actions",
+        json={
+            "action": "archive",
+            "source_id": source_id,
+            "notes": "Record is no longer maintained.",
+        },
+        headers=headers,
+    )
+    assert archived.status_code == 200
+    assert archived.json()["status"] == "archived"
+    assert archived.json()["verification_status"] == "archived"
 
 
 def test_full_funding_requires_structured_coverage_evidence(

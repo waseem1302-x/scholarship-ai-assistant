@@ -14,7 +14,15 @@ from app.core.security import (
     hash_refresh_token,
     verify_password,
 )
-from app.modules.auth.models import RefreshToken, User, UserRole
+from app.modules.auth.models import (
+    AdminStepUpToken,
+    AuditLog,
+    EmailVerificationToken,
+    PasswordResetToken,
+    RefreshToken,
+    User,
+    UserRole,
+)
 from app.modules.auth.repository import AuthRepository
 
 
@@ -24,6 +32,12 @@ class IssuedTokens:
     refresh_token: str
     expires_in: int
     user: User
+
+
+@dataclass(frozen=True)
+class IssuedAccountToken:
+    raw_token: str
+    expires_at: datetime
 
 
 class AuthService:
@@ -105,6 +119,54 @@ class AuthService:
             self.repository.revoke_family(token.family_id)
             self.session.commit()
 
+    def issue_email_verification(self, user: User) -> IssuedAccountToken:
+        issued = self._new_account_token(
+            EmailVerificationToken, user.id, self.settings.email_verification_ttl_minutes
+        )
+        self.repository.add(issued[0])
+        self._audit(user.id, "email_verification_requested", "user", str(user.id))
+        self.session.commit()
+        return IssuedAccountToken(issued[1], issued[0].expires_at)
+
+    def confirm_email_verification(self, raw_token: str) -> User:
+        token = self.repository.get_email_verification_token(hash_refresh_token(raw_token))
+        user = self._consume_account_token(token, "email_verification_confirmed")
+        user.email_verified_at = datetime.now(UTC)
+        self.session.commit()
+        return user
+
+    def request_password_reset(self, email: str) -> IssuedAccountToken | None:
+        user = self.repository.get_user_by_email(email)
+        if user is None or not user.is_active:
+            return None
+        issued = self._new_account_token(
+            PasswordResetToken, user.id, self.settings.password_reset_ttl_minutes
+        )
+        self.repository.add(issued[0])
+        self._audit(user.id, "password_reset_requested", "user", str(user.id))
+        self.session.commit()
+        return IssuedAccountToken(issued[1], issued[0].expires_at)
+
+    def confirm_password_reset(self, raw_token: str, new_password: str) -> None:
+        token = self.repository.get_password_reset_token(hash_refresh_token(raw_token))
+        user = self._consume_account_token(token, "password_reset_completed")
+        user.password_hash = hash_password(new_password)
+        self.repository.revoke_family_for_user(user.id)
+        self.session.commit()
+
+    def step_up_admin(self, user: User, password: str) -> IssuedAccountToken:
+        if user.role is not UserRole.ADMIN or not verify_password(password, user.password_hash):
+            raise AuthenticationError("Invalid administrator credentials")
+        if self.settings.env == "production" and user.email_verified_at is None:
+            raise AuthenticationError("Administrator email verification is required")
+        issued = self._new_account_token(
+            AdminStepUpToken, user.id, self.settings.admin_step_up_ttl_minutes
+        )
+        self.repository.add(issued[0])
+        self._audit(user.id, "admin_step_up_completed", "user", str(user.id))
+        self.session.commit()
+        return IssuedAccountToken(issued[1], issued[0].expires_at)
+
     def _issue_token_pair(self, user: User) -> IssuedTokens:
         now = datetime.now(UTC)
         access_token, expires_in = create_access_token(
@@ -126,6 +188,39 @@ class AuthService:
             expires_at=now + timedelta(days=self.settings.refresh_token_ttl_days),
         )
         return record, raw_token
+
+    def _new_account_token(self, token_type, user_id: uuid.UUID, ttl_minutes: int):
+        now = datetime.now(UTC)
+        raw_token = generate_refresh_token()
+        record = token_type(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            token_hash=hash_refresh_token(raw_token),
+            expires_at=now + timedelta(minutes=ttl_minutes),
+        )
+        return record, raw_token
+
+    def _consume_account_token(self, token, action: str) -> User:
+        now = datetime.now(UTC)
+        if token is None or token.consumed_at is not None or self._as_utc(token.expires_at) <= now:
+            raise AuthenticationError("Invalid or expired token")
+        if not token.user.is_active:
+            raise AuthenticationError("Invalid or expired token")
+        token.consumed_at = now
+        self._audit(token.user_id, action, "user", str(token.user_id))
+        return token.user
+
+    def _audit(
+        self, actor_user_id: uuid.UUID | None, action: str, entity_type: str, entity_id: str
+    ) -> None:
+        self.repository.add(
+            AuditLog(
+                actor_user_id=actor_user_id,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+        )
 
     @staticmethod
     def _as_utc(value: datetime) -> datetime:

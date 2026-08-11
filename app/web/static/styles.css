@@ -576,6 +576,74 @@ textarea:focus {
   margin-bottom: 1rem;
 }
 
+.admin-review-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 1rem 0;
+}
+
+.review-panel {
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: white;
+  padding: 1rem;
+}
+
+.section-heading.compact {
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.section-heading.compact h3 {
+  margin: 0.1rem 0 0;
+}
+
+.issue-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.issue-row {
+  align-items: flex-start;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding-top: 0.65rem;
+}
+
+.issue-row h4 {
+  margin: 0 0 0.2rem;
+}
+
+.issue-row p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.issue-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.pill.high {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.pill.medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.pill.low {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
 .footer {
   padding: 0 clamp(1rem, 3vw, 3rem) 2rem;
 }
@@ -599,7 +667,8 @@ textarea:focus {
   .hero-grid,
   .auth-panel,
   .detail-grid,
-  .catalogue-note {
+  .catalogue-note,
+  .admin-review-grid {
     grid-template-columns: 1fr;
   }
 

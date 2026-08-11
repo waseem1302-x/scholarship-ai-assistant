@@ -9,7 +9,15 @@ from app.modules.matching.schemas import (
     MatchListResponse,
     OpportunityMatchResponse,
 )
-from app.modules.opportunities.models import FundingType, Opportunity
+from app.modules.opportunities.lifecycle import effective_application_window
+from app.modules.opportunities.models import (
+    ApplicationWindowState,
+    EligibilityOperator,
+    EligibilityRule,
+    EligibilityRuleType,
+    FundingType,
+    Opportunity,
+)
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.service import OpportunityService
 from app.modules.profiles.models import StudentProfile, TestStatus
@@ -28,6 +36,8 @@ class RuleResult:
 
 
 class MatchingService:
+    MATCHER_VERSION = "2026-08-11.structured-hard-gates.v1"
+
     def __init__(
         self,
         profile_repository: StudentProfileRepository,
@@ -54,17 +64,44 @@ class MatchingService:
     def match_opportunity(
         self, profile: StudentProfile, opportunity: Opportunity
     ) -> OpportunityMatchResponse:
-        rules = [
-            self._degree_rule(profile, opportunity),
-            self._nationality_rule(profile, opportunity),
-            self._field_rule(profile, opportunity),
-            self._academic_rule(profile, opportunity),
-            self._deadline_rule(opportunity),
-            self._language_rule(profile, opportunity),
-            self._country_preference_rule(profile, opportunity),
-            self._funding_rule(profile, opportunity),
-        ]
-        score = round(sum(rule.score for rule in rules))
+        rules = (
+            [
+                self._structured_rule(profile, opportunity, rule)
+                for rule in opportunity.eligibility_rules
+            ]
+            if opportunity.eligibility_rules
+            else [
+                self._degree_rule(profile, opportunity),
+                self._nationality_rule(profile, opportunity),
+                self._field_rule(profile, opportunity),
+                self._academic_rule(profile, opportunity),
+                self._language_rule(profile, opportunity),
+            ]
+        )
+        rules.extend(
+            [
+                self._deadline_rule(opportunity),
+                self._country_preference_rule(profile, opportunity),
+                self._funding_rule(profile, opportunity),
+            ]
+        )
+        hard_failures = self._hard_failures(profile, opportunity, rules)
+        unknown = [item for rule in rules for item in rule.uncertain]
+        failed = [item for rule in rules for item in rule.missing]
+        answered = sum(bool(rule.satisfied or rule.missing) for rule in rules)
+        completeness = round((answered / len(rules)) * 100) if rules else 0
+        if hard_failures:
+            score = 0
+            fit_score = None
+            score_label = "not_eligible"
+            eligibility_status = "ineligible"
+        else:
+            score = round(sum(rule.score for rule in rules))
+            fit_score = score
+            score_label = self._score_label(score)
+            eligibility_status = "eligible" if not unknown else "likely_eligible"
+            if not opportunity.eligibility_rules and not profile.target_degree_level:
+                eligibility_status = "unknown"
         explanation = MatchExplanation(
             satisfied=[item for rule in rules for item in rule.satisfied],
             missing=[item for rule in rules for item in rule.missing],
@@ -74,8 +111,101 @@ class MatchingService:
         return OpportunityMatchResponse(
             opportunity=self.opportunity_service.to_summary_response(opportunity),
             match_score=score,
-            score_label=self._score_label(score),
+            score_label=score_label,
+            eligibility_status=eligibility_status,
+            fit_score=fit_score,
+            evidence_completeness=completeness,
+            confidence="high" if completeness >= 80 else "medium" if completeness >= 50 else "low",
+            failed_criteria=failed,
+            unknown_criteria=unknown,
+            warnings=hard_failures,
+            matcher_version=self.MATCHER_VERSION,
+            evaluated_at=datetime.now(UTC),
             explanation=explanation,
+        )
+
+    def _hard_failures(
+        self, profile: StudentProfile, opportunity: Opportunity, rules: list[RuleResult]
+    ) -> list[str]:
+        failures: list[str] = []
+        window = effective_application_window(
+            opportunity, self.opportunity_service._official_source(opportunity)
+        )
+        if window.state in {ApplicationWindowState.CLOSED, ApplicationWindowState.ARCHIVED}:
+            failures.append("The application window is closed or archived.")
+        if (
+            profile.target_degree_level
+            and profile.target_degree_level.value != opportunity.degree_level.value
+        ):
+            failures.append("Target degree does not match this opportunity.")
+        if opportunity.eligibility_rules:
+            for rule, result in zip(opportunity.eligibility_rules, rules, strict=False):
+                if rule.required and result.missing:
+                    failures.extend(result.missing)
+        else:
+            # Legacy text only identifies unmistakable exclusions; ambiguous text remains unknown.
+            nationality = _normalize(profile.nationality)
+            requirement = _normalize(opportunity.nationality_eligibility)
+            if nationality and _explicitly_excludes(nationality, requirement):
+                failures.append(
+                    "Your nationality is explicitly excluded by the stored requirement."
+                )
+        return failures
+
+    @staticmethod
+    def _structured_rule(
+        profile: StudentProfile, opportunity: Opportunity, rule: EligibilityRule
+    ) -> RuleResult:
+        actual = _profile_value(profile, rule.rule_type)
+        label = rule.rule_type.value.replace("_", " ")
+        if rule.rule_type is EligibilityRuleType.APPLICATION_WINDOW:
+            window = effective_application_window(opportunity, None)
+            if window.state in {ApplicationWindowState.CLOSED, ApplicationWindowState.ARCHIVED}:
+                return RuleResult(label, 15, 0, missing=["The application window is closed."])
+            if window.state in {
+                ApplicationWindowState.DEADLINE_UNKNOWN,
+                ApplicationWindowState.UPCOMING,
+            }:
+                return RuleResult(
+                    label,
+                    15,
+                    7.5,
+                    uncertain=["Application timing is not currently confirmed open."],
+                )
+            return RuleResult(label, 15, 15, satisfied=["Application window is currently open."])
+        if actual is None:
+            return RuleResult(
+                label,
+                15,
+                7.5,
+                uncertain=[f"Your {label} is missing, so this rule is unknown."],
+                next_steps=[f"Add your {label} to evaluate this requirement."],
+            )
+        required = rule.value_json
+        if rule.rule_type is EligibilityRuleType.CGPA:
+            if profile.grading_scale not in {
+                Decimal("4"),
+                Decimal("4.00"),
+                Decimal("5"),
+                Decimal("5.00"),
+            }:
+                return RuleResult(
+                    label,
+                    15,
+                    7.5,
+                    uncertain=["Your grading scale is unsupported for this CGPA comparison."],
+                )
+            actual = (Decimal(str(actual)) / profile.grading_scale) * rule.grading_scale
+        satisfied = _compare(actual, required, rule.operator)
+        message = (
+            f"{label.title()} requirement {'is satisfied' if satisfied else 'is not satisfied'}."
+        )
+        return RuleResult(
+            label,
+            15,
+            15 if satisfied else 0,
+            satisfied=[message] if satisfied else [],
+            missing=[] if satisfied else [message],
         )
 
     @staticmethod
@@ -416,3 +546,51 @@ def _normalize_cgpa(cgpa: Decimal, scale: Decimal) -> Decimal:
 
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _profile_value(profile: StudentProfile, rule_type: EligibilityRuleType):
+    values = {
+        EligibilityRuleType.NATIONALITY: profile.nationality,
+        EligibilityRuleType.RESIDENCE: profile.country_of_residence,
+        EligibilityRuleType.TARGET_DEGREE: profile.target_degree_level.value
+        if profile.target_degree_level
+        else None,
+        EligibilityRuleType.FIELD: profile.intended_field or profile.academic_discipline,
+        EligibilityRuleType.CGPA: profile.cgpa,
+        EligibilityRuleType.PERCENTAGE: profile.percentage,
+        EligibilityRuleType.IELTS: profile.ielts_score,
+        EligibilityRuleType.TOEFL: profile.toefl_score,
+        EligibilityRuleType.WORK_EXPERIENCE_MONTHS: profile.work_experience_months,
+    }
+    return values.get(rule_type)
+
+
+def _compare(actual, required, operator: EligibilityOperator) -> bool:
+    if operator in {EligibilityOperator.IN, EligibilityOperator.NOT_IN}:
+        candidates = {_normalize(str(item)) for item in required}
+        matches = _normalize(str(actual)) in candidates
+        return matches if operator is EligibilityOperator.IN else not matches
+    if operator is EligibilityOperator.EQUALS:
+        return _normalize(str(actual)) == _normalize(str(required))
+    try:
+        actual_number = Decimal(str(actual))
+        required_number = Decimal(str(required))
+    except Exception:
+        return False
+    if operator is EligibilityOperator.GTE:
+        return actual_number >= required_number
+    if operator is EligibilityOperator.LTE:
+        return actual_number <= required_number
+    return False
+
+
+def _explicitly_excludes(nationality: str, requirement: str) -> bool:
+    escaped = re.escape(nationality)
+    excluded_pattern = (
+        rf"(?:not eligible|ineligible|except|excluding)\s+(?:for\s+)?"
+        rf"(?:citizens?\s+of\s+)?{escaped}"
+    )
+    return bool(
+        re.search(excluded_pattern, requirement)
+        or re.search(rf"{escaped}\s+(?:applicants?\s+)?(?:are|is)\s+not eligible", requirement)
+    )

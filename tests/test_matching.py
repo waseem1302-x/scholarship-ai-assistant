@@ -218,3 +218,36 @@ def test_matching_surfaces_uncertainty_for_missing_profile_fields(
     assert any("nationality" in item.lower() for item in uncertain)
     assert any("field" in item.lower() for item in uncertain)
     assert any("cgpa" in item.lower() for item in uncertain)
+
+
+def test_structured_hard_exclusion_never_receives_a_strong_match(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-hard-rule@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="student-hard-rule@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-hard-rule@example.com"))
+    student_headers = headers(login(client, "student-hard-rule@example.com"))
+    assert (
+        client.put(
+            "/api/v1/profiles/me", json=profile_payload(), headers=student_headers
+        ).status_code
+        == 200
+    )
+    create_verified_opportunity(
+        client,
+        admin_headers,
+        name="Excluded nationality scholarship",
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "not_in", "value": ["Pakistani"]},
+            {"rule_type": "target_degree", "operator": "equals", "value": "masters"},
+            {"rule_type": "cgpa", "operator": "gte", "value": 3.2, "grading_scale": 4.0},
+            {"rule_type": "ielts", "operator": "gte", "value": 6.5},
+        ],
+    )
+
+    result = client.get("/api/v1/matches/me", headers=student_headers).json()["results"][0]
+
+    assert result["eligibility_status"] == "ineligible"
+    assert result["fit_score"] is None
+    assert result["score_label"] == "not_eligible"
+    assert result["matcher_version"] == "2026-08-11.structured-hard-gates.v1"

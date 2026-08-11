@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,11 +26,31 @@ class Settings(BaseSettings):
     jwt_audience: str = "scholarship-ai-api"
     access_token_ttl_minutes: int = Field(default=15, ge=1, le=60)
     refresh_token_ttl_days: int = Field(default=30, ge=1, le=90)
+    email_verification_ttl_minutes: int = Field(default=1440, ge=15, le=10080)
+    password_reset_ttl_minutes: int = Field(default=30, ge=5, le=120)
+    admin_step_up_ttl_minutes: int = Field(default=10, ge=1, le=60)
     cors_origins: str = "http://localhost:3000"
+    cookie_secure: bool | None = None
+
+    @model_validator(mode="after")
+    def reject_unsafe_production_settings(self) -> "Settings":
+        development_secrets = {
+            "local-development-secret-change-me-now",
+            "local-compose-secret-change-before-any-shared-deployment",
+        }
+        if self.env == "production" and self.jwt_secret in development_secrets:
+            raise ValueError("APP_JWT_SECRET must be replaced before production startup")
+        if self.env == "production" and any(origin == "*" for origin in self.cors_origin_list):
+            raise ValueError("Wildcard CORS origins are not allowed in production")
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @property
+    def refresh_cookie_secure(self) -> bool:
+        return self.env == "production" if self.cookie_secure is None else self.cookie_secure
 
 
 @lru_cache

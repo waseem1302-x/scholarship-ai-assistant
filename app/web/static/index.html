@@ -341,6 +341,31 @@
               then verify before public search can show the record.
             </p>
 
+            <div class="admin-review-grid">
+              <div class="review-panel">
+                <div class="section-heading compact">
+                  <div>
+                    <p class="eyebrow">Phase 2 data trust</p>
+                    <h3>Review queue</h3>
+                  </div>
+                  <button class="ghost" id="load-review-queue" type="button">Refresh</button>
+                </div>
+                <p class="form-status" id="review-status" role="status"></p>
+                <div class="issue-list" id="review-list"></div>
+              </div>
+              <div class="review-panel">
+                <div class="section-heading compact">
+                  <div>
+                    <p class="eyebrow">Data quality</p>
+                    <h3>Issue dashboard</h3>
+                  </div>
+                  <button class="ghost" id="load-quality-issues" type="button">Refresh</button>
+                </div>
+                <p class="form-status" id="quality-status" role="status"></p>
+                <div class="issue-list" id="quality-list"></div>
+              </div>
+            </div>
+
             <details class="admin-create">
               <summary>Add a draft opportunity</summary>
               <form class="profile-form" id="admin-create-form">

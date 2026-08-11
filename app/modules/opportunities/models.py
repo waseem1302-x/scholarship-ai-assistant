@@ -69,6 +69,36 @@ class DataConfidence(StrEnum):
     HIGH = "high"
 
 
+class ApplicationWindowState(StrEnum):
+    UPCOMING = "upcoming"
+    OPEN = "open"
+    CLOSED = "closed"
+    ROLLING = "rolling"
+    DEADLINE_UNKNOWN = "deadline_unknown"
+    ARCHIVED = "archived"
+
+
+class EligibilityRuleType(StrEnum):
+    NATIONALITY = "nationality"
+    RESIDENCE = "residence"
+    TARGET_DEGREE = "target_degree"
+    FIELD = "field"
+    CGPA = "cgpa"
+    PERCENTAGE = "percentage"
+    IELTS = "ielts"
+    TOEFL = "toefl"
+    WORK_EXPERIENCE_MONTHS = "work_experience_months"
+    APPLICATION_WINDOW = "application_window"
+
+
+class EligibilityOperator(StrEnum):
+    EQUALS = "equals"
+    IN = "in"
+    NOT_IN = "not_in"
+    GTE = "gte"
+    LTE = "lte"
+
+
 class Provider(Base):
     __tablename__ = "providers"
     __table_args__ = (
@@ -217,6 +247,95 @@ class Opportunity(Base):
     verification_records: Mapped[list["VerificationRecord"]] = relationship(
         back_populates="opportunity", cascade="all, delete-orphan"
     )
+    cycles: Mapped[list["OpportunityCycle"]] = relationship(
+        back_populates="opportunity", cascade="all, delete-orphan"
+    )
+    eligibility_rules: Mapped[list["EligibilityRule"]] = relationship(
+        back_populates="opportunity", cascade="all, delete-orphan"
+    )
+
+
+class OpportunityCycle(Base):
+    """A historical or recurring application window; never overwrite a prior cycle."""
+
+    __tablename__ = "opportunity_cycles"
+    __table_args__ = (
+        CheckConstraint(
+            "application_deadline IS NULL OR application_opening_date IS NULL "
+            "OR application_deadline >= application_opening_date",
+            name="ck_opportunity_cycles_deadline_after_opening",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    intake_year: Mapped[int | None] = mapped_column()
+    application_opening_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    application_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    is_rolling: Mapped[bool] = mapped_column(default=False)
+    is_archived: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    opportunity: Mapped[Opportunity] = relationship(back_populates="cycles")
+
+
+class EligibilityRule(Base):
+    __tablename__ = "eligibility_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    rule_type: Mapped[EligibilityRuleType] = mapped_column(
+        Enum(
+            EligibilityRuleType,
+            name="eligibility_rule_type",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        )
+    )
+    operator: Mapped[EligibilityOperator] = mapped_column(
+        Enum(
+            EligibilityOperator,
+            name="eligibility_operator",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        )
+    )
+    value_json: Mapped[object] = mapped_column(JSON)
+    unit: Mapped[str | None] = mapped_column(String(64))
+    grading_scale: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    required: Mapped[bool] = mapped_column(default=True)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="SET NULL")
+    )
+    confidence: Mapped[DataConfidence] = mapped_column(
+        Enum(
+            DataConfidence,
+            name="eligibility_rule_confidence",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=DataConfidence.MEDIUM,
+    )
+    curator_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    opportunity: Mapped[Opportunity] = relationship(back_populates="eligibility_rules")
+    source: Mapped["Source | None"] = relationship()
 
 
 class Source(Base):
@@ -267,6 +386,37 @@ class Source(Base):
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="sources")
     verified_by: Mapped[User | None] = relationship()
+    excerpts: Mapped[list["SourceExcerpt"]] = relationship(
+        back_populates="source", cascade="all, delete-orphan"
+    )
+
+
+class SourceExcerpt(Base):
+    """Immutable evidence snapshot captured from a source at review time."""
+
+    __tablename__ = "source_excerpts"
+    __table_args__ = (
+        CheckConstraint("text = trim(text)", name="ck_source_excerpts_text_trimmed"),
+        Index("ix_source_excerpts_source_captured", "source_id", "captured_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), index=True
+    )
+    section_label: Mapped[str | None] = mapped_column(String(255))
+    locator: Mapped[str | None] = mapped_column(String(255))
+    text: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    captured_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    source: Mapped[Source] = relationship(back_populates="excerpts")
+    captured_by: Mapped[User | None] = relationship()
 
 
 class VerificationRecord(Base):

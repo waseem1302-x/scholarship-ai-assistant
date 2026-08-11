@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -90,11 +90,41 @@ class OpportunityRepository:
                 joinedload(Opportunity.provider),
                 joinedload(Opportunity.university),
                 selectinload(Opportunity.sources),
+                selectinload(Opportunity.cycles),
+                selectinload(Opportunity.eligibility_rules),
             )
         )
 
     def get_source(self, source_id: uuid.UUID) -> Source | None:
         return self.session.get(Source, source_id)
+
+    def list_sources_due_for_monitoring(
+        self,
+        *,
+        now: datetime,
+        check_interval_days: int,
+        freshness_days: int,
+        limit: int,
+    ) -> list[Source]:
+        check_cutoff = now - timedelta(days=check_interval_days)
+        freshness_cutoff = now - timedelta(days=freshness_days)
+        statement = (
+            select(Source)
+            .join(Opportunity)
+            .where(
+                Opportunity.status == OpportunityStatus.ACTIVE,
+                Source.source_type == SourceType.OFFICIAL,
+                Source.verification_status == VerificationStatus.OFFICIALLY_VERIFIED,
+                or_(
+                    Source.last_updated_at.is_(None),
+                    Source.last_updated_at <= check_cutoff,
+                    Source.last_verified_at <= freshness_cutoff,
+                ),
+            )
+            .order_by(Source.last_updated_at.asc().nulls_first(), Source.date_collected.asc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(statement))
 
     def list_admin_opportunities(
         self,
@@ -172,6 +202,8 @@ class OpportunityRepository:
             joinedload(Opportunity.provider),
             joinedload(Opportunity.university),
             selectinload(Opportunity.sources),
+            selectinload(Opportunity.cycles),
+            selectinload(Opportunity.eligibility_rules),
         )
         if country is not None:
             statement = statement.where(func.lower(Opportunity.country) == country.lower())
@@ -324,6 +356,8 @@ class OpportunityRepository:
                 joinedload(Opportunity.provider),
                 joinedload(Opportunity.university),
                 selectinload(Opportunity.sources),
+                selectinload(Opportunity.cycles),
+                selectinload(Opportunity.eligibility_rules),
             )
         )
         if country is not None:

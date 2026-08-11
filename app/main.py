@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.errors import install_error_handlers
+from app.core.rate_limit import AuthRateLimitMiddleware
 from app.db.session import get_db
 
 
@@ -36,6 +37,25 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
+    application.add_middleware(AuthRateLimitMiddleware)
+
+    @application.middleware("http")
+    async def security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; "
+            "img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'",
+        )
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        if settings.env == "production":
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
+
     install_error_handlers(application)
     application.include_router(api_router, prefix="/api/v1")
     application.mount("/static", StaticFiles(directory="app/web/static"), name="static")

@@ -60,6 +60,8 @@ def test_frontend_shell_exposes_slice_10_product_flows(client: TestClient) -> No
         "admin",
     } <= (parser.sections)
     assert {"auth-form", "opportunity-filters", "profile-form", "admin-create-form"} <= parser.forms
+    assert "review-list" in parser.ids
+    assert "quality-list" in parser.ids
 
 
 def test_frontend_html_has_unique_ids_and_no_encoding_artifacts(client: TestClient) -> None:
@@ -82,11 +84,30 @@ def test_frontend_static_assets_are_product_specific(client: TestClient) -> None
     assert "workspace" in css.text
     assert "@media (max-width: 1100px)" in css.text
     assert "Official source evidence" in js.text
+    assert "Phase 2 checks" in js.text
+    assert "/admin/review-queue" in js.text
+    assert "/admin/data-quality-issues" in js.text
+    assert "/review-actions" in js.text
+    assert "Resolve conflict" in js.text
+    assert "request_recheck" in js.text
     assert "Funding package" in js.text
     assert "Match scores and eligibility explanations are decision support" in js.text
     assert "does not guarantee" not in js.text.lower()
     assert "Â" not in js.text
     assert "TÃ" not in js.text
+
+
+def test_primary_frontend_has_baseline_accessibility_contract(client: TestClient) -> None:
+    html = client.get("/").text
+    css = client.get("/static/styles.css").text
+
+    assert '<html lang="en">' in html
+    assert "<main" in html
+    assert 'role="status"' in html
+    assert 'autocomplete="email"' in html
+    assert "input:focus" in css
+    assert "textarea:focus" in css
+    assert "onclick=" not in html
 
 
 def test_frontend_javascript_does_not_reintroduce_duplicate_function_definitions(
