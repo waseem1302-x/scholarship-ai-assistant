@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -23,3 +25,12 @@ def test_frontend_keeps_tokens_out_of_local_storage_and_never_trusts_anchor_mark
     assert "localStorage" not in javascript
     assert 'stringValue.includes("<a ")' not in javascript
     assert "data?.error?.message" in javascript
+
+
+def test_phase_three_client_keeps_access_tokens_in_memory_and_uses_csrf_protection() -> None:
+    javascript = (Path("frontend/src/api/client.ts")).read_text(encoding="utf-8")
+
+    assert "localStorage" not in javascript
+    assert "sessionStorage" not in javascript
+    assert 'credentials: "same-origin"' in javascript
+    assert '"X-CSRF-Token"' in javascript

@@ -45,3 +45,25 @@ def test_auth_form_is_keyboard_reachable(page: Page, live_base_url: str) -> None
     expect(page.locator("#auth-email")).to_be_focused()
     page.keyboard.press("Tab")
     expect(page.locator("#auth-password")).to_be_focused()
+
+
+def test_phase_three_foundation_can_register_and_sign_out(page: Page, live_base_url: str) -> None:
+    email = f"phase3-{uuid4().hex}@example.com"
+
+    page.goto(f"{live_base_url}/app", wait_until="networkidle")
+    expect(
+        page.get_by_role("heading", name="Make your next scholarship decision with confidence.")
+    ).to_be_visible()
+
+    page.get_by_role("link", name="Get started").click()
+    page.get_by_role("tab", name="Create account").click()
+    page.get_by_label("Email address").fill(email)
+    page.get_by_label("Password").fill("PhaseThree!2026")
+    page.get_by_role("button", name="Create account").click()
+
+    expect(page).to_have_url(f"{live_base_url}/app/dashboard")
+    expect(
+        page.get_by_role("heading", name=f"Good to see you, {email.split('@')[0]}.")
+    ).to_be_visible()
+    page.get_by_role("button", name="Sign out").click()
+    expect(page.get_by_role("link", name="Sign in")).to_be_visible()

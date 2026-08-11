@@ -19,7 +19,8 @@ backend engineering, responsible AI, and education access.
 ## Current status
 
 The repository has completed **Phase 1: correctness and security repairs**.
-Phase 2 has started with the opportunity data-platform trust layer.
+Phase 2 has started with the opportunity data-platform trust layer. Phase 3
+frontend foundation work is now underway on an isolated preview route.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -88,6 +89,9 @@ Implemented so far:
   requesting rechecks, resolving conflicts, expiring, and archiving records
 - admin review queue and data-quality issue APIs plus frontend panels for
   curation work
+- React, TypeScript, and Vite Phase 3 foundation at `/app`, with a typed
+  same-origin API client and a cookie-session-aware authentication shell; the
+  original static MVP remains at `/` during the staged migration
 
 ## Quick start
 
@@ -357,6 +361,7 @@ verified flagship sample, not a claim to include every scholarship worldwide.
 - [Frontend MVP slice handoff](docs/slices/10-frontend-mvp.md)
 - [Phase 1 correctness/security increment](docs/slices/11-phase1-correctness-security.md)
 - [Phase 2 opportunity data platform increment](docs/slices/12-phase2-opportunity-data-platform.md)
+- [Phase 3 frontend foundation increment](docs/slices/13-phase3-frontend-foundation.md)
 - [Phased implementation roadmap](docs/implementation-roadmap.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)
