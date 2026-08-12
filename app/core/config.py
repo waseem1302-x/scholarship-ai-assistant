@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     document_lab_max_extracted_characters: int = Field(default=100_000, ge=1_000, le=500_000)
     document_lab_upload_rate_limit_per_minute: int = Field(default=6, ge=1, le=60)
     document_lab_daily_user_limit: int = Field(default=20, ge=1, le=200)
+    document_lab_daily_analysis_limit: int = Field(default=10, ge=1, le=100)
     document_lab_retention_days: int = Field(default=30, ge=1, le=365)
     document_lab_analysis_retention_days: int = Field(default=30, ge=1, le=365)
     document_lab_provider: str = "unavailable"

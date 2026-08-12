@@ -1,4 +1,5 @@
 import io
+import time
 import zipfile
 from pathlib import Path
 
@@ -18,7 +19,11 @@ from app.modules.document_lab.models import (
     ExtractionStatus,
     ScanStatus,
 )
-from app.modules.document_lab.provider import ProviderAnalysisOutput, ProviderFeedbackItem
+from app.modules.document_lab.provider import (
+    DocumentProviderQuotaExhausted,
+    ProviderAnalysisOutput,
+    ProviderFeedbackItem,
+)
 from app.modules.document_lab.scanner import SignatureTestScanner, UnavailableScanner
 from app.modules.document_lab.service import DocumentLabService
 from app.modules.document_lab.validation import DOCX_CONTENT_TYPE, PDF_CONTENT_TYPE
@@ -125,6 +130,20 @@ def test_document_lab_rejects_spoofed_malicious_and_unsupported_uploads(
                 content=content,
             )
         assert error.value.code == code
+
+    bomb = io.BytesIO()
+    with zipfile.ZipFile(bomb, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types />")
+        archive.writestr("word/document.xml", "x" * 2_000_000)
+    with pytest.raises(AppError) as zip_bomb:
+        document_service.create_asset(
+            user=owner,
+            document_kind="cv_resume",
+            filename="resume.docx",
+            declared_content_type=DOCX_CONTENT_TYPE,
+            content=bomb.getvalue(),
+        )
+    assert zip_bomb.value.code == "zip_bomb_suspected"
 
 
 def test_document_lab_enforces_size_and_page_limits(db_session: Session, tmp_path: Path) -> None:
@@ -421,3 +440,87 @@ def test_delete_after_analysis_removes_private_storage_and_analysis_data(
     assert db_session.get(DocumentVersion, asset.versions[0].id) is None
     assert db_session.get(DocumentAnalysis, analysis.id) is None
     assert document_service.export_data(owner.id).assets == []
+
+
+def test_analysis_quota_provider_quota_and_extracted_text_limit_are_safe(
+    db_session: Session, tmp_path: Path
+) -> None:
+    limited, owner, asset = ready_document_service(
+        db_session, tmp_path, GroundedProvider(), "analysis-quota@example.com"
+    )
+    limited.settings.document_lab_daily_analysis_limit = 1
+    limited.request_analysis(
+        version_id=asset.versions[0].id,
+        user=owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    with pytest.raises(AppError) as quota:
+        limited.request_analysis(
+            version_id=asset.versions[0].id,
+            user=owner,
+            analysis_type="statement_of_purpose",
+            consent=True,
+            notice_version="phase7.document-data-use.v1",
+        )
+    assert quota.value.code == "document_analysis_quota_exceeded"
+    assert limited.process_next_job()
+
+    class QuotaProvider(GroundedProvider):
+        def analyse(self, text: str, analysis_type: str) -> ProviderAnalysisOutput:
+            del text, analysis_type
+            raise DocumentProviderQuotaExhausted("quota")
+
+    provider, provider_owner, provider_asset = ready_document_service(
+        db_session, tmp_path, QuotaProvider(), "provider-quota@example.com"
+    )
+    queued = provider.request_analysis(
+        version_id=provider_asset.versions[0].id,
+        user=provider_owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    assert provider.process_next_job()
+    assert (
+        provider.get_analysis(queued.id, provider_owner.id).provider_status.value
+        == "quota_exhausted"
+    )
+
+    extracted_limit = service(db_session, tmp_path, document_lab_max_extracted_characters=1_000)
+    too_much = extracted_limit.create_asset(
+        user=owner,
+        document_kind="cv_resume",
+        filename="short-limit.pdf",
+        declared_content_type=PDF_CONTENT_TYPE,
+        content=pdf("x" * 1_001),
+    )
+    assert extracted_limit.process_next_job() and extracted_limit.process_next_job()
+    assert (
+        extracted_limit.get_asset(too_much.id, owner.id).versions[0].rejection_code
+        == "extracted_text_limit_exceeded"
+    )
+
+
+def test_provider_timeout_is_persisted_as_safe_failure(db_session: Session, tmp_path: Path) -> None:
+    class SlowProvider(GroundedProvider):
+        def analyse(self, text: str, analysis_type: str) -> ProviderAnalysisOutput:
+            time.sleep(2)
+            return super().analyse(text, analysis_type)
+
+    timed, owner, asset = ready_document_service(
+        db_session, tmp_path, SlowProvider(), "provider-timeout@example.com"
+    )
+    timed.settings.document_lab_provider_timeout_seconds = 1
+    queued = timed.request_analysis(
+        version_id=asset.versions[0].id,
+        user=owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    assert timed.process_next_job()
+    result = timed.get_analysis(queued.id, owner.id)
+    assert result.status is AnalysisStatus.FAILED
+    assert result.provider_status.value == "failed"

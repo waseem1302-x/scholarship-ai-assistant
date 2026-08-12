@@ -24,9 +24,13 @@ def extract_restricted(
     Python boundary remains deterministic for local Windows development.
     """
     with ProcessPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_extract, content, content_type, max_characters)
+        future = executor.submit(_extract_result, content, content_type, max_characters)
         try:
-            return future.result(timeout=timeout_seconds)
+            text, failure_code = future.result(timeout=timeout_seconds)
+            if failure_code:
+                raise AppError(failure_code, "Document extraction failed.", 422)
+            assert text is not None
+            return text
         except TimeoutError as exc:
             future.cancel()
             raise AppError("extraction_timeout", "Document extraction timed out.", 422) from exc
@@ -34,6 +38,16 @@ def extract_restricted(
             raise
         except Exception as exc:
             raise AppError("extraction_failed", "Document extraction failed.", 422) from exc
+
+
+def _extract_result(
+    content: bytes, content_type: str, max_characters: int
+) -> tuple[str | None, str | None]:
+    """Return serializable worker results; `AppError` itself cannot be pickled."""
+    try:
+        return _extract(content, content_type, max_characters), None
+    except AppError as exc:
+        return None, exc.code
 
 
 def _extract(content: bytes, content_type: str, max_characters: int) -> str:

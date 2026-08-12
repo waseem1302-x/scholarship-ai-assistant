@@ -3,6 +3,7 @@
 import hashlib
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import timedelta
 
 from sqlalchemy import delete, func, select
@@ -34,6 +35,7 @@ from app.modules.document_lab.models import (
 from app.modules.document_lab.provider import (
     DocumentProvider,
     DocumentProviderError,
+    DocumentProviderTimeout,
     ProviderAnalysisOutput,
     ProviderFeedbackItem,
     get_provider,
@@ -185,6 +187,7 @@ class DocumentLabService:
     ) -> DocumentAnalysisResponse:
         self._require_enabled()
         analysis_type = DocumentKind(analysis_type)
+        self._enforce_analysis_quota(user.id)
         version = self._owned_version(version_id, user.id)
         if version.status is not DocumentVersionStatus.READY:
             raise AppError(
@@ -480,15 +483,11 @@ class DocumentLabService:
             return
         analysis.status = AnalysisStatus.RUNNING
         try:
+            extracted_text = self.cipher.decrypt_text(extraction.text_ciphertext or "")
             output = ProviderAnalysisOutput.model_validate(
-                self.provider.analyse(
-                    self.cipher.decrypt_text(extraction.text_ciphertext or ""),
-                    analysis.analysis_type,
-                )
+                self._analyse_with_timeout(extracted_text, analysis.analysis_type)
             )
-            self._validate_provider_output(
-                output, self.cipher.decrypt_text(extraction.text_ciphertext or "")
-            )
+            self._validate_provider_output(output, extracted_text)
         except DocumentProviderError as exc:
             analysis.status = AnalysisStatus.FAILED
             analysis.provider_status = AnalysisProviderStatus(exc.status)
@@ -634,6 +633,20 @@ class DocumentLabService:
             max_characters=self.settings.document_lab_max_extracted_characters,
         )
 
+    def _analyse_with_timeout(
+        self, text: str, analysis_type: DocumentKind
+    ) -> ProviderAnalysisOutput:
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(self.provider.analyse, text, analysis_type)
+            try:
+                return future.result(timeout=self.settings.document_lab_provider_timeout_seconds)
+            except TimeoutError as exc:
+                future.cancel()
+                raise DocumentProviderTimeout("Document provider timed out") from exc
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
     def _complete_job(self, job: DocumentAnalysisJob) -> None:
         job.status = AnalysisStatus.COMPLETED
         job.completed_at = utc_now()
@@ -716,6 +729,21 @@ class DocumentLabService:
         )
         if count >= self.settings.document_lab_daily_user_limit:
             raise AppError("document_upload_quota_exceeded", "Document upload limit reached.", 429)
+
+    def _enforce_analysis_quota(self, user_id: uuid.UUID) -> None:
+        cutoff = utc_now() - timedelta(days=1)
+        count = (
+            self.session.scalar(
+                select(func.count(DocumentAnalysis.id)).where(
+                    DocumentAnalysis.user_id == user_id, DocumentAnalysis.created_at >= cutoff
+                )
+            )
+            or 0
+        )
+        if count >= self.settings.document_lab_daily_analysis_limit:
+            raise AppError(
+                "document_analysis_quota_exceeded", "Document analysis limit reached.", 429
+            )
 
     def _purge_expired(self) -> None:
         expired = self.session.scalars(

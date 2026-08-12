@@ -33,6 +33,14 @@ class DocumentProviderUnavailable(DocumentProviderError):
     status = "unavailable"
 
 
+class DocumentProviderQuotaExhausted(DocumentProviderError):
+    status = "quota_exhausted"
+
+
+class DocumentProviderTimeout(DocumentProviderError):
+    status = "failed"
+
+
 class DocumentProvider(Protocol):
     name: str
     model_version: str
