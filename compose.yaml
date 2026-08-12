@@ -73,3 +73,7 @@ services:
 
 volumes:
   postgres_data:
+    # Preserve the existing development database when moving from Compose's
+    # former default project name to the explicit project name above.
+    external: true
+    name: scholarshipaiassistant_postgres_data
