@@ -40,24 +40,27 @@ The first seed dataset contains:
 
 ## How to load the seed dataset
 
-Create an admin first:
+Use the guided, idempotent demo bootstrapper. It validates the whole dataset,
+creates or updates an administrator, and then loads only records that do not
+already exist:
 
 ```bash
-docker compose exec api python -m app.cli.create_admin
-```
-
-Then load the verified seed records:
-
-```bash
-docker compose exec api python -m app.cli.seed_verified_opportunities
+docker compose exec api python -m app.cli.bootstrap_demo
 ```
 
 Optional environment variables:
 
 ```bash
-APP_SEED_ADMIN_EMAIL=admin@example.com
-APP_SEED_FILE=/app/data/seed/verified_opportunities.json
-APP_SEED_DRY_RUN=true
+APP_DEMO_ADMIN_EMAIL=admin@example.com
+APP_DEMO_ADMIN_PASSWORD=a-unique-password-of-at-least-12-characters
+APP_DEMO_SEED_FILE=/app/data/seed/verified_opportunities.json
+```
+
+The lower-level seed command remains available for data operations that already
+have a trusted administrator:
+
+```bash
+APP_SEED_ADMIN_EMAIL=admin@example.com python -m app.cli.seed_verified_opportunities
 ```
 
 ## Behavior
@@ -90,7 +93,7 @@ Run seed loading during Docker startup after migrations.
 
 ## Tradeoff
 
-Manual loading is one extra command, but it is safer and easier to explain.
+Manual loading is one deliberate command, but it is safer and easier to explain.
 
 ## What this teaches
 
@@ -118,9 +121,11 @@ verification status, and last-verified metadata.
 
 ## Known limitations
 
-- Only three seed records are included.
+- The seed set is a curated demo catalogue, not exhaustive scholarship coverage.
 - Deadlines and requirements can change after 2026-07-22.
-- The dataset is manually curated, not automatically monitored.
+- Before any public release, re-verify official sources and schedule
+  `python -m app.cli.monitor_sources`; the optional Docker `monitoring` profile
+  polls the due-source monitor daily for single-host deployments.
 - Some opportunities support multiple degree levels, while the current schema
   stores one representative degree level per record.
 - DAAD EPOS has course-specific deadlines, so the seed record leaves the general

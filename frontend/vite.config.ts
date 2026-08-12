@@ -2,7 +2,6 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  base: "/app/",
   plugins: [react()],
   build: {
     outDir: "../app/web/frontend-dist",

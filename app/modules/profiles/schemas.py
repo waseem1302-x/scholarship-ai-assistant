@@ -36,6 +36,7 @@ class StudentProfileUpsert(BaseModel):
     preferred_destination_countries: list[str] = Field(default_factory=list)
     preferred_study_mode: StudyMode | None = None
     target_intake: str | None = Field(default=None, max_length=100)
+    target_intake_year: int | None = Field(default=None, ge=2000, le=2100)
     application_constraints: str | None = None
     additional_eligibility_information: str | None = None
 

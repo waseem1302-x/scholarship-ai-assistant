@@ -2,6 +2,7 @@ import { ApiError, apiClient } from "../../api/client";
 
 import {
   defaultCatalogueFilters,
+  type CatalogueAvailability,
   type CatalogueFilters,
   type OpportunityDetail,
   type OpportunitySearchResponse,
@@ -9,9 +10,14 @@ import {
 
 export function filtersFromSearch(search: URLSearchParams): CatalogueFilters {
   const limit = search.get("limit");
+  const availability = search.get("availability");
   const degreeLevel = search.get("degree_level");
   const fundingType = search.get("funding_type");
   return {
+    availability:
+      availability === "open" || availability === "upcoming" || availability === "all"
+        ? availability
+        : defaultCatalogueFilters.availability,
     country: search.get("country") ?? defaultCatalogueFilters.country,
     degree_level:
       degreeLevel === "bachelors" || degreeLevel === "masters" || degreeLevel === "phd" || degreeLevel === "postdoc" || degreeLevel === "short_course"
@@ -28,13 +34,29 @@ export function filtersFromSearch(search: URLSearchParams): CatalogueFilters {
 }
 
 export function catalogueSearch(filters: CatalogueFilters, offset = 0): URLSearchParams {
-  const params = new URLSearchParams({ open_now: "true", limit: filters.limit, offset: String(offset) });
+  const params = new URLSearchParams({
+    availability: filters.availability,
+    limit: filters.limit,
+    offset: String(offset),
+  });
+  if (filters.availability === "open") {
+    params.set("open_now", "true");
+  }
+  if (filters.availability === "upcoming") {
+    params.set("application_window_state", "upcoming");
+  }
   for (const [key, value] of Object.entries(filters)) {
-    if (key !== "limit" && value) {
+    if (key !== "availability" && key !== "limit" && value) {
       params.set(key, value);
     }
   }
   return params;
+}
+
+export function availabilityLabel(availability: CatalogueAvailability): string {
+  if (availability === "open") return "open opportunities";
+  if (availability === "upcoming") return "upcoming opportunities";
+  return "verified opportunities";
 }
 
 export function readableValue(value: string): string {

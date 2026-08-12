@@ -20,6 +20,12 @@ interface AdminStepUpResponse {
   expires_at: string;
 }
 
+export interface AccountTokenDelivery {
+  accepted: boolean;
+  expires_at: string | null;
+  debug_token: string | null;
+}
+
 interface ApiErrorBody {
   detail?: unknown;
   error?: { details?: unknown; message?: string };
@@ -96,6 +102,35 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ password }),
     });
+  }
+
+  async requestEmailVerification(): Promise<AccountTokenDelivery> {
+    return this.request<AccountTokenDelivery>("/auth/email-verifications", { method: "POST" });
+  }
+
+  async confirmEmailVerification(token: string): Promise<User> {
+    return this.request<User>("/auth/email-verifications/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  async requestPasswordReset(email: string): Promise<AccountTokenDelivery> {
+    return this.request<AccountTokenDelivery>("/auth/password-resets", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async confirmPasswordReset(token: string, newPassword: string): Promise<void> {
+    try {
+      await this.request<void>("/auth/password-resets/confirm", {
+        method: "POST",
+        body: JSON.stringify({ token, new_password: newPassword }),
+      });
+    } finally {
+      this.setAccessToken(null);
+    }
   }
 
   async request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {

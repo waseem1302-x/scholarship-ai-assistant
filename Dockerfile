@@ -6,7 +6,7 @@ COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml 
 RUN corepack enable && pnpm install --frozen-lockfile
 
 COPY frontend ./
-RUN pnpm build
+RUN CI=true pnpm build
 
 
 FROM python:3.12-slim AS runtime

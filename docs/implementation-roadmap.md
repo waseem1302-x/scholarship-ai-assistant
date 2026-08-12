@@ -24,7 +24,7 @@ and production browser/authentication security, not a need for a rewrite.
    - administrator password re-authentication, production email-verification
      enforcement, single-use step-up tokens, and audit events;
    - lifecycle reconciliation CLI and baseline automated accessibility checks.
-3. **Phase 2 — opportunity data platform** — in progress.
+3. **Phase 2 — opportunity data platform** — complete.
    - immutable source-excerpt snapshots;
    - admin source-check records with content-hash change detection;
    - changed sources automatically return to `needs_review` and lose public
@@ -36,7 +36,7 @@ and production browser/authentication security, not a need for a rewrite.
    - CSV import parsing into the same review-safe row contract as JSON imports;
    - admin review queue and data-quality issue dashboard APIs;
    - static admin review/data-quality panels.
-4. **Phase 3 — premium frontend foundation** — in progress.
+4. **Phase 3 — premium frontend foundation** — complete.
    - Milestone 1: React, TypeScript, Vite build path, design tokens, client
      routing, and cookie-session-aware authentication shell;
    - Milestone 2: verified catalogue and opportunity-detail journey — complete;
@@ -81,6 +81,12 @@ and production browser/authentication security, not a need for a rewrite.
   trusting server strings as HTML.
 
 ## Compatibility decisions
+
+## Phase 3 closeout
+
+React now serves the canonical product at `/`; the duplicate static MVP and its
+assets have been retired. Existing `/app/*` URLs redirect to their equivalent
+React routes for compatibility.
 
 - Existing `opportunities` fields remain as the legacy/current cycle projection
   so existing API clients and imported data keep working. New `opportunity_cycles`

@@ -18,9 +18,9 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository has completed **Phase 1: correctness and security repairs**.
-Phase 2 has started with the opportunity data-platform trust layer. Phase 3
-frontend foundation work is now underway on an isolated preview route.
+The repository has completed **Phase 1: correctness and security repairs**,
+**Phase 2: opportunity data-platform trust**, and **Phase 3: frontend
+foundation**. The React frontend is the canonical product at `/`.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -60,9 +60,10 @@ Implemented so far:
   text, English requirements, verification freshness, and admin review queues
 - paginated public and admin opportunity search responses with total counts,
   result counts, offsets, and next/previous page indicators
-- local FastAPI-served frontend for login/register, opportunity search,
-  official-source detail, student profile editing, explainable matches,
-  saved-opportunity tracking, and basic admin curation
+- React, TypeScript, and Vite frontend at `/` for login/register, account
+  recovery and email verification, opportunity search, official-source detail,
+  student profile editing, explainable matches, saved-opportunity tracking,
+  and basic admin curation
 - polished opportunity cards and detail pages that emphasize funding components,
   deadlines, eligibility warnings, official evidence, and last verification
 - frontend regression tests for the static product shell, required flows,
@@ -89,11 +90,9 @@ Implemented so far:
   requesting rechecks, resolving conflicts, expiring, and archiving records
 - admin review queue and data-quality issue APIs plus frontend panels for
   curation work
-- React, TypeScript, and Vite Phase 3 foundation at `/app`, with a typed
-  same-origin API client, cookie-session-aware authentication shell, and a
+- typed same-origin API client, cookie-session-aware authentication shell, and a
   verified catalogue, official-evidence detail journey, student profile,
-  explainable matches, and application tracker; the original static MVP remains
-  at `/` during the staged migration
+  explainable matches, and application tracker
 
 ## Quick start
 
@@ -132,13 +131,15 @@ outside the Compose network.
 
 ## Frontend walkthrough
 
-The first frontend is intentionally lightweight and served by FastAPI from
-`app/web/static`. It avoids adding a separate JavaScript build system before the
-backend and data model stabilize.
+The React frontend is built with Vite and served by FastAPI at
+`http://localhost:8000`. It uses a typed same-origin API client and a
+cookie-backed refresh session. The former static MVP was retired after the
+Phase 3 release checks passed.
 
 From `http://localhost:8000`, users can:
 
 - register or login as a student
+- request and confirm email verification, or reset a password with a single-use token
 - search verified public opportunities with structured filters and pagination
 - open opportunity details with official-source excerpts and verification dates
 - create or update a student profile
@@ -152,13 +153,15 @@ and use the admin section to:
 - create a draft opportunity with official-source provenance
 - mark a source as officially verified, which makes the opportunity active
 
-For a useful local demo, create an admin account and load the verified seed
-dataset:
+For a useful local demo, run the guided bootstrap command. It creates (or
+updates) an administrator and idempotently loads the curated dataset:
 
 ```bash
-docker compose exec api python -m app.cli.create_admin
-docker compose exec api python -m app.cli.seed_verified_opportunities
+docker compose exec api python -m app.cli.bootstrap_demo
 ```
+
+It prompts for an email address and a password of at least 12 characters. On a
+second run, existing catalogue records are skipped rather than duplicated.
 
 ## Quality checks
 
@@ -191,6 +194,12 @@ password re-authentication token supplied in `X-Admin-Step-Up`.
 
 Registration creates students only. Administrator roles must be assigned by a
 trusted operational process; public clients cannot self-promote.
+
+The React routes `/verify-email` and `/auth/password-reset` expose the
+verification and recovery flows. In local development, the API returns a
+one-time debug token in the page so the flow can be tested without email. In
+production, the token is not returned to the browser; a transactional email
+provider must deliver it.
 
 For local development, create or promote an administrator inside the running
 Docker API container:
@@ -310,10 +319,18 @@ The repository includes a manually curated source-verified demo dataset:
 data/seed/verified_opportunities.json
 ```
 
-Load it only after creating an admin account:
+For local demos, the single guided command creates the administrator and loads
+the records:
 
 ```bash
-docker compose exec api python -m app.cli.seed_verified_opportunities
+docker compose exec api python -m app.cli.bootstrap_demo
+```
+
+For non-interactive CI or a controlled local environment, provide credentials
+only through environment variables or your secret manager:
+
+```bash
+docker compose exec -e APP_DEMO_ADMIN_EMAIL=admin@example.com -e APP_DEMO_ADMIN_PASSWORD='use-a-unique-12-character-minimum-password' api python -m app.cli.bootstrap_demo
 ```
 
 The loader skips duplicates, records source verification metadata, and makes the
@@ -321,6 +338,25 @@ seed records public only because the dataset was manually checked against
 official source pages. Use this for local portfolio demos, not as a promise that
 deadlines or eligibility will remain unchanged forever. The dataset is a
 verified flagship sample, not a claim to include every scholarship worldwide.
+
+### Catalogue maintenance before public release
+
+Do not treat the seed set as live production data. Before release, re-check each
+official source and resolve any review or data-quality issues before publishing
+the record again. Then schedule the existing source monitor instead of relying
+on ad-hoc manual runs. For a single-host Docker deployment, enable the optional
+monitoring profile:
+
+```bash
+docker compose --profile monitoring up -d source-monitor
+```
+
+It polls daily by default and only checks sources that are due (every seven
+days by default). Set `APP_SOURCE_MONITOR_POLL_SECONDS`,
+`APP_SOURCE_MONITOR_INTERVAL_DAYS`, and `APP_SOURCE_MONITOR_LIMIT` in the
+deployment environment to tune it. On managed hosting, schedule the equivalent
+`python -m app.cli.monitor_sources` command through the platform scheduler and
+alert on failed runs; do not silently republish changed sources.
 
 ## Important limitations
 

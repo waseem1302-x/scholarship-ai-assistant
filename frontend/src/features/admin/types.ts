@@ -59,6 +59,29 @@ export interface ReviewQueueResponse {
   pagination: PaginationMeta;
 }
 
+export interface AdminOpportunitySearchResponse {
+  items: AdminOpportunity[];
+  pagination: PaginationMeta;
+}
+
+export interface AdminOpportunityFilters {
+  search_query: string;
+  country: string;
+  degree_level: string;
+  status: string;
+  verification_status: string;
+  needs_review: "" | "true";
+}
+
+export const defaultAdminOpportunityFilters: AdminOpportunityFilters = {
+  search_query: "",
+  country: "",
+  degree_level: "",
+  status: "",
+  verification_status: "",
+  needs_review: "",
+};
+
 export interface DataQualityResponse {
   items: DataQualityIssue[];
   pagination: PaginationMeta;

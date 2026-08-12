@@ -9,6 +9,7 @@ from app.modules.auth.models import (
     RefreshToken,
     User,
 )
+from app.modules.matching.models import MatchEvaluation, MatchEvaluationResult, MatchRuleOutcome
 from app.modules.opportunities.models import (
     EligibilityRule,
     Opportunity,
@@ -26,6 +27,9 @@ __all__ = [
     "AuditLog",
     "EligibilityRule",
     "EmailVerificationToken",
+    "MatchEvaluation",
+    "MatchEvaluationResult",
+    "MatchRuleOutcome",
     "Opportunity",
     "OpportunityCycle",
     "PasswordResetToken",

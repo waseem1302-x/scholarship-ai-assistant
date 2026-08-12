@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from app.core.errors import install_error_handlers
 from app.core.rate_limit import AuthRateLimitMiddleware
 from app.db.session import get_db
 
-PHASE_THREE_FRONTEND_DIRECTORY = Path("app/web/frontend-dist")
+FRONTEND_DIRECTORY = Path("app/web/frontend-dist")
 
 
 @asynccontextmanager
@@ -61,24 +61,25 @@ def create_app() -> FastAPI:
 
     install_error_handlers(application)
     application.include_router(api_router, prefix="/api/v1")
-    application.mount("/static", StaticFiles(directory="app/web/static"), name="static")
     application.mount(
-        "/app/assets",
-        StaticFiles(directory=PHASE_THREE_FRONTEND_DIRECTORY / "assets", check_dir=False),
-        name="phase-three-assets",
+        "/assets",
+        StaticFiles(directory=FRONTEND_DIRECTORY / "assets", check_dir=False),
+        name="frontend-assets",
     )
-
-    @application.get("/", include_in_schema=False)
-    def frontend() -> FileResponse:
-        return FileResponse("app/web/static/index.html")
 
     @application.get("/app", include_in_schema=False)
     @application.get("/app/{path:path}", include_in_schema=False)
-    def phase_three_frontend() -> Response:
-        index = PHASE_THREE_FRONTEND_DIRECTORY / "index.html"
+    def redirect_legacy_frontend(request: Request, path: str = "") -> RedirectResponse:
+        target = f"/{path}"
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
+
+    def frontend_response() -> Response:
+        index = FRONTEND_DIRECTORY / "index.html"
         if not index.is_file():
             return PlainTextResponse(
-                "The Phase 3 frontend has not been built. Run `pnpm --dir frontend build` first.",
+                "The frontend has not been built. Run `pnpm --dir frontend build` first.",
                 status_code=503,
             )
         return FileResponse(index)
@@ -91,6 +92,14 @@ def create_app() -> FastAPI:
     def readiness(session: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
         session.execute(text("SELECT 1"))
         return {"status": "ready"}
+
+    @application.get("/", include_in_schema=False)
+    def frontend() -> Response:
+        return frontend_response()
+
+    @application.get("/{path:path}", include_in_schema=False)
+    def frontend_route(path: str) -> Response:
+        return frontend_response()
 
     return application
 

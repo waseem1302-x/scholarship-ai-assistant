@@ -17,7 +17,7 @@ can be reviewed, monitored, and trusted before later AI retrieval uses it.
   source id, and human-readable message
 - admin review queue endpoint that groups high and medium priority curation
   reasons by opportunity
-- static admin frontend panels for the review queue and data-quality dashboard
+- administrator review/data-quality frontend panels (migrated to React in Phase 3)
 - reviewer-action endpoint and frontend controls for publishing, holding,
   flagging conflicts, requesting rechecks, resolving conflicts, expiring, and
   archiving records

@@ -20,15 +20,18 @@ from app.modules.opportunities.models import (
     VerificationStatus,
 )
 
+EligibilityRuleValue = str | int | float | list[str | int | float]
+
 
 class EligibilityRuleCreate(BaseModel):
     rule_type: EligibilityRuleType
     operator: EligibilityOperator
-    value: str | int | float | list[str]
+    value: EligibilityRuleValue
     unit: str | None = Field(default=None, max_length=64)
     grading_scale: Decimal | None = Field(default=None, gt=0, le=100)
     required: bool = True
     source_id: uuid.UUID | None = None
+    source_excerpt_id: uuid.UUID | None = None
     confidence: DataConfidence = DataConfidence.MEDIUM
     curator_notes: str | None = Field(default=None, max_length=2000)
 
@@ -41,11 +44,27 @@ class EligibilityRuleCreate(BaseModel):
             EligibilityRuleType.IELTS,
             EligibilityRuleType.TOEFL,
             EligibilityRuleType.WORK_EXPERIENCE_MONTHS,
+            EligibilityRuleType.DUOLINGO,
+            EligibilityRuleType.GRE,
         }
+        categorical_rules = set(EligibilityRuleType) - numeric_rules
+        if self.rule_type in categorical_rules and self.operator not in set_operators | {
+            EligibilityOperator.EQUALS
+        }:
+            raise ValueError("Categorical eligibility rules support equals, in, and not_in only")
         if self.operator in set_operators and not isinstance(self.value, list):
             raise ValueError("IN and NOT_IN rules require a list value")
-        if self.rule_type in numeric_rules and not isinstance(self.value, (int, float)):
-            raise ValueError("Numeric eligibility rules require a numeric value")
+        if self.operator not in set_operators and isinstance(self.value, list):
+            raise ValueError("EQUALS, GTE, and LTE rules require a scalar value")
+        values = self.value if isinstance(self.value, list) else [self.value]
+        if self.rule_type in numeric_rules and not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool) for value in values
+        ):
+            raise ValueError("Numeric eligibility rules require numeric values")
+        if self.rule_type not in numeric_rules and not all(
+            isinstance(value, str) for value in values
+        ):
+            raise ValueError("Categorical eligibility rules require text values")
         if self.rule_type is EligibilityRuleType.CGPA and self.grading_scale is None:
             raise ValueError("CGPA rules require a grading_scale")
         return self

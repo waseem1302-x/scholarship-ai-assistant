@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.modules.auth.dependencies import require_admin_step_up, require_roles
 from app.modules.auth.models import User, UserRole
 from app.modules.opportunities.models import (
+    ApplicationWindowState,
     DegreeLevel,
     FundingType,
     OpportunityStatus,
@@ -237,6 +238,7 @@ def search_opportunities(
     english_requirement: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     verified_after: datetime | None = None,
     open_now: bool = False,
+    application_window_state: ApplicationWindowState | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> OpportunitySearchResponse:
@@ -254,6 +256,7 @@ def search_opportunities(
         english_requirement=english_requirement,
         verified_after=verified_after,
         open_now=open_now,
+        application_window_state=application_window_state,
         limit=limit,
         offset=offset,
     )

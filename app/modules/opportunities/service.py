@@ -15,6 +15,7 @@ from app.modules.opportunities.lifecycle import (
     is_open_now,
 )
 from app.modules.opportunities.models import (
+    ApplicationWindowState,
     EligibilityRule,
     Opportunity,
     OpportunityCycle,
@@ -75,6 +76,31 @@ class OpportunityService:
     def create_opportunity(
         self, payload: OpportunityCreate, *, created_by: User
     ) -> AdminOpportunityResponse:
+        if self.repository.find_duplicate_opportunity(
+            provider_name=payload.provider_name,
+            name=payload.name,
+            country=payload.country,
+            intake_year=payload.intake_year,
+        ):
+            raise ConflictError(
+                "duplicate_opportunity",
+                "An opportunity with the same provider, name, country, and intake already exists",
+            )
+        if payload.eligibility_rules and payload.source.source_type is not SourceType.OFFICIAL:
+            raise AppError(
+                "eligibility_rule_official_source_required",
+                "Eligibility rules require an official source and immutable source excerpt",
+                422,
+            )
+        if any(
+            rule.source_id is not None or rule.source_excerpt_id is not None
+            for rule in payload.eligibility_rules
+        ):
+            raise AppError(
+                "eligibility_rule_source_reference_invalid",
+                "New opportunity rules must use the official source supplied with the opportunity",
+                422,
+            )
         provider = self.repository.get_or_create_provider(
             payload.provider_name,
             str(payload.provider_website_url) if payload.provider_website_url else None,
@@ -116,37 +142,22 @@ class OpportunityService:
             eligibility_warnings=payload.eligibility_warnings,
             created_by_user_id=created_by.id,
         )
-        opportunity.sources.append(
-            Source(
-                url=str(payload.source.url),
-                source_type=payload.source.source_type,
-                title=payload.source.title.strip(),
-                publication_date=payload.source.publication_date,
-                content_hash=payload.source.content_hash,
-                relevant_excerpt=payload.source.relevant_excerpt.strip(),
-                verification_status=payload.source.verification_status,
-                verified_by_user_id=created_by.id
-                if payload.source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
-                else None,
-                last_verified_at=datetime.now(UTC)
-                if payload.source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
-                else None,
-            )
+        source = Source(
+            url=str(payload.source.url),
+            source_type=payload.source.source_type,
+            title=payload.source.title.strip(),
+            publication_date=payload.source.publication_date,
+            content_hash=payload.source.content_hash,
+            relevant_excerpt=payload.source.relevant_excerpt.strip(),
+            verification_status=payload.source.verification_status,
+            verified_by_user_id=created_by.id
+            if payload.source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
+            else None,
+            last_verified_at=datetime.now(UTC)
+            if payload.source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
+            else None,
         )
-        for rule in payload.eligibility_rules:
-            opportunity.eligibility_rules.append(
-                EligibilityRule(
-                    rule_type=rule.rule_type,
-                    operator=rule.operator,
-                    value_json=rule.value,
-                    unit=rule.unit,
-                    grading_scale=rule.grading_scale,
-                    required=rule.required,
-                    source_id=rule.source_id,
-                    confidence=rule.confidence,
-                    curator_notes=rule.curator_notes,
-                )
-            )
+        opportunity.sources.append(source)
         for cycle in payload.application_cycles:
             opportunity.cycles.append(
                 OpportunityCycle(
@@ -159,6 +170,31 @@ class OpportunityService:
                 )
             )
         self.repository.add_opportunity(opportunity)
+        self.session.flush()
+        if payload.eligibility_rules:
+            excerpt = SourceExcerpt(
+                source_id=source.id,
+                text=source.relevant_excerpt,
+                content_hash=source.content_hash,
+                captured_by_user_id=created_by.id,
+            )
+            self.session.add(excerpt)
+            self.session.flush()
+            for rule in payload.eligibility_rules:
+                opportunity.eligibility_rules.append(
+                    EligibilityRule(
+                        rule_type=rule.rule_type,
+                        operator=rule.operator,
+                        value_json=rule.value,
+                        unit=rule.unit,
+                        grading_scale=rule.grading_scale,
+                        required=rule.required,
+                        source_id=source.id,
+                        source_excerpt_id=excerpt.id,
+                        confidence=rule.confidence,
+                        curator_notes=rule.curator_notes,
+                    )
+                )
         self.session.add(
             AuditLog(
                 actor_user_id=created_by.id,
@@ -503,13 +539,39 @@ class OpportunityService:
         self, *, limit: int, offset: int, **filters: object
     ) -> OpportunitySearchResponse:
         open_now = bool(filters.pop("open_now", False))
-        if open_now:
+        application_window_state = filters.pop("application_window_state", None)
+        if application_window_state is not None and not isinstance(
+            application_window_state, ApplicationWindowState
+        ):
+            raise AppError(
+                "application_window_state_invalid",
+                "Application window state is not valid",
+                422,
+            )
+        if open_now and application_window_state is not None:
+            raise AppError(
+                "application_window_filter_conflict",
+                "Open-now and application-window-state filters cannot be combined",
+                422,
+            )
+
+        if open_now or application_window_state is not None:
             opportunities = self.repository.list_public_opportunities(**filters)
-            opportunities = [
-                opportunity
-                for opportunity in opportunities
-                if is_open_now(opportunity, self._official_source(opportunity))
-            ]
+            if open_now:
+                opportunities = [
+                    opportunity
+                    for opportunity in opportunities
+                    if is_open_now(opportunity, self._official_source(opportunity))
+                ]
+            else:
+                opportunities = [
+                    opportunity
+                    for opportunity in opportunities
+                    if effective_application_window(
+                        opportunity, self._official_source(opportunity)
+                    ).state
+                    is application_window_state
+                ]
             total = len(opportunities)
             items = [
                 self.to_summary_response(opportunity)
@@ -620,6 +682,7 @@ class OpportunityService:
                     grading_scale=rule.grading_scale,
                     required=rule.required,
                     source_id=rule.source_id,
+                    source_excerpt_id=rule.source_excerpt_id,
                     confidence=rule.confidence,
                     curator_notes=rule.curator_notes,
                 )
@@ -997,6 +1060,75 @@ class OpportunityService:
                     message="Minimum academic requirement is missing.",
                 )
             )
+        structured_types = {rule.rule_type for rule in opportunity.eligibility_rules}
+        if not structured_types:
+            issues.append(
+                self._issue(
+                    opportunity,
+                    source=best_source,
+                    code="structured_eligibility_missing",
+                    severity=DataQualitySeverity.HIGH,
+                    message=(
+                        "Public opportunity has no structured eligibility rules and requires "
+                        "curator coverage."
+                    ),
+                )
+            )
+        unstructured_dependencies = {
+            "nationality_eligibility": (
+                opportunity.nationality_eligibility,
+                {"nationality"},
+            ),
+            "field_eligibility": (opportunity.field_eligibility, {"field"}),
+            "academic_requirement": (
+                opportunity.minimum_academic_requirement,
+                {"cgpa", "percentage", "current_education_level"},
+            ),
+            "english_test_requirement": (
+                opportunity.english_language_requirement
+                or opportunity.standardized_test_requirement,
+                {"ielts", "toefl", "duolingo", "english_test_status"},
+            ),
+        }
+        for dependency, (text, required_types) in unstructured_dependencies.items():
+            has_structured_rule = any(
+                rule_type.value in required_types for rule_type in structured_types
+            )
+            if text and not has_structured_rule:
+                issues.append(
+                    self._issue(
+                        opportunity,
+                        source=best_source,
+                        code=f"unstructured_eligibility_{dependency}",
+                        severity=DataQualitySeverity.HIGH,
+                        message=(
+                            "Public opportunity still depends on unstructured eligibility text: "
+                            f"{dependency.replace('_', ' ')}."
+                        ),
+                    )
+                )
+        for rule in opportunity.eligibility_rules:
+            source = rule.source
+            excerpt = rule.source_excerpt
+            if (
+                source is None
+                or source.opportunity_id != opportunity.id
+                or source.source_type is not SourceType.OFFICIAL
+                or excerpt is None
+                or excerpt.source_id != source.id
+            ):
+                issues.append(
+                    self._issue(
+                        opportunity,
+                        source=source,
+                        code="eligibility_rule_evidence_missing",
+                        severity=DataQualitySeverity.HIGH,
+                        message=(
+                            "Structured eligibility rule lacks a linked official source and "
+                            "immutable excerpt."
+                        ),
+                    )
+                )
         if opportunity.funding_type.value == "unknown":
             issues.append(
                 self._issue(

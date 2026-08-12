@@ -1,6 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { readCsrfToken } from "./client";
+import { ApiClient, readCsrfToken } from "./client";
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body),
+  } as Response;
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("readCsrfToken", () => {
   it("returns the CSRF token without persisting sensitive state", () => {
@@ -9,5 +21,34 @@ describe("readCsrfToken", () => {
 
   it("returns undefined when the cookie is unavailable", () => {
     expect(readCsrfToken("theme=light")).toBeUndefined();
+  });
+});
+
+describe("account lifecycle API methods", () => {
+  it("uses the existing verification and password-reset contracts", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ accepted: true, expires_at: "2099-01-01T00:00:00Z", debug_token: null }))
+      .mockResolvedValueOnce(jsonResponse({ id: "user-id", email: "student@example.com", role: "student", is_active: true, email_verified_at: "2099-01-01T00:00:00Z", created_at: "2099-01-01T00:00:00Z" }))
+      .mockResolvedValueOnce(jsonResponse({ accepted: true, expires_at: null, debug_token: null }))
+      .mockResolvedValueOnce(jsonResponse({}, 204));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient();
+    client.setAccessToken("access-token");
+
+    await client.requestEmailVerification();
+    await client.confirmEmailVerification("verification-token");
+    await client.requestPasswordReset("student@example.com");
+    await client.confirmPasswordReset("reset-token", "UpdatedPassword2026");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v1/auth/email-verifications",
+      "/api/v1/auth/email-verifications/confirm",
+      "/api/v1/auth/password-resets",
+      "/api/v1/auth/password-resets/confirm",
+    ]);
+    expect(fetchMock.mock.calls[0][1].headers.get("Authorization")).toBe("Bearer access-token");
+    expect(fetchMock.mock.calls[1][1].body).toBe(JSON.stringify({ token: "verification-token" }));
+    expect(fetchMock.mock.calls[2][1].body).toBe(JSON.stringify({ email: "student@example.com" }));
+    expect(fetchMock.mock.calls[3][1].body).toBe(JSON.stringify({ token: "reset-token", new_password: "UpdatedPassword2026" }));
   });
 });

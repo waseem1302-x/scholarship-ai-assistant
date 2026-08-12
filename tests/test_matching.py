@@ -1,10 +1,22 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.modules.auth.models import User, UserRole
+from app.modules.matching.models import MatchEvaluation, MatchEvaluationResult
+from app.modules.matching.repository import MatchEvaluationRepository
+from app.modules.matching.service import _compare
+from app.modules.opportunities.models import (
+    EligibilityOperator,
+    EligibilityRule,
+    EligibilityRuleType,
+    Opportunity,
+)
 
 PASSWORD = "MatchingPassword123"
 
@@ -131,7 +143,16 @@ def test_matching_ranks_verified_opportunities_and_explains_fit(
     )
     assert profile.status_code == 200
 
-    strong = create_verified_opportunity(client, admin_headers)
+    strong = create_verified_opportunity(
+        client,
+        admin_headers,
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]},
+            {"rule_type": "field", "operator": "in", "value": ["Artificial Intelligence"]},
+            {"rule_type": "cgpa", "operator": "gte", "value": 3.0, "grading_scale": 4.0},
+            {"rule_type": "ielts", "operator": "gte", "value": 6.5},
+        ],
+    )
     weak = create_verified_opportunity(
         client,
         admin_headers,
@@ -161,7 +182,10 @@ def test_matching_ranks_verified_opportunities_and_explains_fit(
     assert results[0]["match_score"] > results[1]["match_score"]
     assert results[0]["score_label"] == "strong_match"
     assert "not a probability" in results[0]["disclaimer"]
-    assert any("Target degree matches" in item for item in results[0]["explanation"]["satisfied"])
+    assert any(
+        "Nationality requirement is satisfied" in item
+        for item in results[0]["explanation"]["satisfied"]
+    )
     assert any("target degree" in item.lower() for item in results[1]["explanation"]["missing"])
 
 
@@ -217,7 +241,7 @@ def test_matching_surfaces_uncertainty_for_missing_profile_fields(
     uncertain = response.json()["results"][0]["explanation"]["uncertain"]
     assert any("nationality" in item.lower() for item in uncertain)
     assert any("field" in item.lower() for item in uncertain)
-    assert any("cgpa" in item.lower() for item in uncertain)
+    assert any("academic" in item.lower() for item in uncertain)
 
 
 def test_structured_hard_exclusion_never_receives_a_strong_match(
@@ -251,3 +275,290 @@ def test_structured_hard_exclusion_never_receives_a_strong_match(
     assert result["fit_score"] is None
     assert result["score_label"] == "not_eligible"
     assert result["matcher_version"] == "2026-08-11.structured-hard-gates.v1"
+
+
+def test_matching_persists_reproducible_evaluation_history(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-evaluation@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="student-evaluation@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-evaluation@example.com"))
+    student_headers = headers(login(client, "student-evaluation@example.com"))
+    assert (
+        client.put(
+            "/api/v1/profiles/me", json=profile_payload(), headers=student_headers
+        ).status_code
+        == 200
+    )
+    opportunity = create_verified_opportunity(
+        client,
+        admin_headers,
+        application_cycles=[
+            {
+                "intake_year": 2027,
+                "application_opening_date": "2027-01-01T00:00:00Z",
+                "application_deadline": "2027-05-30T23:59:59Z",
+            }
+        ],
+    )
+
+    first_response = client.get("/api/v1/matches/me", headers=student_headers)
+
+    assert first_response.status_code == 200
+    first_evaluation_id = first_response.json()["evaluation_id"]
+    first = db_session.get(MatchEvaluation, uuid.UUID(first_evaluation_id))
+    assert first is not None
+    assert first.matcher_version == "2026-08-11.structured-hard-gates.v1"
+    assert len(first.profile_snapshot_hash) == 64
+    assert first.profile_snapshot_json["identity"]["nationality"] == "Pakistani"
+    assert first.expires_at > first.evaluated_at
+
+    stored_result = db_session.scalar(
+        select(MatchEvaluationResult).where(MatchEvaluationResult.evaluation_id == first.id)
+    )
+    assert stored_result is not None
+    assert str(stored_result.opportunity_id) == opportunity["id"]
+    assert stored_result.opportunity_cycle_id is not None
+    assert stored_result.source_id is not None
+    assert stored_result.source_snapshot_json is not None
+    assert stored_result.source_snapshot_json["source_id"] == str(stored_result.source_id)
+    assert len(stored_result.rule_outcomes) == 8
+    assert all(item.reason_code.startswith("match.") for item in stored_result.rule_outcomes)
+
+    assert (
+        client.put(
+            "/api/v1/profiles/me",
+            json=profile_payload(ielts_score="7.5"),
+            headers=student_headers,
+        ).status_code
+        == 200
+    )
+    second_response = client.get("/api/v1/matches/me", headers=student_headers)
+    second = db_session.get(MatchEvaluation, uuid.UUID(second_response.json()["evaluation_id"]))
+
+    assert second is not None
+    assert second.supersedes_evaluation_id == first.id
+    assert second.profile_snapshot_hash != first.profile_snapshot_hash
+
+    second.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db_session.commit()
+    removed = MatchEvaluationRepository(db_session).purge_expired(before=datetime.now(UTC))
+    db_session.commit()
+
+    assert removed == 1
+    assert db_session.get(MatchEvaluation, second.id) is None
+
+
+def test_structured_rules_cover_all_profile_backed_categories_and_operators(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-complete-rules@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="student-complete-rules@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-complete-rules@example.com"))
+    student_headers = headers(login(client, "student-complete-rules@example.com"))
+    assert (
+        client.put(
+            "/api/v1/profiles/me",
+            json=profile_payload(
+                percentage="85",
+                toefl_score=105,
+                duolingo_score=130,
+                gre_status="taken",
+                gre_score=320,
+                work_experience_months=12,
+                preferred_study_mode="online",
+                target_intake_year=2027,
+            ),
+            headers=student_headers,
+        ).status_code
+        == 200
+    )
+    created = create_verified_opportunity(
+        client,
+        admin_headers,
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]},
+            {"rule_type": "residence", "operator": "equals", "value": "Malaysia"},
+            {"rule_type": "target_degree", "operator": "equals", "value": "masters"},
+            {"rule_type": "field", "operator": "in", "value": ["Artificial Intelligence"]},
+            {"rule_type": "cgpa", "operator": "gte", "value": 3.5, "grading_scale": 4.0},
+            {"rule_type": "percentage", "operator": "gte", "value": 80},
+            {"rule_type": "ielts", "operator": "gte", "value": 6.5},
+            {"rule_type": "toefl", "operator": "lte", "value": 110},
+            {"rule_type": "duolingo", "operator": "gte", "value": 120},
+            {"rule_type": "gre", "operator": "gte", "value": 310},
+            {"rule_type": "work_experience_months", "operator": "lte", "value": 24},
+            {"rule_type": "study_mode", "operator": "equals", "value": "online"},
+            {"rule_type": "intake_year", "operator": "equals", "value": "2027"},
+            {"rule_type": "current_education_level", "operator": "equals", "value": "bachelors"},
+            {"rule_type": "english_test_status", "operator": "equals", "value": "taken"},
+            {"rule_type": "gre_status", "operator": "equals", "value": "taken"},
+            {"rule_type": "application_window", "operator": "in", "value": ["open", "rolling"]},
+        ],
+    )
+
+    response = client.get("/api/v1/matches/me", headers=student_headers)
+
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["opportunity"]["id"] == created["id"]
+    assert result["failed_criteria"] == []
+    assert result["unknown_criteria"] == []
+    assert result["eligibility_status"] == "eligible"
+    assert all(
+        rule["source_id"] == created["sources"][0]["id"]
+        for rule in created["eligibility_rules"]
+    )
+    assert all(rule["source_excerpt_id"] is not None for rule in created["eligibility_rules"])
+
+
+def test_missing_or_waived_structured_test_evidence_stays_unknown(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-unknown-rule@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="student-unknown-rule@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-unknown-rule@example.com"))
+    student_headers = headers(login(client, "student-unknown-rule@example.com"))
+    assert (
+        client.put(
+            "/api/v1/profiles/me",
+            json=profile_payload(english_test_status="not_required", ielts_score=None),
+            headers=student_headers,
+        ).status_code
+        == 200
+    )
+    create_verified_opportunity(
+        client,
+        admin_headers,
+        eligibility_rules=[
+            {"rule_type": "english_test_status", "operator": "equals", "value": "taken"}
+        ],
+    )
+
+    result = client.get("/api/v1/matches/me", headers=student_headers).json()["results"][0]
+
+    assert result["eligibility_status"] == "likely_eligible"
+    assert result["failed_criteria"] == []
+    assert any("waiver" in item.lower() for item in result["unknown_criteria"])
+
+
+def test_unstructured_eligibility_is_admin_visible_and_never_a_hard_failure(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-unstructured@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="student-unstructured@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-unstructured@example.com"))
+    student_headers = headers(login(client, "student-unstructured@example.com"))
+    assert (
+        client.put(
+            "/api/v1/profiles/me", json=profile_payload(), headers=student_headers
+        ).status_code
+        == 200
+    )
+    created = create_verified_opportunity(
+        client,
+        admin_headers,
+        nationality_eligibility="German citizens only",
+        field_eligibility="History only",
+    )
+
+    result = client.get("/api/v1/matches/me", headers=student_headers).json()["results"][0]
+    quality = client.get("/api/v1/admin/data-quality-issues", headers=admin_headers).json()
+
+    assert result["eligibility_status"] != "ineligible"
+    assert result["fit_score"] is not None
+    codes = {
+        item["code"]
+        for item in quality["items"]
+        if item["opportunity_id"] == created["id"]
+    }
+    assert "unstructured_eligibility_nationality_eligibility" in codes
+    assert "unstructured_eligibility_field_eligibility" in codes
+    assert "structured_eligibility_missing" in codes
+
+
+def test_admin_rules_require_official_source_evidence(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-rule-evidence@example.com", role=UserRole.ADMIN)
+    admin_headers = headers(login(client, "admin-rule-evidence@example.com"))
+
+    response = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(
+            eligibility_rules=[
+                {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]}
+            ],
+            source={
+                **opportunity_payload()["source"],
+                "source_type": "university",
+                "url": "https://example.edu/non-official-rule-source",
+            },
+        ),
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "eligibility_rule_official_source_required"
+
+
+@pytest.mark.parametrize(
+    ("actual", "required", "operator", "expected"),
+    [
+        ("Pakistan", "Pakistan", EligibilityOperator.EQUALS, True),
+        ("Pakistan", ["Malaysia", "Pakistan"], EligibilityOperator.IN, True),
+        ("Pakistan", ["Pakistan"], EligibilityOperator.NOT_IN, False),
+        (3.5, 3.0, EligibilityOperator.GTE, True),
+        (3.5, 3.0, EligibilityOperator.LTE, False),
+        (
+            ["Artificial Intelligence", "Computer Science"],
+            ["Computer Science"],
+            EligibilityOperator.IN,
+            True,
+        ),
+    ],
+)
+def test_structured_operator_matrix(
+    actual: str | float | list[str],
+    required: str | float | list[str],
+    operator: EligibilityOperator,
+    expected: bool,
+) -> None:
+    assert _compare(actual, required, operator) is expected
+
+
+def test_admin_quality_flags_legacy_rule_without_official_excerpt(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-legacy-rule@example.com", role=UserRole.ADMIN)
+    admin_headers = headers(login(client, "admin-legacy-rule@example.com"))
+    created = create_verified_opportunity(
+        client,
+        admin_headers,
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]}
+        ],
+    )
+    opportunity = db_session.get(Opportunity, uuid.UUID(created["id"]))
+    assert opportunity is not None
+    db_session.add(
+        EligibilityRule(
+            opportunity_id=opportunity.id,
+            rule_type=EligibilityRuleType.FIELD,
+            operator=EligibilityOperator.IN,
+            value_json=["Computer Science"],
+            required=True,
+            source_id=None,
+            source_excerpt_id=None,
+        )
+    )
+    db_session.commit()
+
+    quality = client.get("/api/v1/admin/data-quality-issues", headers=admin_headers).json()
+    codes = {
+        item["code"]
+        for item in quality["items"]
+        if item["opportunity_id"] == created["id"]
+    }
+
+    assert "eligibility_rule_evidence_missing" in codes

@@ -30,6 +30,12 @@ describe("student workspace payloads", () => {
     expect(payload.preferred_destination_countries).toEqual(["Malaysia", "Germany", "Canada"]);
   });
 
+  it("keeps target intake year structured for eligibility rules", () => {
+    const payload = profilePayload({ ...emptyProfileDraft, target_intake_year: "2027" });
+
+    expect(payload.target_intake_year).toBe(2027);
+  });
+
   it("removes empty list entries before a profile is saved", () => {
     expect(listFromText("paper one, , paper two,  ")).toEqual(["paper one", "paper two"]);
   });

@@ -2,7 +2,7 @@ import uuid
 from pathlib import Path
 
 from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from alembic import command
@@ -23,6 +23,12 @@ def test_alembic_schema_accepts_orm_enums_and_portable_timestamp_defaults(
     command.upgrade(alembic_config, "head")
 
     engine = create_engine(database_url)
+    inspector = inspect(engine)
+    profile_columns = {column["name"] for column in inspector.get_columns("student_profiles")}
+    assert "target_intake_year" in profile_columns
+    assert "source_excerpt_id" in {
+        column["name"] for column in inspector.get_columns("eligibility_rules")
+    }
     settings = Settings(
         env="test",
         database_url=database_url,

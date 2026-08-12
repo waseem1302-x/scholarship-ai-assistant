@@ -5,16 +5,17 @@
 Give the backend a usable product surface so the project can be tested like a
 real early-stage application instead of only through Swagger or curl.
 
-This slice deliberately keeps the frontend lightweight. It is served directly by
-FastAPI from static files so the project still has one local runtime and one
-Docker entry point.
+This historical slice deliberately kept the frontend lightweight. It was served
+directly by FastAPI from static files so the project had one local runtime and
+one Docker entry point. The static client was retired in the Phase 3 closeout;
+see `docs/slices/13-phase3-frontend-foundation.md` for the current frontend.
 
 ## What changed
 
 - Added a local frontend at `/`.
 - Kept API documentation available at `/docs`.
-- Added static assets under `app/web/static`.
-- Mounted `/static` through FastAPI.
+- Added static assets under `app/web/static` (retired in Phase 3).
+- Mounted `/static` through FastAPI (retired in Phase 3).
 - Updated tests so the root route is now the product UI.
 - Polished opportunity cards and detail pages to highlight funding fields,
   eligibility warnings, official-source evidence, and last verification dates.
@@ -51,7 +52,7 @@ Administrators can:
 - create a draft opportunity with official-source provenance
 - mark an opportunity source as officially verified
 
-## Decision
+## Historical decision
 
 Use a dependency-light static frontend instead of introducing React/Vite yet.
 
@@ -104,10 +105,10 @@ This slice demonstrates:
 - Tests cover core frontend structure and asset regressions.
 - Existing backend tests still pass.
 
-## Known limitations
+## Historical limitations
 
-- The frontend stores local demo tokens in browser local storage.
-- There is no production-grade CSRF/session-cookie strategy yet.
+- The static client's local demo-token approach and missing production-grade
+  CSRF/session-cookie strategy were resolved before its retirement.
 - The UI does not include the future AI assistant chat interface yet.
 - Admin creation is intentionally minimal; CSV/JSON import remains better
   tested through the API for now.

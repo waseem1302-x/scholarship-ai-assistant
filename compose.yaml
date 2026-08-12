@@ -26,6 +26,23 @@ services:
     ports:
       - "8000:8000"
 
+  source-monitor:
+    profiles: ["monitoring"]
+    build: .
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
+      APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
+      APP_SOURCE_MONITOR_INTERVAL_DAYS: ${APP_SOURCE_MONITOR_INTERVAL_DAYS:-7}
+      APP_SOURCE_MONITOR_LIMIT: ${APP_SOURCE_MONITOR_LIMIT:-20}
+      APP_SOURCE_MONITOR_POLL_SECONDS: ${APP_SOURCE_MONITOR_POLL_SECONDS:-86400}
+    depends_on:
+      api:
+        condition: service_started
+    command: >
+      sh -c 'while true; do python -m app.cli.monitor_sources;
+      sleep "$${APP_SOURCE_MONITOR_POLL_SECONDS}"; done'
+    restart: unless-stopped
+
 volumes:
   postgres_data:
-

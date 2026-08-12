@@ -61,6 +61,7 @@ export function ProfilePage() {
         <Field label="Academic discipline"><input value={draft.academic_discipline} onChange={(e) => update("academic_discipline", e.target.value)} placeholder="Computer Science" /></Field>
         <Field label="Preferred study mode"><Select value={draft.preferred_study_mode} onChange={(v) => update("preferred_study_mode", v)}><option value="">No preference</option>{["on_campus", "online", "hybrid", "any"].map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</Select></Field>
         <Field label="Target intake"><input value={draft.target_intake} onChange={(e) => update("target_intake", e.target.value)} placeholder="Fall 2027" /></Field>
+        <Field label="Target intake year"><input inputMode="numeric" value={draft.target_intake_year} onChange={(e) => update("target_intake_year", e.target.value)} placeholder="2027" /></Field>
         <Field label="Preferred destinations" wide><input value={draft.preferred_destination_countries} onChange={(e) => update("preferred_destination_countries", e.target.value)} placeholder="Malaysia, Germany, Canada" /><small>Separate countries with commas.</small></Field>
       </div></fieldset>
       <fieldset><legend>Academic record and tests</legend><div className="form-grid">

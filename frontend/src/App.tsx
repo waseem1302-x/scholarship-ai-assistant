@@ -3,6 +3,7 @@ import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom"
 import { BrowserRouter } from "react-router-dom";
 
 import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
+import { EmailVerificationNotice, EmailVerificationPage, PasswordResetPage } from "./auth/AccountLifecycle";
 import { CataloguePage } from "./features/catalogue/CataloguePage";
 import { OpportunityDetailPage } from "./features/catalogue/OpportunityDetailPage";
 import { AdminPage } from "./features/admin/AdminPage";
@@ -25,7 +26,7 @@ function Brand() {
 }
 
 function Topbar() {
-  const { user, signOut } = useAuth();
+  const { user, isRestoring, signOut } = useAuth();
   const navigate = useNavigate();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
@@ -43,6 +44,32 @@ function Topbar() {
     <header className="topbar-shell">
       <nav className="topbar page-width" aria-label="Primary navigation">
         <Brand />
+        <div className="product-nav" aria-label="Product navigation">
+          <NavLink className="product-nav-link" to="/catalogue">
+            Catalogue
+          </NavLink>
+          {user ? (
+            <>
+              <NavLink className="product-nav-link" to="/dashboard">
+                Dashboard
+              </NavLink>
+              <NavLink className="product-nav-link" to="/profile">
+                Profile
+              </NavLink>
+              <NavLink className="product-nav-link" to="/matches">
+                Matches
+              </NavLink>
+              <NavLink className="product-nav-link" to="/tracker">
+                Tracker
+              </NavLink>
+              {user.role === "admin" ? (
+                <NavLink className="product-nav-link" to="/admin">
+                  Admin
+                </NavLink>
+              ) : null}
+            </>
+          ) : null}
+        </div>
         <div className="topbar-actions">
           <a className="text-link" href="/docs" target="_blank" rel="noreferrer">
             API documentation
@@ -53,7 +80,7 @@ function Topbar() {
             </button>
           ) : (
             <NavLink className="button button-quiet" to="/auth">
-              Sign in
+              {isRestoring ? "Preparing…" : "Sign in"}
             </NavLink>
           )}
         </div>
@@ -76,7 +103,10 @@ function HomePage() {
             application work moving—without unsupported promises.
           </p>
           <div className="hero-actions">
-            <NavLink className="button button-primary" to={user ? "/dashboard" : "/auth"}>
+            <NavLink className="button button-primary" to="/catalogue">
+              Browse scholarships
+            </NavLink>
+            <NavLink className="button button-quiet" to={user ? "/dashboard" : "/auth"}>
               {isRestoring ? "Preparing your workspace…" : user ? "Open workspace" : "Get started"}
             </NavLink>
             <a className="button button-quiet" href="#how-it-works">
@@ -154,6 +184,7 @@ function Dashboard() {
         <h1>Good to see you, {user.email.split("@")[0]}.</h1>
           <p>Your secure workspace brings discovery, preparation, and careful source curation into one place.</p>
       </section>
+      <EmailVerificationNotice />
       <div className="workspace-grid">
         <NavLink className="workspace-card" to="/catalogue">
           <span>Explore</span>
@@ -194,6 +225,8 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/auth" element={<AuthPage />} />
+        <Route path="/auth/password-reset" element={<PasswordResetPage />} />
+        <Route path="/verify-email" element={<EmailVerificationPage />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/catalogue" element={<CataloguePage />} />
         <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
@@ -209,7 +242,7 @@ function AppRoutes() {
 
 export function App() {
   return (
-    <BrowserRouter basename="/app">
+    <BrowserRouter>
       <AuthProvider>
         <AppRoutes />
       </AuthProvider>

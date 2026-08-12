@@ -36,4 +36,17 @@ class OpportunityMatchResponse(BaseModel):
 
 class MatchListResponse(BaseModel):
     profile_id: uuid.UUID
+    evaluation_id: uuid.UUID | None = None
     results: list[OpportunityMatchResponse]
+
+
+class MatchEvaluationRecordResponse(BaseModel):
+    """History contract. Profile snapshots remain owner-only and are not returned here."""
+
+    id: uuid.UUID
+    profile_id: uuid.UUID | None
+    supersedes_evaluation_id: uuid.UUID | None
+    matcher_version: str
+    evaluated_at: datetime
+    expires_at: datetime
+    profile_snapshot_hash: str

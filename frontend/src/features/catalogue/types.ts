@@ -1,5 +1,6 @@
 export type DegreeLevel = "bachelors" | "masters" | "phd" | "postdoc" | "short_course";
 export type FundingType = "full" | "partial" | "tuition_only" | "stipend_only" | "unknown";
+export type CatalogueAvailability = "open" | "upcoming" | "all";
 
 export interface PaginationMeta {
   total: number;
@@ -64,6 +65,7 @@ export interface OpportunitySearchResponse {
 }
 
 export interface CatalogueFilters {
+  availability: CatalogueAvailability;
   country: string;
   degree_level: DegreeLevel | "";
   funding_type: FundingType | "";
@@ -73,6 +75,7 @@ export interface CatalogueFilters {
 }
 
 export const defaultCatalogueFilters: CatalogueFilters = {
+  availability: "open",
   country: "",
   degree_level: "",
   funding_type: "",

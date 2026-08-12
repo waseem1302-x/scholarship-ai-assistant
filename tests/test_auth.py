@@ -221,14 +221,14 @@ def test_root_serves_frontend(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert "Scholarship AI Assistant" in response.text
-    assert "/static/app.js" in response.text
+    assert '<div id="root"></div>' in response.text
 
 
-def test_frontend_static_assets_are_served(client: TestClient) -> None:
-    response = client.get("/static/app.js")
+def test_frontend_bundle_is_served(client: TestClient) -> None:
+    response = client.get("/")
 
     assert response.status_code == 200
-    assert "bootstrapSession" in response.text
+    assert "/assets/" in response.text
 
 
 def test_role_dependency_denies_student_and_allows_admin() -> None:
