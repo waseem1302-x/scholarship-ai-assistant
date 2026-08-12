@@ -23,6 +23,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8000/health/ready')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     ports:
       - "8000:8000"
 
@@ -38,7 +44,7 @@ services:
       APP_SOURCE_MONITOR_POLL_SECONDS: ${APP_SOURCE_MONITOR_POLL_SECONDS:-86400}
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
     command: >
       sh -c 'while true; do python -m app.cli.monitor_sources;
       sleep "$${APP_SOURCE_MONITOR_POLL_SECONDS}"; done'
@@ -53,7 +59,7 @@ services:
       APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
       APP_REMINDER_WORKER_POLL_SECONDS: ${APP_REMINDER_WORKER_POLL_SECONDS:-60}
     depends_on:
-      db:
+      api:
         condition: service_healthy
     command: >
       sh -c 'while true; do python -m app.cli.dispatch_reminders;
