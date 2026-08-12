@@ -446,6 +446,26 @@ official source pages. Use this for local portfolio demos, not as a promise that
 deadlines or eligibility will remain unchanged forever. The dataset is a
 verified flagship sample, not a claim to include every scholarship worldwide.
 
+## Local Docker workflow
+
+The API, source monitor, and reminder worker deliberately share the single
+`scholarship-ai-assistant:local` image. Docker Compose therefore needs one app
+build image plus `postgres:16-alpine`; the monitor and reminder services are
+optional profiles, not separate application images.
+
+```bash
+docker compose build api
+docker compose up -d
+docker compose ps
+docker image ls scholarship-ai-assistant:local postgres:16-alpine
+```
+
+Enable background workers only when needed:
+
+```bash
+docker compose --profile monitoring --profile reminders up -d
+```
+
 ### Catalogue maintenance before public release
 
 Do not treat the seed set as live production data. Before release, re-check each

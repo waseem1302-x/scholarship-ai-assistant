@@ -1,3 +1,5 @@
+name: scholarship-ai-assistant
+
 services:
   db:
     image: postgres:16-alpine
@@ -14,6 +16,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   api:
+    image: scholarship-ai-assistant:local
     build: .
     environment:
       APP_ENV: development
@@ -34,6 +37,7 @@ services:
 
   source-monitor:
     profiles: ["monitoring"]
+    image: scholarship-ai-assistant:local
     build: .
     environment:
       APP_ENV: development
@@ -52,6 +56,7 @@ services:
 
   reminder-worker:
     profiles: ["reminders"]
+    image: scholarship-ai-assistant:local
     build: .
     environment:
       APP_ENV: development
