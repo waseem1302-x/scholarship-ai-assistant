@@ -76,12 +76,32 @@ Open `http://localhost:8000/app`.
   catalogue-to-detail browser journey, while existing backend tests continue to
   verify public visibility and source-gating behavior
 
+## Milestone 3 delivered
+
+- authenticated student pages for profile editing, explainable matches, and
+  the saved-application tracker
+- a structured profile editor covering study goals, academic record, language
+  and GRE test state, work/research/leadership context, financial need, and
+  constraints accepted by the existing profile API
+- profile completeness and missing-recommended-field guidance without guessing
+  omitted information
+- client-side score handling that omits language and GRE scores unless the
+  student explicitly marks the corresponding test as taken
+- explainable match cards that separate confirmed alignment, missing evidence,
+  uncertainty, next steps, warnings, and hard eligibility failures; scores are
+  explicitly presented as decision support, not outcome predictions
+- student-only tracker pages for status, private notes, personal deadlines,
+  removal, and an empty state that leads back to verified opportunities
+- a student-only `Save to tracker` action on opportunity detail pages; public
+  and administrator sessions do not receive this control
+- frontend unit tests for profile payload safety and a route-mocked Playwright
+  journey through profile save, match inspection, and tracker update
+
 ## Remaining Phase 3 milestones
 
-1. Rebuild the profile, explainable matching, and saved-application tracker.
-2. Rebuild the admin review queue, data-quality dashboard, imports, and
+1. Rebuild the admin review queue, data-quality dashboard, imports, and
    reviewer actions.
-3. Complete responsive, accessibility, performance, empty/error state, and
+2. Complete responsive, accessibility, performance, empty/error state, and
    browser-regression work. Retire the legacy static UI only after full
    verification and explicit approval.
 

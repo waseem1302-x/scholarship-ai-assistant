@@ -1,6 +1,8 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { useAuth } from "../../auth/AuthProvider";
+import { saveOpportunity } from "../workspace/workspace";
 import { deadlineLabel, formatDate, getOpportunity, isNotFound, readableValue } from "./catalogue";
 import type { OpportunityDetail } from "./types";
 
@@ -117,6 +119,29 @@ function OpportunityDetailContent({ opportunity }: { opportunity: OpportunityDet
   );
 }
 
+function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
+  const { user } = useAuth();
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  if (user?.role !== "student") return null;
+
+  async function save() {
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      await saveOpportunity(opportunityId);
+      setMessage("Saved to your application tracker.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save this opportunity.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return <div className="save-to-tracker"><button className="button button-primary" type="button" onClick={save} disabled={isSaving}>{isSaving ? "Saving..." : "Save to tracker"}</button>{message ? <p className={message.startsWith("Saved") ? "form-success" : "form-error"} role="status">{message}</p> : null}</div>;
+}
+
 export function OpportunityDetailPage() {
   const { opportunityId } = useParams();
   const [opportunity, setOpportunity] = useState<OpportunityDetail | null>(null);
@@ -155,6 +180,7 @@ export function OpportunityDetailPage() {
         </div>
       ) : null}
       {!isLoading && !error && opportunity ? <OpportunityDetailContent opportunity={opportunity} /> : null}
+      {!isLoading && !error && opportunity ? <SaveToTrackerButton opportunityId={opportunity.id} /> : null}
     </main>
   );
 }

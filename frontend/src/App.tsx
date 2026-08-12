@@ -5,6 +5,9 @@ import { BrowserRouter } from "react-router-dom";
 import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
 import { CataloguePage } from "./features/catalogue/CataloguePage";
 import { OpportunityDetailPage } from "./features/catalogue/OpportunityDetailPage";
+import { MatchesPage } from "./features/workspace/MatchesPage";
+import { ProfilePage } from "./features/workspace/ProfilePage";
+import { TrackerPage } from "./features/workspace/TrackerPage";
 
 const comingSoon = {
   catalogue: {
@@ -177,7 +180,17 @@ function Dashboard() {
         <NavLink className="workspace-card" to="/profile">
           <span>Prepare</span>
           <h2>Profile and fit</h2>
-          <p>Profile, matching, and tracking arrive in Milestone 3.</p>
+          <p>Build your profile, inspect matches, and track next steps.</p>
+        </NavLink>
+        <NavLink className="workspace-card" to="/matches">
+          <span>Understand</span>
+          <h2>Explainable matches</h2>
+          <p>See the evidence behind every fit signal.</p>
+        </NavLink>
+        <NavLink className="workspace-card" to="/tracker">
+          <span>Act</span>
+          <h2>Application tracker</h2>
+          <p>Keep status, personal deadlines, and notes in one place.</p>
         </NavLink>
         {user.role === "admin" ? (
           <NavLink className="workspace-card" to="/admin">
@@ -215,7 +228,9 @@ function AppRoutes() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/catalogue" element={<CataloguePage />} />
         <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
-        <Route path="/profile" element={<ComingSoonPage area="profile" />} />
+        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/matches" element={<MatchesPage />} />
+        <Route path="/tracker" element={<TrackerPage />} />
         <Route path="/admin" element={<ComingSoonPage area="admin" />} />
         <Route path="*" element={<Navigate replace to="/" />} />
       </Routes>

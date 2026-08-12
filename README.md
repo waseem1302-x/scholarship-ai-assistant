@@ -91,8 +91,9 @@ Implemented so far:
   curation work
 - React, TypeScript, and Vite Phase 3 foundation at `/app`, with a typed
   same-origin API client, cookie-session-aware authentication shell, and a
-  verified catalogue plus official-evidence detail journey; the original static
-  MVP remains at `/` during the staged migration
+  verified catalogue, official-evidence detail journey, student profile,
+  explainable matches, and application tracker; the original static MVP remains
+  at `/` during the staged migration
 
 ## Quick start
 
