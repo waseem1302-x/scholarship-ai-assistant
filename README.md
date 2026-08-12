@@ -90,8 +90,9 @@ Implemented so far:
 - admin review queue and data-quality issue APIs plus frontend panels for
   curation work
 - React, TypeScript, and Vite Phase 3 foundation at `/app`, with a typed
-  same-origin API client and a cookie-session-aware authentication shell; the
-  original static MVP remains at `/` during the staged migration
+  same-origin API client, cookie-session-aware authentication shell, and a
+  verified catalogue plus official-evidence detail journey; the original static
+  MVP remains at `/` during the staged migration
 
 ## Quick start
 

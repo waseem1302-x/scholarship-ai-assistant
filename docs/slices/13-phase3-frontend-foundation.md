@@ -57,14 +57,31 @@ python -m uvicorn app.main:app --reload
 
 Open `http://localhost:8000/app`.
 
+## Milestone 2 delivered
+
+- public catalogue at `/app/catalogue`, supplied only by the existing public
+  opportunities API
+- safe `open_now=true` search semantics, so unknown, future, closed, and stale
+  application windows do not appear as current openings
+- structured country, degree, funding, field, and nationality filters that are
+  represented in the browser URL and survive refresh/back-forward navigation
+- pagination that retains the selected filters
+- accessible loading, empty, error, retry, and pagination states
+- dedicated opportunity detail pages at `/app/catalogue/{id}` with funding,
+  eligibility, application requirements, warnings, curator notes, and explicit
+  decision-support language
+- official-source evidence card with the stored excerpt, verification date, and
+  safe external source link
+- frontend unit tests for the safe query contract and a Playwright route-mocked
+  catalogue-to-detail browser journey, while existing backend tests continue to
+  verify public visibility and source-gating behavior
+
 ## Remaining Phase 3 milestones
 
-1. Rebuild verified search, filtering, pagination, and official-evidence
-   opportunity detail pages.
-2. Rebuild the profile, explainable matching, and saved-application tracker.
-3. Rebuild the admin review queue, data-quality dashboard, imports, and
+1. Rebuild the profile, explainable matching, and saved-application tracker.
+2. Rebuild the admin review queue, data-quality dashboard, imports, and
    reviewer actions.
-4. Complete responsive, accessibility, performance, empty/error state, and
+3. Complete responsive, accessibility, performance, empty/error state, and
    browser-regression work. Retire the legacy static UI only after full
    verification and explicit approval.
 

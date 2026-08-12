@@ -3,6 +3,8 @@ import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom"
 import { BrowserRouter } from "react-router-dom";
 
 import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
+import { CataloguePage } from "./features/catalogue/CataloguePage";
+import { OpportunityDetailPage } from "./features/catalogue/OpportunityDetailPage";
 
 const comingSoon = {
   catalogue: {
@@ -170,7 +172,7 @@ function Dashboard() {
         <NavLink className="workspace-card" to="/catalogue">
           <span>Explore</span>
           <h2>Verified catalogue</h2>
-          <p>Search will be rebuilt here in Milestone 2.</p>
+          <p>Search the reviewed, currently open catalogue.</p>
         </NavLink>
         <NavLink className="workspace-card" to="/profile">
           <span>Prepare</span>
@@ -211,7 +213,8 @@ function AppRoutes() {
         <Route path="/" element={<HomePage />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/catalogue" element={<ComingSoonPage area="catalogue" />} />
+        <Route path="/catalogue" element={<CataloguePage />} />
+        <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
         <Route path="/profile" element={<ComingSoonPage area="profile" />} />
         <Route path="/admin" element={<ComingSoonPage area="admin" />} />
         <Route path="*" element={<Navigate replace to="/" />} />

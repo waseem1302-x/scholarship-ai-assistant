@@ -39,7 +39,7 @@ and production browser/authentication security, not a need for a rewrite.
 4. **Phase 3 — premium frontend foundation** — in progress.
    - Milestone 1: React, TypeScript, Vite build path, design tokens, client
      routing, and cookie-session-aware authentication shell;
-   - Milestone 2: verified catalogue and opportunity-detail journey;
+   - Milestone 2: verified catalogue and opportunity-detail journey — complete;
    - Milestone 3: profile, matches, and application tracker;
    - Milestone 4: administrator review and data-quality workspace;
    - Milestone 5: accessibility, performance, browser regression, and release
