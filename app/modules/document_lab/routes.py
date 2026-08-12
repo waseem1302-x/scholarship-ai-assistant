@@ -1,0 +1,143 @@
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from sqlalchemy.orm import Session
+
+from app.core.config import Settings, get_settings
+from app.core.errors import AppError, ErrorResponse
+from app.db.session import get_db
+from app.modules.auth.dependencies import require_roles
+from app.modules.auth.models import User, UserRole
+from app.modules.document_lab.models import DocumentKind
+from app.modules.document_lab.schemas import DocumentAssetResponse, DocumentLabPolicyResponse
+from app.modules.document_lab.service import DocumentLabService
+
+router = APIRouter(prefix="/document-lab", tags=["private document lab"])
+StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
+Errors = {
+    401: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+    404: {"model": ErrorResponse},
+}
+
+
+def get_document_lab_service(
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DocumentLabService:
+    return DocumentLabService(session, settings)
+
+
+DocumentService = Annotated[DocumentLabService, Depends(get_document_lab_service)]
+
+
+@router.get(
+    "/policy", response_model=DocumentLabPolicyResponse, responses={401: {"model": ErrorResponse}}
+)
+def policy(
+    _: StudentUser, settings: Annotated[Settings, Depends(get_settings)]
+) -> DocumentLabPolicyResponse:
+    return DocumentLabPolicyResponse(
+        enabled=settings.document_lab_enabled,
+        supported_types=[item.value for item in DocumentKind],
+        max_upload_bytes=settings.document_lab_max_upload_bytes,
+        max_pages=settings.document_lab_max_pages,
+        max_extracted_characters=settings.document_lab_max_extracted_characters,
+        retention_days=settings.document_lab_retention_days,
+        notice_version=settings.document_lab_notice_version,
+        data_use_notice=(
+            "Your file remains private. Before each analysis, you must explicitly agree "
+            "to send extracted text to the configured AI provider. Feedback is editorial "
+            "guidance, not an eligibility, admission, funding, visa, plagiarism, "
+            "or authorship decision."
+        ),
+    )
+
+
+@router.post(
+    "/assets",
+    response_model=DocumentAssetResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=Errors,
+)
+async def upload_asset(
+    request: Request,
+    document_kind: Annotated[DocumentKind, Query()],
+    user: StudentUser,
+    service: DocumentService,
+    filename: Annotated[str, Header(alias="X-Document-Filename")],
+    declared_content_type: Annotated[str, Header(alias="Content-Type")],
+) -> DocumentAssetResponse:
+    return service.create_asset(
+        user=user,
+        document_kind=document_kind,
+        filename=filename,
+        declared_content_type=declared_content_type,
+        content=await _read_upload(request, service.settings.document_lab_max_upload_bytes),
+    )
+
+
+@router.post(
+    "/assets/{asset_id}/versions",
+    response_model=DocumentAssetResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=Errors,
+)
+async def upload_version(
+    asset_id: uuid.UUID,
+    request: Request,
+    user: StudentUser,
+    service: DocumentService,
+    filename: Annotated[str, Header(alias="X-Document-Filename")],
+    declared_content_type: Annotated[str, Header(alias="Content-Type")],
+) -> DocumentAssetResponse:
+    return service.add_version(
+        asset_id=asset_id,
+        user=user,
+        filename=filename,
+        declared_content_type=declared_content_type,
+        content=await _read_upload(request, service.settings.document_lab_max_upload_bytes),
+    )
+
+
+@router.get("/assets", response_model=list[DocumentAssetResponse], responses=Errors)
+def list_assets(user: StudentUser, service: DocumentService) -> list[DocumentAssetResponse]:
+    return service.list_assets(user.id)
+
+
+@router.get("/assets/{asset_id}", response_model=DocumentAssetResponse, responses=Errors)
+def get_asset(
+    asset_id: uuid.UUID, user: StudentUser, service: DocumentService
+) -> DocumentAssetResponse:
+    return service.get_asset(asset_id, user.id)
+
+
+@router.get("/versions/{version_id}/download", responses=Errors)
+def download_version(
+    version_id: uuid.UUID, user: StudentUser, service: DocumentService
+) -> Response:
+    content, content_type = service.download_version(version_id, user.id)
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": "attachment; filename=private-document"},
+    )
+
+
+@router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT, responses=Errors)
+def delete_asset(asset_id: uuid.UUID, user: StudentUser, service: DocumentService) -> Response:
+    service.delete_asset(asset_id, user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _read_upload(request: Request, maximum: int) -> bytes:
+    declared_size = request.headers.get("content-length")
+    if declared_size and declared_size.isdigit() and int(declared_size) > maximum:
+        raise AppError("file_too_large", "The uploaded file cannot be accepted.", 422)
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > maximum:
+            raise AppError("file_too_large", "The uploaded file cannot be accepted.", 422)
+    return bytes(content)

@@ -50,6 +50,27 @@ class Settings(BaseSettings):
     assistant_feedback_retention_days: int = Field(default=365, ge=30, le=1825)
     assistant_audit_retention_days: int = Field(default=365, ge=30, le=1825)
 
+    # Phase 7 document lab. These controls deliberately live outside the
+    # application-document coordination metadata domain.
+    document_lab_enabled: bool = False
+    document_lab_storage_provider: str = "local-encrypted"
+    document_lab_storage_root: str = "./.document-lab-storage"
+    document_lab_encryption_key: SecretStr | None = Field(default=None, repr=False)
+    document_lab_max_upload_bytes: int = Field(default=10_000_000, ge=1, le=25_000_000)
+    document_lab_max_pages: int = Field(default=50, ge=1, le=200)
+    document_lab_max_extracted_characters: int = Field(default=100_000, ge=1_000, le=500_000)
+    document_lab_upload_rate_limit_per_minute: int = Field(default=6, ge=1, le=60)
+    document_lab_daily_user_limit: int = Field(default=20, ge=1, le=200)
+    document_lab_retention_days: int = Field(default=30, ge=1, le=365)
+    document_lab_analysis_retention_days: int = Field(default=30, ge=1, le=365)
+    document_lab_provider: str = "unavailable"
+    document_lab_model: str = "unconfigured"
+    document_lab_api_key: SecretStr | None = Field(default=None, repr=False)
+    document_lab_provider_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    document_lab_provider_config_version: str = "phase7.provider.v1"
+    document_lab_rubric_version: str = "phase7.editorial.v1"
+    document_lab_notice_version: str = "phase7.document-data-use.v1"
+
     @model_validator(mode="after")
     def reject_unsafe_production_settings(self) -> "Settings":
         development_secrets = {
@@ -60,6 +81,13 @@ class Settings(BaseSettings):
             raise ValueError("APP_JWT_SECRET must be replaced before production startup")
         if self.env == "production" and any(origin == "*" for origin in self.cors_origin_list):
             raise ValueError("Wildcard CORS origins are not allowed in production")
+        if self.env == "production" and self.document_lab_enabled:
+            if self.document_lab_encryption_key is None:
+                raise ValueError("APP_DOCUMENT_LAB_ENCRYPTION_KEY is required for Document Lab")
+            if self.document_lab_storage_provider == "local-encrypted":
+                raise ValueError(
+                    "Production Document Lab requires a reviewed remote storage provider"
+                )
         return self
 
     @property

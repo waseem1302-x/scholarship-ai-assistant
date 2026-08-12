@@ -28,6 +28,16 @@ from app.modules.auth.models import (
     RefreshToken,
     User,
 )
+from app.modules.document_lab.models import (
+    ApplicationDocumentLink,
+    DocumentAnalysis,
+    DocumentAnalysisJob,
+    DocumentAsset,
+    DocumentConsent,
+    DocumentExtraction,
+    DocumentFeedbackItem,
+    DocumentVersion,
+)
 from app.modules.matching.models import MatchEvaluation, MatchEvaluationResult, MatchRuleOutcome
 from app.modules.opportunities.models import (
     EligibilityRule,
@@ -45,6 +55,7 @@ __all__ = [
     "AdminStepUpToken",
     "Application",
     "ApplicationDocument",
+    "ApplicationDocumentLink",
     "ApplicationEvent",
     "ApplicationNotificationPreference",
     "ApplicationReminder",
@@ -58,6 +69,13 @@ __all__ = [
     "AssistantMessage",
     "AssistantPrivacyPreference",
     "AuditLog",
+    "DocumentAnalysis",
+    "DocumentAnalysisJob",
+    "DocumentAsset",
+    "DocumentConsent",
+    "DocumentExtraction",
+    "DocumentFeedbackItem",
+    "DocumentVersion",
     "EligibilityRule",
     "EmailVerificationToken",
     "MatchEvaluation",

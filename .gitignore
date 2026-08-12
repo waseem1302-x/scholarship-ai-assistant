@@ -5,6 +5,7 @@ node_modules/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.document-lab-storage/
 .pytest-tmp/
 /.pytest-*/
 .ruff_cache/

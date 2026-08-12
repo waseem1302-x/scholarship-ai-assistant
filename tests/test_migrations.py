@@ -189,3 +189,30 @@ def test_assistant_safety_migration_upgrades_and_downgrades(tmp_path: Path) -> N
         column["name"] for column in inspector.get_columns("assistant_citations")
     }
     engine.dispose()
+
+
+def test_document_lab_foundation_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
+    database_path = tmp_path / "document-lab.db"
+    database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(alembic_config, "20260812_0013")
+    engine = create_engine(database_url)
+    inspector = inspect(engine)
+    assert {
+        "document_assets",
+        "document_versions",
+        "document_extractions",
+        "document_consents",
+        "document_analyses",
+        "document_feedback_items",
+        "document_analysis_jobs",
+        "application_document_links",
+    }.issubset(inspector.get_table_names())
+    command.downgrade(alembic_config, "20260812_0012")
+    inspector = inspect(engine)
+    assert "document_assets" not in inspector.get_table_names()
+    assert "application_document_links" not in inspector.get_table_names()
+    engine.dispose()
