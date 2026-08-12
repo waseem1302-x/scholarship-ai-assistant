@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Callable
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -20,6 +20,7 @@ from app.modules.document_lab.models import (
     DocumentAnalysis,
     DocumentAnalysisJob,
     DocumentAsset,
+    DocumentConsent,
     DocumentExtraction,
     DocumentFeedbackItem,
     DocumentJobKind,
@@ -169,6 +170,7 @@ class DocumentLabService:
         versions = self._versions_for_asset(asset.id)
         for version in versions:
             self.storage.delete(version.storage_key)
+        self._delete_analysis_records([version.id for version in versions])
         self.session.delete(asset)
         self.session.commit()
 
@@ -241,6 +243,18 @@ class DocumentLabService:
             raise AppError("document_analysis_not_found", "Document analysis was not found.", 404)
         return self._analysis_response(analysis)
 
+    def list_version_analyses(
+        self, version_id: uuid.UUID, user_id: uuid.UUID
+    ) -> list[DocumentAnalysisResponse]:
+        self._require_enabled()
+        self._owned_version(version_id, user_id)
+        analyses = self.session.scalars(
+            select(DocumentAnalysis)
+            .where(DocumentAnalysis.version_id == version_id, DocumentAnalysis.user_id == user_id)
+            .order_by(DocumentAnalysis.created_at.desc())
+        ).all()
+        return [self._analysis_response(item) for item in analyses]
+
     def export_data(self, user_id: uuid.UUID) -> DocumentExportResponse:
         self._require_enabled()
         assets = self.list_assets(user_id)
@@ -260,8 +274,10 @@ class DocumentLabService:
         for asset in self.session.scalars(
             select(DocumentAsset).where(DocumentAsset.user_id == user_id)
         ).all():
-            for version in self._versions_for_asset(asset.id):
+            versions = self._versions_for_asset(asset.id)
+            for version in versions:
                 self.storage.delete(version.storage_key)
+            self._delete_analysis_records([version.id for version in versions])
             self.session.delete(asset)
         self.session.commit()
 
@@ -551,6 +567,23 @@ class DocumentLabService:
             .where(DocumentFeedbackItem.analysis_id == analysis.id)
             .order_by(DocumentFeedbackItem.position)
         ).all()
+        feedback = [
+            DocumentFeedbackResponse(
+                id=item.id,
+                category=item.category,
+                text=self.cipher.decrypt_text(item.text_ciphertext),
+                excerpt=self.cipher.decrypt_text(item.excerpt_ciphertext)
+                if item.excerpt_ciphertext
+                else None,
+                is_general_suggestion=item.is_general_suggestion,
+                position=item.position,
+            )
+            for item in items
+        ]
+        by_category = {
+            category: [item for item in feedback if item.category is category]
+            for category in FeedbackCategory
+        }
         return DocumentAnalysisResponse(
             id=analysis.id,
             version_id=analysis.version_id,
@@ -567,19 +600,31 @@ class DocumentLabService:
             abstained_reason=analysis.abstained_reason,
             created_at=analysis.created_at,
             completed_at=analysis.completed_at,
-            feedback=[
-                DocumentFeedbackResponse(
-                    id=item.id,
-                    category=item.category,
-                    text=self.cipher.decrypt_text(item.text_ciphertext),
-                    excerpt=self.cipher.decrypt_text(item.excerpt_ciphertext)
-                    if item.excerpt_ciphertext
-                    else None,
-                    is_general_suggestion=item.is_general_suggestion,
-                    position=item.position,
+            feedback=feedback,
+            strengths=by_category[FeedbackCategory.STRENGTH],
+            suggestions=by_category[FeedbackCategory.SUGGESTION],
+            questions_to_consider=by_category[FeedbackCategory.QUESTION],
+            warnings=by_category[FeedbackCategory.WARNING],
+            quoted_evidence=[item.excerpt for item in feedback if item.excerpt],
+        )
+
+    def _delete_analysis_records(self, version_ids: list[uuid.UUID]) -> None:
+        if not version_ids:
+            return
+        analysis_ids = self.session.scalars(
+            select(DocumentAnalysis.id).where(DocumentAnalysis.version_id.in_(version_ids))
+        ).all()
+        if analysis_ids:
+            self.session.execute(
+                delete(DocumentFeedbackItem).where(
+                    DocumentFeedbackItem.analysis_id.in_(analysis_ids)
                 )
-                for item in items
-            ],
+            )
+            self.session.execute(
+                delete(DocumentAnalysis).where(DocumentAnalysis.id.in_(analysis_ids))
+            )
+        self.session.execute(
+            delete(DocumentConsent).where(DocumentConsent.version_id.in_(version_ids))
         )
 
     def _restricted_extract(self, content: bytes, content_type: str) -> str:

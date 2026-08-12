@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.modules.auth.models import User, UserRole
 from app.modules.document_lab.models import (
     AnalysisStatus,
+    DocumentAnalysis,
     DocumentAnalysisJob,
     DocumentVersion,
     DocumentVersionStatus,
@@ -359,6 +360,11 @@ def test_analysis_is_consent_gated_grounded_and_exportable(
     assert completed.feedback[1].is_general_suggestion is True
     exported = document_service.export_data(owner.id)
     assert exported.analyses[0].id == completed.id
+    assert completed.quoted_evidence == ["I built a community "]
+    assert completed.strengths[0].id == completed.feedback[0].id
+    assert (
+        document_service.list_version_analyses(asset.versions[0].id, owner.id)[0].id == completed.id
+    )
 
 
 def test_provider_outage_and_invalid_evidence_are_safe(db_session: Session, tmp_path: Path) -> None:
@@ -395,3 +401,23 @@ def test_provider_outage_and_invalid_evidence_are_safe(db_session: Session, tmp_
     abstained = second.get_analysis(invalid.id, second_owner.id)
     assert abstained.status is AnalysisStatus.ABSTAINED
     assert abstained.abstained_reason == "invalid_provider_response"
+
+
+def test_delete_after_analysis_removes_private_storage_and_analysis_data(
+    db_session: Session, tmp_path: Path
+) -> None:
+    document_service, owner, asset = ready_document_service(
+        db_session, tmp_path, GroundedProvider(), "analysis-delete@example.com"
+    )
+    analysis = document_service.request_analysis(
+        version_id=asset.versions[0].id,
+        user=owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    assert document_service.process_next_job()
+    document_service.delete_asset(asset.id, owner.id)
+    assert db_session.get(DocumentVersion, asset.versions[0].id) is None
+    assert db_session.get(DocumentAnalysis, analysis.id) is None
+    assert document_service.export_data(owner.id).assets == []

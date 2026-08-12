@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     document_lab_enabled: bool = False
     document_lab_storage_provider: str = "local-encrypted"
     document_lab_storage_root: str = "./.document-lab-storage"
+    document_lab_scanner_provider: str = "unavailable"
+    document_lab_scanner_host: str = "localhost"
+    document_lab_scanner_port: int = Field(default=3310, ge=1, le=65535)
+    document_lab_scanner_timeout_seconds: int = Field(default=30, ge=1, le=120)
     document_lab_encryption_key: SecretStr | None = Field(default=None, repr=False)
     document_lab_max_upload_bytes: int = Field(default=10_000_000, ge=1, le=25_000_000)
     document_lab_max_pages: int = Field(default=50, ge=1, le=200)

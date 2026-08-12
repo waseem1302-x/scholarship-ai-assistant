@@ -49,6 +49,11 @@ class DocumentAnalysisResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     feedback: list[DocumentFeedbackResponse] = Field(default_factory=list)
+    strengths: list[DocumentFeedbackResponse] = Field(default_factory=list)
+    suggestions: list[DocumentFeedbackResponse] = Field(default_factory=list)
+    questions_to_consider: list[DocumentFeedbackResponse] = Field(default_factory=list)
+    warnings: list[DocumentFeedbackResponse] = Field(default_factory=list)
+    quoted_evidence: list[str] = Field(default_factory=list)
 
 
 class DocumentVersionResponse(BaseModel):

@@ -52,6 +52,14 @@ and production browser/authentication security, not a need for a rewrite.
 9. **Phase 8 — scholarship-only community** — pending.
 10. **Phase 9 — production hardening and beta launch** — pending.
 
+## Roadmap status correction (2026-08-13)
+
+The phase list above predates the delivered matching, application command
+centre, and citation-first assistant work. Phase 4, Phase 5, and Phase 6 are
+implemented in the current codebase. Phase 7 is actively implementing the
+separate private Document Lab. The phase list will be normalized in the next
+roadmap editorial pass; this correction is authoritative in the interim.
+
 ## Phase 1 acceptance gates
 
 - An expired, future, unknown-deadline, rolling, or stale record cannot be

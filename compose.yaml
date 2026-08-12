@@ -85,17 +85,29 @@ services:
       APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
       APP_DOCUMENT_LAB_ENABLED: "true"
       APP_DOCUMENT_LAB_STORAGE_ROOT: /app/document-data
-      # A reviewed malware-scanner adapter must be configured before analysis.
+      APP_DOCUMENT_LAB_SCANNER_PROVIDER: clamav
+      APP_DOCUMENT_LAB_SCANNER_HOST: clamav
       APP_DOCUMENT_LAB_PROVIDER: unavailable
     volumes:
       - document_lab_data:/app/document-data
     depends_on:
       api:
         condition: service_healthy
+      clamav:
+        condition: service_healthy
     command: >
       sh -c 'while true; do python -m app.cli.dispatch_document_jobs;
       sleep 5; done'
     restart: unless-stopped
+
+  clamav:
+    profiles: ["documents"]
+    image: clamav/clamav:1.4
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --version"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
 
 volumes:
   postgres_data:

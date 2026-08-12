@@ -167,6 +167,17 @@ def get_analysis(
     return service.get_analysis(analysis_id, user.id)
 
 
+@router.get(
+    "/versions/{version_id}/analyses",
+    response_model=list[DocumentAnalysisResponse],
+    responses=Errors,
+)
+def list_version_analyses(
+    version_id: uuid.UUID, user: StudentUser, service: DocumentService
+) -> list[DocumentAnalysisResponse]:
+    return service.list_version_analyses(version_id, user.id)
+
+
 @router.get("/export", response_model=DocumentExportResponse, responses=Errors)
 def export_data(user: StudentUser, service: DocumentService) -> DocumentExportResponse:
     return service.export_data(user.id)
