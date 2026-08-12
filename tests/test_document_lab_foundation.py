@@ -7,6 +7,8 @@ from app.modules.document_lab.routes import get_document_lab_service
 from app.modules.document_lab.scanner import SignatureTestScanner
 from app.modules.document_lab.service import DocumentLabService
 from app.modules.document_lab.validation import PDF_CONTENT_TYPE
+from tests.test_applications import create_verified_opportunity
+from tests.test_applications import headers as application_headers
 from tests.test_document_lab_intake import pdf, settings
 from tests.test_opportunities import create_user, login
 
@@ -65,6 +67,65 @@ def test_raw_upload_contract_is_authenticated_owner_scoped_and_quarantined(
         assert (
             client.get(
                 f"/api/v1/document-lab/versions/{version_id}/download", headers=other_headers
+            ).status_code
+            == 404
+        )
+    finally:
+        app.dependency_overrides.pop(get_document_lab_service, None)
+
+
+def test_linking_requires_confirmation_and_both_owned_records(
+    client: TestClient, db_session: Session, tmp_path
+) -> None:
+    create_user(db_session, email="document-link-admin@example.com", role=UserRole.ADMIN)
+    owner_headers = headers(client, db_session, "document-link-owner@example.com")
+    other_headers = headers(client, db_session, "document-link-other@example.com")
+    admin_headers = application_headers(login(client, email="document-link-admin@example.com"))
+    opportunity = create_verified_opportunity(client, admin_headers)
+    application = client.post(
+        "/api/v1/applications",
+        json={"opportunity_id": opportunity["id"]},
+        headers=owner_headers,
+    ).json()
+    application_document = client.post(
+        f"/api/v1/applications/{application['id']}/documents",
+        json={"name": "Statement"},
+        headers=owner_headers,
+    ).json()
+    service = DocumentLabService(
+        db_session,
+        settings(tmp_path),
+        scanner=SignatureTestScanner(),
+    )
+    app.dependency_overrides[get_document_lab_service] = lambda: service
+    try:
+        uploaded = client.post(
+            "/api/v1/document-lab/assets?document_kind=statement_of_purpose",
+            content=pdf("My private statement"),
+            headers={
+                **owner_headers,
+                "Content-Type": PDF_CONTENT_TYPE,
+                "X-Document-Filename": "statement.pdf",
+            },
+        ).json()
+        version_id = uploaded["versions"][0]["id"]
+        unconfirmed = client.post(
+            f"/api/v1/document-lab/application-documents/{application_document['id']}/link",
+            json={"version_id": version_id, "confirmed": False},
+            headers=owner_headers,
+        )
+        assert unconfirmed.status_code == 422
+        linked = client.post(
+            f"/api/v1/document-lab/application-documents/{application_document['id']}/link",
+            json={"version_id": version_id, "confirmed": True},
+            headers=owner_headers,
+        )
+        assert linked.status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/document-lab/application-documents/{application_document['id']}/link",
+                json={"version_id": version_id, "confirmed": True},
+                headers=other_headers,
             ).status_code
             == 404
         )
