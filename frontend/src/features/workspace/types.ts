@@ -121,6 +121,30 @@ export interface SavedOpportunity {
   opportunity: OpportunitySummary;
 }
 
+export type CommandLifecycle = "saved" | "preparing" | "ready_to_submit" | "submitted" | "decision_received" | "accepted" | "declined" | "withdrawn";
+export type TaskStatus = "todo" | "in_progress" | "blocked" | "completed" | "dismissed";
+export type DeadlineUrgency = "upcoming" | "due_soon" | "overdue" | "deadline_changed" | "deadline_uncertain";
+
+export interface ApplicationTask {
+  id: string; category: string; title: string; status: TaskStatus; priority: string;
+  due_at: string | null; source_id: string | null; source_excerpt_id: string | null;
+  is_generated: boolean; completion_evidence: string | null; completed_at: string | null; notes: string | null;
+}
+export interface ApplicationReminder { id: string; task_id: string | null; scheduled_at: string; timezone: string; message: string | null; status: string; delivered_at: string | null; read_at: string | null; }
+export interface ApplicationDocument {
+  id: string; task_id: string | null; name: string; is_required: boolean; file_name: string | null;
+  content_type: string | null; size_bytes: number | null; version_label: string | null;
+  expires_at: string | null; reviewed_at: string | null; is_complete: boolean;
+}
+export interface ApplicationEvent { id: string; event_type: string; metadata_json: Record<string, unknown>; created_at: string; }
+export interface Application {
+  id: string; lifecycle: CommandLifecycle; official_deadline: string | null; official_deadline_timezone: string; official_deadline_state: "known" | "changed" | "uncertain";
+  personal_deadline: string | null; personal_deadline_timezone: string; deadline_urgency: DeadlineUrgency;
+  notes: string | null; submitted_at: string | null; version: number; opportunity: OpportunitySummary;
+  tasks: ApplicationTask[]; reminders: ApplicationReminder[]; documents: ApplicationDocument[];
+}
+export interface CommandCentre { urgent_tasks: ApplicationTask[]; blocked_tasks: ApplicationTask[]; blocked_applications: Application[]; approaching_deadlines: Application[]; submitted_applications: Application[]; upcoming_reminders: ApplicationReminder[]; recently_changed_opportunities: Application[]; }
+
 export const applicationStatuses: ApplicationStatus[] = [
   "interested", "researching", "preparing_documents", "waiting_for_recommendation", "ready_to_apply",
   "submitted", "interview_stage", "accepted", "rejected", "withdrawn", "expired",

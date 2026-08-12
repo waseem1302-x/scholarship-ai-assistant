@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.modules.applications.command_routes import router as command_centre_router
 from app.modules.applications.routes import router as applications_router
 from app.modules.auth.routes import router as auth_router
 from app.modules.matching.routes import router as matching_router
@@ -12,3 +13,4 @@ api_router.include_router(opportunities_router)
 api_router.include_router(profiles_router)
 api_router.include_router(matching_router)
 api_router.include_router(applications_router)
+api_router.include_router(command_centre_router)

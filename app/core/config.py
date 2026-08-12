@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     admin_step_up_ttl_minutes: int = Field(default=10, ge=1, le=60)
     cors_origins: str = "http://localhost:3000"
     cookie_secure: bool | None = None
+    reminder_worker_poll_seconds: int = Field(default=60, ge=10, le=3600)
+    reminder_worker_required: bool = False
 
     @model_validator(mode="after")
     def reject_unsafe_production_settings(self) -> "Settings":

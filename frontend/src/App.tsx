@@ -10,6 +10,8 @@ import { AdminPage } from "./features/admin/AdminPage";
 import { MatchesPage } from "./features/workspace/MatchesPage";
 import { ProfilePage } from "./features/workspace/ProfilePage";
 import { TrackerPage } from "./features/workspace/TrackerPage";
+import { CommandCentrePage } from "./features/workspace/CommandCentrePage";
+import { ApplicationDetailPage } from "./features/workspace/ApplicationDetailPage";
 
 function Brand() {
   return (
@@ -61,6 +63,9 @@ function Topbar() {
               </NavLink>
               <NavLink className="product-nav-link" to="/tracker">
                 Tracker
+              </NavLink>
+              <NavLink className="product-nav-link" to="/applications">
+                Applications
               </NavLink>
               {user.role === "admin" ? (
                 <NavLink className="product-nav-link" to="/admin">
@@ -206,6 +211,11 @@ function Dashboard() {
           <h2>Application tracker</h2>
           <p>Keep status, personal deadlines, and notes in one place.</p>
         </NavLink>
+        <NavLink className="workspace-card" to="/applications">
+          <span>Organize</span>
+          <h2>Application command centre</h2>
+          <p>Manage source-linked tasks, reminders, and application milestones.</p>
+        </NavLink>
         {user.role === "admin" ? (
           <NavLink className="workspace-card" to="/admin">
             <span>Curate</span>
@@ -233,6 +243,8 @@ function AppRoutes() {
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/matches" element={<MatchesPage />} />
         <Route path="/tracker" element={<TrackerPage />} />
+        <Route path="/applications" element={<CommandCentrePage />} />
+        <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
         <Route path="/admin" element={<AdminPage />} />
         <Route path="*" element={<Navigate replace to="/" />} />
       </Routes>

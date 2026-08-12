@@ -42,7 +42,7 @@ export class ApiError extends Error {
   }
 }
 
-export function readCsrfToken(cookie = document.cookie): string | undefined {
+export function readCsrfToken(cookie = typeof document === "undefined" ? "" : document.cookie): string | undefined {
   return cookie
     .split("; ")
     .find((item) => item.startsWith("csrf_token="))

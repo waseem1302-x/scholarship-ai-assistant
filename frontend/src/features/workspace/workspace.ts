@@ -1,5 +1,5 @@
 import { ApiError, apiClient } from "../../api/client";
-import { emptyProfileDraft, type OpportunityMatch, type ProfileDraft, type SavedOpportunity, type StudentProfile } from "./types";
+import { emptyProfileDraft, type Application, type ApplicationDocument, type ApplicationEvent, type ApplicationReminder, type ApplicationTask, type CommandCentre, type OpportunityMatch, type ProfileDraft, type SavedOpportunity, type StudentProfile } from "./types";
 
 export function humanize(value: string): string {
   return value.replaceAll("_", " ");
@@ -92,4 +92,73 @@ export async function updateSaved(id: string, update: object): Promise<SavedOppo
 
 export async function deleteSaved(id: string): Promise<void> {
   return apiClient.request<void>(`/saved-opportunities/${id}`, { method: "DELETE" });
+}
+
+export async function createApplication(opportunityId: string): Promise<Application> {
+  return apiClient.request<Application>("/applications", { method: "POST", body: JSON.stringify({ opportunity_id: opportunityId }) });
+}
+
+export async function getApplications(): Promise<Application[]> {
+  return (await apiClient.request<{ items: Application[] }>("/applications")).items;
+}
+
+export async function getApplication(id: string): Promise<Application> {
+  return apiClient.request<Application>(`/applications/${id}`);
+}
+
+export async function getApplicationEvents(id: string): Promise<ApplicationEvent[]> {
+  return apiClient.request<ApplicationEvent[]>(`/applications/${id}/events`);
+}
+
+export async function getCommandCentre(): Promise<CommandCentre> {
+  return apiClient.request<CommandCentre>("/applications/command-centre");
+}
+
+export async function updateApplication(id: string, update: object): Promise<Application> {
+  return apiClient.request<Application>(`/applications/${id}`, { method: "PATCH", body: JSON.stringify(update) });
+}
+
+export async function updateApplicationTask(applicationId: string, taskId: string, update: object): Promise<Application> {
+  await apiClient.request(`/applications/${applicationId}/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(update) });
+  return apiClient.request<Application>(`/applications/${applicationId}`);
+}
+
+export async function createApplicationTask(applicationId: string, task: object): Promise<ApplicationTask> {
+  return apiClient.request<ApplicationTask>(`/applications/${applicationId}/tasks`, { method: "POST", body: JSON.stringify(task) });
+}
+
+export async function deleteApplicationTask(applicationId: string, taskId: string): Promise<void> {
+  return apiClient.request<void>(`/applications/${applicationId}/tasks/${taskId}`, { method: "DELETE" });
+}
+
+export async function createApplicationReminder(applicationId: string, reminder: object): Promise<ApplicationReminder> {
+  return apiClient.request<ApplicationReminder>(`/applications/${applicationId}/reminders`, { method: "POST", body: JSON.stringify(reminder) });
+}
+
+export async function updateApplicationReminder(applicationId: string, reminderId: string, update: object): Promise<ApplicationReminder> {
+  return apiClient.request<ApplicationReminder>(`/applications/${applicationId}/reminders/${reminderId}`, { method: "PATCH", body: JSON.stringify(update) });
+}
+
+export async function getNotificationPreference(): Promise<{ in_app_enabled: boolean }> {
+  return apiClient.request<{ in_app_enabled: boolean }>("/applications/notification-preferences");
+}
+
+export async function updateNotificationPreference(inAppEnabled: boolean): Promise<{ in_app_enabled: boolean }> {
+  return apiClient.request<{ in_app_enabled: boolean }>("/applications/notification-preferences", { method: "PUT", body: JSON.stringify({ in_app_enabled: inAppEnabled }) });
+}
+
+export async function createApplicationDocument(applicationId: string, document: object): Promise<ApplicationDocument> {
+  return apiClient.request<ApplicationDocument>(`/applications/${applicationId}/documents`, { method: "POST", body: JSON.stringify(document) });
+}
+
+export async function updateApplicationDocument(applicationId: string, documentId: string, update: object): Promise<ApplicationDocument> {
+  return apiClient.request<ApplicationDocument>(`/applications/${applicationId}/documents/${documentId}`, { method: "PATCH", body: JSON.stringify(update) });
+}
+
+export async function exportApplicationData(): Promise<object> {
+  return apiClient.request<object>("/applications/export");
+}
+
+export async function deleteApplicationData(): Promise<void> {
+  return apiClient.request<void>("/applications/data", { method: "DELETE" });
 }

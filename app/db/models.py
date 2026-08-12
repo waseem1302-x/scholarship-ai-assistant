@@ -1,6 +1,15 @@
 """Import every ORM model here so Alembic can discover complete metadata."""
 
-from app.modules.applications.models import SavedOpportunity
+from app.modules.applications.models import (
+    Application,
+    ApplicationDocument,
+    ApplicationEvent,
+    ApplicationNotificationPreference,
+    ApplicationReminder,
+    ApplicationTask,
+    ReminderWorkerHealth,
+    SavedOpportunity,
+)
 from app.modules.auth.models import (
     AdminStepUpToken,
     AuditLog,
@@ -24,6 +33,12 @@ from app.modules.profiles.models import StudentProfile
 
 __all__ = [
     "AdminStepUpToken",
+    "Application",
+    "ApplicationDocument",
+    "ApplicationEvent",
+    "ApplicationNotificationPreference",
+    "ApplicationReminder",
+    "ApplicationTask",
     "AuditLog",
     "EligibilityRule",
     "EmailVerificationToken",
@@ -35,6 +50,7 @@ __all__ = [
     "PasswordResetToken",
     "Provider",
     "RefreshToken",
+    "ReminderWorkerHealth",
     "SavedOpportunity",
     "Source",
     "SourceExcerpt",

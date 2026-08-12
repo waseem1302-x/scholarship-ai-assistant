@@ -478,3 +478,263 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
     page.get_by_role("button", name="Apply filters").last.click()
     expect(page.get_by_text("Showing 1 of 1").last).to_be_visible()
     assert any("country=Malaysia" in query for query in catalogue_queries)
+
+
+def test_phase_five_application_command_centre_journey(page: Page, live_base_url: str) -> None:
+    """A student can create an application and advance its source-aware workflow."""
+    user = {
+        "id": "4a2aa936-4dfa-4d69-8b17-e6a9fc38c067",
+        "email": "phase-five@example.com",
+        "role": "student",
+        "is_active": True,
+        "email_verified_at": "2099-01-01T00:00:00Z",
+        "created_at": "2099-01-01T00:00:00Z",
+    }
+    opportunity_id = "6d7268a9-5e6f-4fa5-841e-7b554369877a"
+    application_id = "800a7a52-3e22-4731-b12a-722f3c73a322"
+    opportunity = {
+        "id": opportunity_id,
+        "name": "Phase Five Verified Scholarship",
+        "provider_name": "Verified Test Provider",
+        "university_name": None,
+        "country": "Malaysia",
+        "degree_level": "masters",
+        "application_deadline": "2099-12-31T23:59:59Z",
+        "funding_type": "full",
+        "funding_summary": "Tuition is covered.",
+        "verification_status": "officially_verified",
+        "last_verified_at": "2099-01-01T00:00:00Z",
+        "official_source_url": "https://example.com/official",
+        "application_window_state": "open",
+        "source_is_fresh": True,
+    }
+    detail = {
+        **opportunity,
+        "field_eligibility": "Computer Science",
+        "nationality_eligibility": "International applicants",
+        "intake_year": 2100,
+        "tuition_coverage": "Full tuition",
+        "monthly_stipend_amount": None,
+        "monthly_stipend_currency": None,
+        "accommodation_coverage": None,
+        "travel_allowance": None,
+        "health_insurance": None,
+        "application_fee_info": "No fee",
+        "english_language_requirement": None,
+        "standardized_test_requirement": None,
+        "minimum_academic_requirement": None,
+        "required_documents": ["Transcript"],
+        "application_method": "Official online portal",
+        "application_url": "https://example.com/apply",
+        "data_confidence": "high",
+        "notes": None,
+        "eligibility_warnings": [],
+        "source": {
+            "id": "eea4e950-6f5d-4112-9d72-bc48961bcde2",
+            "url": "https://example.com/official",
+            "source_type": "official",
+            "title": "Official scholarship call",
+            "relevant_excerpt": "Official requirements and application deadline.",
+            "verification_status": "officially_verified",
+            "last_verified_at": "2099-01-01T00:00:00Z",
+        },
+    }
+    lifecycle = "saved"
+    created = False
+    tasks = [
+        {
+            "id": "de7e6e5d-7d8d-4947-a3e4-5064201866d4",
+            "category": "document",
+            "title": "Prepare Transcript",
+            "status": "todo",
+            "priority": "normal",
+            "due_at": None,
+            "source_id": detail["source"]["id"],
+            "source_excerpt_id": None,
+            "is_generated": True,
+            "completion_evidence": None,
+            "completed_at": None,
+            "notes": None,
+        }
+    ]
+    reminders: list[dict[str, object]] = []
+
+    def application() -> dict[str, object]:
+        return {
+            "id": application_id,
+            "lifecycle": lifecycle,
+            "official_deadline": "2099-12-31T23:59:59Z",
+            "official_deadline_timezone": "UTC",
+            "official_deadline_state": "known",
+            "official_deadline_source_id": detail["source"]["id"],
+            "official_deadline_excerpt_id": None,
+            "official_deadline_verified_at": "2099-01-01T00:00:00Z",
+            "personal_deadline": None,
+            "personal_deadline_timezone": "UTC",
+            "deadline_urgency": "upcoming",
+            "notes": None,
+            "submitted_at": None,
+            "decision_notes": None,
+            "version": 1,
+            "created_at": "2099-01-01T00:00:00Z",
+            "updated_at": "2099-01-01T00:00:00Z",
+            "opportunity": opportunity,
+            "tasks": tasks,
+            "reminders": reminders,
+            "documents": [],
+        }
+
+    page.route(
+        "**/api/v1/auth/refresh",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={"access_token": "test-access-token", "expires_in": 900, "user": user},
+        ),
+    )
+    page.route(
+        f"**/api/v1/opportunities/{opportunity_id}",
+        lambda route: route.fulfill(status=200, content_type="application/json", json=detail),
+    )
+    page.route(
+        "**/api/v1/saved-opportunities",
+        lambda route: route.fulfill(status=201, content_type="application/json", json={}),
+    )
+    page.route(
+        "**/api/v1/applications/command-centre",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={
+                "urgent_tasks": tasks,
+                "blocked_tasks": [],
+                "blocked_applications": [],
+                "approaching_deadlines": [application()] if created else [],
+                "submitted_applications": [application()] if lifecycle == "submitted" else [],
+                "upcoming_reminders": reminders,
+                "recently_changed_opportunities": [],
+            },
+        ),
+    )
+    page.route(
+        "**/api/v1/applications/notification-preferences",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={"in_app_enabled": True, "updated_at": "2099-01-01T00:00:00Z"},
+        ),
+    )
+    page.route(
+        f"**/api/v1/applications/{application_id}/events",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json=[
+                {
+                    "id": "116bf5ae-106c-44cb-bef7-5392d3ce6c5b",
+                    "event_type": "application.created",
+                    "metadata_json": {},
+                    "created_at": "2099-01-01T00:00:00Z",
+                }
+            ],
+        ),
+    )
+
+    def tasks_route(route) -> None:
+        if route.request.method == "POST":
+            payload = route.request.post_data_json
+            task = {
+                "id": "16f8f3bd-cf8a-4682-9bbd-30d5c0978f9f",
+                "category": payload["category"],
+                "title": payload["title"],
+                "status": "todo",
+                "priority": "normal",
+                "due_at": None,
+                "source_id": None,
+                "source_excerpt_id": None,
+                "is_generated": False,
+                "completion_evidence": None,
+                "completed_at": None,
+                "notes": None,
+            }
+            tasks.append(task)
+            route.fulfill(status=201, content_type="application/json", json=task)
+        else:
+            route.fulfill(status=200, content_type="application/json", json=application())
+
+    def reminders_route(route) -> None:
+        payload = route.request.post_data_json
+        reminder = {
+            "id": "da56673b-3a8f-45ba-882f-4ea93b625dc8",
+            "task_id": None,
+            "scheduled_at": payload["scheduled_at"],
+            "timezone": payload["timezone"],
+            "message": payload["message"],
+            "status": "scheduled",
+            "delivered_at": None,
+            "read_at": None,
+        }
+        reminders.append(reminder)
+        route.fulfill(status=201, content_type="application/json", json=reminder)
+
+    page.route(f"**/api/v1/applications/{application_id}/tasks", tasks_route)
+    page.route(f"**/api/v1/applications/{application_id}/reminders", reminders_route)
+
+    def application_route(route) -> None:
+        nonlocal lifecycle, created
+        if route.request.method == "POST":
+            created = True
+        elif route.request.method == "PATCH":
+            payload = route.request.post_data_json
+            if payload.get("lifecycle"):
+                lifecycle = payload["lifecycle"]
+        route.fulfill(
+            status=201 if route.request.method == "POST" else 200,
+            content_type="application/json",
+            json=application(),
+        )
+
+    page.route(f"**/api/v1/applications/{application_id}", application_route)
+
+    def applications_route(route) -> None:
+        nonlocal created
+        if route.request.method == "POST":
+            created = True
+            route.fulfill(status=201, content_type="application/json", json=application())
+        else:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                json={
+                    "items": [application()] if created else [],
+                    "pagination": {
+                        "total": 1 if created else 0,
+                        "limit": 25,
+                        "offset": 0,
+                        "count": 1 if created else 0,
+                        "has_next": False,
+                        "has_previous": False,
+                    },
+                },
+            )
+
+    page.route("**/api/v1/applications", applications_route)
+
+    page.goto(f"{live_base_url}/catalogue/{opportunity_id}", wait_until="networkidle")
+    page.get_by_role("button", name="Create application").click()
+    expect(page.get_by_role("status")).to_contain_text("Application workspace created")
+    page.get_by_role("link", name="Applications", exact=True).click()
+    expect(page.get_by_role("heading", name="Phase Five Verified Scholarship")).to_be_visible()
+    page.get_by_role("link", name="Open workspace").click()
+    expect(page.get_by_role("heading", name="Task board")).to_be_visible()
+    page.get_by_label("New task").fill("Confirm portal account")
+    page.get_by_role("button", name="Add task").click()
+    expect(page.get_by_text("Confirm portal account")).to_be_visible()
+    page.get_by_label("When").fill("2099-10-01T09:00")
+    page.get_by_label("Message").fill("Check portal receipt")
+    page.get_by_role("button", name="Schedule").click()
+    expect(page.get_by_text("Check portal receipt")).to_be_visible()
+    page.get_by_role("button", name="Move to preparing").click()
+    page.get_by_role("button", name="Move to ready to submit").click()
+    page.get_by_role("button", name="Move to submitted").click()
+    expect(page.get_by_text("Current: submitted")).to_be_visible()

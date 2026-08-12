@@ -19,8 +19,10 @@ backend engineering, responsible AI, and education access.
 ## Current status
 
 The repository has completed **Phase 1: correctness and security repairs**,
-**Phase 2: opportunity data-platform trust**, and **Phase 3: frontend
-foundation**. The React frontend is the canonical product at `/`.
+**Phase 2: opportunity data-platform trust**, **Phase 3: frontend
+foundation**, **Phase 4: matching evaluation records**, and **Phase 5:
+Application Command Centre**. The React frontend is the canonical product at
+`/`.
 The product, architecture, database, API, matching, RAG, evaluation, security,
 and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
 
@@ -93,6 +95,15 @@ Implemented so far:
 - typed same-origin API client, cookie-session-aware authentication shell, and a
   verified catalogue, official-evidence detail journey, student profile,
   explainable matches, and application tracker
+- private Phase 5 application workspaces with a strict saved-to-outcome
+  lifecycle, normalized source-aware tasks, deadlines, reminders, documents,
+  immutable activity history, export/delete, and owner-scoped access controls
+- application command-centre dashboard for urgent actions, blocked tasks and
+  applications, approaching deadlines, changed opportunities, submissions, and
+  reminders
+- idempotent in-app reminder dispatcher, opt-out preference, operational
+  health endpoint, and aggregate admin-only operational reporting that excludes
+  private student content
 
 ## Quick start
 
@@ -145,6 +156,9 @@ From `http://localhost:8000`, users can:
 - create or update a student profile
 - refresh explainable profile matches
 - save opportunities and update tracker status/notes
+- create an application workspace from a verified opportunity, manage tasks,
+  personal deadlines, document metadata, reminders, and lifecycle milestones
+- export or permanently delete their private application data
 
 Administrators can login with an admin account created through the trusted CLI
 and use the admin section to:
@@ -169,6 +183,15 @@ second run, existing catalogue records are skipped rather than duplicated.
 ruff check .
 ruff format --check .
 pytest
+pnpm --dir frontend test
+pnpm --dir frontend build
+```
+
+For the optional live-browser journeys, first start the app and then run:
+
+```bash
+$env:E2E_BASE_URL = "http://127.0.0.1:8000"
+pytest tests/test_browser_e2e.py
 ```
 
 ## Authentication walkthrough
@@ -311,6 +334,43 @@ Students can only save active opportunities with officially verified official
 sources. Saved trackers are isolated by user, so one student cannot read or
 modify another student's applications.
 
+## Application Command Centre walkthrough
+
+Students create a private application workspace only from an active opportunity
+with an officially verified source. The workspace preserves the legacy tracker
+while normalizing work into source-linked tasks, reminders, document metadata,
+and an append-only activity timeline.
+
+```text
+POST   /api/v1/applications                                  student only
+GET    /api/v1/applications?limit=25&offset=0                student only
+GET    /api/v1/applications/command-centre                   student only
+GET    /api/v1/applications/{application_id}                 student only
+PATCH  /api/v1/applications/{application_id}                 student only
+POST   /api/v1/applications/{application_id}/tasks           student only
+PATCH  /api/v1/applications/{application_id}/tasks/{task_id} student only
+POST   /api/v1/applications/{application_id}/reminders       student only
+PATCH  /api/v1/applications/{application_id}/reminders/{id}  student only
+POST   /api/v1/applications/{application_id}/documents       student only
+PATCH  /api/v1/applications/{application_id}/documents/{id}  student only
+GET    /api/v1/applications/export                           student only
+DELETE /api/v1/applications/data                             student only
+GET    /api/v1/applications/operational-report               admin only
+```
+
+The lifecycle is `saved → preparing → ready_to_submit → submitted →
+decision_received → accepted|declined|withdrawn`. Official deadlines remain
+source-backed and may be shown as changed or uncertain rather than guessed;
+personal targets are stored separately with their IANA timezone. Document
+completion is the student's own evidence and never asserts that an institution
+accepted a document.
+
+Application workspaces, tasks, notes, reminders, document metadata, and
+activity history are retained until the student deletes their application data.
+That deletion removes normalized application records and the superseded legacy
+saved tracker records for that student. Catalogue-source audit records are
+retained separately for data integrity.
+
 ## Verified seed dataset walkthrough
 
 The repository includes a manually curated source-verified demo dataset:
@@ -368,8 +428,18 @@ alert on failed runs; do not silently republish changed sources.
   any public production use.
 - Matching currently uses explicit baseline rules and simple parsing for some
   free-text requirements. Structured eligibility rules come next.
-- Saved opportunities do not send reminders yet. Notification logic belongs in
-  a later slice.
+- The Application Command Centre provides private in-app reminders through an
+  idempotent worker. Enable it locally with
+  `docker compose --profile reminders up -d reminder-worker`. Email delivery is
+  intentionally not enabled yet.
+- Application documents are coordination metadata only in this phase. The app
+  does not upload, read, extract, summarize, grade, or provide AI feedback on
+  document contents.
+- Application workspaces, tasks, notes, reminders, document metadata, and
+  event history are owner-private. Students can export their normalized
+  application data or permanently delete that application data from the
+  command centre. Operational health data and analytics never include notes,
+  reminder text, or document metadata.
 - Email ownership verification and password reset are implemented. A
   transactional email provider still must be configured before public release.
 - Access tokens remain valid for their short lifetime after logout. Logout
@@ -400,6 +470,7 @@ alert on failed runs; do not silently republish changed sources.
 - [Phase 1 correctness/security increment](docs/slices/11-phase1-correctness-security.md)
 - [Phase 2 opportunity data platform increment](docs/slices/12-phase2-opportunity-data-platform.md)
 - [Phase 3 frontend foundation increment](docs/slices/13-phase3-frontend-foundation.md)
+- [Phase 5 application command centre](docs/slices/16-phase5-application-command-centre.md)
 - [Phased implementation roadmap](docs/implementation-roadmap.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)

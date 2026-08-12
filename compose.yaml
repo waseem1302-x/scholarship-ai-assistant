@@ -44,5 +44,21 @@ services:
       sleep "$${APP_SOURCE_MONITOR_POLL_SECONDS}"; done'
     restart: unless-stopped
 
+  reminder-worker:
+    profiles: ["reminders"]
+    build: .
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
+      APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
+      APP_REMINDER_WORKER_POLL_SECONDS: ${APP_REMINDER_WORKER_POLL_SECONDS:-60}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c 'while true; do python -m app.cli.dispatch_reminders;
+      sleep "$${APP_REMINDER_WORKER_POLL_SECONDS}"; done'
+    restart: unless-stopped
+
 volumes:
   postgres_data:

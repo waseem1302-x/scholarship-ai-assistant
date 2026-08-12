@@ -622,6 +622,22 @@ class OpportunityService:
             raise AppError("source_not_verified", "Opportunity has no verified official source")
         return self._summary_response(opportunity, official_source)
 
+    def to_private_application_summary_response(
+        self, opportunity: Opportunity
+    ) -> OpportunitySummaryResponse:
+        """Preserve owner-visible application context if public verification changes."""
+        source = self._official_source(opportunity) or next(
+            (item for item in opportunity.sources if item.source_type is SourceType.OFFICIAL),
+            None,
+        )
+        if source is None:
+            source = next(iter(opportunity.sources), None)
+        if source is None:
+            raise AppError(
+                "application_source_missing", "Application source record was not found", 404
+            )
+        return self._summary_response(opportunity, source)
+
     def _summary_response(
         self, opportunity: Opportunity, source: Source
     ) -> OpportunitySummaryResponse:

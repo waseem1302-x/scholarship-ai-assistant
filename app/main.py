@@ -1,9 +1,10 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +16,7 @@ from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.rate_limit import AuthRateLimitMiddleware
 from app.db.session import get_db
+from app.modules.applications.models import ReminderWorkerHealth
 
 FRONTEND_DIRECTORY = Path("app/web/frontend-dist")
 
@@ -92,6 +94,22 @@ def create_app() -> FastAPI:
     def readiness(session: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
         session.execute(text("SELECT 1"))
         return {"status": "ready"}
+
+    @application.get("/health/reminders", tags=["operations"])
+    def reminder_worker_readiness(session: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+        health = session.get(ReminderWorkerHealth, "default")
+        completed = health.last_completed_at if health else None
+        completed_utc = (
+            completed.replace(tzinfo=UTC) if completed and completed.tzinfo is None else completed
+        )
+        is_current = bool(
+            completed_utc and completed_utc >= datetime.now(UTC) - timedelta(minutes=5)
+        )
+        if settings.reminder_worker_required and not is_current:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "Reminder worker is not healthy"
+            )
+        return {"status": "ready" if is_current else "not_running"}
 
     @application.get("/", include_in_schema=False)
     def frontend() -> Response:
