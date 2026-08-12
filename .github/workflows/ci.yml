@@ -45,7 +45,7 @@ jobs:
       - run: python -m alembic upgrade head
       - run: ruff check .
       - run: ruff format --check .
-      - run: pytest --cov=app --cov-report=term-missing
+      - run: pytest -m "not e2e" --cov=app --cov-report=term-missing
 
   browser-e2e:
     runs-on: ubuntu-latest
