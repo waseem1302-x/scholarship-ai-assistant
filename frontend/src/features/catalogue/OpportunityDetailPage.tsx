@@ -124,7 +124,22 @@ function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  if (user?.role !== "student") return null;
+  if (!user) {
+    return (
+      <section className="guest-save-cta" aria-label="Save and track this opportunity">
+        <div>
+          <p className="eyebrow">Keep your research moving</p>
+          <h2>Save this opportunity and track your application.</h2>
+          <p>Create a student account to keep private notes, personal deadlines, and application progress in one place.</p>
+        </div>
+        <Link className="button button-primary" to="/auth">
+          Create an account to save and track
+        </Link>
+      </section>
+    );
+  }
+
+  if (user.role !== "student") return null;
 
   async function save() {
     setIsSaving(true);

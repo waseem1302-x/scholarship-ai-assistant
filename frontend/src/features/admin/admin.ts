@@ -2,6 +2,8 @@ import { apiClient } from "../../api/client";
 
 import type {
   DataQualityResponse,
+  AdminOpportunityFilters,
+  AdminOpportunitySearchResponse,
   ImportResponse,
   ReviewAction,
   ReviewQueueResponse,
@@ -16,6 +18,42 @@ export const reviewActions: { value: ReviewAction; label: string; needsNotes: bo
   { value: "expire", label: "Expire", needsNotes: true },
   { value: "archive", label: "Archive", needsNotes: true },
 ];
+
+export type ImportFormat = "json" | "csv";
+
+const templateRow = {
+  name: "Replace with opportunity name",
+  provider_name: "Replace with provider name",
+  country: "Malaysia",
+  degree_level: "masters",
+  funding_type: "full",
+  tuition_coverage: "Replace with official funding evidence",
+  application_deadline: "2027-12-31T23:59:59Z",
+  required_documents: ["Transcript", "Passport"],
+  english_language_requirement: "Replace with official requirement",
+  minimum_academic_requirement: "Replace with official requirement",
+  source: {
+    url: "https://example.edu/official-scholarship",
+    title: "Replace with official source title",
+    relevant_excerpt: "Replace this with an official excerpt of at least twenty words that supports the scholarship details.",
+  },
+};
+
+export const importTemplates: Record<ImportFormat, string> = {
+  json: `${JSON.stringify([templateRow], null, 2)}\n`,
+  csv: [
+    "name,provider_name,country,degree_level,funding_type,tuition_coverage,application_deadline,required_documents,english_language_requirement,minimum_academic_requirement,source_url,source_title,source_relevant_excerpt",
+    'Replace with opportunity name,Replace with provider name,Malaysia,masters,full,Replace with official funding evidence,2027-12-31T23:59:59Z,"Transcript;Passport",Replace with official requirement,Replace with official requirement,https://example.edu/official-scholarship,Replace with official source title,"Replace this with an official excerpt of at least twenty words that supports the scholarship details."',
+    "",
+  ].join("\n"),
+};
+
+export function importFormatForFile(filename: string): ImportFormat | null {
+  const normalized = filename.trim().toLowerCase();
+  if (normalized.endsWith(".json")) return "json";
+  if (normalized.endsWith(".csv")) return "csv";
+  return null;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -38,23 +76,73 @@ export function jsonImportRows(input: string): Record<string, unknown>[] {
   return rows;
 }
 
-export async function getAdminWorkspace(): Promise<[ReviewQueueResponse, DataQualityResponse]> {
+export interface AdminWorkspacePage {
+  queueOffset?: number;
+  issueOffset?: number;
+}
+
+export async function getAdminWorkspace({
+  queueOffset = 0,
+  issueOffset = 0,
+}: AdminWorkspacePage = {}): Promise<[ReviewQueueResponse, DataQualityResponse]> {
   return Promise.all([
-    apiClient.request<ReviewQueueResponse>("/admin/review-queue?limit=50&offset=0"),
-    apiClient.request<DataQualityResponse>("/admin/data-quality-issues?limit=50&offset=0"),
+    apiClient.request<ReviewQueueResponse>(`/admin/review-queue?limit=20&offset=${queueOffset}`),
+    apiClient.request<DataQualityResponse>(`/admin/data-quality-issues?limit=20&offset=${issueOffset}`),
   ]);
 }
 
-async function adminMutation<T>(path: string, body: object, password: string): Promise<T> {
+export function adminOpportunitySearch(filters: AdminOpportunityFilters, offset = 0): URLSearchParams {
+  const params = new URLSearchParams({ limit: "20", offset: String(offset) });
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  return params;
+}
+
+export async function getAdminOpportunities(filters: AdminOpportunityFilters, offset = 0): Promise<AdminOpportunitySearchResponse> {
+  return apiClient.request<AdminOpportunitySearchResponse>(`/admin/opportunities?${adminOpportunitySearch(filters, offset)}`);
+}
+
+async function adminMutation<T>(
+  path: string,
+  body: object,
+  password: string,
+  method: "POST" | "PATCH" = "POST",
+): Promise<T> {
   if (!password) {
     throw new Error("Enter your administrator password to confirm this action.");
   }
   const stepUp = await apiClient.adminStepUp(password);
   return apiClient.request<T>(path, {
-    method: "POST",
+    method,
     headers: { "X-Admin-Step-Up": stepUp.step_up_token },
     body: JSON.stringify(body),
   });
+}
+
+export async function recordSourceCheck(
+  sourceId: string,
+  contentHash: string,
+  changeSummary: string,
+  password: string,
+): Promise<void> {
+  await adminMutation(`/admin/sources/${sourceId}/checks`, {
+    content_hash: contentHash.trim() || null,
+    change_summary: changeSummary.trim() || null,
+  }, password);
+}
+
+export async function reverifySource(
+  opportunityId: string,
+  sourceId: string,
+  notes: string,
+  password: string,
+): Promise<void> {
+  await adminMutation(`/admin/opportunities/${opportunityId}/verification`, {
+    source_id: sourceId,
+    verification_status: "officially_verified",
+    notes: notes.trim() || null,
+  }, password, "PATCH");
 }
 
 export async function applyReviewAction(
@@ -72,7 +160,7 @@ export async function applyReviewAction(
 }
 
 export async function importOpportunities(
-  sourceFormat: "json" | "csv",
+  sourceFormat: ImportFormat,
   content: string,
   dryRun: boolean,
   password: string,

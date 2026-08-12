@@ -212,6 +212,18 @@ def test_open_now_excludes_closed_future_and_unknown_deadline_records(
     assert [item["name"] for item in response_items(response)] == ["Open-now scholarship"]
     assert response_items(response)[0]["application_window_state"] == "open"
 
+    upcoming = client.get("/api/v1/opportunities?application_window_state=upcoming")
+
+    assert upcoming.status_code == 200
+    assert [item["name"] for item in response_items(upcoming)] == ["Future scholarship"]
+    assert response_items(upcoming)[0]["application_window_state"] == "upcoming"
+
+    conflicting_filters = client.get(
+        "/api/v1/opportunities?open_now=true&application_window_state=upcoming"
+    )
+
+    assert conflicting_filters.status_code == 422
+
 
 def test_public_search_filters_verified_opportunities(
     client: TestClient, db_session: Session

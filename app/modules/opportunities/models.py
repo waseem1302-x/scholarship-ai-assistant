@@ -89,6 +89,13 @@ class EligibilityRuleType(StrEnum):
     TOEFL = "toefl"
     WORK_EXPERIENCE_MONTHS = "work_experience_months"
     APPLICATION_WINDOW = "application_window"
+    STUDY_MODE = "study_mode"
+    INTAKE_YEAR = "intake_year"
+    CURRENT_EDUCATION_LEVEL = "current_education_level"
+    ENGLISH_TEST_STATUS = "english_test_status"
+    GRE_STATUS = "gre_status"
+    DUOLINGO = "duolingo"
+    GRE = "gre"
 
 
 class EligibilityOperator(StrEnum):
@@ -318,6 +325,9 @@ class EligibilityRule(Base):
     source_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("sources.id", ondelete="SET NULL")
     )
+    source_excerpt_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_excerpts.id", ondelete="SET NULL")
+    )
     confidence: Mapped[DataConfidence] = mapped_column(
         Enum(
             DataConfidence,
@@ -336,6 +346,7 @@ class EligibilityRule(Base):
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="eligibility_rules")
     source: Mapped["Source | None"] = relationship()
+    source_excerpt: Mapped["SourceExcerpt | None"] = relationship()
 
 
 class Source(Base):

@@ -87,6 +87,10 @@ class StudentProfile(Base):
             "work_experience_months IS NULL OR work_experience_months >= 0",
             name="ck_profiles_work_experience_non_negative",
         ),
+        CheckConstraint(
+            "target_intake_year IS NULL OR target_intake_year BETWEEN 2000 AND 2100",
+            name="ck_profiles_target_intake_year_range",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -164,6 +168,7 @@ class StudentProfile(Base):
         )
     )
     target_intake: Mapped[str | None] = mapped_column(String(100))
+    target_intake_year: Mapped[int | None]
     application_constraints: Mapped[str | None] = mapped_column(Text)
     additional_eligibility_information: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(

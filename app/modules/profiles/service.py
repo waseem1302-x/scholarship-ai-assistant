@@ -15,6 +15,7 @@ RECOMMENDED_FIELDS = [
     "english_test_status",
     "preferred_destination_countries",
     "target_intake",
+    "target_intake_year",
 ]
 
 

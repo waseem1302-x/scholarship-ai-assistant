@@ -1,9 +1,13 @@
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.core.errors import AppError
+from app.modules.matching.models import MatchEvaluation, MatchEvaluationResult, MatchRuleOutcome
+from app.modules.matching.repository import MatchEvaluationRepository
 from app.modules.matching.schemas import (
     MatchExplanation,
     MatchListResponse,
@@ -46,6 +50,7 @@ class MatchingService:
         self.profile_repository = profile_repository
         self.opportunity_repository = opportunity_repository
         self.opportunity_service = OpportunityService(opportunity_repository.session)
+        self.evaluation_repository = MatchEvaluationRepository(opportunity_repository.session)
 
     def match_for_user(self, user_id) -> MatchListResponse:
         profile = self.profile_repository.get_by_user_id(user_id)
@@ -56,14 +61,55 @@ class MatchingService:
                 400,
             )
 
+        evaluated_at = datetime.now(UTC)
+        profile_snapshot = _matching_profile_snapshot(profile)
+        previous = self.evaluation_repository.latest_for_user(user_id)
+        evaluation = MatchEvaluation(
+            user_id=user_id,
+            profile_id=profile.id,
+            supersedes_evaluation_id=previous.id if previous else None,
+            matcher_version=self.MATCHER_VERSION,
+            evaluated_at=evaluated_at,
+            expires_at=evaluated_at + timedelta(days=365),
+            profile_snapshot_json=profile_snapshot,
+            profile_snapshot_hash=_snapshot_hash(profile_snapshot),
+        )
+        self.evaluation_repository.add(evaluation)
+
         opportunities = self.opportunity_repository.list_public_opportunities()
-        results = [self.match_opportunity(profile, opportunity) for opportunity in opportunities]
-        results.sort(key=lambda item: item.match_score, reverse=True)
-        return MatchListResponse(profile_id=profile.id, results=results)
+        evaluated_results = [
+            self._match_opportunity_with_rules(profile, opportunity, evaluated_at)
+            for opportunity in opportunities
+        ]
+        evaluated_results.sort(key=lambda item: item[0].match_score, reverse=True)
+        for rank, (result, rules, opportunity) in enumerate(evaluated_results, start=1):
+            evaluation.results.append(
+                self._evaluation_result(
+                    result=result,
+                    rules=rules,
+                    opportunity=opportunity,
+                    rank=rank,
+                )
+            )
+        self.opportunity_repository.session.commit()
+        return MatchListResponse(
+            profile_id=profile.id,
+            evaluation_id=evaluation.id,
+            results=[item[0] for item in evaluated_results],
+        )
 
     def match_opportunity(
         self, profile: StudentProfile, opportunity: Opportunity
     ) -> OpportunityMatchResponse:
+        result, _, _ = self._match_opportunity_with_rules(profile, opportunity, datetime.now(UTC))
+        return result
+
+    def _match_opportunity_with_rules(
+        self,
+        profile: StudentProfile,
+        opportunity: Opportunity,
+        evaluated_at: datetime,
+    ) -> tuple[OpportunityMatchResponse, list[RuleResult], Opportunity]:
         rules = (
             [
                 self._structured_rule(profile, opportunity, rule)
@@ -108,7 +154,7 @@ class MatchingService:
             uncertain=[item for rule in rules for item in rule.uncertain],
             next_steps=[item for rule in rules for item in rule.next_steps],
         )
-        return OpportunityMatchResponse(
+        response = OpportunityMatchResponse(
             opportunity=self.opportunity_service.to_summary_response(opportunity),
             match_score=score,
             score_label=score_label,
@@ -120,9 +166,62 @@ class MatchingService:
             unknown_criteria=unknown,
             warnings=hard_failures,
             matcher_version=self.MATCHER_VERSION,
-            evaluated_at=datetime.now(UTC),
+            evaluated_at=evaluated_at,
             explanation=explanation,
         )
+        return response, rules, opportunity
+
+    def _evaluation_result(
+        self,
+        *,
+        result: OpportunityMatchResponse,
+        rules: list[RuleResult],
+        opportunity: Opportunity,
+        rank: int,
+    ) -> MatchEvaluationResult:
+        source = self.opportunity_service._official_source(opportunity)
+        window = effective_application_window(opportunity, source)
+        excerpt = _latest_excerpt(source)
+        stored = MatchEvaluationResult(
+            opportunity_id=opportunity.id,
+            opportunity_cycle_id=window.cycle.id if window.cycle else None,
+            source_id=source.id if source else None,
+            source_excerpt_id=excerpt.id if excerpt else None,
+            rank=rank,
+            match_score=result.match_score,
+            fit_score=result.fit_score,
+            score_label=result.score_label,
+            eligibility_status=result.eligibility_status,
+            confidence=result.confidence,
+            evidence_completeness=result.evidence_completeness,
+            warnings_json=result.warnings,
+            opportunity_snapshot_json=result.opportunity.model_dump(mode="json"),
+            source_snapshot_json=_source_snapshot(source, excerpt),
+        )
+        structured_rules = list(opportunity.eligibility_rules)
+        for index, rule in enumerate(rules):
+            stored.rule_outcomes.append(
+                MatchRuleOutcome(
+                    eligibility_rule_id=(
+                        structured_rules[index].id if index < len(structured_rules) else None
+                    ),
+                    rule_name=rule.name,
+                    outcome=_rule_outcome(rule),
+                    reason_code=_rule_reason_code(rule),
+                    profile_fields_json=_profile_fields_for_rule(rule.name),
+                    comparison_json={"weight": rule.weight, "awarded_score": rule.score},
+                    message=_rule_message(rule),
+                    confidence=result.confidence,
+                    next_actions_json=rule.next_steps,
+                    source_id=(
+                        structured_rules[index].source_id
+                        if index < len(structured_rules)
+                        else source.id if source else None
+                    ),
+                    source_excerpt_id=excerpt.id if excerpt else None,
+                )
+            )
+        return stored
 
     def _hard_failures(
         self, profile: StudentProfile, opportunity: Opportunity, rules: list[RuleResult]
@@ -142,38 +241,24 @@ class MatchingService:
             for rule, result in zip(opportunity.eligibility_rules, rules, strict=False):
                 if rule.required and result.missing:
                     failures.extend(result.missing)
-        else:
-            # Legacy text only identifies unmistakable exclusions; ambiguous text remains unknown.
-            nationality = _normalize(profile.nationality)
-            requirement = _normalize(opportunity.nationality_eligibility)
-            if nationality and _explicitly_excludes(nationality, requirement):
-                failures.append(
-                    "Your nationality is explicitly excluded by the stored requirement."
-                )
         return failures
 
     @staticmethod
     def _structured_rule(
         profile: StudentProfile, opportunity: Opportunity, rule: EligibilityRule
     ) -> RuleResult:
-        actual = _profile_value(profile, rule.rule_type)
         label = rule.rule_type.value.replace("_", " ")
+        actual = _profile_value(profile, rule.rule_type)
         if rule.rule_type is EligibilityRuleType.APPLICATION_WINDOW:
             window = effective_application_window(opportunity, None)
-            if window.state in {ApplicationWindowState.CLOSED, ApplicationWindowState.ARCHIVED}:
-                return RuleResult(label, 15, 0, missing=["The application window is closed."])
-            if window.state in {
-                ApplicationWindowState.DEADLINE_UNKNOWN,
-                ApplicationWindowState.UPCOMING,
-            }:
-                return RuleResult(
+            actual = window.state.value
+            if window.state is ApplicationWindowState.DEADLINE_UNKNOWN:
+                return _unknown_rule(
                     label,
-                    15,
-                    7.5,
-                    uncertain=["Application timing is not currently confirmed open."],
+                    "The official application window is not confirmed.",
+                    "Verify the current application window from the official source.",
                 )
-            return RuleResult(label, 15, 15, satisfied=["Application window is currently open."])
-        if actual is None:
+        if actual is None or actual == []:
             return RuleResult(
                 label,
                 15,
@@ -181,22 +266,26 @@ class MatchingService:
                 uncertain=[f"Your {label} is missing, so this rule is unknown."],
                 next_steps=[f"Add your {label} to evaluate this requirement."],
             )
-        required = rule.value_json
         if rule.rule_type is EligibilityRuleType.CGPA:
-            if profile.grading_scale not in {
-                Decimal("4"),
-                Decimal("4.00"),
-                Decimal("5"),
-                Decimal("5.00"),
-            }:
-                return RuleResult(
+            if profile.grading_scale is None or rule.grading_scale is None:
+                return _unknown_rule(
                     label,
-                    15,
-                    7.5,
-                    uncertain=["Your grading scale is unsupported for this CGPA comparison."],
+                    "A grading scale is required for this CGPA comparison.",
+                    "Add or verify the grading scale used for your CGPA.",
                 )
             actual = (Decimal(str(actual)) / profile.grading_scale) * rule.grading_scale
-        satisfied = _compare(actual, required, rule.operator)
+        if rule.rule_type in {
+            EligibilityRuleType.ENGLISH_TEST_STATUS,
+            EligibilityRuleType.GRE_STATUS,
+        } and actual == TestStatus.NOT_REQUIRED.value and not _compare(
+            actual, rule.value_json, rule.operator
+        ):
+            return _unknown_rule(
+                label,
+                "Your profile records a possible test waiver that must be confirmed.",
+                "Confirm the waiver with the official source.",
+            )
+        satisfied = _compare(actual, rule.value_json, rule.operator)
         message = (
             f"{label.title()} requirement {'is satisfied' if satisfied else 'is not satisfied'}."
         )
@@ -237,121 +326,15 @@ class MatchingService:
 
     @staticmethod
     def _nationality_rule(profile: StudentProfile, opportunity: Opportunity) -> RuleResult:
-        requirement = _normalize(opportunity.nationality_eligibility)
-        nationality = _normalize(profile.nationality)
-        if not requirement:
-            return RuleResult(
-                "nationality",
-                15,
-                7.5,
-                uncertain=["Nationality eligibility is not structured for this opportunity."],
-                next_steps=["Verify nationality eligibility from the official source."],
-            )
-        if not nationality:
-            return RuleResult(
-                "nationality",
-                15,
-                7.5,
-                uncertain=["Your nationality is missing from your profile."],
-                next_steps=["Add your nationality to check this requirement."],
-            )
-        if (
-            nationality in requirement
-            or "international" in requirement
-            or "all nationalities" in requirement
-        ):
-            return RuleResult(
-                "nationality",
-                15,
-                15,
-                satisfied=["Nationality appears compatible with the stated eligibility."],
-            )
-        return RuleResult(
-            "nationality",
-            15,
-            0,
-            missing=["Your nationality was not found in the stated eligibility text."],
-            next_steps=["Check the official source for country-specific eligibility details."],
-        )
+        return _unstructured_rule("nationality")
 
     @staticmethod
     def _field_rule(profile: StudentProfile, opportunity: Opportunity) -> RuleResult:
-        requirement = _normalize(opportunity.field_eligibility)
-        intended = _normalize(profile.intended_field)
-        discipline = _normalize(profile.academic_discipline)
-        if not requirement:
-            return RuleResult(
-                "field",
-                15,
-                7.5,
-                uncertain=["Field eligibility is not structured for this opportunity."],
-                next_steps=["Verify eligible fields from the official source."],
-            )
-        if not intended and not discipline:
-            return RuleResult(
-                "field",
-                15,
-                7.5,
-                uncertain=["Your intended field or academic discipline is missing."],
-                next_steps=["Add your intended field to improve matching."],
-            )
-        profile_terms = [term for term in [intended, discipline] if term]
-        if any(term in requirement or _token_overlap(term, requirement) for term in profile_terms):
-            return RuleResult(
-                "field",
-                15,
-                15,
-                satisfied=["Your field appears compatible with the stated field eligibility."],
-            )
-        return RuleResult(
-            "field",
-            15,
-            0,
-            missing=["Your field was not found in the stated field eligibility text."],
-        )
+        return _unstructured_rule("field")
 
     @staticmethod
     def _academic_rule(profile: StudentProfile, opportunity: Opportunity) -> RuleResult:
-        requirement = opportunity.minimum_academic_requirement
-        if not requirement:
-            return RuleResult(
-                "academic",
-                15,
-                7.5,
-                uncertain=["Minimum academic requirement is not structured for this opportunity."],
-                next_steps=["Verify the minimum academic requirement from the official source."],
-            )
-        required_cgpa = _extract_required_cgpa(requirement)
-        if required_cgpa is None:
-            return RuleResult(
-                "academic",
-                15,
-                7.5,
-                uncertain=["Academic requirement exists but could not be parsed into a CGPA rule."],
-                next_steps=["Review the official academic requirement manually."],
-            )
-        if profile.cgpa is None or profile.grading_scale is None:
-            return RuleResult(
-                "academic",
-                15,
-                7.5,
-                uncertain=["Your CGPA or grading scale is missing from your profile."],
-                next_steps=["Add CGPA and grading scale to check academic fit."],
-            )
-        normalized_cgpa = _normalize_cgpa(profile.cgpa, profile.grading_scale)
-        if normalized_cgpa >= required_cgpa:
-            return RuleResult(
-                "academic",
-                15,
-                15,
-                satisfied=[f"Academic requirement appears satisfied: CGPA >= {required_cgpa}."],
-            )
-        return RuleResult(
-            "academic",
-            15,
-            0,
-            missing=[f"Academic requirement may not be satisfied: CGPA below {required_cgpa}."],
-        )
+        return _unstructured_rule("academic")
 
     @staticmethod
     def _deadline_rule(opportunity: Opportunity) -> RuleResult:
@@ -390,53 +373,7 @@ class MatchingService:
 
     @staticmethod
     def _language_rule(profile: StudentProfile, opportunity: Opportunity) -> RuleResult:
-        requirement = _normalize(opportunity.english_language_requirement)
-        if not requirement:
-            return RuleResult(
-                "language",
-                10,
-                5,
-                uncertain=["English-language requirement is not stated in structured data."],
-                next_steps=["Check whether IELTS, TOEFL, Duolingo, or a waiver is required."],
-            )
-        mentions_test = any(
-            test in requirement for test in ["ielts", "toefl", "duolingo", "english"]
-        )
-        if not mentions_test:
-            return RuleResult(
-                "language",
-                10,
-                5,
-                uncertain=["Language text exists but no supported test rule was detected."],
-            )
-        if profile.english_test_status is TestStatus.TAKEN and any(
-            score is not None
-            for score in [profile.ielts_score, profile.toefl_score, profile.duolingo_score]
-        ):
-            return RuleResult(
-                "language",
-                10,
-                10,
-                satisfied=["You have a recorded English test score."],
-            )
-        if profile.english_test_status is TestStatus.NOT_REQUIRED:
-            return RuleResult(
-                "language",
-                10,
-                5,
-                uncertain=[
-                    "Your profile says English test is not required, "
-                    "but this opportunity mentions English."
-                ],
-                next_steps=["Verify whether a waiver applies to you."],
-            )
-        return RuleResult(
-            "language",
-            10,
-            0,
-            missing=["English test evidence is missing or not yet taken."],
-            next_steps=["Confirm IELTS, TOEFL, Duolingo, or waiver requirements."],
-        )
+        return _unstructured_rule("English-language")
 
     @staticmethod
     def _country_preference_rule(profile: StudentProfile, opportunity: Opportunity) -> RuleResult:
@@ -555,17 +492,36 @@ def _profile_value(profile: StudentProfile, rule_type: EligibilityRuleType):
         EligibilityRuleType.TARGET_DEGREE: profile.target_degree_level.value
         if profile.target_degree_level
         else None,
-        EligibilityRuleType.FIELD: profile.intended_field or profile.academic_discipline,
+        EligibilityRuleType.FIELD: [
+            field for field in [profile.intended_field, profile.academic_discipline] if field
+        ],
         EligibilityRuleType.CGPA: profile.cgpa,
         EligibilityRuleType.PERCENTAGE: profile.percentage,
         EligibilityRuleType.IELTS: profile.ielts_score,
         EligibilityRuleType.TOEFL: profile.toefl_score,
         EligibilityRuleType.WORK_EXPERIENCE_MONTHS: profile.work_experience_months,
+        EligibilityRuleType.STUDY_MODE: (
+            profile.preferred_study_mode.value if profile.preferred_study_mode else None
+        ),
+        EligibilityRuleType.INTAKE_YEAR: profile.target_intake_year,
+        EligibilityRuleType.CURRENT_EDUCATION_LEVEL: (
+            profile.current_education_level.value if profile.current_education_level else None
+        ),
+        EligibilityRuleType.ENGLISH_TEST_STATUS: profile.english_test_status.value,
+        EligibilityRuleType.GRE_STATUS: profile.gre_status.value,
+        EligibilityRuleType.DUOLINGO: profile.duolingo_score,
+        EligibilityRuleType.GRE: profile.gre_score,
     }
     return values.get(rule_type)
 
 
 def _compare(actual, required, operator: EligibilityOperator) -> bool:
+    if isinstance(actual, list):
+        if operator is EligibilityOperator.NOT_IN:
+            return all(_compare(value, required, operator) for value in actual)
+        return any(_compare(value, required, operator) for value in actual)
+    if actual == "any" and operator in {EligibilityOperator.EQUALS, EligibilityOperator.IN}:
+        return True
     if operator in {EligibilityOperator.IN, EligibilityOperator.NOT_IN}:
         candidates = {_normalize(str(item)) for item in required}
         matches = _normalize(str(actual)) in candidates
@@ -584,13 +540,119 @@ def _compare(actual, required, operator: EligibilityOperator) -> bool:
     return False
 
 
-def _explicitly_excludes(nationality: str, requirement: str) -> bool:
-    escaped = re.escape(nationality)
-    excluded_pattern = (
-        rf"(?:not eligible|ineligible|except|excluding)\s+(?:for\s+)?"
-        rf"(?:citizens?\s+of\s+)?{escaped}"
+def _unknown_rule(label: str, message: str, next_step: str) -> RuleResult:
+    return RuleResult(label, 15, 7.5, uncertain=[message], next_steps=[next_step])
+
+
+def _unstructured_rule(label: str) -> RuleResult:
+    return _unknown_rule(
+        label,
+        f"{label.title()} eligibility is not yet structured for this opportunity.",
+        "Verify this requirement from the official source.",
     )
-    return bool(
-        re.search(excluded_pattern, requirement)
-        or re.search(rf"{escaped}\s+(?:applicants?\s+)?(?:are|is)\s+not eligible", requirement)
-    )
+
+
+def _matching_profile_snapshot(profile: StudentProfile) -> dict[str, object]:
+    """Return only profile inputs used for matching; never account or session data."""
+    return {
+        "schema_version": 1,
+        "identity": {
+            "nationality": profile.nationality,
+            "country_of_residence": profile.country_of_residence,
+        },
+        "education": {
+            "current_education_level": _snapshot_value(profile.current_education_level),
+            "target_degree_level": _snapshot_value(profile.target_degree_level),
+            "intended_field": profile.intended_field,
+            "academic_discipline": profile.academic_discipline,
+            "cgpa": _snapshot_value(profile.cgpa),
+            "percentage": _snapshot_value(profile.percentage),
+            "grading_scale": _snapshot_value(profile.grading_scale),
+        },
+        "test_evidence": {
+            "english_test_status": _snapshot_value(profile.english_test_status),
+            "ielts_score": _snapshot_value(profile.ielts_score),
+            "toefl_score": profile.toefl_score,
+            "duolingo_score": profile.duolingo_score,
+            "gre_status": _snapshot_value(profile.gre_status),
+            "gre_score": profile.gre_score,
+        },
+        "experience": {"work_experience_months": profile.work_experience_months},
+        "preferences": {
+            "financial_need": profile.financial_need,
+            "preferred_destination_countries": profile.preferred_destination_countries,
+            "preferred_study_mode": _snapshot_value(profile.preferred_study_mode),
+            "target_intake": profile.target_intake,
+            "target_intake_year": profile.target_intake_year,
+        },
+    }
+
+
+def _snapshot_value(value: object) -> object:
+    if isinstance(value, Decimal):
+        return str(value)
+    return getattr(value, "value", value)
+
+
+def _snapshot_hash(snapshot: dict[str, object]) -> str:
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _latest_excerpt(source):
+    if source is None or not source.excerpts:
+        return None
+    return max(source.excerpts, key=lambda excerpt: excerpt.captured_at)
+
+
+def _source_snapshot(source, excerpt) -> dict[str, object] | None:
+    if source is None:
+        return None
+    return {
+        "source_id": str(source.id),
+        "url": source.url,
+        "content_hash": source.content_hash,
+        "verification_status": source.verification_status.value,
+        "last_verified_at": (
+            source.last_verified_at.isoformat() if source.last_verified_at else None
+        ),
+        "excerpt_id": str(excerpt.id) if excerpt else None,
+        "excerpt_content_hash": excerpt.content_hash if excerpt else None,
+    }
+
+
+def _rule_outcome(rule: RuleResult) -> str:
+    if rule.satisfied:
+        return "satisfied"
+    if rule.missing:
+        return "failed"
+    return "unknown"
+
+
+def _rule_reason_code(rule: RuleResult) -> str:
+    normalized_name = re.sub(r"[^a-z0-9]+", "_", rule.name.lower()).strip("_")
+    return f"match.{normalized_name}.{_rule_outcome(rule)}"
+
+
+def _rule_message(rule: RuleResult) -> str:
+    return (rule.satisfied or rule.missing or rule.uncertain or ["Rule evaluated."])[0]
+
+
+def _profile_fields_for_rule(rule_name: str) -> list[str]:
+    fields = {
+        "degree": ["target_degree_level"],
+        "target degree": ["target_degree_level"],
+        "nationality": ["nationality"],
+        "residence": ["country_of_residence"],
+        "field": ["intended_field", "academic_discipline"],
+        "academic": ["cgpa", "grading_scale"],
+        "cgpa": ["cgpa", "grading_scale"],
+        "percentage": ["percentage"],
+        "ielts": ["ielts_score", "english_test_status"],
+        "toefl": ["toefl_score", "english_test_status"],
+        "work experience months": ["work_experience_months"],
+        "language": ["english_test_status", "ielts_score", "toefl_score", "duolingo_score"],
+        "location": ["preferred_destination_countries"],
+        "funding": ["financial_need"],
+    }
+    return fields.get(rule_name, [])

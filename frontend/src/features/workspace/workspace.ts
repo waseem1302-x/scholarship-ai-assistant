@@ -55,6 +55,7 @@ export function profilePayload(draft: ProfileDraft) {
     preferred_destination_countries: listFromText(draft.preferred_destination_countries),
     preferred_study_mode: optional(draft.preferred_study_mode),
     target_intake: optional(draft.target_intake),
+    target_intake_year: numeric(draft.target_intake_year),
     application_constraints: optional(draft.application_constraints),
     additional_eligibility_information: optional(draft.additional_eligibility_information),
   };

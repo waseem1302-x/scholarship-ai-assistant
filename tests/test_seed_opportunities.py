@@ -3,6 +3,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.cli.bootstrap_demo import bootstrap_demo
 from app.cli.seed_verified_opportunities import (
     DEFAULT_SEED_PATH,
     SeedError,
@@ -93,6 +94,32 @@ def test_seed_loader_skips_duplicates_on_second_run(db_session: Session) -> None
     assert first["created"] >= 3
     assert second["created"] == 0
     assert second["skipped_duplicates"] == first["validated"]
+
+
+def test_demo_bootstrap_creates_admin_and_loads_catalogue_idempotently(
+    db_session: Session,
+) -> None:
+    email = "demo-admin@example.com"
+
+    admin, first = bootstrap_demo(
+        db_session,
+        email=email,
+        password="DemoBootstrapPassword123",
+    )
+    repeat_admin, second = bootstrap_demo(
+        db_session,
+        email=email,
+        password="UpdatedDemoBootstrapPassword123",
+    )
+
+    assert admin.email == email
+    assert admin.role is UserRole.ADMIN
+    assert admin.email_verified_at is not None
+    assert first["created"] == first["validated"]
+    assert second["created"] == 0
+    assert second["skipped_duplicates"] == first["validated"]
+    assert repeat_admin.id == admin.id
+    assert db_session.query(Opportunity).count() == first["validated"]
 
 
 def test_custom_seed_path_must_contain_records(tmp_path: Path, db_session: Session) -> None:

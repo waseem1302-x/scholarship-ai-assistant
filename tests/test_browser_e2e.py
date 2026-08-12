@@ -17,40 +17,48 @@ def live_base_url() -> str:
     return base_url.rstrip("/")
 
 
-def test_student_can_register_use_catalogue_and_log_out(page: Page, live_base_url: str) -> None:
-    email = f"e2e-{uuid4().hex}@example.com"
-
-    page.goto(live_base_url, wait_until="networkidle")
-    expect(page).to_have_title("Scholarship AI Assistant")
-    expect(page.locator("main")).to_be_visible()
-
-    page.locator("#register-tab").click()
-    page.locator("#auth-email").fill(email)
-    page.locator("#auth-password").fill("BrowserTest!2026")
-    page.locator("#auth-submit").click()
-
-    expect(page.locator("#workspace")).to_be_visible()
-    expect(page.locator("#user-email")).to_have_text(email)
-    expect(page.locator("#opportunity-status")).to_contain_text("verified opportunities found")
-
-    page.get_by_role("button", name="Logout").click()
-    expect(page.locator("#auth-panel")).to_be_visible()
-    expect(page.locator("#auth-status")).to_have_text("Logged out.")
-
-
 def test_auth_form_is_keyboard_reachable(page: Page, live_base_url: str) -> None:
     page.goto(live_base_url, wait_until="networkidle")
 
-    page.locator("#auth-email").focus()
-    expect(page.locator("#auth-email")).to_be_focused()
+    expect(page.get_by_role("link", name="Catalogue", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Dashboard", exact=True)).to_have_count(0)
+    page.get_by_role("link", name="Get started").click()
+    email = page.get_by_label("Email address")
+    password = page.get_by_label("Password")
+    email.focus()
+    expect(email).to_be_focused()
     page.keyboard.press("Tab")
-    expect(page.locator("#auth-password")).to_be_focused()
+    expect(password).to_be_focused()
 
 
-def test_phase_three_foundation_can_register_and_sign_out(page: Page, live_base_url: str) -> None:
+def test_public_home_can_browse_scholarships_without_an_account(
+    page: Page, live_base_url: str
+) -> None:
+    page.goto(live_base_url, wait_until="networkidle")
+
+    page.get_by_role("link", name="Browse scholarships").click()
+
+    expect(page).to_have_url(f"{live_base_url}/catalogue")
+    expect(
+        page.get_by_role("heading", name="Find the opportunities worth your attention.")
+    ).to_be_visible()
+    page.get_by_label("Availability").select_option("upcoming")
+    page.get_by_role("button", name="Apply filters").click()
+    expect(page).to_have_url(
+        f"{live_base_url}/catalogue?availability=upcoming&limit=10&offset=0&application_window_state=upcoming"
+    )
+    expect(page.get_by_text("Upcoming verified opportunities")).to_be_visible()
+
+    page.get_by_label("Availability").select_option("all")
+    page.get_by_role("button", name="Apply filters").click()
+    expect(page).to_have_url(f"{live_base_url}/catalogue?availability=all&limit=10&offset=0")
+    expect(page.get_by_text("All verified opportunities")).to_be_visible()
+
+
+def test_react_frontend_can_register_and_sign_out(page: Page, live_base_url: str) -> None:
     email = f"phase3-{uuid4().hex}@example.com"
 
-    page.goto(f"{live_base_url}/app", wait_until="networkidle")
+    page.goto(live_base_url, wait_until="networkidle")
     expect(
         page.get_by_role("heading", name="Make your next scholarship decision with confidence.")
     ).to_be_visible()
@@ -61,12 +69,51 @@ def test_phase_three_foundation_can_register_and_sign_out(page: Page, live_base_
     page.get_by_label("Password").fill("PhaseThree!2026")
     page.get_by_role("button", name="Create account").click()
 
-    expect(page).to_have_url(f"{live_base_url}/app/dashboard")
+    expect(page).to_have_url(f"{live_base_url}/dashboard")
     expect(
         page.get_by_role("heading", name=f"Good to see you, {email.split('@')[0]}.")
     ).to_be_visible()
+    for link_name in ["Catalogue", "Dashboard", "Profile", "Matches", "Tracker"]:
+        expect(page.get_by_role("link", name=link_name, exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Admin", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Sign out").click()
     expect(page.get_by_role("link", name="Sign in")).to_be_visible()
+
+
+def test_react_email_verification_and_password_reset(page: Page, live_base_url: str) -> None:
+    email = f"lifecycle-{uuid4().hex}@example.com"
+    new_password = "UpdatedPassword2026"
+
+    page.goto(live_base_url, wait_until="networkidle")
+    page.get_by_role("link", name="Get started").click()
+    page.get_by_role("tab", name="Create account").click()
+    page.get_by_label("Email address").fill(email)
+    page.get_by_label("Password").fill("LifecyclePassword2026")
+    page.get_by_role("button", name="Create account").click()
+
+    page.get_by_role("link", name="Verify email").click()
+    page.get_by_role("button", name="Send verification email").click()
+    verification_token = page.get_by_label("Development verification token").inner_text()
+    page.get_by_role("textbox", name="Verification token", exact=True).fill(verification_token)
+    page.get_by_role("button", name="Verify email").click()
+    expect(page.get_by_role("heading", name="Email address confirmed.")).to_be_visible()
+
+    page.get_by_role("link", name="Return to workspace").click()
+    page.goto(f"{live_base_url}/auth/password-reset", wait_until="networkidle")
+    page.get_by_label("Email address").fill(email)
+    page.get_by_role("button", name="Request password reset").click()
+    reset_token = page.get_by_label("Development password reset token").inner_text()
+    page.get_by_role("textbox", name="Reset token", exact=True).fill(reset_token)
+    page.get_by_label("New password").fill(new_password)
+    page.get_by_role("button", name="Update password").click()
+    expect(page.get_by_role("heading", name="Password updated.")).to_be_visible()
+
+    page.get_by_role("link", name="Sign in", exact=True).last.click()
+    expect(page.get_by_label("Email address")).to_be_visible()
+    page.get_by_label("Email address").fill(email)
+    page.get_by_label("Password").fill(new_password)
+    page.get_by_role("button", name="Sign in").click()
+    expect(page).to_have_url(f"{live_base_url}/dashboard")
 
 
 def test_phase_three_catalogue_and_source_detail_are_browsable(
@@ -144,7 +191,7 @@ def test_phase_three_catalogue_and_source_detail_are_browsable(
             )
 
     page.route("**/api/v1/opportunities**", fulfil_opportunity_request)
-    page.goto(f"{live_base_url}/app/catalogue", wait_until="networkidle")
+    page.goto(f"{live_base_url}/catalogue", wait_until="networkidle")
 
     expect(
         page.get_by_role("heading", name="Find the opportunities worth your attention.")
@@ -153,11 +200,14 @@ def test_phase_three_catalogue_and_source_detail_are_browsable(
     expect(page.get_by_text("Verified official source")).to_be_visible()
     page.get_by_role("link", name="View opportunity").click()
 
-    expect(page).to_have_url(f"{live_base_url}/app/catalogue/{opportunity_id}")
+    expect(page).to_have_url(f"{live_base_url}/catalogue/{opportunity_id}")
     expect(page.get_by_role("heading", name="Official scholarship call")).to_be_visible()
     expect(page.get_by_role("link", name="Open official source")).to_have_attribute(
         "href", "https://example.com/official-scholarship"
     )
+    expect(
+        page.get_by_role("link", name="Create an account to save and track")
+    ).to_have_attribute("href", "/auth")
 
 
 def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: str) -> None:
@@ -286,18 +336,18 @@ def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: s
             route.fulfill(status=200, content_type="application/json", json=[tracker_item])
 
     page.route("**/api/v1/saved-opportunities**", tracker_route)
-    page.goto(f"{live_base_url}/app/profile", wait_until="networkidle")
+    page.goto(f"{live_base_url}/profile", wait_until="networkidle")
     expect(page.get_by_role("heading", name="Build a profile you can trust.")).to_be_visible()
     page.get_by_label("Nationality").fill("Pakistani")
     page.get_by_role("button", name="Save profile").click()
     expect(page.get_by_role("status")).to_contain_text("Profile saved")
 
-    page.goto(f"{live_base_url}/app/matches", wait_until="networkidle")
+    page.goto(f"{live_base_url}/matches", wait_until="networkidle")
     expect(page.get_by_role("heading", name="Recommendations you can inspect.")).to_be_visible()
     expect(page.get_by_role("heading", name="Student Workspace Test Scholarship")).to_be_visible()
     expect(page.get_by_text("Information to add")).to_be_visible()
 
-    page.goto(f"{live_base_url}/app/tracker", wait_until="networkidle")
+    page.goto(f"{live_base_url}/tracker", wait_until="networkidle")
     expect(
         page.get_by_role("heading", name="Turn research into a clear next step.")
     ).to_be_visible()
@@ -361,6 +411,7 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
         "has_next": False,
         "has_previous": False,
     }
+    catalogue_queries: list[str] = []
 
     page.route(
         "**/api/v1/auth/refresh",
@@ -389,10 +440,40 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
             json={"items": [issue], "pagination": pagination},
         ),
     )
+    def catalogue_records_route(route) -> None:
+        catalogue_queries.append(route.request.url)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={"items": [opportunity], "pagination": {**pagination, "limit": 20}},
+        )
 
-    page.goto(f"{live_base_url}/app/admin", wait_until="networkidle")
+    page.route("**/api/v1/admin/opportunities**", catalogue_records_route)
+
+    page.goto(f"{live_base_url}/admin", wait_until="networkidle")
 
     expect(page.get_by_role("heading", name="Keep the catalogue trustworthy.")).to_be_visible()
     expect(page.get_by_role("heading", name="Admin Review Test Scholarship")).to_be_visible()
     expect(page.get_by_text("source requires review").first).to_be_visible()
     assert page.get_by_label("Administrator password").count() == 2
+    expect(page.get_by_role("button", name="Record source check")).to_be_visible()
+    expect(page.get_by_role("button", name="Reverify selected source")).to_be_visible()
+    page.get_by_label("Upload opportunity import file").set_input_files(
+        {
+            "name": "opportunities.csv",
+            "mimeType": "text/csv",
+            "buffer": (
+                b"name,provider_name,country,degree_level\n"
+                b"Uploaded Scholarship,Example Provider,Malaysia,masters\n"
+            ),
+        }
+    )
+    expect(
+        page.get_by_text(
+            "Loaded opportunities.csv. Review the contents before running a dry import."
+        )
+    ).to_be_visible()
+    page.get_by_label("Country").last.fill("Malaysia")
+    page.get_by_role("button", name="Apply filters").last.click()
+    expect(page.get_by_text("Showing 1 of 1").last).to_be_visible()
+    assert any("country=Malaysia" in query for query in catalogue_queries)

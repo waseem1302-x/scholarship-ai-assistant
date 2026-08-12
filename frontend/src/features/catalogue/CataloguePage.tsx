@@ -1,8 +1,8 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { catalogueSearch, deadlineLabel, filtersFromSearch, formatDate, readableValue, searchOpportunities } from "./catalogue";
-import { defaultCatalogueFilters, type CatalogueFilters, type OpportunitySearchResponse, type OpportunitySummary } from "./types";
+import { availabilityLabel, catalogueSearch, deadlineLabel, filtersFromSearch, formatDate, readableValue, searchOpportunities } from "./catalogue";
+import { defaultCatalogueFilters, type CatalogueAvailability, type CatalogueFilters, type OpportunitySearchResponse, type OpportunitySummary } from "./types";
 
 function OpportunityCard({ opportunity }: { opportunity: OpportunitySummary }) {
   return (
@@ -62,6 +62,14 @@ function CatalogueFiltersForm({
   return (
     <form className="catalogue-filters" onSubmit={submit} aria-label="Filter verified opportunities">
       <label>
+        Availability
+        <select value={filters.availability} onChange={(event) => update("availability", event.target.value)} name="availability">
+          <option value="open">Open now</option>
+          <option value="upcoming">Upcoming</option>
+          <option value="all">All verified</option>
+        </select>
+      </label>
+      <label>
         Country
         <input value={filters.country} onChange={(event) => update("country", event.target.value)} placeholder="Malaysia, UK, USA..." name="country" />
       </label>
@@ -112,7 +120,7 @@ function CatalogueFiltersForm({
 
 export function CataloguePage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const filters = filtersFromSearch(searchParams);
+  const filters = useMemo(() => filtersFromSearch(searchParams), [searchParams]);
   const offset = Number(searchParams.get("offset") ?? "0") || 0;
   const [results, setResults] = useState<OpportunitySearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +150,24 @@ export function CataloguePage() {
   }
 
   const pagination = results?.pagination;
+  const availabilityDetails: Record<CatalogueAvailability, { title: string; description: string; empty: string }> = {
+    open: {
+      title: "Current openings only",
+      description: "Records with an unknown, future, expired, or stale application window are intentionally excluded.",
+      empty: "No open verified opportunities match these filters.",
+    },
+    upcoming: {
+      title: "Upcoming verified opportunities",
+      description: "These official-source records have a future application opening date. Re-check dates before planning an application.",
+      empty: "No upcoming verified opportunities match these filters.",
+    },
+    all: {
+      title: "All verified opportunities",
+      description: "This includes open, upcoming, closed, rolling, and deadline-variable records. Check the displayed window state and source date carefully.",
+      empty: "No verified opportunities match these filters.",
+    },
+  };
+  const availabilityDetail = availabilityDetails[filters.availability];
   return (
     <main className="catalogue-page page-width">
       <section className="catalogue-header">
@@ -151,8 +177,8 @@ export function CataloguePage() {
           <p className="lead">Every result must have an active, officially verified source. This view shows opportunities that are currently open; deadlines and eligibility still need your careful review.</p>
         </div>
         <aside className="catalogue-safety-note">
-          <strong>Current openings only</strong>
-          <p>Records with an unknown, future, expired, or stale application window are intentionally excluded.</p>
+          <strong>{availabilityDetail.title}</strong>
+          <p>{availabilityDetail.description}</p>
         </aside>
       </section>
 
@@ -162,7 +188,7 @@ export function CataloguePage() {
         <div className="result-heading">
           <div>
             <p className="eyebrow">Search results</p>
-            <h2>{isLoading ? "Checking verified sources..." : `${pagination?.total ?? 0} open opportunities`}</h2>
+            <h2>{isLoading ? "Checking verified sources..." : `${pagination?.total ?? 0} ${availabilityLabel(filters.availability)}`}</h2>
           </div>
           {pagination ? <p className="result-count">Showing {pagination.count} of {pagination.total}</p> : null}
         </div>
@@ -177,8 +203,8 @@ export function CataloguePage() {
         {isLoading ? <div className="catalogue-message">Loading verified opportunities...</div> : null}
         {!isLoading && !error && results?.items.length === 0 ? (
           <div className="catalogue-message">
-            <h2>No open verified opportunities match these filters.</h2>
-            <p>Try broadening a filter. Drafts, unverified sources, and inactive application windows are never included here.</p>
+            <h2>{availabilityDetail.empty}</h2>
+            <p>Try broadening a filter. Drafts and unverified sources are never included here.</p>
             <button className="button button-quiet" type="button" onClick={() => updateSearch(defaultCatalogueFilters)}>Clear filters</button>
           </div>
         ) : null}

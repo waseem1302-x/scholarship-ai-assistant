@@ -1,4 +1,5 @@
-import { createContext, type FormEvent, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, type FormEvent, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { apiClient, type User } from "../api/client";
 
@@ -9,6 +10,7 @@ interface AuthContextValue {
   isRestoring: boolean;
   signIn: (mode: AuthMode, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  updateUser: (user: User) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -16,11 +18,13 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
+  const sessionGeneration = useRef(0);
 
   useEffect(() => {
     let mounted = true;
+    const generation = sessionGeneration.current;
     void apiClient.restoreSession().then((restoredUser) => {
-      if (mounted) {
+      if (mounted && generation === sessionGeneration.current) {
         setUser(restoredUser);
         setIsRestoring(false);
       }
@@ -35,12 +39,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       isRestoring,
       async signIn(mode, email, password) {
+        sessionGeneration.current += 1;
         const result = await apiClient.signIn(mode, email, password);
         setUser(result.user);
+        setIsRestoring(false);
       },
       async signOut() {
+        sessionGeneration.current += 1;
         setUser(null);
+        setIsRestoring(false);
         await apiClient.signOut();
+      },
+      updateUser(nextUser) {
+        setUser(nextUser);
       },
     }),
     [isRestoring, user],
@@ -121,6 +132,7 @@ export function AuthForm() {
       <button className="button button-primary" type="submit" disabled={isSubmitting}>
         {isSubmitting ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
       </button>
+      {mode === "login" ? <Link className="auth-link" to="/auth/password-reset">Forgot your password?</Link> : null}
     </form>
   );
 }

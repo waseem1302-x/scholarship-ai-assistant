@@ -2,16 +2,14 @@
 
 ## Goal
 
-Replace the single imperative browser script incrementally with a typed,
-component-based frontend that can support the later matching, assistant,
-document, and community phases without changing the FastAPI product API.
+Replace the single imperative browser script with a typed, component-based
+frontend that can support the later matching, assistant, document, and
+community phases without changing the FastAPI product API.
 
 ## Milestone 1 delivered
 
 - a React, TypeScript, and Vite project under `frontend/`
-- an isolated production preview at `/app`; the existing `/` product remains
-  available until its replacement has passed every milestone
-- a production build that FastAPI serves at `/app`, including client-side route
+- a production build that FastAPI serves at `/`, including client-side route
   fallback and hashed static assets
 - a local Vite development server that proxies `/api` to FastAPI
 - a small visual system with reusable button, layout, form, card, typography,
@@ -33,8 +31,9 @@ document, and community phases without changing the FastAPI product API.
 - Refresh tokens stay in the existing HTTP-only cookie. The client never writes
   an access or refresh token to `localStorage` or `sessionStorage`.
 - State-changing requests retain the existing double-submit CSRF header.
-- The existing static MVP is not deleted during the migration. `/` remains the
-  fallback product until the replacement passes the final Phase 3 gates.
+- The static MVP was retained during migration, then retired after the final
+  Phase 3 gates passed. `/app/*` redirects to the equivalent canonical React
+  route for compatibility.
 
 ## Local development
 
@@ -45,7 +44,7 @@ pnpm --dir frontend install
 pnpm --dir frontend dev
 ```
 
-Open `http://localhost:5173/app/` for the Vite development experience. The
+Open `http://localhost:5173/` for the Vite development experience. The
 development server proxies API calls to FastAPI on port 8000.
 
 To verify FastAPI's production serving path locally:
@@ -55,11 +54,11 @@ pnpm --dir frontend build
 python -m uvicorn app.main:app --reload
 ```
 
-Open `http://localhost:8000/app`.
+Open `http://localhost:8000`.
 
 ## Milestone 2 delivered
 
-- public catalogue at `/app/catalogue`, supplied only by the existing public
+- public catalogue at `/catalogue`, supplied only by the existing public
   opportunities API
 - safe `open_now=true` search semantics, so unknown, future, closed, and stale
   application windows do not appear as current openings
@@ -67,7 +66,7 @@ Open `http://localhost:8000/app`.
   represented in the browser URL and survive refresh/back-forward navigation
 - pagination that retains the selected filters
 - accessible loading, empty, error, retry, and pagination states
-- dedicated opportunity detail pages at `/app/catalogue/{id}` with funding,
+- dedicated opportunity detail pages at `/catalogue/{id}` with funding,
   eligibility, application requirements, warnings, curator notes, and explicit
   decision-support language
 - official-source evidence card with the stored excerpt, verification date, and
@@ -99,7 +98,7 @@ Open `http://localhost:8000/app`.
 
 ## Milestone 4 delivered
 
-- an administrator-only workspace at `/app/admin` that loads the existing
+- an administrator-only workspace at `/admin` that loads the existing
   review queue and data-quality dashboard contracts
 - evidence-rich review cards with issue severity, source excerpts, safe source
   links, explicit reviewer notes, and all supported review actions
@@ -128,10 +127,18 @@ Open `http://localhost:8000/app`.
 - live local verification covered the release build, loading and empty states,
   registration, profile saving, and browser-console errors
 
-## Remaining Phase 3 milestones
+## Phase 3 closeout
 
-The React product is ready for legacy-UI retirement. The static `/` interface
-remains available until its removal is explicitly approved.
+React now serves the canonical product at `/`; the former static MVP and its
+duplicate assets have been removed. Legacy `/app/*` URLs redirect to the same
+React routes.
+
+The React account lifecycle now exposes email-verification request/confirmation
+at `/verify-email` and password-reset request/confirmation at
+`/auth/password-reset`. Both rely on the existing single-use backend token
+contracts and never persist tokens in browser storage. Development debug tokens
+are rendered only when the backend explicitly returns them; production delivery
+continues to require a transactional email provider.
 
 ## Verification
 

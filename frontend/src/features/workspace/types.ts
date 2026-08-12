@@ -40,6 +40,7 @@ export interface StudentProfile {
   preferred_destination_countries: string[];
   preferred_study_mode: string | null;
   target_intake: string | null;
+  target_intake_year: number | null;
   application_constraints: string | null;
   additional_eligibility_information: string | null;
   profile_completeness: number;
@@ -70,6 +71,7 @@ export interface ProfileDraft {
   preferred_destination_countries: string;
   preferred_study_mode: string;
   target_intake: string;
+  target_intake_year: string;
   application_constraints: string;
   additional_eligibility_information: string;
 }
@@ -125,5 +127,5 @@ export const applicationStatuses: ApplicationStatus[] = [
 ];
 
 export const emptyProfileDraft: ProfileDraft = {
-  nationality: "", country_of_residence: "", current_education_level: "", target_degree_level: "", intended_field: "", academic_discipline: "", cgpa: "", percentage: "", grading_scale: "", english_test_status: "unknown", ielts_score: "", toefl_score: "", duolingo_score: "", gre_status: "unknown", gre_score: "", work_experience_months: "", research_experience: "", publications: "", leadership_experience: "", financial_need: "", preferred_destination_countries: "", preferred_study_mode: "", target_intake: "", application_constraints: "", additional_eligibility_information: "",
+  nationality: "", country_of_residence: "", current_education_level: "", target_degree_level: "", intended_field: "", academic_discipline: "", cgpa: "", percentage: "", grading_scale: "", english_test_status: "unknown", ielts_score: "", toefl_score: "", duolingo_score: "", gre_status: "unknown", gre_score: "", work_experience_months: "", research_experience: "", publications: "", leadership_experience: "", financial_need: "", preferred_destination_countries: "", preferred_study_mode: "", target_intake: "", target_intake_year: "", application_constraints: "", additional_eligibility_information: "",
 };
