@@ -36,7 +36,15 @@ and production browser/authentication security, not a need for a rewrite.
    - CSV import parsing into the same review-safe row contract as JSON imports;
    - admin review queue and data-quality issue dashboard APIs;
    - static admin review/data-quality panels.
-4. **Phase 3 — premium frontend foundation** — pending.
+4. **Phase 3 — premium frontend foundation** — in progress.
+   - Milestone 1: React, TypeScript, Vite build path, design tokens, client
+     routing, and cookie-session-aware authentication shell;
+   - Milestone 2: verified catalogue and opportunity-detail journey — complete;
+   - Milestone 3: profile, matches, and application tracker — complete;
+   - Milestone 4: administrator review and data-quality workspace â€” complete;
+   - Milestone 5: accessibility, performance, browser regression, and release
+     verification â€” complete; the legacy UI remains until explicit retirement
+     approval.
 5. **Phase 4 — matching and readiness intelligence** — pending.
 6. **Phase 5 — application command centre** — pending.
 7. **Phase 6 — citation-first AI assistant** — pending.

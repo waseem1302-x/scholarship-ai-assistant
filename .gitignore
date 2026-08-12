@@ -1,5 +1,7 @@
 .env
 .venv/
+node_modules/
+.pnpm-store/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -8,6 +10,7 @@ __pycache__/
 .coverage
 htmlcov/
 dist/
+app/web/frontend-dist/
 build/
 *.egg-info/
 *.db

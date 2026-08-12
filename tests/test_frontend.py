@@ -120,3 +120,15 @@ def test_frontend_javascript_does_not_reintroduce_duplicate_function_definitions
     }
 
     assert duplicated_functions == set()
+
+
+def test_phase_three_build_is_served_by_fastapi(client: TestClient) -> None:
+    response = client.get("/app/admin")
+
+    assert response.status_code == 200
+    asset_match = re.search(r'src="(/app/assets/[^\"]+\.js)"', response.text)
+    assert asset_match is not None
+
+    bundle = client.get(asset_match.group(1))
+    assert bundle.status_code == 200
+    assert "Keep the catalogue trustworthy." in bundle.text

@@ -1,10 +1,11 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from app.core.config import get_settings
 from app.core.errors import install_error_handlers
 from app.core.rate_limit import AuthRateLimitMiddleware
 from app.db.session import get_db
+
+PHASE_THREE_FRONTEND_DIRECTORY = Path("app/web/frontend-dist")
 
 
 @asynccontextmanager
@@ -35,7 +38,7 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origin_list,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Admin-Step-Up", "X-CSRF-Token"],
     )
     application.add_middleware(AuthRateLimitMiddleware)
 
@@ -59,10 +62,26 @@ def create_app() -> FastAPI:
     install_error_handlers(application)
     application.include_router(api_router, prefix="/api/v1")
     application.mount("/static", StaticFiles(directory="app/web/static"), name="static")
+    application.mount(
+        "/app/assets",
+        StaticFiles(directory=PHASE_THREE_FRONTEND_DIRECTORY / "assets", check_dir=False),
+        name="phase-three-assets",
+    )
 
     @application.get("/", include_in_schema=False)
     def frontend() -> FileResponse:
         return FileResponse("app/web/static/index.html")
+
+    @application.get("/app", include_in_schema=False)
+    @application.get("/app/{path:path}", include_in_schema=False)
+    def phase_three_frontend() -> Response:
+        index = PHASE_THREE_FRONTEND_DIRECTORY / "index.html"
+        if not index.is_file():
+            return PlainTextResponse(
+                "The Phase 3 frontend has not been built. Run `pnpm --dir frontend build` first.",
+                status_code=503,
+            )
+        return FileResponse(index)
 
     @application.get("/health/live", tags=["operations"])
     def liveness() -> dict[str, str]:

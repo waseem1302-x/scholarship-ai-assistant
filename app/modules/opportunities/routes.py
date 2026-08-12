@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorResponse
 from app.db.session import get_db
-from app.modules.auth.dependencies import require_admin_step_up
-from app.modules.auth.models import User
+from app.modules.auth.dependencies import require_admin_step_up, require_roles
+from app.modules.auth.models import User, UserRole
 from app.modules.opportunities.models import (
     DegreeLevel,
     FundingType,
@@ -58,6 +58,7 @@ def get_opportunity_service(session: Annotated[Session, Depends(get_db)]) -> Opp
 
 
 AdminUser = Annotated[User, Depends(require_admin_step_up)]
+AdminReader = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
 
 
 @router.post(
@@ -85,7 +86,7 @@ def create_opportunity(
     responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
 )
 def list_admin_opportunities(
-    _admin: AdminUser,
+    _admin: AdminReader,
     service: Annotated[OpportunityService, Depends(get_opportunity_service)],
     country: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     degree_level: DegreeLevel | None = None,
@@ -120,7 +121,7 @@ def list_admin_opportunities(
     responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
 )
 def list_review_queue(
-    _admin: AdminUser,
+    _admin: AdminReader,
     service: Annotated[OpportunityService, Depends(get_opportunity_service)],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -134,7 +135,7 @@ def list_review_queue(
     responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
 )
 def list_data_quality_issues(
-    _admin: AdminUser,
+    _admin: AdminReader,
     service: Annotated[OpportunityService, Depends(get_opportunity_service)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,

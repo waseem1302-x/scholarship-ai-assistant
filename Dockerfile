@@ -1,3 +1,14 @@
+FROM node:24-slim AS frontend-build
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
+
+COPY frontend ./
+RUN pnpm build
+
+
 FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -9,6 +20,7 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY --from=frontend-build /app/web/frontend-dist ./app/web/frontend-dist
 COPY data ./data
 COPY alembic.ini ./
 COPY alembic ./alembic
