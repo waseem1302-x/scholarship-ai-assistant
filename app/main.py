@@ -38,7 +38,7 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origin_list,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Admin-Step-Up", "X-CSRF-Token"],
     )
     application.add_middleware(AuthRateLimitMiddleware)
 

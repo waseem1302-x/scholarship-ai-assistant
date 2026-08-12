@@ -97,13 +97,41 @@ Open `http://localhost:8000/app`.
 - frontend unit tests for profile payload safety and a route-mocked Playwright
   journey through profile save, match inspection, and tracker update
 
+## Milestone 4 delivered
+
+- an administrator-only workspace at `/app/admin` that loads the existing
+  review queue and data-quality dashboard contracts
+- evidence-rich review cards with issue severity, source excerpts, safe source
+  links, explicit reviewer notes, and all supported review actions
+- a password-confirmed administrator step-up flow for state-changing review and
+  import operations; the short-lived step-up token is used only for that one
+  mutation and is never persisted in browser storage
+- JSON-row and CSV-text imports with dry-run support and per-row result feedback
+- read-only admin dashboard endpoints use ordinary administrator RBAC, avoiding
+  consumption of a one-time step-up token merely to load the workspace; mutating
+  endpoints retain step-up protection
+- focused tests for import parsing and reviewer-note requirements, alongside the
+  existing backend review/data-quality coverage
+
+## Milestone 5 delivered
+
+- strict TypeScript unused-local and unused-parameter checks now complement the
+  existing compiler, Ruff, and test gates; the obsolete frontend placeholder
+  path was removed
+- consistent visible keyboard focus and typography inheritance for buttons,
+  inputs, selects, and textareas
+- an intermediate responsive layout for the workspace cards before the mobile
+  breakpoint, with mobile overflow and keyboard-focus verification
+- production bundle serving is tested through FastAPI, and the browser suite
+  now includes the administrator review workspace as well as the existing
+  catalogue and student journeys
+- live local verification covered the release build, loading and empty states,
+  registration, profile saving, and browser-console errors
+
 ## Remaining Phase 3 milestones
 
-1. Rebuild the admin review queue, data-quality dashboard, imports, and
-   reviewer actions.
-2. Complete responsive, accessibility, performance, empty/error state, and
-   browser-regression work. Retire the legacy static UI only after full
-   verification and explicit approval.
+The React product is ready for legacy-UI retirement. The static `/` interface
+remains available until its removal is explicitly approved.
 
 ## Verification
 

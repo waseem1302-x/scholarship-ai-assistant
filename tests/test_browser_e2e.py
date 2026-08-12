@@ -303,3 +303,96 @@ def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: s
     ).to_be_visible()
     page.get_by_role("button", name="Save update").click()
     expect(page.get_by_role("heading", name="Student Workspace Test Scholarship")).to_be_visible()
+
+
+def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str) -> None:
+    user = {
+        "id": "b841a458-bb0e-4c31-98ef-f8e2e9f8c2b4",
+        "email": "reviewer@example.com",
+        "role": "admin",
+        "is_active": True,
+        "email_verified_at": "2099-01-01T00:00:00Z",
+        "created_at": "2099-01-01T00:00:00Z",
+    }
+    source = {
+        "id": "4a8420dc-8de0-4f40-938d-df45ce13c884",
+        "url": "https://example.com/official-call",
+        "source_type": "official",
+        "title": "Official scholarship call",
+        "relevant_excerpt": (
+            "The official source needs a curator decision after its deadline changed."
+        ),
+        "verification_status": "needs_review",
+        "last_verified_at": None,
+    }
+    opportunity = {
+        "id": "52c07256-ad65-4169-841e-c23189874049",
+        "name": "Admin Review Test Scholarship",
+        "provider_name": "Verified Test Provider",
+        "university_name": None,
+        "country": "Malaysia",
+        "degree_level": "masters",
+        "application_deadline": "2099-12-31T23:59:59Z",
+        "funding_type": "full",
+        "funding_summary": "Tuition is covered.",
+        "verification_status": "needs_review",
+        "last_verified_at": None,
+        "official_source_url": source["url"],
+        "application_window_state": "open",
+        "source_is_fresh": True,
+        "status": "draft",
+        "data_confidence": "medium",
+        "source": source,
+        "sources": [source],
+    }
+    issue = {
+        "code": "source_requires_review",
+        "severity": "high",
+        "message": "The official source changed and must be reviewed before publication.",
+        "opportunity_id": opportunity["id"],
+        "opportunity_name": opportunity["name"],
+        "source_id": source["id"],
+    }
+    pagination = {
+        "total": 1,
+        "limit": 50,
+        "offset": 0,
+        "count": 1,
+        "has_next": False,
+        "has_previous": False,
+    }
+
+    page.route(
+        "**/api/v1/auth/refresh",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={"access_token": "test-access-token", "expires_in": 900, "user": user},
+        ),
+    )
+    page.route(
+        "**/api/v1/admin/review-queue**",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={
+                "items": [{"opportunity": opportunity, "reasons": [issue]}],
+                "pagination": pagination,
+            },
+        ),
+    )
+    page.route(
+        "**/api/v1/admin/data-quality-issues**",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={"items": [issue], "pagination": pagination},
+        ),
+    )
+
+    page.goto(f"{live_base_url}/app/admin", wait_until="networkidle")
+
+    expect(page.get_by_role("heading", name="Keep the catalogue trustworthy.")).to_be_visible()
+    expect(page.get_by_role("heading", name="Admin Review Test Scholarship")).to_be_visible()
+    expect(page.get_by_text("source requires review").first).to_be_visible()
+    assert page.get_by_label("Administrator password").count() == 2

@@ -15,6 +15,11 @@ interface TokenResponse {
   user: User;
 }
 
+interface AdminStepUpResponse {
+  step_up_token: string;
+  expires_at: string;
+}
+
 interface ApiErrorBody {
   detail?: unknown;
   error?: { details?: unknown; message?: string };
@@ -84,6 +89,13 @@ export class ApiClient {
     } finally {
       this.setAccessToken(null);
     }
+  }
+
+  async adminStepUp(password: string): Promise<AdminStepUpResponse> {
+    return this.request<AdminStepUpResponse>("/auth/admin/step-up", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
   }
 
   async request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {

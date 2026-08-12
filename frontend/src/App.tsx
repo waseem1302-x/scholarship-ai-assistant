@@ -5,27 +5,10 @@ import { BrowserRouter } from "react-router-dom";
 import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
 import { CataloguePage } from "./features/catalogue/CataloguePage";
 import { OpportunityDetailPage } from "./features/catalogue/OpportunityDetailPage";
+import { AdminPage } from "./features/admin/AdminPage";
 import { MatchesPage } from "./features/workspace/MatchesPage";
 import { ProfilePage } from "./features/workspace/ProfilePage";
 import { TrackerPage } from "./features/workspace/TrackerPage";
-
-const comingSoon = {
-  catalogue: {
-    title: "Verified opportunities, without the noise.",
-    description:
-      "The catalogue migration is the next Phase 3 milestone. It will retain the verified-source gate and the current safe open-now defaults.",
-  },
-  profile: {
-    title: "A profile that makes every next step clearer.",
-    description:
-      "Profile guidance, explainable matching, and application tracking are planned for the next student-workspace milestone.",
-  },
-  admin: {
-    title: "A calm workspace for trusted curation.",
-    description:
-      "Review queues, quality issues, imports, and reviewer actions will move after the student journey is complete.",
-  },
-} as const;
 
 function Brand() {
   return (
@@ -169,7 +152,7 @@ function Dashboard() {
       <section className="workspace-intro">
         <p className="eyebrow">Welcome back</p>
         <h1>Good to see you, {user.email.split("@")[0]}.</h1>
-        <p>Milestone 1 establishes this secure workspace. The next milestones will progressively bring your live catalogue, profile, matches, tracker, and curation tools here.</p>
+          <p>Your secure workspace brings discovery, preparation, and careful source curation into one place.</p>
       </section>
       <div className="workspace-grid">
         <NavLink className="workspace-card" to="/catalogue">
@@ -196,24 +179,10 @@ function Dashboard() {
           <NavLink className="workspace-card" to="/admin">
             <span>Curate</span>
             <h2>Review workspace</h2>
-            <p>Administration moves in Milestone 4.</p>
+            <p>Resolve review work, inspect quality signals, and safely import records.</p>
           </NavLink>
         ) : null}
       </div>
-    </main>
-  );
-}
-
-function ComingSoonPage({ area }: { area: keyof typeof comingSoon }) {
-  const content = comingSoon[area];
-  return (
-    <main className="page-width placeholder-page">
-      <p className="eyebrow">Phase 3 in progress</p>
-      <h1>{content.title}</h1>
-      <p className="lead">{content.description}</p>
-      <NavLink className="button button-primary" to="/dashboard">
-        Back to workspace
-      </NavLink>
     </main>
   );
 }
@@ -231,7 +200,7 @@ function AppRoutes() {
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/matches" element={<MatchesPage />} />
         <Route path="/tracker" element={<TrackerPage />} />
-        <Route path="/admin" element={<ComingSoonPage area="admin" />} />
+        <Route path="/admin" element={<AdminPage />} />
         <Route path="*" element={<Navigate replace to="/" />} />
       </Routes>
     </>
