@@ -45,8 +45,10 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         assistant_limited = request.url.path == "/api/v1/assistant/answers"
         document_limited = request.method == "POST" and (
             request.url.path == "/api/v1/document-lab/assets"
-            or (request.url.path.endswith("/versions")
-            and request.url.path.startswith("/api/v1/document-lab/assets/"))
+            or (
+                request.url.path.endswith("/versions")
+                and request.url.path.startswith("/api/v1/document-lab/assets/")
+            )
         )
         if not auth_limited and not assistant_limited and not document_limited:
             return await call_next(request)
