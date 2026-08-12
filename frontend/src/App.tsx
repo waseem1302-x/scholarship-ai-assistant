@@ -13,6 +13,7 @@ import { TrackerPage } from "./features/workspace/TrackerPage";
 import { CommandCentrePage } from "./features/workspace/CommandCentrePage";
 import { ApplicationDetailPage } from "./features/workspace/ApplicationDetailPage";
 import { AssistantPage } from "./features/assistant/AssistantPage";
+import { DocumentLabPage } from "./features/document-lab/DocumentLabPage";
 
 function Brand() {
   return (
@@ -70,6 +71,9 @@ function Topbar() {
               </NavLink>
               <NavLink className="product-nav-link" to="/assistant">
                 Assistant
+              </NavLink>
+              <NavLink className="product-nav-link" to="/document-lab">
+                Document Lab
               </NavLink>
               {user.role === "admin" ? (
                 <NavLink className="product-nav-link" to="/admin">
@@ -225,6 +229,11 @@ function Dashboard() {
           <h2>Citation-first assistant</h2>
           <p>Ask questions grounded in verified official sources.</p>
         </NavLink>
+        <NavLink className="workspace-card" to="/document-lab">
+          <span>Improve</span>
+          <h2>Private Document Lab</h2>
+          <p>Get consent-gated editorial feedback on private drafts.</p>
+        </NavLink>
         {user.role === "admin" ? (
           <NavLink className="workspace-card" to="/admin">
             <span>Curate</span>
@@ -255,6 +264,7 @@ function AppRoutes() {
         <Route path="/applications" element={<CommandCentrePage />} />
         <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
         <Route path="/assistant" element={<AssistantPage />} />
+        <Route path="/document-lab" element={<DocumentLabPage />} />
         <Route path="/admin" element={<AdminPage />} />
         <Route path="*" element={<Navigate replace to="/" />} />
       </Routes>

@@ -23,6 +23,10 @@ services:
       APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
       APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
       APP_CORS_ORIGINS: http://localhost:3000
+      APP_DOCUMENT_LAB_ENABLED: "true"
+      APP_DOCUMENT_LAB_STORAGE_ROOT: /app/document-data
+    volumes:
+      - document_lab_data:/app/document-data
     depends_on:
       db:
         condition: service_healthy
@@ -71,9 +75,32 @@ services:
       sleep "$${APP_REMINDER_WORKER_POLL_SECONDS}"; done'
     restart: unless-stopped
 
+  document-worker:
+    profiles: ["documents"]
+    image: scholarship-ai-assistant:local
+    build: .
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
+      APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
+      APP_DOCUMENT_LAB_ENABLED: "true"
+      APP_DOCUMENT_LAB_STORAGE_ROOT: /app/document-data
+      # A reviewed malware-scanner adapter must be configured before analysis.
+      APP_DOCUMENT_LAB_PROVIDER: unavailable
+    volumes:
+      - document_lab_data:/app/document-data
+    depends_on:
+      api:
+        condition: service_healthy
+    command: >
+      sh -c 'while true; do python -m app.cli.dispatch_document_jobs;
+      sleep 5; done'
+    restart: unless-stopped
+
 volumes:
   postgres_data:
     # Preserve the existing development database when moving from Compose's
     # former default project name to the explicit project name above.
     external: true
     name: scholarshipaiassistant_postgres_data
+  document_lab_data:

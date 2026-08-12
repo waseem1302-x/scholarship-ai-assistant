@@ -521,6 +521,31 @@ alert on failed runs; do not silently republish changed sources.
   before public production use.
 - Deployment, public users, and evaluation metrics have not been claimed.
 
+## Private Document Lab
+
+Phase 7 adds a separate, owner-private Document Lab for PDF/DOCX CVs, resumes,
+statements of purpose, personal statements, and motivation letters. It accepts
+files no larger than 10 MB, 50 pages, and 100,000 extracted characters. Uploads
+are quarantined, validated against extension/MIME/magic bytes, macro/archive and
+password-protection checks, and must pass a malware-scanner adapter before
+restricted text extraction.
+
+Each AI analysis requires fresh explicit consent before extracted text can be
+sent to a configured provider. Feedback is structured editorial guidance, never
+an eligibility, admission, funding, visa, plagiarism, or authorship decision.
+Students can export or delete their private Document Lab data. Application
+document records remain coordination metadata and only link to a private version
+after explicit confirmation.
+
+Enable the local worker after configuring a reviewed scanner:
+
+```bash
+docker compose --profile documents up -d document-worker
+```
+
+See [Document Lab architecture and threat model](docs/document-lab-architecture.md)
+for storage, retention, provider, incident-response, and production requirements.
+
 ## Documentation
 
 - [Implementation blueprint](docs/blueprint.md)

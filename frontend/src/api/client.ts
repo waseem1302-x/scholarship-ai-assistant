@@ -181,6 +181,17 @@ export class ApiClient {
     return body as T;
   }
 
+  async upload<T>(path: string, file: File): Promise<T> {
+    return this.request<T>(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Document-Filename": file.name,
+      },
+      body: file,
+    });
+  }
+
   private async refresh(): Promise<TokenResponse | null> {
     if (!this.refreshPromise) {
       this.refreshPromise = this.refreshRequest().finally(() => {
