@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from app.cli.bootstrap_demo import bootstrap_demo
 from app.cli.seed_verified_opportunities import (
     DEFAULT_SEED_PATH,
+    DEFAULT_SEED_PATHS,
     SeedError,
     load_seed_payload,
+    load_seed_records,
     seed_verified_opportunities,
 )
 from app.core.security import hash_password
@@ -34,10 +36,18 @@ def create_admin(db_session: Session, *, email: str = "seed-admin@example.com") 
 
 def test_verified_seed_file_contains_valid_opportunity_records() -> None:
     payload = load_seed_payload(DEFAULT_SEED_PATH)
+    records = load_seed_records()
 
     assert payload["dataset_version"] == "2026-07-22"
-    assert len(payload["records"]) >= 3
-    for record in payload["records"]:
+    assert len(DEFAULT_SEED_PATHS) == 3
+    assert len(records) == 50
+    assert len(
+        {
+            (record["provider_name"], record["name"], record["country"], record.get("intake_year"))
+            for record in records
+        }
+    ) == len(records)
+    for record in records:
         additional_sources = record.get("additional_sources", [])
         OpportunityCreate.model_validate(
             {key: value for key, value in record.items() if key != "additional_sources"}
@@ -61,7 +71,7 @@ def test_seed_loader_requires_admin_user(db_session: Session) -> None:
 def test_seed_loader_dry_run_validates_without_creating_records(db_session: Session) -> None:
     summary = seed_verified_opportunities(db_session, dry_run=True)
 
-    assert summary["validated"] >= 3
+    assert summary["validated"] == 50
     assert summary["created"] == 0
     assert db_session.query(Opportunity).count() == 0
 
@@ -91,7 +101,7 @@ def test_seed_loader_skips_duplicates_on_second_run(db_session: Session) -> None
 
     second = seed_verified_opportunities(db_session, admin_email=admin.email)
 
-    assert first["created"] >= 3
+    assert first["created"] == 50
     assert second["created"] == 0
     assert second["skipped_duplicates"] == first["validated"]
 

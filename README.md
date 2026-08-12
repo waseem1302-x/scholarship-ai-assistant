@@ -72,10 +72,10 @@ Implemented so far:
   encoding artifacts, and duplicate JavaScript function definitions
 - Playwright/Chromium end-to-end tests for registration, catalogue loading,
   logout, and keyboard form navigation
-- expanded verified seed dataset with 16 official-source records across major
+- expanded verified seed dataset with 50 official-source records across major
   destination systems such as Chevening, Commonwealth, Fulbright, DAAD, Eiffel,
   Swiss Excellence, Erasmus Mundus, CSC, MEXT, GKS, Turkiye Scholarships,
-  Australia Awards, RTP, Manaaki, and ADB-JSP
+  Australia Awards, RTP, Manaaki, ADB-JSP, TaiwanICDF, MTCP, and SINGA
 - Docker Compose, lint configuration, and automated tests
 - effective application-window states with a safe `open_now` catalogue filter
 - historical opportunity cycles and structured eligibility-rule foundation
@@ -421,6 +421,8 @@ The repository includes a manually curated source-verified demo dataset:
 
 ```text
 data/seed/verified_opportunities.json
+data/seed/verified_government_opportunities.json
+data/seed/verified_remaining_scholarships.json
 ```
 
 For local demos, the single guided command creates the administrator and loads
@@ -437,8 +439,9 @@ only through environment variables or your secret manager:
 docker compose exec -e APP_DEMO_ADMIN_EMAIL=admin@example.com -e APP_DEMO_ADMIN_PASSWORD='use-a-unique-12-character-minimum-password' api python -m app.cli.bootstrap_demo
 ```
 
-The loader skips duplicates, records source verification metadata, and makes the
-seed records public only because the dataset was manually checked against
+The default loader combines the three curated files into 50 unique records,
+skips duplicates, records source verification metadata, and makes the seed
+records public only because the dataset was manually checked against
 official source pages. Use this for local portfolio demos, not as a promise that
 deadlines or eligibility will remain unchanged forever. The dataset is a
 verified flagship sample, not a claim to include every scholarship worldwide.

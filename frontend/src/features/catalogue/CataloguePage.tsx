@@ -163,7 +163,7 @@ export function CataloguePage() {
     },
     all: {
       title: "All verified opportunities",
-      description: "This includes open, upcoming, closed, rolling, and deadline-variable records. Check the displayed window state and source date carefully.",
+      description: "Open opportunities appear first, followed by upcoming, deadline-variable, and closed records. Check the displayed window state and source date carefully.",
       empty: "No verified opportunities match these filters.",
     },
   };
@@ -174,7 +174,7 @@ export function CataloguePage() {
         <div>
           <p className="eyebrow">Verified opportunity catalogue</p>
           <h1>Find the opportunities worth your attention.</h1>
-          <p className="lead">Every result must have an active, officially verified source. This view shows opportunities that are currently open; deadlines and eligibility still need your careful review.</p>
+          <p className="lead">Every result has an active, officially verified source. Open opportunities appear first, followed by upcoming and deadline-variable records; deadlines and eligibility still need your careful review.</p>
         </div>
         <aside className="catalogue-safety-note">
           <strong>{availabilityDetail.title}</strong>

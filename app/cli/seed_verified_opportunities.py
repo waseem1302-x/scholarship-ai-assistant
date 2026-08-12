@@ -14,8 +14,12 @@ from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.schemas import OpportunityCreate, VerificationUpdate
 from app.modules.opportunities.service import OpportunityService
 
-DEFAULT_SEED_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "seed" / "verified_opportunities.json"
+SEED_DIRECTORY = Path(__file__).resolve().parents[2] / "data" / "seed"
+DEFAULT_SEED_PATH = SEED_DIRECTORY / "verified_opportunities.json"
+DEFAULT_SEED_PATHS = (
+    DEFAULT_SEED_PATH,
+    SEED_DIRECTORY / "verified_government_opportunities.json",
+    SEED_DIRECTORY / "verified_remaining_scholarships.json",
 )
 
 
@@ -29,6 +33,16 @@ def load_seed_payload(path: Path = DEFAULT_SEED_PATH) -> dict[str, Any]:
     if not isinstance(payload.get("records"), list):
         raise SeedError("Seed file must contain a records list")
     return payload
+
+
+def load_seed_records(seed_path: Path | None = None) -> list[dict[str, Any]]:
+    """Load one explicit seed file or the complete curated baseline by default."""
+    paths = (seed_path,) if seed_path is not None else DEFAULT_SEED_PATHS
+    records: list[dict[str, Any]] = []
+    for path in paths:
+        payload = load_seed_payload(path)
+        records.extend(payload["records"])
+    return records
 
 
 def find_seed_admin(session: Session, email: str | None = None) -> User:
@@ -53,16 +67,16 @@ def seed_verified_opportunities(
     session: Session,
     *,
     admin_email: str | None = None,
-    seed_path: Path = DEFAULT_SEED_PATH,
+    seed_path: Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, int]:
-    seed_payload = load_seed_payload(seed_path)
+    seed_records = load_seed_records(seed_path)
     admin = None if dry_run else find_seed_admin(session, admin_email)
     opportunity_service = OpportunityService(session)
     opportunity_repository = OpportunityRepository(session)
     summary = {"created": 0, "skipped_duplicates": 0, "validated": 0}
 
-    for raw_record in seed_payload["records"]:
+    for raw_record in seed_records:
         record = dict(raw_record)
         additional_sources = record.pop("additional_sources", [])
         opportunity_payload = OpportunityCreate.model_validate(record)
@@ -125,7 +139,8 @@ def seed_verified_opportunities(
 
 
 def main() -> None:
-    seed_path = Path(os.getenv("APP_SEED_FILE", DEFAULT_SEED_PATH))
+    configured_seed_path = os.getenv("APP_SEED_FILE")
+    seed_path = Path(configured_seed_path) if configured_seed_path else None
     admin_email = os.getenv("APP_SEED_ADMIN_EMAIL")
     dry_run = os.getenv("APP_SEED_DRY_RUN", "false").lower() in {"1", "true", "yes"}
 

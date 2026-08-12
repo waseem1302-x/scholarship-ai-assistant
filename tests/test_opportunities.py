@@ -225,6 +225,61 @@ def test_open_now_excludes_closed_future_and_unknown_deadline_records(
     assert conflicting_filters.status_code == 422
 
 
+def test_public_catalogue_prioritizes_open_then_upcoming_then_other_verified_records(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    now = datetime.now(UTC)
+    records = [
+        create_opportunity(
+            client,
+            headers,
+            name="Closed catalogue scholarship",
+            application_deadline=(now - timedelta(days=1)).isoformat(),
+        ),
+        create_opportunity(
+            client,
+            headers,
+            name="Deadline-variable catalogue scholarship",
+            application_opening_date=None,
+            application_deadline=None,
+        ),
+        create_opportunity(
+            client,
+            headers,
+            name="Upcoming catalogue scholarship",
+            application_opening_date=(now + timedelta(days=3)).isoformat(),
+            application_deadline=(now + timedelta(days=10)).isoformat(),
+        ),
+        create_opportunity(
+            client,
+            headers,
+            name="Open catalogue scholarship",
+            application_opening_date=(now - timedelta(days=1)).isoformat(),
+            application_deadline=(now + timedelta(days=2)).isoformat(),
+        ),
+    ]
+    for record in records:
+        assert (
+            client.patch(
+                f"/api/v1/admin/opportunities/{record['id']}/verification",
+                json={"verification_status": "officially_verified"},
+                headers=headers,
+            ).status_code
+            == 200
+        )
+
+    response = client.get("/api/v1/opportunities")
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response_items(response)] == [
+        "Open catalogue scholarship",
+        "Upcoming catalogue scholarship",
+        "Deadline-variable catalogue scholarship",
+        "Closed catalogue scholarship",
+    ]
+
+
 def test_public_search_filters_verified_opportunities(
     client: TestClient, db_session: Session
 ) -> None:

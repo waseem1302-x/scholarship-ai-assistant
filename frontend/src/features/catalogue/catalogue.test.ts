@@ -33,9 +33,9 @@ describe("catalogue query contract", () => {
     expect(all.toString()).toBe("availability=all&limit=10&offset=0");
   });
 
-  it("normalizes invalid URL values to the safe filter defaults", () => {
+  it("normalizes invalid URL values to all verified by default", () => {
     expect(filtersFromSearch(new URLSearchParams("country=UK&limit=100&degree_level=unsupported"))).toEqual({
-      availability: "open",
+      availability: "all",
       country: "UK",
       degree_level: "",
       funding_type: "",

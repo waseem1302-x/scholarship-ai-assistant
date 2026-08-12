@@ -555,39 +555,27 @@ class OpportunityService:
                 422,
             )
 
-        if open_now or application_window_state is not None:
-            opportunities = self.repository.list_public_opportunities(**filters)
-            if open_now:
-                opportunities = [
-                    opportunity
-                    for opportunity in opportunities
-                    if is_open_now(opportunity, self._official_source(opportunity))
-                ]
-            else:
-                opportunities = [
-                    opportunity
-                    for opportunity in opportunities
-                    if effective_application_window(
-                        opportunity, self._official_source(opportunity)
-                    ).state
-                    is application_window_state
-                ]
-            total = len(opportunities)
-            items = [
-                self.to_summary_response(opportunity)
-                for opportunity in opportunities[offset : offset + limit]
+        opportunities = self.repository.list_public_opportunities(**filters)
+        if open_now:
+            opportunities = [
+                opportunity
+                for opportunity in opportunities
+                if is_open_now(opportunity, self._official_source(opportunity))
             ]
-            return OpportunitySearchResponse(
-                items=items,
-                pagination=self._pagination(
-                    total=total, limit=limit, offset=offset, count=len(items)
-                ),
-            )
-        opportunities = self.repository.list_public_opportunities(
-            **filters, limit=limit, offset=offset
-        )
-        total = self.repository.count_public_opportunities(**filters)
-        items = [self.to_summary_response(opportunity) for opportunity in opportunities]
+        elif application_window_state is not None:
+            opportunities = [
+                opportunity
+                for opportunity in opportunities
+                if effective_application_window(
+                    opportunity, self._official_source(opportunity)
+                ).state
+                is application_window_state
+            ]
+
+        opportunities.sort(key=self._catalogue_order_key)
+        total = len(opportunities)
+        page = opportunities[offset : offset + limit]
+        items = [self.to_summary_response(opportunity) for opportunity in page]
         return OpportunitySearchResponse(
             items=items,
             pagination=self._pagination(total=total, limit=limit, offset=offset, count=len(items)),
@@ -600,6 +588,21 @@ class OpportunityService:
         if opportunity.status is not OpportunityStatus.ACTIVE:
             raise AppError("opportunity_not_found", "Opportunity was not found", 404)
         return self.to_detail_response(opportunity)
+
+    def _catalogue_order_key(self, opportunity: Opportunity) -> tuple[int, datetime, str]:
+        """Put actionable opportunities first without hiding verified records."""
+        window = effective_application_window(opportunity, self._official_source(opportunity))
+        priority = {
+            ApplicationWindowState.OPEN: 0,
+            ApplicationWindowState.ROLLING: 0,
+            ApplicationWindowState.UPCOMING: 1,
+            ApplicationWindowState.DEADLINE_UNKNOWN: 2,
+            ApplicationWindowState.CLOSED: 3,
+            ApplicationWindowState.ARCHIVED: 4,
+        }[window.state]
+        cycle = window.cycle
+        deadline = cycle.application_deadline if cycle else opportunity.application_deadline
+        return priority, deadline or datetime.max.replace(tzinfo=UTC), opportunity.name.casefold()
 
     def to_admin_response(self, opportunity: Opportunity) -> AdminOpportunityResponse:
         official_source = self._best_source(opportunity)

@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.cli.create_admin import upsert_admin
-from app.cli.seed_verified_opportunities import DEFAULT_SEED_PATH, seed_verified_opportunities
+from app.cli.seed_verified_opportunities import seed_verified_opportunities
 from app.db.session import SessionLocal
 from app.modules.auth.models import User
 
@@ -17,7 +17,7 @@ def bootstrap_demo(
     *,
     email: str,
     password: str,
-    seed_path: Path = DEFAULT_SEED_PATH,
+    seed_path: Path | None = None,
 ) -> tuple[User, dict[str, int]]:
     """Validate and load the demo dataset using an idempotent administrator account."""
     # Validate every record before changing the user or catalogue tables.
@@ -35,7 +35,8 @@ def bootstrap_demo(
 def main() -> None:
     email = os.getenv("APP_DEMO_ADMIN_EMAIL") or input("Demo admin email: ").strip()
     password = os.getenv("APP_DEMO_ADMIN_PASSWORD") or getpass.getpass("Demo admin password: ")
-    seed_path = Path(os.getenv("APP_DEMO_SEED_FILE", DEFAULT_SEED_PATH))
+    configured_seed_path = os.getenv("APP_DEMO_SEED_FILE")
+    seed_path = Path(configured_seed_path) if configured_seed_path else None
 
     with SessionLocal() as session:
         admin, summary = bootstrap_demo(

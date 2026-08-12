@@ -75,7 +75,7 @@ export interface CatalogueFilters {
 }
 
 export const defaultCatalogueFilters: CatalogueFilters = {
-  availability: "open",
+  availability: "all",
   country: "",
   degree_level: "",
   funding_type: "",
