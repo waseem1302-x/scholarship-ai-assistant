@@ -205,9 +205,9 @@ def test_phase_three_catalogue_and_source_detail_are_browsable(
     expect(page.get_by_role("link", name="Open official source")).to_have_attribute(
         "href", "https://example.com/official-scholarship"
     )
-    expect(
-        page.get_by_role("link", name="Create an account to save and track")
-    ).to_have_attribute("href", "/auth")
+    expect(page.get_by_role("link", name="Create an account to save and track")).to_have_attribute(
+        "href", "/auth"
+    )
 
 
 def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: str) -> None:
@@ -440,6 +440,7 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
             json={"items": [issue], "pagination": pagination},
         ),
     )
+
     def catalogue_records_route(route) -> None:
         catalogue_queries.append(route.request.url)
         route.fulfill(

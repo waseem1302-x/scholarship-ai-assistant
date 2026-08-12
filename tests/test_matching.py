@@ -406,8 +406,7 @@ def test_structured_rules_cover_all_profile_backed_categories_and_operators(
     assert result["unknown_criteria"] == []
     assert result["eligibility_status"] == "eligible"
     assert all(
-        rule["source_id"] == created["sources"][0]["id"]
-        for rule in created["eligibility_rules"]
+        rule["source_id"] == created["sources"][0]["id"] for rule in created["eligibility_rules"]
     )
     assert all(rule["source_excerpt_id"] is not None for rule in created["eligibility_rules"])
 
@@ -467,11 +466,7 @@ def test_unstructured_eligibility_is_admin_visible_and_never_a_hard_failure(
 
     assert result["eligibility_status"] != "ineligible"
     assert result["fit_score"] is not None
-    codes = {
-        item["code"]
-        for item in quality["items"]
-        if item["opportunity_id"] == created["id"]
-    }
+    codes = {item["code"] for item in quality["items"] if item["opportunity_id"] == created["id"]}
     assert "unstructured_eligibility_nationality_eligibility" in codes
     assert "unstructured_eligibility_field_eligibility" in codes
     assert "structured_eligibility_missing" in codes
@@ -535,9 +530,7 @@ def test_admin_quality_flags_legacy_rule_without_official_excerpt(
     created = create_verified_opportunity(
         client,
         admin_headers,
-        eligibility_rules=[
-            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]}
-        ],
+        eligibility_rules=[{"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]}],
     )
     opportunity = db_session.get(Opportunity, uuid.UUID(created["id"]))
     assert opportunity is not None
@@ -555,10 +548,6 @@ def test_admin_quality_flags_legacy_rule_without_official_excerpt(
     db_session.commit()
 
     quality = client.get("/api/v1/admin/data-quality-issues", headers=admin_headers).json()
-    codes = {
-        item["code"]
-        for item in quality["items"]
-        if item["opportunity_id"] == created["id"]
-    }
+    codes = {item["code"] for item in quality["items"] if item["opportunity_id"] == created["id"]}
 
     assert "eligibility_rule_evidence_missing" in codes

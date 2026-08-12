@@ -28,15 +28,18 @@ OLD_RULE_TYPES = (
     "work_experience_months",
     "application_window",
 )
-NEW_RULE_TYPES = (*OLD_RULE_TYPES, *(
-    "study_mode",
-    "intake_year",
-    "current_education_level",
-    "english_test_status",
-    "gre_status",
-    "duolingo",
-    "gre",
-))
+NEW_RULE_TYPES = (
+    *OLD_RULE_TYPES,
+    *(
+        "study_mode",
+        "intake_year",
+        "current_education_level",
+        "english_test_status",
+        "gre_status",
+        "duolingo",
+        "gre",
+    ),
+)
 
 
 def rule_type_enum(values: tuple[str, ...]) -> sa.Enum:

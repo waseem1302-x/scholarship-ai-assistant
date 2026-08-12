@@ -86,9 +86,7 @@ def upgrade() -> None:
             ["opportunity_cycle_id"], ["opportunity_cycles.id"], ondelete="SET NULL"
         ),
         sa.ForeignKeyConstraint(["source_id"], ["sources.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(
-            ["source_excerpt_id"], ["source_excerpts.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["source_excerpt_id"], ["source_excerpts.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -133,9 +131,7 @@ def upgrade() -> None:
             ["evaluation_result_id"], ["match_evaluation_results.id"], ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(["source_id"], ["sources.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(
-            ["source_excerpt_id"], ["source_excerpts.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["source_excerpt_id"], ["source_excerpts.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -165,9 +161,7 @@ def downgrade() -> None:
     op.drop_index("ix_match_evaluations_user_evaluated", table_name="match_evaluations")
     op.drop_index("ix_match_evaluations_expires_at", table_name="match_evaluations")
     op.drop_index("ix_match_evaluations_profile_snapshot_hash", table_name="match_evaluations")
-    op.drop_index(
-        "ix_match_evaluations_supersedes_evaluation_id", table_name="match_evaluations"
-    )
+    op.drop_index("ix_match_evaluations_supersedes_evaluation_id", table_name="match_evaluations")
     op.drop_index("ix_match_evaluations_profile_id", table_name="match_evaluations")
     op.drop_index("ix_match_evaluations_user_id", table_name="match_evaluations")
     op.drop_table("match_evaluations")

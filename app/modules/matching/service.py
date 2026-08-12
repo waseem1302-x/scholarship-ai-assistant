@@ -216,7 +216,9 @@ class MatchingService:
                     source_id=(
                         structured_rules[index].source_id
                         if index < len(structured_rules)
-                        else source.id if source else None
+                        else source.id
+                        if source
+                        else None
                     ),
                     source_excerpt_id=excerpt.id if excerpt else None,
                 )
@@ -274,11 +276,14 @@ class MatchingService:
                     "Add or verify the grading scale used for your CGPA.",
                 )
             actual = (Decimal(str(actual)) / profile.grading_scale) * rule.grading_scale
-        if rule.rule_type in {
-            EligibilityRuleType.ENGLISH_TEST_STATUS,
-            EligibilityRuleType.GRE_STATUS,
-        } and actual == TestStatus.NOT_REQUIRED.value and not _compare(
-            actual, rule.value_json, rule.operator
+        if (
+            rule.rule_type
+            in {
+                EligibilityRuleType.ENGLISH_TEST_STATUS,
+                EligibilityRuleType.GRE_STATUS,
+            }
+            and actual == TestStatus.NOT_REQUIRED.value
+            and not _compare(actual, rule.value_json, rule.operator)
         ):
             return _unknown_rule(
                 label,
