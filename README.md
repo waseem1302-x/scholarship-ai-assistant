@@ -544,7 +544,8 @@ docker compose --profile documents up -d document-worker
 ```
 
 See [Document Lab architecture and threat model](docs/document-lab-architecture.md)
-for storage, retention, provider, incident-response, and production requirements.
+and the [evaluation and release gate](docs/document-lab-evaluation.md) for
+storage, retention, provider, incident-response, and production requirements.
 
 ## Documentation
 
