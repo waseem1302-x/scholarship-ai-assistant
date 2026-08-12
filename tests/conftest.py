@@ -10,6 +10,9 @@ from sqlalchemy.pool import StaticPool
 os.environ["APP_ENV"] = "test"
 os.environ["APP_DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 os.environ["APP_JWT_SECRET"] = "test-secret-that-is-at-least-32-characters-long"
+# Request-limit behavior is covered with an injected small limit. The shared
+# TestClient address should not make otherwise independent test users collide.
+os.environ["APP_ASSISTANT_RATE_LIMIT_PER_MINUTE"] = "120"
 
 from app.db.base import Base
 from app.db.session import get_db

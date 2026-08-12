@@ -42,7 +42,8 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "X-Admin-Step-Up", "X-CSRF-Token"],
     )
-    application.add_middleware(AuthRateLimitMiddleware)
+    application.state.settings = settings
+    application.add_middleware(AuthRateLimitMiddleware, settings=settings)
 
     @application.middleware("http")
     async def security_headers(request, call_next):

@@ -371,6 +371,50 @@ That deletion removes normalized application records and the superseded legacy
 saved tracker records for that student. Catalogue-source audit records are
 retained separately for data integrity.
 
+## Citation-first assistant
+
+The private assistant searches the verified catalogue before composing an
+answer. It only uses recent, officially verified catalogue sources, attaches
+stored citations to factual opportunity claims, and abstains when the evidence
+is missing, stale, conflicting, or unsupported. It does not review documents,
+give legal or visa advice, create applications/tasks/reminders automatically,
+or guarantee eligibility, funding, admission, or outcomes.
+
+```text
+POST   /api/v1/assistant/answers                    student session
+GET    /api/v1/assistant/conversations              student session
+GET    /api/v1/assistant/conversations/{id}         owner only
+DELETE /api/v1/assistant/conversations/{id}         owner only
+GET    /api/v1/assistant/preferences                student session
+PUT    /api/v1/assistant/preferences                student session
+PUT    /api/v1/assistant/history-preference         student session
+POST   /api/v1/assistant/answers/{id}/save          owner only
+POST   /api/v1/assistant/answers/{id}/feedback      owner only
+GET    /api/v1/assistant/export                     student session
+DELETE /api/v1/assistant/data                       student session
+```
+
+The local default is the deterministic `evidence-template` provider. Its
+configuration and privacy boundary are documented in
+[docs/assistant-architecture.md](docs/assistant-architecture.md). Use a secret
+manager for any future provider API key and keep it server-side.
+
+For a local container run, copy `.env.example`, set the database and JWT
+settings, then run `docker compose up --build` from the deployment directory.
+The assistant stays on the local evidence-template provider unless a reviewed
+server-side adapter is configured; an unknown provider fails closed.
+
+Before first use, students accept the assistant data-use notice. By default,
+chat history is retained for 30 days, feedback for 365 days, and minimal
+citation/audit metadata for 365 days; all are server-side policy settings.
+Students can disable history, delete one conversation, export assistant data,
+or permanently delete their assistant data in the Assistant workspace.
+
+> The assistant helps organize and explain source-backed scholarship
+> information. Always confirm requirements, deadlines, funding, and eligibility
+> directly with the official provider before applying. The assistant cannot
+> guarantee eligibility, funding, admission, or visa outcomes.
+
 ## Verified seed dataset walkthrough
 
 The repository includes a manually curated source-verified demo dataset:

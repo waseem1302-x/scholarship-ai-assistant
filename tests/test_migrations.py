@@ -162,3 +162,30 @@ def test_application_command_centre_migration_preserves_legacy_tracker_data(
         assert restored_saved.personal_notes == "Confirm portal receipt."
         assert restored_saved.document_checklist[0]["name"] == "Transcript"
     engine.dispose()
+
+
+def test_assistant_safety_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
+    database_path = tmp_path / "assistant-safety.db"
+    database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(alembic_config, "20260812_0011")
+    command.upgrade(alembic_config, "20260812_0012")
+    engine = create_engine(database_url)
+    inspector = inspect(engine)
+    assert "assistant_privacy_preferences" in inspector.get_table_names()
+    assert "claim_key" in {
+        column["name"] for column in inspector.get_columns("assistant_citations")
+    }
+    assert "failure_code" in {
+        column["name"] for column in inspector.get_columns("assistant_answers")
+    }
+    command.downgrade(alembic_config, "20260812_0011")
+    inspector = inspect(engine)
+    assert "assistant_privacy_preferences" not in inspector.get_table_names()
+    assert "claim_key" not in {
+        column["name"] for column in inspector.get_columns("assistant_citations")
+    }
+    engine.dispose()

@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +33,22 @@ class Settings(BaseSettings):
     cookie_secure: bool | None = None
     reminder_worker_poll_seconds: int = Field(default=60, ge=10, le=3600)
     reminder_worker_required: bool = False
+    # The default provider is deliberately deterministic and does not send student data
+    # to a third party. Production integrations must remain server-side.
+    assistant_provider: str = "evidence-template"
+    assistant_model: str = "evidence-template-v1"
+    assistant_api_key: SecretStr | None = Field(default=None, repr=False)
+    assistant_prompt_version: str = "phase6.citation-first.v1"
+    assistant_retrieval_version: str = "phase6.structured-official.v1"
+    assistant_source_freshness_days: int = Field(default=90, ge=1, le=365)
+    assistant_max_response_characters: int = Field(default=6000, ge=500, le=12000)
+    assistant_max_retrieval_results: int = Field(default=8, ge=1, le=20)
+    assistant_daily_user_limit: int = Field(default=30, ge=1, le=500)
+    assistant_monthly_user_limit: int = Field(default=300, ge=1, le=5000)
+    assistant_rate_limit_per_minute: int = Field(default=12, ge=1, le=120)
+    assistant_history_retention_days: int = Field(default=30, ge=1, le=365)
+    assistant_feedback_retention_days: int = Field(default=365, ge=30, le=1825)
+    assistant_audit_retention_days: int = Field(default=365, ge=30, le=1825)
 
     @model_validator(mode="after")
     def reject_unsafe_production_settings(self) -> "Settings":

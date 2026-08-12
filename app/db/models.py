@@ -10,6 +10,16 @@ from app.modules.applications.models import (
     ReminderWorkerHealth,
     SavedOpportunity,
 )
+from app.modules.assistant.models import (
+    AssistantAnswer,
+    AssistantCitation,
+    AssistantConversation,
+    AssistantEvaluationRun,
+    AssistantEvidencePacket,
+    AssistantFeedback,
+    AssistantMessage,
+    AssistantPrivacyPreference,
+)
 from app.modules.auth.models import (
     AdminStepUpToken,
     AuditLog,
@@ -39,6 +49,14 @@ __all__ = [
     "ApplicationNotificationPreference",
     "ApplicationReminder",
     "ApplicationTask",
+    "AssistantAnswer",
+    "AssistantCitation",
+    "AssistantConversation",
+    "AssistantEvaluationRun",
+    "AssistantEvidencePacket",
+    "AssistantFeedback",
+    "AssistantMessage",
+    "AssistantPrivacyPreference",
     "AuditLog",
     "EligibilityRule",
     "EmailVerificationToken",
