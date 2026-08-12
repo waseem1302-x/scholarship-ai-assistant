@@ -79,3 +79,21 @@ class AnalysisCreateRequest(BaseModel):
     analysis_type: DocumentKind
     consent: bool
     notice_version: str = Field(min_length=1, max_length=100)
+
+
+class ApplicationDocumentLinkRequest(BaseModel):
+    version_id: uuid.UUID
+    confirmed: bool
+
+
+class ApplicationDocumentLinkResponse(BaseModel):
+    id: uuid.UUID
+    application_document_id: uuid.UUID
+    version_id: uuid.UUID
+    confirmed_at: datetime
+
+
+class DocumentExportResponse(BaseModel):
+    exported_at: datetime
+    assets: list[DocumentAssetResponse]
+    analyses: list[DocumentAnalysisResponse]

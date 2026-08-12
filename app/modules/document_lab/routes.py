@@ -10,7 +10,15 @@ from app.db.session import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.auth.models import User, UserRole
 from app.modules.document_lab.models import DocumentKind
-from app.modules.document_lab.schemas import DocumentAssetResponse, DocumentLabPolicyResponse
+from app.modules.document_lab.schemas import (
+    AnalysisCreateRequest,
+    ApplicationDocumentLinkRequest,
+    ApplicationDocumentLinkResponse,
+    DocumentAnalysisResponse,
+    DocumentAssetResponse,
+    DocumentExportResponse,
+    DocumentLabPolicyResponse,
+)
 from app.modules.document_lab.service import DocumentLabService
 
 router = APIRouter(prefix="/document-lab", tags=["private document lab"])
@@ -129,6 +137,64 @@ def download_version(
 def delete_asset(asset_id: uuid.UUID, user: StudentUser, service: DocumentService) -> Response:
     service.delete_asset(asset_id, user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/versions/{version_id}/analyses",
+    response_model=DocumentAnalysisResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses=Errors,
+)
+def create_analysis(
+    version_id: uuid.UUID,
+    payload: AnalysisCreateRequest,
+    user: StudentUser,
+    service: DocumentService,
+) -> DocumentAnalysisResponse:
+    return service.request_analysis(
+        version_id=version_id,
+        user=user,
+        analysis_type=payload.analysis_type,
+        consent=payload.consent,
+        notice_version=payload.notice_version,
+    )
+
+
+@router.get("/analyses/{analysis_id}", response_model=DocumentAnalysisResponse, responses=Errors)
+def get_analysis(
+    analysis_id: uuid.UUID, user: StudentUser, service: DocumentService
+) -> DocumentAnalysisResponse:
+    return service.get_analysis(analysis_id, user.id)
+
+
+@router.get("/export", response_model=DocumentExportResponse, responses=Errors)
+def export_data(user: StudentUser, service: DocumentService) -> DocumentExportResponse:
+    return service.export_data(user.id)
+
+
+@router.delete("/data", status_code=status.HTTP_204_NO_CONTENT, responses=Errors)
+def delete_data(user: StudentUser, service: DocumentService) -> Response:
+    service.delete_all_data(user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/application-documents/{application_document_id}/link",
+    response_model=ApplicationDocumentLinkResponse,
+    responses=Errors,
+)
+def link_application_document(
+    application_document_id: uuid.UUID,
+    payload: ApplicationDocumentLinkRequest,
+    user: StudentUser,
+    service: DocumentService,
+) -> ApplicationDocumentLinkResponse:
+    return service.link_application_document(
+        application_document_id=application_document_id,
+        version_id=payload.version_id,
+        user_id=user.id,
+        confirmed=payload.confirmed,
+    )
 
 
 async def _read_upload(request: Request, maximum: int) -> bytes:

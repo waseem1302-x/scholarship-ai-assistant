@@ -17,6 +17,7 @@ from app.modules.document_lab.models import (
     ExtractionStatus,
     ScanStatus,
 )
+from app.modules.document_lab.provider import ProviderAnalysisOutput, ProviderFeedbackItem
 from app.modules.document_lab.scanner import SignatureTestScanner, UnavailableScanner
 from app.modules.document_lab.service import DocumentLabService
 from app.modules.document_lab.validation import DOCX_CONTENT_TYPE, PDF_CONTENT_TYPE
@@ -266,3 +267,131 @@ def test_document_delete_removes_encrypted_storage_and_records(
     document_service.delete_asset(asset.id, owner.id)
     assert db_session.get(DocumentVersion, version_id) is None
     assert not list((tmp_path / "private-store").rglob("*.bin"))
+
+
+class GroundedProvider:
+    name = "grounded-test"
+    model_version = "grounded-test-v1"
+
+    def analyse(self, text: str, analysis_type: str) -> ProviderAnalysisOutput:
+        del analysis_type
+        return ProviderAnalysisOutput(
+            summary="This draft has a clear starting point and can be made more specific.",
+            confidence="medium",
+            strengths=[
+                ProviderFeedbackItem(
+                    category="strength",
+                    text="The opening establishes the document's focus.",
+                    excerpt=text[:20],
+                )
+            ],
+            suggestions=[
+                ProviderFeedbackItem(
+                    category="suggestion",
+                    text="Add one concrete outcome that supports your central message.",
+                    is_general_suggestion=True,
+                )
+            ],
+        )
+
+
+def ready_document_service(
+    db_session: Session,
+    tmp_path: Path,
+    provider: object | None = None,
+    email: str = "analysis-owner@example.com",
+) -> tuple[DocumentLabService, User, object]:
+    owner = user(db_session, email)
+    document_service = DocumentLabService(
+        db_session,
+        settings(tmp_path),
+        scanner=SignatureTestScanner(),
+        provider=provider,
+    )
+    asset = document_service.create_asset(
+        user=owner,
+        document_kind="statement_of_purpose",
+        filename="statement.pdf",
+        declared_content_type=PDF_CONTENT_TYPE,
+        content=pdf("I built a community research project."),
+    )
+    assert document_service.process_next_job()
+    assert document_service.process_next_job()
+    return document_service, owner, asset
+
+
+def test_analysis_requires_per_analysis_current_consent(
+    db_session: Session, tmp_path: Path
+) -> None:
+    document_service, owner, asset = ready_document_service(
+        db_session, tmp_path, GroundedProvider()
+    )
+    with pytest.raises(AppError) as rejected:
+        document_service.request_analysis(
+            version_id=asset.versions[0].id,
+            user=owner,
+            analysis_type="statement_of_purpose",
+            consent=False,
+            notice_version="phase7.document-data-use.v1",
+        )
+    assert rejected.value.code == "document_analysis_consent_required"
+
+
+def test_analysis_is_consent_gated_grounded_and_exportable(
+    db_session: Session, tmp_path: Path
+) -> None:
+    document_service, owner, asset = ready_document_service(
+        db_session, tmp_path, GroundedProvider()
+    )
+    queued = document_service.request_analysis(
+        version_id=asset.versions[0].id,
+        user=owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    assert queued.status is AnalysisStatus.QUEUED
+    assert document_service.process_next_job()
+    completed = document_service.get_analysis(queued.id, owner.id)
+    assert completed.status is AnalysisStatus.COMPLETED
+    assert completed.provider_status.value == "completed"
+    assert completed.feedback[0].excerpt == "I built a community "
+    assert completed.feedback[1].is_general_suggestion is True
+    exported = document_service.export_data(owner.id)
+    assert exported.analyses[0].id == completed.id
+
+
+def test_provider_outage_and_invalid_evidence_are_safe(db_session: Session, tmp_path: Path) -> None:
+    document_service, owner, asset = ready_document_service(db_session, tmp_path)
+    queued = document_service.request_analysis(
+        version_id=asset.versions[0].id,
+        user=owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    assert document_service.process_next_job()
+    failed = document_service.get_analysis(queued.id, owner.id)
+    assert failed.status is AnalysisStatus.FAILED
+    assert failed.provider_status.value == "unavailable"
+
+    class BadEvidenceProvider(GroundedProvider):
+        def analyse(self, text: str, analysis_type: str) -> ProviderAnalysisOutput:
+            result = super().analyse(text, analysis_type)
+            result.strengths[0].excerpt = "not from the document"
+            return result
+
+    second, second_owner, second_asset = ready_document_service(
+        db_session, tmp_path, BadEvidenceProvider(), "analysis-owner-two@example.com"
+    )
+    invalid = second.request_analysis(
+        version_id=second_asset.versions[0].id,
+        user=second_owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    assert second.process_next_job()
+    abstained = second.get_analysis(invalid.id, second_owner.id)
+    assert abstained.status is AnalysisStatus.ABSTAINED
+    assert abstained.abstained_reason == "invalid_provider_response"

@@ -14,20 +14,36 @@ from app.modules.auth.models import User, utc_now
 from app.modules.document_lab.crypto import DocumentCipher
 from app.modules.document_lab.extraction import extract_restricted
 from app.modules.document_lab.models import (
+    AnalysisProviderStatus,
     AnalysisStatus,
+    ApplicationDocumentLink,
+    DocumentAnalysis,
     DocumentAnalysisJob,
     DocumentAsset,
     DocumentExtraction,
+    DocumentFeedbackItem,
     DocumentJobKind,
     DocumentKind,
     DocumentVersion,
     DocumentVersionStatus,
     ExtractionStatus,
+    FeedbackCategory,
     ScanStatus,
+)
+from app.modules.document_lab.provider import (
+    DocumentProvider,
+    DocumentProviderError,
+    ProviderAnalysisOutput,
+    ProviderFeedbackItem,
+    get_provider,
 )
 from app.modules.document_lab.scanner import MalwareScanner, ScannerUnavailable, get_scanner
 from app.modules.document_lab.schemas import (
+    ApplicationDocumentLinkResponse,
+    DocumentAnalysisResponse,
     DocumentAssetResponse,
+    DocumentExportResponse,
+    DocumentFeedbackResponse,
     DocumentVersionResponse,
 )
 from app.modules.document_lab.storage import LocalEncryptedDocumentStorage
@@ -46,6 +62,7 @@ class DocumentLabService:
         *,
         scanner: MalwareScanner | None = None,
         extractor: Extractor | None = None,
+        provider: DocumentProvider | None = None,
     ) -> None:
         self.session = session
         self.settings = settings
@@ -57,6 +74,7 @@ class DocumentLabService:
         )
         self.scanner = scanner or get_scanner(settings)
         self.extractor = extractor or self._restricted_extract
+        self.provider = provider or get_provider(settings)
 
     def create_asset(
         self,
@@ -154,6 +172,146 @@ class DocumentLabService:
         self.session.delete(asset)
         self.session.commit()
 
+    def request_analysis(
+        self,
+        *,
+        version_id: uuid.UUID,
+        user: User,
+        analysis_type: DocumentKind,
+        consent: bool,
+        notice_version: str,
+    ) -> DocumentAnalysisResponse:
+        self._require_enabled()
+        analysis_type = DocumentKind(analysis_type)
+        version = self._owned_version(version_id, user.id)
+        if version.status is not DocumentVersionStatus.READY:
+            raise AppError(
+                "document_not_ready_for_analysis", "Document extraction is not ready.", 409
+            )
+        asset = self._owned_asset(version.asset_id, user.id)
+        if asset.document_kind is not analysis_type:
+            raise AppError(
+                "document_analysis_type_mismatch", "Analysis type must match the document.", 422
+            )
+        if not consent or notice_version != self.settings.document_lab_notice_version:
+            raise AppError(
+                "document_analysis_consent_required",
+                "Review and accept the current document data-use notice before analysis.",
+                403,
+            )
+        from app.modules.document_lab.models import DocumentConsent
+
+        consent_record = DocumentConsent(
+            version_id=version.id,
+            user_id=user.id,
+            analysis_type=analysis_type,
+            notice_version=notice_version,
+            provider_config_version=self.settings.document_lab_provider_config_version,
+        )
+        self.session.add(consent_record)
+        self.session.flush()
+        analysis = DocumentAnalysis(
+            version_id=version.id,
+            user_id=user.id,
+            consent_id=consent_record.id,
+            analysis_type=analysis_type,
+            provider=self.provider.name,
+            model_version=self.provider.model_version,
+            provider_config_version=self.settings.document_lab_provider_config_version,
+            rubric_version=self.settings.document_lab_rubric_version,
+        )
+        self.session.add(analysis)
+        self.session.flush()
+        self.session.add(
+            DocumentAnalysisJob(
+                version_id=version.id,
+                analysis_id=analysis.id,
+                user_id=user.id,
+                job_kind=DocumentJobKind.ANALYSE,
+                idempotency_key=f"analysis:{analysis.id}",
+            )
+        )
+        self.session.commit()
+        return self._analysis_response(analysis)
+
+    def get_analysis(self, analysis_id: uuid.UUID, user_id: uuid.UUID) -> DocumentAnalysisResponse:
+        self._require_enabled()
+        analysis = self.session.get(DocumentAnalysis, analysis_id)
+        if analysis is None or analysis.user_id != user_id:
+            raise AppError("document_analysis_not_found", "Document analysis was not found.", 404)
+        return self._analysis_response(analysis)
+
+    def export_data(self, user_id: uuid.UUID) -> DocumentExportResponse:
+        self._require_enabled()
+        assets = self.list_assets(user_id)
+        analyses = self.session.scalars(
+            select(DocumentAnalysis)
+            .where(DocumentAnalysis.user_id == user_id)
+            .order_by(DocumentAnalysis.created_at)
+        ).all()
+        return DocumentExportResponse(
+            exported_at=utc_now(),
+            assets=assets,
+            analyses=[self._analysis_response(item) for item in analyses],
+        )
+
+    def delete_all_data(self, user_id: uuid.UUID) -> None:
+        self._require_enabled()
+        for asset in self.session.scalars(
+            select(DocumentAsset).where(DocumentAsset.user_id == user_id)
+        ).all():
+            for version in self._versions_for_asset(asset.id):
+                self.storage.delete(version.storage_key)
+            self.session.delete(asset)
+        self.session.commit()
+
+    def link_application_document(
+        self,
+        *,
+        application_document_id: uuid.UUID,
+        version_id: uuid.UUID,
+        user_id: uuid.UUID,
+        confirmed: bool,
+    ) -> ApplicationDocumentLinkResponse:
+        if not confirmed:
+            raise AppError(
+                "document_link_confirmation_required", "Confirm before linking a document.", 422
+            )
+        from app.modules.applications.models import Application, ApplicationDocument
+
+        application_document = self.session.scalar(
+            select(ApplicationDocument)
+            .join(Application, Application.id == ApplicationDocument.application_id)
+            .where(
+                ApplicationDocument.id == application_document_id, Application.user_id == user_id
+            )
+        )
+        if application_document is None:
+            raise AppError(
+                "application_document_not_found", "Application document was not found.", 404
+            )
+        self._owned_version(version_id, user_id)
+        link = self.session.scalar(
+            select(ApplicationDocumentLink).where(
+                ApplicationDocumentLink.application_document_id == application_document_id,
+                ApplicationDocumentLink.version_id == version_id,
+            )
+        )
+        if link is None:
+            link = ApplicationDocumentLink(
+                application_document_id=application_document_id,
+                version_id=version_id,
+                user_id=user_id,
+            )
+            self.session.add(link)
+            self.session.commit()
+        return ApplicationDocumentLinkResponse(
+            id=link.id,
+            application_document_id=link.application_document_id,
+            version_id=link.version_id,
+            confirmed_at=link.confirmed_at,
+        )
+
     def process_next_job(self) -> bool:
         """Run exactly one queued preparation job for the worker CLI.
 
@@ -176,6 +334,8 @@ class DocumentLabService:
             self._process_scan(job)
         elif job.job_kind is DocumentJobKind.EXTRACT:
             self._process_extract(job)
+        elif job.job_kind is DocumentJobKind.ANALYSE:
+            self._process_analysis(job)
         else:
             self._fail_job(job, "analysis_worker_not_ready")
         return True
@@ -289,6 +449,138 @@ class DocumentLabService:
         extraction.completed_at = utc_now()
         version.status = DocumentVersionStatus.READY
         self._complete_job(job)
+
+    def _process_analysis(self, job: DocumentAnalysisJob) -> None:
+        analysis = self.session.get(DocumentAnalysis, job.analysis_id)
+        extraction = self.session.scalar(
+            select(DocumentExtraction).where(DocumentExtraction.version_id == job.version_id)
+        )
+        if (
+            analysis is None
+            or extraction is None
+            or extraction.status is not ExtractionStatus.COMPLETED
+        ):
+            self._fail_job(job, "document_not_ready_for_analysis")
+            return
+        analysis.status = AnalysisStatus.RUNNING
+        try:
+            output = ProviderAnalysisOutput.model_validate(
+                self.provider.analyse(
+                    self.cipher.decrypt_text(extraction.text_ciphertext or ""),
+                    analysis.analysis_type,
+                )
+            )
+            self._validate_provider_output(
+                output, self.cipher.decrypt_text(extraction.text_ciphertext or "")
+            )
+        except DocumentProviderError as exc:
+            analysis.status = AnalysisStatus.FAILED
+            analysis.provider_status = AnalysisProviderStatus(exc.status)
+            analysis.failure_code = f"provider_{exc.status}"
+            analysis.completed_at = utc_now()
+            self._fail_job(job, analysis.failure_code)
+            return
+        except (AppError, ValueError):
+            analysis.status = AnalysisStatus.ABSTAINED
+            analysis.provider_status = AnalysisProviderStatus.INVALID_RESPONSE
+            analysis.abstained_reason = "invalid_provider_response"
+            analysis.completed_at = utc_now()
+            self._complete_job(job)
+            return
+        analysis.summary_ciphertext = self.cipher.encrypt_text(output.summary)
+        analysis.confidence = output.confidence
+        if output.abstained_reason:
+            analysis.status = AnalysisStatus.ABSTAINED
+            analysis.provider_status = AnalysisProviderStatus.ABSTAINED
+            analysis.abstained_reason = output.abstained_reason
+        else:
+            analysis.status = AnalysisStatus.COMPLETED
+            analysis.provider_status = AnalysisProviderStatus.COMPLETED
+        for position, item in enumerate(self._provider_items(output), start=1):
+            self.session.add(
+                DocumentFeedbackItem(
+                    analysis_id=analysis.id,
+                    category=item.category,
+                    text_ciphertext=self.cipher.encrypt_text(item.text),
+                    excerpt_ciphertext=self.cipher.encrypt_text(item.excerpt)
+                    if item.excerpt
+                    else None,
+                    is_general_suggestion=item.is_general_suggestion,
+                    position=position,
+                )
+            )
+        analysis.completed_at = utc_now()
+        self._complete_job(job)
+
+    @staticmethod
+    def _provider_items(output: ProviderAnalysisOutput) -> list[ProviderFeedbackItem]:
+        categories = (
+            (FeedbackCategory.STRENGTH, output.strengths),
+            (FeedbackCategory.SUGGESTION, output.suggestions),
+            (FeedbackCategory.QUESTION, output.questions_to_consider),
+            (FeedbackCategory.WARNING, output.warnings),
+        )
+        items: list[ProviderFeedbackItem] = []
+        for category, values in categories:
+            for value in values:
+                items.append(value.model_copy(update={"category": category}))
+        return items
+
+    @staticmethod
+    def _validate_provider_output(output: ProviderAnalysisOutput, text: str) -> None:
+        prohibited = ("you are eligible", "will be accepted", "guarantee", "plagiarism")
+        all_text = " ".join(
+            [output.summary] + [item.text for item in DocumentLabService._provider_items(output)]
+        ).casefold()
+        if any(term in all_text for term in prohibited):
+            raise AppError("invalid_provider_response", "Provider output was not safe.", 422)
+        for item in DocumentLabService._provider_items(output):
+            if item.is_general_suggestion:
+                if item.excerpt:
+                    raise AppError(
+                        "invalid_provider_response", "Provider output was not safe.", 422
+                    )
+            elif not item.excerpt or item.excerpt not in text:
+                raise AppError(
+                    "invalid_provider_response", "Provider output was not grounded.", 422
+                )
+
+    def _analysis_response(self, analysis: DocumentAnalysis) -> DocumentAnalysisResponse:
+        items = self.session.scalars(
+            select(DocumentFeedbackItem)
+            .where(DocumentFeedbackItem.analysis_id == analysis.id)
+            .order_by(DocumentFeedbackItem.position)
+        ).all()
+        return DocumentAnalysisResponse(
+            id=analysis.id,
+            version_id=analysis.version_id,
+            analysis_type=analysis.analysis_type,
+            status=analysis.status,
+            provider_status=analysis.provider_status,
+            rubric_version=analysis.rubric_version,
+            provider=analysis.provider,
+            model_version=analysis.model_version,
+            summary=self.cipher.decrypt_text(analysis.summary_ciphertext)
+            if analysis.summary_ciphertext
+            else None,
+            confidence=analysis.confidence,
+            abstained_reason=analysis.abstained_reason,
+            created_at=analysis.created_at,
+            completed_at=analysis.completed_at,
+            feedback=[
+                DocumentFeedbackResponse(
+                    id=item.id,
+                    category=item.category,
+                    text=self.cipher.decrypt_text(item.text_ciphertext),
+                    excerpt=self.cipher.decrypt_text(item.excerpt_ciphertext)
+                    if item.excerpt_ciphertext
+                    else None,
+                    is_general_suggestion=item.is_general_suggestion,
+                    position=item.position,
+                )
+                for item in items
+            ],
+        )
 
     def _restricted_extract(self, content: bytes, content_type: str) -> str:
         return extract_restricted(
