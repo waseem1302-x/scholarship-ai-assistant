@@ -18,6 +18,7 @@ from app.modules.document_lab.schemas import (
     DocumentAssetResponse,
     DocumentExportResponse,
     DocumentLabPolicyResponse,
+    DocumentVersionResponse,
 )
 from app.modules.document_lab.service import DocumentLabService
 
@@ -131,6 +132,15 @@ def download_version(
         media_type=content_type,
         headers={"Content-Disposition": "attachment; filename=private-document"},
     )
+
+
+@router.post(
+    "/versions/{version_id}/retry", response_model=DocumentVersionResponse, responses=Errors
+)
+def retry_version(
+    version_id: uuid.UUID, user: StudentUser, service: DocumentService
+) -> DocumentVersionResponse:
+    return service.retry_preparation(version_id, user.id)
 
 
 @router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT, responses=Errors)

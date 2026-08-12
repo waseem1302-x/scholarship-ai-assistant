@@ -176,6 +176,39 @@ class DocumentLabService:
         self.session.delete(asset)
         self.session.commit()
 
+    def retry_preparation(
+        self, version_id: uuid.UUID, user_id: uuid.UUID
+    ) -> DocumentVersionResponse:
+        """Explicitly retry a failed scanner/extractor job without duplicating content."""
+        self._require_enabled()
+        version = self._owned_version(version_id, user_id)
+        if version.status is not DocumentVersionStatus.FAILED:
+            raise AppError(
+                "document_retry_not_available",
+                "Only a failed private document can be retried.",
+                409,
+            )
+        version.status = DocumentVersionStatus.QUARANTINED
+        version.scan_status = ScanStatus.PENDING
+        version.rejection_code = None
+        extraction = self.session.scalar(
+            select(DocumentExtraction).where(DocumentExtraction.version_id == version.id)
+        )
+        if extraction:
+            extraction.status = ExtractionStatus.PENDING
+            extraction.failure_code = None
+            extraction.completed_at = None
+        self.session.add(
+            DocumentAnalysisJob(
+                version_id=version.id,
+                user_id=user_id,
+                job_kind=DocumentJobKind.SCAN,
+                idempotency_key=f"scan-retry:{version.id}:{uuid.uuid4().hex}",
+            )
+        )
+        self.session.commit()
+        return self._version_response(version)
+
     def request_analysis(
         self,
         *,
@@ -421,7 +454,13 @@ class DocumentLabService:
             return
         version.scan_status = ScanStatus.CLEAN
         version.status = DocumentVersionStatus.EXTRACTING
-        self.session.add(DocumentExtraction(version_id=version.id, user_id=version.user_id))
+        extraction = self.session.scalar(
+            select(DocumentExtraction).where(DocumentExtraction.version_id == version.id)
+        )
+        if extraction is None:
+            self.session.add(DocumentExtraction(version_id=version.id, user_id=version.user_id))
+        else:
+            extraction.status = ExtractionStatus.PENDING
         self.session.add(
             DocumentAnalysisJob(
                 version_id=version.id,
@@ -753,8 +792,10 @@ class DocumentLabService:
             )
         ).all()
         for asset in expired:
-            for version in self._versions_for_asset(asset.id):
+            versions = self._versions_for_asset(asset.id)
+            for version in versions:
                 self.storage.delete(version.storage_key)
+            self._delete_analysis_records([version.id for version in versions])
             self.session.delete(asset)
         if expired:
             self.session.commit()

@@ -1,6 +1,7 @@
 import io
 import time
 import zipfile
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.modules.auth.models import User, UserRole
+from app.modules.auth.models import User, UserRole, utc_now
 from app.modules.document_lab.models import (
     AnalysisStatus,
     DocumentAnalysis,
@@ -205,6 +206,16 @@ def test_malware_detection_and_scanner_unavailability_fail_closed(
     failed = unavailable.get_asset(unavailable_asset.id, owner.id).versions[0]
     assert failed.status is DocumentVersionStatus.FAILED
     assert failed.scan_status is ScanStatus.UNAVAILABLE
+    unavailable.scanner = SignatureTestScanner()
+    assert (
+        unavailable.retry_preparation(failed.id, owner.id).status
+        is DocumentVersionStatus.QUARANTINED
+    )
+    assert unavailable.process_next_job() and unavailable.process_next_job()
+    assert (
+        unavailable.get_asset(unavailable_asset.id, owner.id).versions[0].status
+        is DocumentVersionStatus.READY
+    )
 
 
 def test_document_asset_version_and_download_are_owner_private(
@@ -286,6 +297,23 @@ def test_document_delete_removes_encrypted_storage_and_records(
     version_id = asset.versions[0].id
     document_service.delete_asset(asset.id, owner.id)
     assert db_session.get(DocumentVersion, version_id) is None
+    assert not list((tmp_path / "private-store").rglob("*.bin"))
+
+
+def test_retention_expiry_removes_private_storage(db_session: Session, tmp_path: Path) -> None:
+    owner = user(db_session, "document-retention@example.com")
+    document_service = service(db_session, tmp_path)
+    asset = document_service.create_asset(
+        user=owner,
+        document_kind="cv_resume",
+        filename="retention.pdf",
+        declared_content_type=PDF_CONTENT_TYPE,
+        content=pdf(),
+    )
+    record = document_service._owned_asset(asset.id, owner.id)
+    record.retention_expires_at = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+    assert document_service.list_assets(owner.id) == []
     assert not list((tmp_path / "private-store").rglob("*.bin"))
 
 
