@@ -49,15 +49,19 @@ def test_register_creates_student_and_protected_me_works(
     assert len(refresh.token_hash) == 64
 
 
-def test_registration_validates_password_and_duplicate_email(client: TestClient) -> None:
-    weak = client.post(
+def test_registration_accepts_passphrases_and_rejects_short_passwords(client: TestClient) -> None:
+    short = client.post(
+        "/api/v1/auth/register",
+        json={"email": EMAIL, "password": "short"},
+    )
+    assert short.status_code == 422
+    assert short.json()["error"]["code"] == "validation_error"
+
+    passphrase = client.post(
         "/api/v1/auth/register",
         json={"email": EMAIL, "password": "alllettersnone"},
     )
-    assert weak.status_code == 422
-    assert weak.json()["error"]["code"] == "validation_error"
-
-    register(client)
+    assert passphrase.status_code == 201
     duplicate = client.post(
         "/api/v1/auth/register",
         json={"email": EMAIL.upper(), "password": PASSWORD},

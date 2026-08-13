@@ -130,6 +130,11 @@ def test_production_rejects_unreviewed_enabled_assistant_provider() -> None:
         )
 
 
+def test_production_requires_compromised_password_screening() -> None:
+    with pytest.raises(ValidationError, match="compromised-password screening"):
+        Settings(**_production_settings(password_breach_check_enabled=False))
+
+
 def _production_settings(**changes: object) -> dict[str, object]:
     values: dict[str, object] = {
         "env": "production",
@@ -144,6 +149,7 @@ def _production_settings(**changes: object) -> dict[str, object]:
         "email_smtp_password": "not-a-real-secret",
         "cors_origins": "https://beta.example.test",
         "trusted_proxy_ips": "10.0.0.10",
+        "password_breach_check_enabled": True,
     }
     values.update(changes)
     return values

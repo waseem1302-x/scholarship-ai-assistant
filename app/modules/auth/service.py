@@ -8,12 +8,17 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.errors import AppError, AuthenticationError, ConflictError
+from app.core.password_security import (
+    PasswordBreachCheckUnavailable,
+    PwnedPasswordsChecker,
+)
 from app.core.security import (
     create_access_token,
     generate_refresh_token,
     hash_password,
     hash_refresh_token,
     verify_password,
+    verify_password_and_update,
 )
 from app.modules.auth.models import (
     AdminStepUpToken,
@@ -43,10 +48,19 @@ class IssuedAccountToken:
 
 
 class AuthService:
-    def __init__(self, session: Session, settings: Settings) -> None:
+    def __init__(
+        self,
+        session: Session,
+        settings: Settings,
+        password_breach_checker: PwnedPasswordsChecker | None = None,
+    ) -> None:
         self.session = session
         self.settings = settings
         self.repository = AuthRepository(session)
+        self.password_breach_checker = password_breach_checker or PwnedPasswordsChecker(
+            endpoint=settings.password_breach_check_url,
+            timeout_seconds=settings.password_breach_check_timeout_seconds,
+        )
 
     def register(
         self,
@@ -61,6 +75,7 @@ class AuthService:
                 "An account already uses this email",
             )
 
+        self._screen_password(password)
         user = User(
             id=uuid.uuid4(),
             email=email,
@@ -90,8 +105,14 @@ class AuthService:
 
     def login(self, email: str, password: str) -> IssuedTokens:
         user = self.repository.get_user_by_email(email)
-        if user is None or not verify_password(password, user.password_hash) or not user.is_active:
+        if user is None:
             raise AuthenticationError("Invalid email or password")
+        valid, upgraded_hash = verify_password_and_update(password, user.password_hash)
+        if not valid or not user.is_active:
+            raise AuthenticationError("Invalid email or password")
+        if upgraded_hash is not None:
+            user.password_hash = upgraded_hash
+            self._audit(user.id, "password_hash_upgraded", "user", str(user.id))
 
         result = self._issue_token_pair(user=user)
         self.session.commit()
@@ -106,6 +127,7 @@ class AuthService:
         if token.revoked_at is not None:
             if token.replaced_by_token_id is not None:
                 self.repository.revoke_family(token.family_id, now)
+                token.user.token_version += 1
                 self.session.commit()
             raise AuthenticationError("Invalid refresh token")
 
@@ -120,14 +142,26 @@ class AuthService:
             self.session.commit()
             raise AuthenticationError("Invalid refresh token")
 
+        if not self.repository.claim_refresh_token_rotation(token.id, now):
+            self.session.rollback()
+            # A concurrent request may have completed the rotation after our
+            # initial read.  Re-read after rollback so its replacement link is
+            # visible, then treat it as refresh-token reuse and contain the
+            # entire family.
+            raced_token = self.repository.get_refresh_token(hash_refresh_token(raw_token))
+            if raced_token is not None and raced_token.replaced_by_token_id is not None:
+                self.repository.revoke_family(raced_token.family_id, now)
+                raced_token.user.token_version += 1
+                self.session.commit()
+            raise AuthenticationError("Invalid refresh token")
         replacement = self._new_refresh_token(user.id, token.family_id, now)
         self.repository.add_refresh_token(replacement[0])
         self.session.flush()
-        token.revoked_at = now
         token.replaced_by_token_id = replacement[0].id
         access_token, expires_in = create_access_token(
             user_id=user.id,
             role=user.role.value,
+            token_version=user.token_version,
             settings=self.settings,
             now=now,
         )
@@ -138,9 +172,18 @@ class AuthService:
         token = self.repository.get_refresh_token(hash_refresh_token(raw_token))
         if token is not None:
             self.repository.revoke_family(token.family_id)
+            token.user.token_version += 1
             self.session.commit()
 
+    def invalidate_user_sessions(self, user: User, *, reason: str) -> None:
+        """Immediately revoke a user's refresh and access sessions after a security event."""
+        self.repository.revoke_family_for_user(user.id)
+        user.token_version += 1
+        self._audit(user.id, f"sessions_invalidated:{reason[:50]}", "user", str(user.id))
+        self.session.commit()
+
     def issue_email_verification(self, user: User) -> IssuedAccountToken:
+        self.repository.invalidate_unconsumed_account_tokens(EmailVerificationToken, user.id)
         issued = self._new_account_token(
             EmailVerificationToken,
             user.id,
@@ -163,6 +206,7 @@ class AuthService:
         user = self.repository.get_user_by_email(email)
         if user is None or not user.is_active:
             return None
+        self.repository.invalidate_unconsumed_account_tokens(PasswordResetToken, user.id)
         issued = self._new_account_token(
             PasswordResetToken,
             user.id,
@@ -176,7 +220,9 @@ class AuthService:
     def confirm_password_reset(self, raw_token: str, new_password: str) -> None:
         token = self.repository.get_password_reset_token(hash_refresh_token(raw_token))
         user = self._consume_account_token(token, "password_reset_completed")
+        self._screen_password(new_password)
         user.password_hash = hash_password(new_password)
+        user.token_version += 1
         self.repository.revoke_family_for_user(user.id)
         self.session.commit()
 
@@ -256,12 +302,39 @@ class AuthService:
         access_token, expires_in = create_access_token(
             user_id=user.id,
             role=user.role.value,
+            token_version=user.token_version,
             settings=self.settings,
             now=now,
         )
         refresh_record, raw_refresh_token = self._new_refresh_token(user.id, uuid.uuid4(), now)
         self.repository.add_refresh_token(refresh_record)
         return IssuedTokens(access_token, raw_refresh_token, expires_in, user)
+
+    def purge_expired_auth_tokens(self) -> int:
+        before = datetime.now(UTC) - timedelta(days=self.settings.auth_token_retention_days)
+        processed = self.repository.purge_expired_tokens(before)
+        self.session.commit()
+        return processed
+
+    def _screen_password(self, password: str) -> None:
+        if not self.settings.password_breach_check_enabled:
+            return
+        try:
+            compromised = self.password_breach_checker.is_compromised(password)
+        except PasswordBreachCheckUnavailable as exc:
+            if self.settings.password_breach_check_fail_closed:
+                raise AppError(
+                    "password_security_check_unavailable",
+                    "Password security screening is temporarily unavailable.",
+                    503,
+                ) from exc
+            return
+        if compromised:
+            raise AppError(
+                "compromised_password",
+                "Choose a password that has not appeared in known data breaches.",
+                422,
+            )
 
     def _new_refresh_token(
         self, user_id: uuid.UUID, family_id: uuid.UUID, now: datetime

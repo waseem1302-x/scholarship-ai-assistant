@@ -15,7 +15,7 @@ from app.modules.applications.models import (
     SavedOpportunity,
     TaskStatus,
 )
-from app.modules.auth.models import User, UserRole
+from app.modules.auth.models import UserRole
 from app.modules.auth.service import AuthService
 from app.modules.opportunities.models import (
     DataConfidence,
@@ -94,11 +94,21 @@ def test_application_command_centre_migration_preserves_legacy_tracker_data(
     engine = create_engine(database_url)
     deadline = datetime(2027, 5, 30, 23, 59, tzinfo=UTC)
     with Session(engine) as session:
-        user = User(
-            email="legacy-tracker@example.com",
-            password_hash=hash_password("LegacyTrackerPassword123"),
-            role=UserRole.STUDENT,
-            is_active=True,
+        # This is intentionally a pre-token-version schema. Insert its user
+        # through the historic table shape rather than the current ORM mapper.
+        user_id = uuid.uuid4()
+        session.execute(
+            text(
+                "INSERT INTO users (id, email, password_hash, role, is_active) "
+                "VALUES (:id, :email, :password_hash, :role, :is_active)"
+            ),
+            {
+                "id": user_id.hex,
+                "email": "legacy-tracker@example.com",
+                "password_hash": hash_password("LegacyTrackerPassword123"),
+                "role": UserRole.STUDENT.value,
+                "is_active": True,
+            },
         )
         provider = Provider(name="Legacy Provider")
         opportunity = Opportunity(
@@ -122,7 +132,7 @@ def test_application_command_centre_migration_preserves_legacy_tracker_data(
             )
         )
         saved = SavedOpportunity(
-            user=user,
+            user_id=user_id,
             opportunity=opportunity,
             status=ApplicationStatus.SUBMITTED,
             personal_notes="Confirm portal receipt.",
@@ -284,4 +294,22 @@ def test_phase_nine_schema_upgrades_and_rolls_back_to_community(tmp_path: Path) 
         "webauthn_challenges",
         "operational_job_health",
     }.intersection(inspector.get_table_names())
+    engine.dispose()
+
+
+def test_token_version_migration_upgrades_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'token-version.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260813_0020")
+    engine = create_engine(database_url)
+    assert "token_version" in {column["name"] for column in inspect(engine).get_columns("users")}
+
+    command.downgrade(alembic_config, "20260813_0019")
+    assert "token_version" not in {
+        column["name"] for column in inspect(engine).get_columns("users")
+    }
     engine.dispose()

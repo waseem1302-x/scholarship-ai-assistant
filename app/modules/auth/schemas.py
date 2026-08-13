@@ -17,15 +17,6 @@ class RegisterRequest(BaseModel):
     def normalize_email(cls, value: EmailStr) -> str:
         return str(value).strip().lower()
 
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, value: str) -> str:
-        if not any(character.isalpha() for character in value) or not any(
-            character.isdigit() for character in value
-        ):
-            raise ValueError("Password must contain at least one letter and one number")
-        return value
-
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -60,15 +51,6 @@ class TokenConfirmRequest(BaseModel):
 
 class PasswordResetConfirmRequest(TokenConfirmRequest):
     new_password: str = Field(min_length=12, max_length=128)
-
-    @field_validator("new_password")
-    @classmethod
-    def validate_password(cls, value: str) -> str:
-        if not any(character.isalpha() for character in value) or not any(
-            character.isdigit() for character in value
-        ):
-            raise ValueError("Password must contain at least one letter and one number")
-        return value
 
 
 class AdminStepUpRequest(BaseModel):

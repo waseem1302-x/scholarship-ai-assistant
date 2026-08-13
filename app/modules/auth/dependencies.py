@@ -25,7 +25,12 @@ def get_current_user(
         raise AuthenticationError()
     claims = decode_access_token(credentials.credentials, settings)
     user = AuthRepository(session).get_user(claims.user_id)
-    if user is None or not user.is_active or user.role.value != claims.role:
+    if (
+        user is None
+        or not user.is_active
+        or user.role.value != claims.role
+        or user.token_version != claims.token_version
+    ):
         raise AuthenticationError()
     return user
 

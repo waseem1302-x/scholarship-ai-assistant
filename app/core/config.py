@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from ipaddress import ip_network
 from typing import Literal
@@ -28,12 +29,20 @@ class Settings(BaseSettings):
         min_length=32,
         repr=False,
     )
+    jwt_active_kid: str = "current"
+    jwt_verification_keys: SecretStr | None = Field(default=None, repr=False)
+    jwt_legacy_verification_secret: SecretStr | None = Field(default=None, repr=False)
     jwt_issuer: str = "scholarship-ai-assistant"
     jwt_audience: str = "scholarship-ai-api"
     access_token_ttl_minutes: int = Field(default=15, ge=1, le=60)
     refresh_token_ttl_days: int = Field(default=30, ge=1, le=90)
     email_verification_ttl_minutes: int = Field(default=1440, ge=15, le=10080)
     password_reset_ttl_minutes: int = Field(default=30, ge=5, le=120)
+    auth_token_retention_days: int = Field(default=30, ge=1, le=3650)
+    password_breach_check_enabled: bool = False
+    password_breach_check_url: str = "https://api.pwnedpasswords.com/range"
+    password_breach_check_timeout_seconds: int = Field(default=3, ge=1, le=15)
+    password_breach_check_fail_closed: bool = True
     admin_step_up_ttl_minutes: int = Field(default=10, ge=1, le=60)
     cors_origins: str = "http://localhost:3000"
     cookie_secure: bool | None = None
@@ -281,7 +290,33 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Production assistant requires the reviewed evidence-template provider"
                 )
+            if not self.password_breach_check_enabled:
+                raise ValueError("Production requires compromised-password screening")
+            if not self.password_breach_check_url.startswith("https://"):
+                raise ValueError("Password breach screening must use HTTPS")
+            _ = self.jwt_verification_key_map
         return self
+
+    @property
+    def jwt_verification_key_map(self) -> dict[str, str]:
+        """Active and staged HMAC verification keys, keyed by JWT ``kid``."""
+        keys = {self.jwt_active_kid: self.jwt_secret}
+        if self.jwt_verification_keys is None:
+            return keys
+        try:
+            configured = json.loads(self.jwt_verification_keys.get_secret_value())
+        except json.JSONDecodeError as exc:
+            raise ValueError("APP_JWT_VERIFICATION_KEYS must be a JSON object") from exc
+        if not isinstance(configured, dict) or not all(
+            isinstance(kid, str) and isinstance(secret, str) and len(secret) >= 32
+            for kid, secret in configured.items()
+        ):
+            raise ValueError(
+                "APP_JWT_VERIFICATION_KEYS must map key IDs to secrets of at least 32 characters"
+            )
+        if self.jwt_active_kid in configured:
+            raise ValueError("APP_JWT_VERIFICATION_KEYS must not duplicate APP_JWT_ACTIVE_KID")
+        return keys | configured
 
     @property
     def cors_origin_list(self) -> list[str]:

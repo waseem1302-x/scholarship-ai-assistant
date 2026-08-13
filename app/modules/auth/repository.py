@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.modules.auth.models import (
@@ -10,6 +10,7 @@ from app.modules.auth.models import (
     PasswordResetToken,
     RefreshToken,
     User,
+    WebAuthnChallenge,
 )
 
 
@@ -36,6 +37,20 @@ class AuthRepository:
         return self.session.scalar(
             select(RefreshToken).where(RefreshToken.token_hash == token_hash)
         )
+
+    def claim_refresh_token_rotation(self, token_id: uuid.UUID, now: datetime) -> bool:
+        """Atomically claim one active refresh token for rotation."""
+        result = self.session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.id == token_id,
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > now,
+            )
+            .values(revoked_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount == 1
 
     def get_email_verification_token(self, token_hash: str) -> EmailVerificationToken | None:
         return self.session.scalar(
@@ -75,3 +90,40 @@ class AuthRepository:
             )
             .values(revoked_at=timestamp)
         )
+
+    def invalidate_unconsumed_account_tokens(
+        self,
+        token_type: type[EmailVerificationToken] | type[PasswordResetToken],
+        user_id: uuid.UUID,
+    ) -> None:
+        self.session.execute(
+            update(token_type)
+            .where(token_type.user_id == user_id, token_type.consumed_at.is_(None))
+            .values(consumed_at=datetime.now(UTC))
+        )
+
+    def purge_expired_tokens(self, before: datetime) -> int:
+        """Delete non-actionable auth artifacts after the documented retention window."""
+        total = 0
+        for token_type in (EmailVerificationToken, PasswordResetToken, AdminStepUpToken):
+            result = self.session.execute(
+                delete(token_type).where(
+                    or_(token_type.consumed_at <= before, token_type.expires_at <= before),
+                )
+            )
+            total += result.rowcount or 0
+        challenge_result = self.session.execute(
+            delete(WebAuthnChallenge).where(
+                or_(
+                    WebAuthnChallenge.consumed_at <= before,
+                    WebAuthnChallenge.expires_at <= before,
+                ),
+            )
+        )
+        total += challenge_result.rowcount or 0
+        refresh_result = self.session.execute(
+            delete(RefreshToken).where(
+                or_(RefreshToken.revoked_at <= before, RefreshToken.expires_at <= before),
+            )
+        )
+        return total + (refresh_result.rowcount or 0)
