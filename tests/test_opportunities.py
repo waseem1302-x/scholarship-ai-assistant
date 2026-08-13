@@ -225,6 +225,41 @@ def test_open_now_excludes_closed_future_and_unknown_deadline_records(
     assert conflicting_filters.status_code == 422
 
 
+def test_public_window_filters_paginate_in_the_database(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    now = datetime.now(UTC)
+    for name in ["A Open Scholarship", "B Open Scholarship", "C Open Scholarship"]:
+        created = create_opportunity(
+            client,
+            headers,
+            name=name,
+            application_opening_date=(now - timedelta(days=1)).isoformat(),
+            application_deadline=(now + timedelta(days=30)).isoformat(),
+        )
+        assert (
+            client.patch(
+                f"/api/v1/admin/opportunities/{created['id']}/verification",
+                json={"verification_status": "officially_verified"},
+                headers=headers,
+            ).status_code
+            == 200
+        )
+
+    response = client.get("/api/v1/opportunities?open_now=true&limit=1&offset=1")
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response_items(response)] == ["B Open Scholarship"]
+    pagination = response_pagination(response)
+    assert pagination["total"] == 3
+    assert pagination["limit"] == 1
+    assert pagination["offset"] == 1
+    assert pagination["count"] == 1
+    assert pagination["has_previous"] is True
+    assert pagination["has_next"] is True
+
+
 def test_public_catalogue_prioritizes_open_then_upcoming_then_other_verified_records(
     client: TestClient, db_session: Session
 ) -> None:

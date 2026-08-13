@@ -21,10 +21,8 @@ from app.modules.opportunities.models import (
     DataConfidence,
     DegreeLevel,
     FundingType,
-    Opportunity,
     OpportunityStatus,
     Provider,
-    Source,
     SourceType,
     VerificationStatus,
 )
@@ -111,29 +109,58 @@ def test_application_command_centre_migration_preserves_legacy_tracker_data(
             },
         )
         provider = Provider(name="Legacy Provider")
-        opportunity = Opportunity(
-            provider=provider,
-            name="Legacy Scholarship",
-            country="Malaysia",
-            degree_level=DegreeLevel.MASTERS,
-            application_deadline=deadline,
-            funding_type=FundingType.FULL,
-            tuition_coverage="Officially stated tuition coverage.",
-            status=OpportunityStatus.ACTIVE,
-            data_confidence=DataConfidence.HIGH,
+        session.add(provider)
+        session.flush()
+        opportunity_id = uuid.uuid4()
+        source_id = uuid.uuid4()
+        # The database is intentionally pinned to the historic 0009 schema.
+        # Use that table shape instead of the current ORM mapper.
+        session.execute(
+            text(
+                "INSERT INTO opportunities "
+                "(id, provider_id, name, country, degree_level, application_deadline, "
+                "funding_type, tuition_coverage, required_documents, status, data_confidence, "
+                "eligibility_warnings) "
+                "VALUES (:id, :provider_id, :name, :country, :degree_level, :deadline, "
+                ":funding_type, :tuition_coverage, :required_documents, :status, "
+                ":data_confidence, :eligibility_warnings)"
+            ),
+            {
+                "id": opportunity_id.hex,
+                "provider_id": provider.id.hex,
+                "name": "Legacy Scholarship",
+                "country": "Malaysia",
+                "degree_level": DegreeLevel.MASTERS.value,
+                "deadline": deadline,
+                "funding_type": FundingType.FULL.value,
+                "tuition_coverage": "Officially stated tuition coverage.",
+                "required_documents": "[]",
+                "status": OpportunityStatus.ACTIVE.value,
+                "data_confidence": DataConfidence.HIGH.value,
+                "eligibility_warnings": "[]",
+            },
         )
-        opportunity.sources.append(
-            Source(
-                url="https://example.edu/legacy-scholarship",
-                source_type=SourceType.OFFICIAL,
-                title="Legacy scholarship official source",
-                relevant_excerpt="Official deadline and document requirements for legacy testing.",
-                verification_status=VerificationStatus.OFFICIALLY_VERIFIED,
-            )
+        session.execute(
+            text(
+                "INSERT INTO sources "
+                "(id, opportunity_id, url, source_type, title, relevant_excerpt, "
+                "verification_status) "
+                "VALUES (:id, :opportunity_id, :url, :source_type, :title, :excerpt, "
+                ":verification_status)"
+            ),
+            {
+                "id": source_id.hex,
+                "opportunity_id": opportunity_id.hex,
+                "url": "https://example.edu/legacy-scholarship",
+                "source_type": SourceType.OFFICIAL.value,
+                "title": "Legacy scholarship official source",
+                "excerpt": "Official deadline and document requirements for legacy testing.",
+                "verification_status": VerificationStatus.OFFICIALLY_VERIFIED.value,
+            },
         )
         saved = SavedOpportunity(
             user_id=user_id,
-            opportunity=opportunity,
+            opportunity_id=opportunity_id,
             status=ApplicationStatus.SUBMITTED,
             personal_notes="Confirm portal receipt.",
             personal_deadline=deadline,

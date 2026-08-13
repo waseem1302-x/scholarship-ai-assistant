@@ -167,6 +167,13 @@ class Opportunity(Base):
             name="uq_opportunities_provider_name_country_intake",
         ),
         Index("ix_opportunities_country_degree", "country", "degree_level"),
+        Index(
+            "ix_opportunities_catalogue_window",
+            "status",
+            "catalogue_cycle_is_archived",
+            "catalogue_application_opening_date",
+            "catalogue_application_deadline",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -189,6 +196,17 @@ class Opportunity(Base):
     nationality_eligibility: Mapped[str | None] = mapped_column(Text)
     application_opening_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     application_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # These fields mirror the cycle that controls the public catalogue.  They
+    # make time-window filtering and ordering database-queryable without
+    # discarding the historical application-cycle records.
+    catalogue_application_opening_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    catalogue_application_deadline: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    catalogue_is_rolling: Mapped[bool] = mapped_column(default=False)
+    catalogue_cycle_is_archived: Mapped[bool] = mapped_column(default=False, index=True)
     intake_year: Mapped[int | None] = mapped_column(index=True)
     funding_type: Mapped[FundingType] = mapped_column(
         Enum(

@@ -72,6 +72,26 @@ def is_open_now(
     }
 
 
+def materialize_catalogue_window(opportunity: Opportunity) -> None:
+    """Copy the cycle governing catalogue state onto the opportunity row.
+
+    Cycle history remains authoritative; these fields are a query projection
+    maintained when an opportunity and its cycles are written.
+    """
+    cycle = _current_cycle(opportunity, datetime.now(UTC))
+    if cycle is None:
+        opportunity.catalogue_application_opening_date = opportunity.application_opening_date
+        opportunity.catalogue_application_deadline = opportunity.application_deadline
+        opportunity.catalogue_is_rolling = False
+        opportunity.catalogue_cycle_is_archived = False
+        return
+
+    opportunity.catalogue_application_opening_date = cycle.application_opening_date
+    opportunity.catalogue_application_deadline = cycle.application_deadline
+    opportunity.catalogue_is_rolling = cycle.is_rolling
+    opportunity.catalogue_cycle_is_archived = cycle.is_archived
+
+
 def _current_cycle(opportunity: Opportunity, now: datetime) -> OpportunityCycle | None:
     if not opportunity.cycles:
         return None

@@ -1,10 +1,12 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.modules.opportunities.lifecycle import SOURCE_FRESHNESS_DAYS
 from app.modules.opportunities.models import (
+    ApplicationWindowState,
     DegreeLevel,
     FundingType,
     Opportunity,
@@ -270,6 +272,8 @@ class OpportunityRepository:
         application_fee: str | None = None,
         english_requirement: str | None = None,
         verified_after: datetime | None = None,
+        open_now: bool = False,
+        application_window_state: ApplicationWindowState | None = None,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[Opportunity]:
@@ -286,10 +290,9 @@ class OpportunityRepository:
             application_fee=application_fee,
             english_requirement=english_requirement,
             verified_after=verified_after,
-        ).order_by(
-            Opportunity.application_deadline.asc().nulls_last(),
-            Opportunity.name,
-        )
+            open_now=open_now,
+            application_window_state=application_window_state,
+        ).order_by(*self._catalogue_order_by())
         if offset:
             statement = statement.offset(offset)
         if limit is not None:
@@ -312,6 +315,8 @@ class OpportunityRepository:
         application_fee: str | None = None,
         english_requirement: str | None = None,
         verified_after: datetime | None = None,
+        open_now: bool = False,
+        application_window_state: ApplicationWindowState | None = None,
     ) -> int:
         statement = self._public_opportunities_statement(
             country=country,
@@ -326,6 +331,8 @@ class OpportunityRepository:
             application_fee=application_fee,
             english_requirement=english_requirement,
             verified_after=verified_after,
+            open_now=open_now,
+            application_window_state=application_window_state,
         )
         return self._count_statement(statement)
 
@@ -344,6 +351,8 @@ class OpportunityRepository:
         application_fee: str | None = None,
         english_requirement: str | None = None,
         verified_after: datetime | None = None,
+        open_now: bool = False,
+        application_window_state: ApplicationWindowState | None = None,
     ) -> Select[tuple[Opportunity]]:
         official_source_filters = [
             Source.source_type == SourceType.OFFICIAL,
@@ -408,7 +417,65 @@ class OpportunityRepository:
                     english_requirement,
                 )
             )
+        now = datetime.now(UTC)
+        window_state = self._catalogue_window_state(now)
+        if open_now:
+            statement = statement.where(
+                Opportunity.catalogue_cycle_is_archived.is_(False),
+                or_(
+                    Opportunity.catalogue_is_rolling.is_(True),
+                    Opportunity.catalogue_application_deadline.is_not(None),
+                ),
+                or_(
+                    Opportunity.catalogue_application_opening_date.is_(None),
+                    Opportunity.catalogue_application_opening_date <= now,
+                ),
+                or_(
+                    Opportunity.catalogue_application_deadline.is_(None),
+                    Opportunity.catalogue_application_deadline >= now,
+                ),
+                Opportunity.sources.any(
+                    and_(
+                        Source.source_type == SourceType.OFFICIAL,
+                        Source.verification_status == VerificationStatus.OFFICIALLY_VERIFIED,
+                        Source.last_verified_at >= now - timedelta(days=SOURCE_FRESHNESS_DAYS),
+                    )
+                ),
+            )
+        elif application_window_state is not None:
+            statement = statement.where(window_state == application_window_state)
         return statement
+
+    @staticmethod
+    def _catalogue_window_state(now: datetime) -> object:
+        return case(
+            (Opportunity.catalogue_cycle_is_archived.is_(True), ApplicationWindowState.ARCHIVED),
+            (Opportunity.catalogue_application_deadline < now, ApplicationWindowState.CLOSED),
+            (Opportunity.catalogue_application_opening_date > now, ApplicationWindowState.UPCOMING),
+            (Opportunity.catalogue_is_rolling.is_(True), ApplicationWindowState.ROLLING),
+            (
+                Opportunity.catalogue_application_deadline.is_(None),
+                ApplicationWindowState.DEADLINE_UNKNOWN,
+            ),
+            else_=ApplicationWindowState.OPEN,
+        )
+
+    @staticmethod
+    def _catalogue_order_by() -> tuple[object, object, object]:
+        now = datetime.now(UTC)
+        window_state = OpportunityRepository._catalogue_window_state(now)
+        priority = case(
+            (window_state.in_([ApplicationWindowState.OPEN, ApplicationWindowState.ROLLING]), 0),
+            (window_state == ApplicationWindowState.UPCOMING, 1),
+            (window_state == ApplicationWindowState.DEADLINE_UNKNOWN, 2),
+            (window_state == ApplicationWindowState.CLOSED, 3),
+            else_=4,
+        )
+        return (
+            priority,
+            Opportunity.catalogue_application_deadline.asc().nulls_last(),
+            Opportunity.name,
+        )
 
     def _count_statement(self, statement: Select[tuple[Opportunity]]) -> int:
         count_statement = select(func.count()).select_from(
