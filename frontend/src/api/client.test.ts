@@ -126,3 +126,18 @@ describe("refresh", () => {
     expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBe("Bearer access-token");
   });
 });
+
+describe("administrator MFA fallback", () => {
+  it("does not interpret a generic authorization denial as an MFA challenge", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ error: { code: "forbidden", message: "Administrator access is required." } }, 403),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient().adminStepUp("password")).rejects.toMatchObject({
+      status: 403,
+      code: "forbidden",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

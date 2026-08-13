@@ -43,7 +43,7 @@ export interface AccountTokenDelivery {
 
 interface ApiErrorBody {
   detail?: unknown;
-  error?: { details?: unknown; message?: string };
+  error?: { code?: string; details?: unknown; message?: string };
   message?: string;
 }
 
@@ -51,6 +51,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -73,6 +74,10 @@ function errorMessage(body: ApiErrorBody | null, status: number): string {
     return detail;
   }
   return body?.error?.message ?? body?.message ?? `Request failed with ${status}.`;
+}
+
+function errorCode(body: ApiErrorBody | null): string | undefined {
+  return body?.error?.code;
 }
 
 export interface BetaInvitationDelivery {
@@ -168,7 +173,13 @@ export class ApiClient {
         body: JSON.stringify({ password }),
       });
     } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 403) throw error;
+      if (
+        !(error instanceof ApiError) ||
+        error.status !== 403 ||
+        error.code !== "admin_mfa_required"
+      ) {
+        throw error;
+      }
       if (typeof window === "undefined" || !("PublicKeyCredential" in window)) {
         throw new Error("Production administrator changes require a passkey-capable browser.");
       }
@@ -255,7 +266,11 @@ export class ApiClient {
       }
     }
     if (!response.ok) {
-      throw new ApiError(errorMessage(body as ApiErrorBody | null, response.status), response.status);
+      throw new ApiError(
+        errorMessage(body as ApiErrorBody | null, response.status),
+        response.status,
+        errorCode(body as ApiErrorBody | null),
+      );
     }
     return body as T;
   }
@@ -346,7 +361,11 @@ export class ApiClient {
       }
     }
     if (!response.ok) {
-      throw new ApiError(errorMessage(body as ApiErrorBody | null, response.status), response.status);
+      throw new ApiError(
+        errorMessage(body as ApiErrorBody | null, response.status),
+        response.status,
+        errorCode(body as ApiErrorBody | null),
+      );
     }
     const result = body as TokenResponse;
     this.setAccessToken(result.access_token);
