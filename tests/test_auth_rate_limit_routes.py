@@ -56,6 +56,12 @@ def protected_client(settings: Settings, store: RecordingStore) -> TestClient:
         def protected_route() -> dict[str, bool]:
             return {"reached": True}
 
+    @application.patch("/api/v1/auth/admin/passkeys/{credential_id}")
+    @application.delete("/api/v1/auth/admin/passkeys/{credential_id}")
+    def protected_passkey_lifecycle_route(credential_id: str) -> dict[str, bool]:
+        del credential_id
+        return {"reached": True}
+
     return TestClient(application)
 
 
@@ -143,6 +149,26 @@ def test_authenticated_sensitive_routes_use_dedicated_ip_and_user_limits(
     assert response.json() == {"reached": True}
     assert f"{route_class}:ip:testclient" in store.keys
     assert f"{route_class}:user:{user_id}" in store.keys
+
+
+@pytest.mark.parametrize("method", ["patch", "delete"])
+def test_passkey_lifecycle_mutations_use_webauthn_limits(method: str) -> None:
+    settings = limiter_settings()
+    store = RecordingStore()
+    client = protected_client(settings, store)
+    user_id = uuid.uuid4()
+    access_token, _ = create_access_token(user_id=user_id, role="admin", settings=settings)
+
+    response = client.request(
+        method.upper(),
+        "/api/v1/auth/admin/passkeys/example",
+        json={},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.json() == {"reached": True}
+    assert "webauthn:ip:testclient" in store.keys
+    assert f"webauthn:user:{user_id}" in store.keys
 
 
 def test_account_recovery_limit_returns_its_dedicated_error_code() -> None:

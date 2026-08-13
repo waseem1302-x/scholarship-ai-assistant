@@ -83,6 +83,14 @@ password, email link, support request, or a single operator's approval. The
 break-glass operator must revoke old sessions, require verified email and a new
 passkey, and attach safe audit identifiers to the incident record.
 
+For an administrator who still has access, use the passkey lifecycle API to
+list named passkeys, register and verify a replacement, then revoke the
+compromised passkey. The API refuses to remove the final active passkey, so a
+normal rotation cannot leave the account without a recovery method. Naming,
+renaming, and revocation are recorded as safe audit events; record only the
+approved safe identifiers, never credential material, a public key, or a
+challenge in an incident record.
+
 ## Scheduled job operations
 
 - Enable `monitoring`, `reminders`, and `retention` for enabled beta features.

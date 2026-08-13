@@ -77,6 +77,31 @@ class WebAuthnRegistrationResponse(BaseModel):
     credential_id: str
 
 
+class WebAuthnCredentialResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    display_name: str
+    created_at: datetime
+    last_used_at: datetime | None
+
+
+class WebAuthnCredentialRenameRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=100)
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_display_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Passkey name cannot be empty")
+        return normalized
+
+
+class WebAuthnCredentialRemovalRequest(AdminStepUpRequest):
+    pass
+
+
 class AccountTokenDeliveryResponse(BaseModel):
     accepted: bool = True
     expires_at: datetime | None = None

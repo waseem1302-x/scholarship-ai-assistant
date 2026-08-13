@@ -11,7 +11,7 @@ from app.core.errors import AppError, AuthenticationError
 from app.core.security import hash_password
 from app.main import app
 from app.modules.auth.dependencies import require_roles
-from app.modules.auth.models import RefreshToken, User, UserRole
+from app.modules.auth.models import RefreshToken, User, UserRole, WebAuthnCredential
 from app.modules.auth.webauthn_service import WebAuthnService
 
 EMAIL = "student@example.com"
@@ -281,6 +281,70 @@ def test_admin_passkey_options_require_password_and_record_a_single_use_challeng
     with pytest.raises(AppError) as no_passkey:
         service.step_up_options(administrator, PASSWORD)
     assert no_passkey.value.code == "admin_passkey_required"
+
+
+def test_administrator_can_manage_passkey_lifecycle(
+    client: TestClient, db_session: Session
+) -> None:
+    administrator = User(
+        id=uuid.uuid4(),
+        email="passkey-lifecycle-admin@example.com",
+        password_hash=hash_password(PASSWORD),
+        role=UserRole.ADMIN,
+    )
+    first = WebAuthnCredential(
+        user_id=administrator.id,
+        credential_id="first-passkey",
+        display_name="Laptop",
+        public_key=b"first-public-key",
+        sign_count=0,
+    )
+    second = WebAuthnCredential(
+        user_id=administrator.id,
+        credential_id="second-passkey",
+        display_name="Phone",
+        public_key=b"second-public-key",
+        sign_count=0,
+    )
+    db_session.add_all((administrator, first, second))
+    db_session.commit()
+    access_token = client.post(
+        "/api/v1/auth/login", json={"email": administrator.email, "password": PASSWORD}
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    listed = client.get("/api/v1/auth/admin/passkeys", headers=headers)
+    assert listed.status_code == 200
+    assert {item["display_name"] for item in listed.json()} == {"Laptop", "Phone"}
+
+    renamed = client.patch(
+        f"/api/v1/auth/admin/passkeys/{first.id}",
+        json={"display_name": "Work laptop"},
+        headers=headers,
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["display_name"] == "Work laptop"
+
+    removed = client.request(
+        "DELETE",
+        f"/api/v1/auth/admin/passkeys/{first.id}",
+        json={"password": PASSWORD},
+        headers=headers,
+    )
+    assert removed.status_code == 204
+    assert [
+        item["display_name"]
+        for item in client.get("/api/v1/auth/admin/passkeys", headers=headers).json()
+    ] == ["Phone"]
+
+    final_removal = client.request(
+        "DELETE",
+        f"/api/v1/auth/admin/passkeys/{second.id}",
+        json={"password": PASSWORD},
+        headers=headers,
+    )
+    assert final_removal.status_code == 409
+    assert final_removal.json()["error"]["code"] == "final_passkey_removal_blocked"
 
 
 def test_health_endpoints(client: TestClient) -> None:

@@ -333,3 +333,25 @@ def test_admin_step_up_scope_migration_upgrades_and_rolls_back(tmp_path: Path) -
         column["name"] for column in inspect(engine).get_columns("admin_step_up_tokens")
     }
     engine.dispose()
+
+
+def test_passkey_lifecycle_migration_upgrades_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'passkey-lifecycle.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260813_0022")
+    engine = create_engine(database_url)
+    credential_columns = {
+        column["name"] for column in inspect(engine).get_columns("webauthn_credentials")
+    }
+    assert {"display_name", "revoked_at"}.issubset(credential_columns)
+
+    command.downgrade(alembic_config, "20260813_0021")
+    credential_columns = {
+        column["name"] for column in inspect(engine).get_columns("webauthn_credentials")
+    }
+    assert not {"display_name", "revoked_at"}.intersection(credential_columns)
+    engine.dispose()

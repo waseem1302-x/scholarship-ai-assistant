@@ -10,7 +10,7 @@ assumptions.
 | --- | --- | --- | --- |
 | Student identity and sessions | API, PostgreSQL, transactional email | password hashing, short access tokens, refresh rotation, CSRF, enumeration-safe account recovery | Security owner |
 | Beta entry | invitation service and registration API | hashed one-time/email-bound codes, expiry, revocation, serialized cohort allocation, verified-email activation, versioned acceptance and audit events | Product owner |
-| Administrator authority | passkeys, password re-authentication, step-up token | verified email, WebAuthn user verification, single-use short-lived step-up tokens, audit events | Security owner |
+| Administrator authority | passkeys, password re-authentication, step-up session | verified email, WebAuthn user verification, scoped short-lived step-up sessions, audit events | Security owner |
 | Private document data | Document Lab, object storage, scanner/parser workers | owner scope, opaque keys, client encryption, SSE-KMS, scan-before-extract, retention/delete | Document Lab owner |
 | Assistant/community content | dedicated product modules | no cross-domain retrieval, consent/gates, owner scope, redacted telemetry | Product/data-quality owner |
 | Operations data | logs, health, alerting, backups | allowlisted fields, safe error classes, restricted access, documented backup expiry | Incident owner |
@@ -21,7 +21,7 @@ assumptions.
 | --- | --- | --- |
 | Invitation theft or self-registration | Email-bound hashed codes, serialized capacity check, reservation until verified-email activation, revocation and closed-registration tests | Staff pilot records an expired/revoked invitation test |
 | Account takeover | Email verification, secure cookie/CSRF, password reset without enumeration, token/session revocation | Email delivery and recovery procedure tested without exposing token values |
-| Admin phishing or credential replay | WebAuthn passkey plus fresh password and single-use MFA step-up | Every production admin has a tested passkey; recovery drill has two approvals |
+| Admin phishing or credential replay | WebAuthn passkey plus fresh password and scoped MFA step-up session | Every production admin has a tested passkey; recovery drill has two approvals |
 | Cross-user private-data access | Owner-scoped services/queries and export/delete tests | Authorization regression suite passes |
 | Malicious document/parser escape | Scan failure blocks extraction; isolated parser worker with resource limits and restricted egress | Platform evidence proves worker permits only database/object-store/scanner endpoints; red-team sample blocks parsing |
 | Object-store disclosure | Opaque scoped keys, client encryption, managed KMS, least-privilege prefix role | Storage policy and KMS audit configuration reviewed |

@@ -1,4 +1,5 @@
 import secrets
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
@@ -8,7 +9,7 @@ from app.core.config import Settings, get_settings
 from app.core.email import get_account_email_sender
 from app.core.errors import ErrorResponse
 from app.db.session import get_db
-from app.modules.auth.dependencies import CurrentUser, require_roles
+from app.modules.auth.dependencies import CurrentUser, require_admin_step_up, require_roles
 from app.modules.auth.models import User, UserRole
 from app.modules.auth.schemas import (
     AccountClosureRequest,
@@ -24,7 +25,10 @@ from app.modules.auth.schemas import (
     TokenConfirmRequest,
     TokenResponse,
     UserResponse,
+    WebAuthnCredentialRemovalRequest,
+    WebAuthnCredentialRenameRequest,
     WebAuthnCredentialRequest,
+    WebAuthnCredentialResponse,
     WebAuthnOptionsResponse,
     WebAuthnRegistrationResponse,
     WebAuthnStartRequest,
@@ -35,6 +39,7 @@ from app.modules.auth.webauthn_service import WebAuthnService
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
+AdminStepUpUser = Annotated[User, Depends(require_admin_step_up)]
 
 VALIDATION_RESPONSE = {
     "model": ErrorResponse,
@@ -273,6 +278,44 @@ def register_passkey(
         user, payload.credential
     )
     return WebAuthnRegistrationResponse(credential_id=credential_id)
+
+
+@router.get("/admin/passkeys", response_model=list[WebAuthnCredentialResponse])
+def list_passkeys(
+    user: AdminStepUpUser,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> list[WebAuthnCredentialResponse]:
+    return [
+        WebAuthnCredentialResponse.model_validate(credential)
+        for credential in WebAuthnService(session, settings).list_credentials(user)
+    ]
+
+
+@router.patch("/admin/passkeys/{credential_id}", response_model=WebAuthnCredentialResponse)
+def rename_passkey(
+    credential_id: uuid.UUID,
+    payload: WebAuthnCredentialRenameRequest,
+    user: AdminStepUpUser,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> WebAuthnCredentialResponse:
+    credential = WebAuthnService(session, settings).rename_credential(
+        user, credential_id, payload.display_name
+    )
+    return WebAuthnCredentialResponse.model_validate(credential)
+
+
+@router.delete("/admin/passkeys/{credential_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_passkey(
+    credential_id: uuid.UUID,
+    payload: WebAuthnCredentialRemovalRequest,
+    user: AdminStepUpUser,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    WebAuthnService(session, settings).remove_credential(user, credential_id, payload.password)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/admin/mfa/options", response_model=WebAuthnOptionsResponse)

@@ -179,6 +179,10 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
             }
             if route_class := route_classes.get(path):
                 return route_class
+        if request.method in {"PATCH", "DELETE"} and request.url.path.startswith(
+            "/api/v1/auth/admin/passkeys/"
+        ):
+            return "webauthn"
         if path == "/api/v1/assistant/answers":
             return "assistant"
         if request.method == "POST" and (

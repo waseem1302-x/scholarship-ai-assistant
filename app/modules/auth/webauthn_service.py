@@ -71,7 +71,9 @@ class WebAuthnService:
         )
         return json.loads(options_to_json(options))
 
-    def complete_registration(self, user: User, credential: dict) -> str:
+    def complete_registration(
+        self, user: User, credential: dict, display_name: str | None = None
+    ) -> str:
         challenge = self._active_challenge(user.id, WebAuthnChallengePurpose.REGISTRATION)
         try:
             verified = verify_registration_response(
@@ -92,6 +94,7 @@ class WebAuthnService:
             WebAuthnCredential(
                 user_id=user.id,
                 credential_id=credential_id,
+                display_name=(display_name or "New passkey").strip(),
                 public_key=verified.credential_public_key,
                 sign_count=verified.sign_count,
             )
@@ -132,6 +135,7 @@ class WebAuthnService:
             select(WebAuthnCredential).where(
                 WebAuthnCredential.user_id == user.id,
                 WebAuthnCredential.credential_id == credential_id,
+                WebAuthnCredential.revoked_at.is_(None),
             )
         )
         if stored is None:
@@ -166,8 +170,43 @@ class WebAuthnService:
         self.session.commit()
         return raw_token, expires_at
 
+    def list_credentials(self, user: User) -> list[WebAuthnCredential]:
+        self._require_admin(user)
+        return self._credentials(user.id)
+
+    def rename_credential(
+        self, user: User, credential_id: uuid.UUID, display_name: str
+    ) -> WebAuthnCredential:
+        self._require_admin(user)
+        credential = self._active_credential(user.id, credential_id)
+        credential.display_name = display_name.strip()
+        self._audit(user.id, "admin_passkey_renamed", "webauthn_credential", str(credential.id))
+        self.session.commit()
+        return credential
+
+    def remove_credential(self, user: User, credential_id: uuid.UUID, password: str) -> None:
+        self._verify_admin_password(user, password)
+        credential = self._active_credential(user.id, credential_id)
+        if len(self._credentials(user.id)) <= 1:
+            raise AppError(
+                "final_passkey_removal_blocked",
+                (
+                    "Register and verify a replacement passkey before removing "
+                    "the final recovery method."
+                ),
+                409,
+            )
+        credential.revoked_at = datetime.now(UTC)
+        self._audit(user.id, "admin_passkey_revoked", "webauthn_credential", str(credential.id))
+        self.session.commit()
+
     def _verify_admin_password(self, user: User, password: str) -> None:
-        if user.role is not UserRole.ADMIN or not verify_password(password, user.password_hash):
+        self._require_admin(user)
+        if not verify_password(password, user.password_hash):
+            raise AuthenticationError("Invalid administrator credentials")
+
+    def _require_admin(self, user: User) -> None:
+        if user.role is not UserRole.ADMIN:
             raise AuthenticationError("Invalid administrator credentials")
         if self.settings.env == "production" and user.email_verified_at is None:
             raise AuthenticationError("Administrator email verification is required")
@@ -214,9 +253,28 @@ class WebAuthnService:
     def _credentials(self, user_id: uuid.UUID) -> list[WebAuthnCredential]:
         return list(
             self.session.scalars(
-                select(WebAuthnCredential).where(WebAuthnCredential.user_id == user_id)
+                select(WebAuthnCredential)
+                .where(
+                    WebAuthnCredential.user_id == user_id,
+                    WebAuthnCredential.revoked_at.is_(None),
+                )
+                .order_by(WebAuthnCredential.created_at.asc())
             )
         )
+
+    def _active_credential(
+        self, user_id: uuid.UUID, credential_id: uuid.UUID
+    ) -> WebAuthnCredential:
+        credential = self.session.scalar(
+            select(WebAuthnCredential).where(
+                WebAuthnCredential.id == credential_id,
+                WebAuthnCredential.user_id == user_id,
+                WebAuthnCredential.revoked_at.is_(None),
+            )
+        )
+        if credential is None:
+            raise AppError("passkey_not_found", "Passkey not found.", 404)
+        return credential
 
     def _rp_id(self) -> str:
         return self.settings.webauthn_rp_id or "localhost"
