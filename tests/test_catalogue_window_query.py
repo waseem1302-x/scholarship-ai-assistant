@@ -36,3 +36,21 @@ def test_data_quality_issue_queue_is_sql_queryable(db_session) -> None:
     assert "required_documents" in sql
     assert "CAST" in sql
     assert "LIMIT ? OFFSET ?" in sql
+
+
+def test_public_structured_filters_do_not_search_eligibility_prose(db_session) -> None:
+    repository = OpportunityRepository(db_session)
+    statement = repository._public_opportunities_statement(
+        field="Artificial Intelligence",
+        nationality="Pakistani",
+        application_fee="not_required",
+        english_requirement="IELTS",
+    )
+    sql = str(statement.compile(dialect=sqlite.dialect()))
+
+    assert "eligibility_rule_values" in sql
+    assert "lower(opportunities.field_eligibility)" not in sql
+    assert "lower(opportunities.nationality_eligibility)" not in sql
+    assert "lower(opportunities.application_fee_info)" not in sql
+    assert "lower(opportunities.english_language_requirement)" not in sql
+    assert " LIKE " not in sql.upper()

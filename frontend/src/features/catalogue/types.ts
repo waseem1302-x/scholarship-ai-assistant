@@ -41,6 +41,7 @@ export interface OpportunityDetail extends OpportunitySummary {
   travel_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
   insurance_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
   fees_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
+  application_fee_status?: "not_required" | "required" | "waiver_available" | "unknown";
   monthly_stipend_amount: number | null;
   monthly_stipend_currency: string | null;
   accommodation_coverage: string | null;

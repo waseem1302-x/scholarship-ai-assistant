@@ -63,6 +63,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     with op.batch_alter_table("opportunities") as batch_op:
         batch_op.drop_index("ix_opportunities_funding_classification")
+        batch_op.drop_constraint("funding_classification", type_="check")
+        batch_op.drop_constraint("funding_coverage_status", type_="check")
         for column in (
             "fees_coverage_status",
             "insurance_coverage_status",

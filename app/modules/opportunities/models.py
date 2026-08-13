@@ -52,6 +52,13 @@ class FundingClassification(StrEnum):
     UNKNOWN = "unknown"
 
 
+class ApplicationFeeStatus(StrEnum):
+    NOT_REQUIRED = "not_required"
+    REQUIRED = "required"
+    WAIVER_AVAILABLE = "waiver_available"
+    UNKNOWN = "unknown"
+
+
 class OpportunityStatus(StrEnum):
     DRAFT = "draft"
     ACTIVE = "active"
@@ -322,6 +329,18 @@ class Opportunity(Base):
         ),
         default=FundingCoverageStatus.UNKNOWN,
     )
+    application_fee_status: Mapped[ApplicationFeeStatus] = mapped_column(
+        Enum(
+            ApplicationFeeStatus,
+            name="application_fee_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=ApplicationFeeStatus.UNKNOWN,
+        index=True,
+    )
     tuition_coverage: Mapped[str | None] = mapped_column(Text)
     monthly_stipend_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     monthly_stipend_currency: Mapped[str | None] = mapped_column(String(3))
@@ -476,8 +495,27 @@ class EligibilityRule(Base):
     )
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="eligibility_rules")
+    value_keys: Mapped[list["EligibilityRuleValue"]] = relationship(
+        back_populates="rule", cascade="all, delete-orphan"
+    )
     source: Mapped["Source | None"] = relationship()
     source_excerpt: Mapped["SourceExcerpt | None"] = relationship()
+
+
+class EligibilityRuleValue(Base):
+    __tablename__ = "eligibility_rule_values"
+    __table_args__ = (
+        UniqueConstraint("rule_id", "value_key", name="uq_eligibility_rule_value_key"),
+        Index("ix_eligibility_rule_values_value_key", "value_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("eligibility_rules.id", ondelete="CASCADE"), index=True
+    )
+    value_key: Mapped[str] = mapped_column(String(120))
+
+    rule: Mapped[EligibilityRule] = relationship(back_populates="value_keys")
 
 
 class Source(Base):

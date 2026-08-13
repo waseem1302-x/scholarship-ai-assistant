@@ -18,6 +18,7 @@ from pydantic import (
 )
 
 from app.modules.opportunities.models import (
+    ApplicationFeeStatus,
     ApplicationWindowState,
     DataConfidence,
     DegreeLevel,
@@ -158,6 +159,7 @@ class OpportunityCreate(BaseModel):
     travel_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
     insurance_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
     fees_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
+    application_fee_status: ApplicationFeeStatus = ApplicationFeeStatus.UNKNOWN
     tuition_coverage: str | None = Field(default=None, max_length=2_000)
     monthly_stipend_amount: Decimal | None = Field(default=None, ge=0)
     monthly_stipend_currency: str | None = Field(default=None, min_length=3, max_length=3)
@@ -450,6 +452,7 @@ class OpportunityDetailResponse(OpportunitySummaryResponse):
     travel_coverage_status: FundingCoverageStatus
     insurance_coverage_status: FundingCoverageStatus
     fees_coverage_status: FundingCoverageStatus
+    application_fee_status: ApplicationFeeStatus
     monthly_stipend_amount: Decimal | None
     monthly_stipend_currency: str | None
     accommodation_coverage: str | None

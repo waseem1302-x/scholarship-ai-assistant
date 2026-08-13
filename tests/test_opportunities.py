@@ -67,6 +67,7 @@ def opportunity_payload(**overrides: object) -> dict:
         "travel_coverage_status": "confirmed",
         "insurance_coverage_status": "confirmed",
         "fees_coverage_status": "confirmed",
+        "application_fee_status": "not_required",
         "tuition_coverage": "Tuition fees covered according to the official call",
         "monthly_stipend_amount": "1500.00",
         "monthly_stipend_currency": "myr",
@@ -542,7 +543,13 @@ def test_public_search_supports_advanced_structured_filters(
         tuition_coverage="Full tuition waiver",
         accommodation_coverage="Monthly living support for rent",
         application_fee_info="No application fee is charged",
+        application_fee_status="not_required",
         english_language_requirement="IELTS accepted; TOEFL accepted",
+        eligibility_rules=[
+            {"rule_type": "field", "operator": "in", "value": ["Artificial Intelligence"]},
+            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]},
+            {"rule_type": "ielts", "operator": "gte", "value": 6.5},
+        ],
         source={
             **opportunity_payload()["source"],
             "url": "https://example.edu/ai-access",
@@ -564,7 +571,13 @@ def test_public_search_supports_advanced_structured_filters(
         tuition_coverage="Partial tuition support",
         accommodation_coverage=None,
         application_fee_info="Application fee may apply",
+        application_fee_status="required",
         english_language_requirement="German proof required",
+        eligibility_rules=[
+            {"rule_type": "field", "operator": "in", "value": ["History"]},
+            {"rule_type": "nationality", "operator": "in", "value": ["European"]},
+            {"rule_type": "english_test_status", "operator": "equals", "value": "German proof"},
+        ],
         source={
             **opportunity_payload()["source"],
             "url": "https://example.edu/history-award",
@@ -581,12 +594,12 @@ def test_public_search_supports_advanced_structured_filters(
 
     filtered = client.get(
         "/api/v1/opportunities"
-        "?field=Artificial"
+        "?field=Artificial%20Intelligence"
         "&nationality=Pakistani"
         "&intake_year=2027"
         "&deadline_after=2027-03-01T00:00:00Z"
         "&funding_coverage=rent"
-        "&application_fee=No application fee"
+        "&application_fee=not_required"
         "&english_requirement=IELTS"
         "&verified_after=2026-01-01T00:00:00Z"
     )
@@ -594,6 +607,69 @@ def test_public_search_supports_advanced_structured_filters(
     assert filtered.status_code == 200
     assert [item["name"] for item in response_items(filtered)] == ["AI Access Scholarship"]
     assert response_pagination(filtered)["total"] == 1
+
+
+def test_public_search_uses_structured_eligibility_rules_not_prose(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    unsafe_prose = create_opportunity(
+        client,
+        headers,
+        name="Unsafe Prose Scholarship",
+        provider_name="Unsafe Prose Provider",
+        nationality_eligibility="Pakistani applicants are not eligible.",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/unsafe-prose",
+            "title": "Unsafe prose source",
+        },
+    )
+    broad_except_pakistan = create_opportunity(
+        client,
+        headers,
+        name="Broad Except Pakistan Scholarship",
+        provider_name="Broad Provider",
+        nationality_eligibility="International applicants except Pakistani citizens.",
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "in", "value": ["International applicants"]},
+            {"rule_type": "nationality", "operator": "not_in", "value": ["Pakistani"]},
+        ],
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/broad-except-pakistan",
+            "title": "Broad source",
+        },
+    )
+    eligible = create_opportunity(
+        client,
+        headers,
+        name="Structured Pakistan Scholarship",
+        provider_name="Structured Provider",
+        nationality_eligibility="Pakistani applicants are eligible.",
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]},
+        ],
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/structured-pakistan",
+            "title": "Structured source",
+        },
+    )
+    for opportunity_id in [unsafe_prose["id"], broad_except_pakistan["id"], eligible["id"]]:
+        response = client.patch(
+            f"/api/v1/admin/opportunities/{opportunity_id}/verification",
+            json={"verification_status": "officially_verified"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+
+    filtered = client.get("/api/v1/opportunities?nationality=Pakistani")
+
+    assert filtered.status_code == 200
+    assert [item["name"] for item in response_items(filtered)] == [
+        "Structured Pakistan Scholarship"
+    ]
 
 
 def test_admin_opportunity_list_supports_review_and_status_filters(

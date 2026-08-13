@@ -45,6 +45,10 @@ def test_alembic_schema_accepts_orm_enums_and_portable_timestamp_defaults(
     assert "source_excerpt_id" in {
         column["name"] for column in inspector.get_columns("eligibility_rules")
     }
+    assert "application_fee_status" in {
+        column["name"] for column in inspector.get_columns("opportunities")
+    }
+    assert "eligibility_rule_values" in inspector.get_table_names()
     settings = Settings(
         env="test",
         database_url=database_url,

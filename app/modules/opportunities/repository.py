@@ -1,20 +1,36 @@
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import Select, String, and_, case, cast, func, literal, or_, select, union_all
+from sqlalchemy import (
+    Select,
+    String,
+    and_,
+    case,
+    cast,
+    false,
+    func,
+    literal,
+    or_,
+    select,
+    union_all,
+)
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.modules.opportunities.lifecycle import SOURCE_FRESHNESS_DAYS
 from app.modules.opportunities.models import (
+    ApplicationFeeStatus,
     ApplicationWindowState,
     DataConfidence,
     DegreeLevel,
     DuplicateSuggestion,
     DuplicateSuggestionStatus,
+    EligibilityOperator,
     EligibilityRule,
     EligibilityRuleType,
+    EligibilityRuleValue,
     FundingType,
     Opportunity,
     OpportunityStatus,
@@ -25,6 +41,54 @@ from app.modules.opportunities.models import (
     University,
     VerificationStatus,
 )
+
+NATIONALITY_BROAD_VALUE_KEYS = {
+    "all-countries",
+    "all-nationalities",
+    "any-nationality",
+    "citizens-of-all-countries",
+    "foreign-citizens",
+    "foreign-students",
+    "international",
+    "international-applicants",
+    "international-students",
+}
+FIELD_BROAD_VALUE_KEYS = {
+    "all-disciplines",
+    "all-fields",
+    "any-discipline",
+    "any-field",
+    "any-programme",
+    "any-program",
+}
+APPLICATION_FEE_ALIASES = {
+    "free": ApplicationFeeStatus.NOT_REQUIRED,
+    "none": ApplicationFeeStatus.NOT_REQUIRED,
+    "no": ApplicationFeeStatus.NOT_REQUIRED,
+    "no-application-fee": ApplicationFeeStatus.NOT_REQUIRED,
+    "no-fee": ApplicationFeeStatus.NOT_REQUIRED,
+    "not-required": ApplicationFeeStatus.NOT_REQUIRED,
+    "required": ApplicationFeeStatus.REQUIRED,
+    "fee-required": ApplicationFeeStatus.REQUIRED,
+    "waiver": ApplicationFeeStatus.WAIVER_AVAILABLE,
+    "waiver-available": ApplicationFeeStatus.WAIVER_AVAILABLE,
+    "fee-waiver": ApplicationFeeStatus.WAIVER_AVAILABLE,
+    "unknown": ApplicationFeeStatus.UNKNOWN,
+}
+ENGLISH_TEST_TYPE_KEYS = {
+    "duolingo": EligibilityRuleType.DUOLINGO,
+    "gre": EligibilityRuleType.GRE,
+    "ielts": EligibilityRuleType.IELTS,
+    "toefl": EligibilityRuleType.TOEFL,
+}
+ENGLISH_RULE_TYPES = {
+    EligibilityRuleType.DUOLINGO,
+    EligibilityRuleType.ENGLISH_TEST_STATUS,
+    EligibilityRuleType.GRE,
+    EligibilityRuleType.GRE_STATUS,
+    EligibilityRuleType.IELTS,
+    EligibilityRuleType.TOEFL,
+}
 
 
 class OpportunityRepository:
@@ -809,11 +873,19 @@ class OpportunityRepository:
             statement = statement.where(Opportunity.funding_type == funding_type)
         if field is not None:
             statement = statement.where(
-                self._contains_case_insensitive(Opportunity.field_eligibility, field)
+                self._structured_eligibility_filter(
+                    EligibilityRuleType.FIELD,
+                    field,
+                    broad_value_keys=FIELD_BROAD_VALUE_KEYS,
+                )
             )
         if nationality is not None:
             statement = statement.where(
-                self._contains_case_insensitive(Opportunity.nationality_eligibility, nationality)
+                self._structured_eligibility_filter(
+                    EligibilityRuleType.NATIONALITY,
+                    nationality,
+                    broad_value_keys=NATIONALITY_BROAD_VALUE_KEYS,
+                )
             )
         if intake_year is not None:
             statement = statement.where(Opportunity.intake_year == intake_year)
@@ -833,16 +905,9 @@ class OpportunityRepository:
                 )
             )
         if application_fee is not None:
-            statement = statement.where(
-                self._contains_case_insensitive(Opportunity.application_fee_info, application_fee)
-            )
+            statement = statement.where(self._application_fee_filter(application_fee))
         if english_requirement is not None:
-            statement = statement.where(
-                self._contains_case_insensitive(
-                    Opportunity.english_language_requirement,
-                    english_requirement,
-                )
-            )
+            statement = statement.where(self._english_requirement_filter(english_requirement))
         now = datetime.now(UTC)
         window_state = self._catalogue_window_state(now)
         if open_now:
@@ -908,6 +973,60 @@ class OpportunityRepository:
             statement.with_only_columns(Opportunity.id).order_by(None).distinct().subquery()
         )
         return self.session.scalar(count_statement) or 0
+
+    def _structured_eligibility_filter(
+        self,
+        rule_type: EligibilityRuleType,
+        raw_value: str,
+        *,
+        broad_value_keys: set[str],
+    ) -> object:
+        value_key = self.structured_value_key(raw_value)
+        if not value_key:
+            return false()
+
+        include_keys = sorted({value_key, *broad_value_keys})
+        has_including_rule = Opportunity.eligibility_rules.any(
+            and_(
+                EligibilityRule.rule_type == rule_type,
+                EligibilityRule.operator.in_(
+                    [EligibilityOperator.EQUALS, EligibilityOperator.IN]
+                ),
+                EligibilityRule.value_keys.any(EligibilityRuleValue.value_key.in_(include_keys)),
+            )
+        )
+        has_excluding_rule = Opportunity.eligibility_rules.any(
+            and_(
+                EligibilityRule.rule_type == rule_type,
+                EligibilityRule.operator == EligibilityOperator.NOT_IN,
+                EligibilityRule.value_keys.any(EligibilityRuleValue.value_key == value_key),
+            )
+        )
+        return and_(has_including_rule, ~has_excluding_rule)
+
+    def _application_fee_filter(self, raw_value: str) -> object:
+        status = APPLICATION_FEE_ALIASES.get(self.structured_value_key(raw_value))
+        if status is None:
+            return false()
+        return Opportunity.application_fee_status == status
+
+    def _english_requirement_filter(self, raw_value: str) -> object:
+        value_key = self.structured_value_key(raw_value)
+        if not value_key:
+            return false()
+        test_type = ENGLISH_TEST_TYPE_KEYS.get(value_key)
+        if test_type is not None:
+            return Opportunity.eligibility_rules.any(EligibilityRule.rule_type == test_type)
+        return Opportunity.eligibility_rules.any(
+            and_(
+                EligibilityRule.rule_type.in_(ENGLISH_RULE_TYPES),
+                EligibilityRule.value_keys.any(EligibilityRuleValue.value_key == value_key),
+            )
+        )
+
+    @staticmethod
+    def structured_value_key(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")[:120]
 
     @staticmethod
     def _contains_case_insensitive(column: object, value: str) -> object:

@@ -20,6 +20,8 @@ from app.modules.opportunities.models import (
     DuplicateSuggestion,
     DuplicateSuggestionStatus,
     EligibilityRule,
+    EligibilityRuleType,
+    EligibilityRuleValue,
     FundingClassification,
     FundingCoverageStatus,
     Opportunity,
@@ -160,6 +162,7 @@ class OpportunityService:
             travel_coverage_status=payload.travel_coverage_status,
             insurance_coverage_status=payload.insurance_coverage_status,
             fees_coverage_status=payload.fees_coverage_status,
+            application_fee_status=payload.application_fee_status,
             tuition_coverage=payload.tuition_coverage,
             monthly_stipend_amount=payload.monthly_stipend_amount,
             monthly_stipend_currency=payload.monthly_stipend_currency,
@@ -223,20 +226,23 @@ class OpportunityService:
             self.session.add(excerpt)
             self.session.flush()
             for rule in payload.eligibility_rules:
-                opportunity.eligibility_rules.append(
-                    EligibilityRule(
-                        rule_type=rule.rule_type,
-                        operator=rule.operator,
-                        value_json=rule.value,
-                        unit=rule.unit,
-                        grading_scale=rule.grading_scale,
-                        required=rule.required,
-                        source_id=source.id,
-                        source_excerpt_id=excerpt.id,
-                        confidence=rule.confidence,
-                        curator_notes=rule.curator_notes,
-                    )
+                eligibility_rule = EligibilityRule(
+                    rule_type=rule.rule_type,
+                    operator=rule.operator,
+                    value_json=rule.value,
+                    unit=rule.unit,
+                    grading_scale=rule.grading_scale,
+                    required=rule.required,
+                    source_id=source.id,
+                    source_excerpt_id=excerpt.id,
+                    confidence=rule.confidence,
+                    curator_notes=rule.curator_notes,
                 )
+                eligibility_rule.value_keys = [
+                    EligibilityRuleValue(value_key=value_key)
+                    for value_key in self._eligibility_value_keys(rule)
+                ]
+                opportunity.eligibility_rules.append(eligibility_rule)
         self.session.add(
             AuditLog(
                 actor_user_id=created_by.id,
@@ -732,6 +738,7 @@ class OpportunityService:
             "travel_coverage_status": opportunity.travel_coverage_status,
             "insurance_coverage_status": opportunity.insurance_coverage_status,
             "fees_coverage_status": opportunity.fees_coverage_status,
+            "application_fee_status": opportunity.application_fee_status,
             "tuition_coverage": opportunity.tuition_coverage,
             "monthly_stipend_amount": opportunity.monthly_stipend_amount,
             "monthly_stipend_currency": opportunity.monthly_stipend_currency,
@@ -904,6 +911,32 @@ class OpportunityService:
         if payload.funding_type.value in {"partial", "tuition_only", "stipend_only"}:
             return FundingClassification.PARTIAL
         return FundingClassification.UNKNOWN
+
+    @classmethod
+    def _eligibility_value_keys(cls, rule: EligibilityRuleCreate) -> list[str]:
+        textual_rule_types = {
+            EligibilityRuleType.NATIONALITY,
+            EligibilityRuleType.RESIDENCE,
+            EligibilityRuleType.TARGET_DEGREE,
+            EligibilityRuleType.FIELD,
+            EligibilityRuleType.APPLICATION_WINDOW,
+            EligibilityRuleType.STUDY_MODE,
+            EligibilityRuleType.CURRENT_EDUCATION_LEVEL,
+            EligibilityRuleType.ENGLISH_TEST_STATUS,
+            EligibilityRuleType.GRE_STATUS,
+        }
+        if rule.rule_type not in textual_rule_types:
+            return []
+
+        values = rule.value if isinstance(rule.value, list) else [rule.value]
+        return sorted(
+            {
+                OpportunityRepository.structured_value_key(value)
+                for value in values
+                if isinstance(value, str)
+                and OpportunityRepository.structured_value_key(value)
+            }
+        )
 
     def _import_rows(
         self, payload: OpportunityImportRequest
