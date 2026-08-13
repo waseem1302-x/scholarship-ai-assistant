@@ -57,10 +57,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsRestoring(false);
       },
       async signOut() {
+        await apiClient.signOut();
         sessionGeneration.current += 1;
         setUser(null);
         setIsRestoring(false);
-        await apiClient.signOut();
       },
       updateUser(nextUser) {
         setUser(nextUser);

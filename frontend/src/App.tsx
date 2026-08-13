@@ -35,12 +35,18 @@ function Topbar() {
   const { user, isRestoring, signOut } = useAuth();
   const navigate = useNavigate();
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   async function logout() {
+    setLogoutError(null);
     setIsSigningOut(true);
     try {
       await signOut();
       navigate("/");
+    } catch {
+      setLogoutError(
+        "We could not confirm server sign-out. You are still signed in; please try again.",
+      );
     } finally {
       setIsSigningOut(false);
     }
@@ -108,6 +114,7 @@ function Topbar() {
           )}
         </div>
       </nav>
+      {logoutError ? <p className="form-error page-width" role="alert">{logoutError}</p> : null}
     </header>
   );
 }

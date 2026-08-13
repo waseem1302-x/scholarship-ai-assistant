@@ -52,3 +52,33 @@ describe("account lifecycle API methods", () => {
     expect(fetchMock.mock.calls[3][1].body).toBe(JSON.stringify({ token: "reset-token", new_password: "UpdatedPassword2026" }));
   });
 });
+
+describe("logout", () => {
+  it("keeps the access token when server-session revocation fails", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Temporary outage" } }, 503))
+      .mockResolvedValueOnce(jsonResponse({ id: "student-id" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient();
+    client.setAccessToken("access-token");
+
+    await expect(client.signOut()).rejects.toMatchObject({ status: 503 });
+    await client.currentUser();
+
+    expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBe("Bearer access-token");
+  });
+
+  it("clears the access token only after server-session revocation succeeds", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({}, 204))
+      .mockResolvedValueOnce(jsonResponse({ id: "student-id" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient();
+    client.setAccessToken("access-token");
+
+    await client.signOut();
+    await client.currentUser();
+
+    expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBeNull();
+  });
+});

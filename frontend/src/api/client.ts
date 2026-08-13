@@ -157,11 +157,8 @@ export class ApiClient {
   }
 
   async signOut(): Promise<void> {
-    try {
-      await this.request<void>("/auth/logout", { method: "POST" });
-    } finally {
-      this.setAccessToken(null);
-    }
+    await this.request<void>("/auth/logout", { method: "POST" });
+    this.setAccessToken(null);
   }
 
   async adminStepUp(password: string): Promise<AdminStepUpResponse> {
