@@ -150,7 +150,7 @@ class OpportunityCreate(BaseModel):
     data_confidence: DataConfidence = DataConfidence.LOW
     notes: str | None = Field(default=None, max_length=8_000)
     eligibility_warnings: list[str] = Field(default_factory=list, max_length=30)
-    eligibility_rules: list[EligibilityRuleCreate] = Field(default_factory=list)
+    eligibility_rules: list[EligibilityRuleCreate] = Field(default_factory=list, max_length=20)
     application_cycles: list[OpportunityCycleCreate] = Field(default_factory=list)
     source: SourceCreate
 

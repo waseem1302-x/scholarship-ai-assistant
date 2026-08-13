@@ -140,13 +140,14 @@ class MatchingService:
         failed = [item for rule in rules for item in rule.missing]
         answered = sum(bool(rule.satisfied or rule.missing) for rule in rules)
         completeness = round((answered / len(rules)) * 100) if rules else 0
+        total_weight = sum(rule.weight for rule in rules)
         if hard_failures:
             score = 0
             fit_score = None
             score_label = "not_eligible"
             eligibility_status = "ineligible"
         else:
-            score = round(sum(rule.score for rule in rules))
+            score = round((sum(rule.score for rule in rules) / total_weight) * 100)
             fit_score = score
             score_label = self._score_label(score)
             eligibility_status = "eligible" if not unknown else "likely_eligible"

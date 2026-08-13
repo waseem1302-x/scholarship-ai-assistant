@@ -199,6 +199,44 @@ def test_matching_ranks_verified_opportunities_and_explains_fit(
     assert any("target degree" in item.lower() for item in results[1]["explanation"]["missing"])
 
 
+def test_structured_rule_scores_are_normalized_regardless_of_rule_count(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-normalized@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="student-normalized@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-normalized@example.com"))
+    student_headers = headers(login(client, "student-normalized@example.com"))
+    assert (
+        client.put(
+            "/api/v1/profiles/me", json=profile_payload(), headers=student_headers
+        ).status_code
+        == 200
+    )
+
+    one_rule = create_verified_opportunity(
+        client,
+        admin_headers,
+        name="One structured rule scholarship",
+        eligibility_rules=[{"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]}],
+    )
+    four_rules = create_verified_opportunity(
+        client,
+        admin_headers,
+        name="Four structured rules scholarship",
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]},
+            {"rule_type": "field", "operator": "in", "value": ["Artificial Intelligence"]},
+            {"rule_type": "cgpa", "operator": "gte", "value": 3.0, "grading_scale": 4.0},
+            {"rule_type": "ielts", "operator": "gte", "value": 6.5},
+        ],
+    )
+
+    results = client.get("/api/v1/matches/me", headers=student_headers).json()["results"]
+    scores = {item["opportunity"]["id"]: item["fit_score"] for item in results}
+
+    assert scores[one_rule["id"]] == scores[four_rules["id"]]
+
+
 def test_matching_hides_unverified_opportunities(client: TestClient, db_session: Session) -> None:
     create_user(db_session, email="admin-unverified@example.com", role=UserRole.ADMIN)
     create_user(db_session, email="student-unverified@example.com", role=UserRole.STUDENT)

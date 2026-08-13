@@ -150,6 +150,19 @@ def test_opportunity_rejects_oversized_text_and_list_items(
     assert oversized_list_item.status_code == 422
 
 
+def test_opportunity_limits_eligibility_rule_count(client: TestClient, db_session: Session) -> None:
+    headers = admin_headers(client, db_session)
+    rule = {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]}
+
+    response = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(eligibility_rules=[rule] * 21),
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+
+
 def test_admin_bootstrap_promotes_existing_user(client: TestClient, db_session: Session) -> None:
     create_user(db_session, email=STUDENT_EMAIL, role=UserRole.STUDENT)
 
