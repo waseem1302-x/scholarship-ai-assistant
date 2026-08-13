@@ -5,5 +5,8 @@ using './foundation.bicep'
 param location = 'southeastasia'
 param resourcePrefix = 'replace-me'
 param environment = 'staging'
+// Provide securely at deployment time. Do not write a real password in this file.
 param postgresAdministratorPassword = ''
 param postgresHighAvailability = 'Disabled'
+// Confirm regional availability and the cost guardrail before retaining this default.
+param redisSkuName = 'Balanced_B0'

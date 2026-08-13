@@ -5,12 +5,14 @@ on:
     paths:
       - 'infra/azure/**'
       - '.github/workflows/azure-infrastructure.yml'
+      - '.github/workflows/azure-application-deploy.yml'
   push:
     branches:
       - main
     paths:
       - 'infra/azure/**'
       - '.github/workflows/azure-infrastructure.yml'
+      - '.github/workflows/azure-application-deploy.yml'
 
 permissions:
   contents: read
@@ -20,8 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile Azure foundation template
+      - name: Compile Azure deployment templates
         uses: azure/cli@v2
         with:
           azcliversion: latest
-          inlineScript: az bicep build --file infra/azure/foundation.bicep
+          inlineScript: |
+            set -e
+            for template in infra/azure/*.bicep; do
+              az bicep build --file "$template"
+            done

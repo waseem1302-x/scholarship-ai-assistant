@@ -61,6 +61,19 @@ def test_production_requires_phase_nine_shared_limiter_and_transactional_email()
         )
 
 
+def test_production_migration_mode_needs_only_the_migration_secret() -> None:
+    settings = Settings(
+        env="production",
+        migration_only=True,
+        migration_database_url="postgresql+psycopg://migrator:secret@example.test/scholarship",
+    )
+
+    assert settings.migration_only is True
+
+    with pytest.raises(ValidationError, match="MIGRATION_DATABASE_URL"):
+        Settings(env="production", migration_only=True)
+
+
 def test_production_beta_requires_named_owners_and_passkey_relying_party() -> None:
     with pytest.raises(ValidationError, match="Production beta requires named"):
         Settings(

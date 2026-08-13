@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     debug: bool = False
     database_url: str = "postgresql+psycopg://scholarship:scholarship@localhost:5432/scholarship"
     migration_database_url: SecretStr | None = Field(default=None, repr=False)
+    # The isolated Alembic job must not need the API, SMTP, Redis, or JWT
+    # secrets merely because it imports the application's settings.
+    migration_only: bool = False
     jwt_secret: str = Field(
         default="local-development-secret-change-me-now",
         min_length=32,
@@ -138,6 +141,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_unsafe_production_settings(self) -> "Settings":
+        if self.env == "production" and self.migration_only:
+            if self.debug:
+                raise ValueError("APP_DEBUG must be false in production migration mode")
+            if self.migration_database_url is None:
+                raise ValueError(
+                    "APP_MIGRATION_DATABASE_URL is required in production migration mode"
+                )
+            return self
+
         development_secrets = {
             "local-development-secret-change-me-now",
             "local-compose-secret-change-before-any-shared-deployment",

@@ -1,0 +1,170 @@
+name: Azure staged application deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target must be staging first. Beta requires a separately approved, immutable staging image.'
+        required: true
+        type: choice
+        options:
+          - staging
+          - beta
+      resource_prefix:
+        description: 'Existing foundation prefix for the selected isolated resource group.'
+        required: true
+        type: string
+      resource_group:
+        description: 'Existing isolated resource group.'
+        required: true
+        type: string
+      app_origin:
+        description: 'Exact HTTPS origin. Use https://bootstrap.invalid only for the initial non-beta staging smoke release.'
+        required: true
+        type: string
+      webauthn_rp_id:
+        description: 'WebAuthn RP ID matching the exact origin (bootstrap.invalid is permitted only while beta is off).'
+        required: true
+        type: string
+      image_reference:
+        description: 'Optional previously verified ACR digest reference for beta promotion. Leave blank only to build the current commit for staging.'
+        required: false
+        type: string
+      deployment_confirmation:
+        description: 'Enter DEPLOY_STAGING or PROMOTE_BETA after reviewing the target and cost status.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: azure-${{ inputs.environment }}-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Each GitHub Environment must require the appropriate human approval.
+    environment: azure-${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    if: >-
+      (inputs.environment == 'staging' && inputs.deployment_confirmation == 'DEPLOY_STAGING') ||
+      (inputs.environment == 'beta' && inputs.deployment_confirmation == 'PROMOTE_BETA')
+    steps:
+      - uses: actions/checkout@v4
+
+      # These identifiers are GitHub Environment variables, never client secrets.
+      # The federated credential is constrained in Entra ID to this repository and
+      # environment. See infra/azure/README.md before enabling this workflow.
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push immutable candidate image
+        id: image
+        shell: bash
+        env:
+          ACR_NAME: ${{ inputs.resource_prefix }}acr
+          REQUESTED_REFERENCE: ${{ inputs.image_reference }}
+        run: |
+          set -euo pipefail
+          az acr login --name "$ACR_NAME"
+          login_server="$(az acr show --name "$ACR_NAME" --query loginServer --output tsv)"
+          if [ -n "$REQUESTED_REFERENCE" ]; then
+            case "$REQUESTED_REFERENCE" in
+              "$login_server"/scholarship-ai-assistant@sha256:*) ;;
+              *) echo "The supplied image must be this registry's scholarship-ai-assistant digest."; exit 1 ;;
+            esac
+            echo "reference=$REQUESTED_REFERENCE" >> "$GITHUB_OUTPUT"
+          else
+            if [ "${{ inputs.environment }}" != "staging" ]; then
+              echo "Beta accepts only a previously verified immutable staging image reference."
+              exit 1
+            fi
+            image_tag="${GITHUB_SHA}"
+            docker build --tag "$login_server/scholarship-ai-assistant:$image_tag" .
+            docker push "$login_server/scholarship-ai-assistant:$image_tag"
+            digest="$(az acr repository show --name "$ACR_NAME" --image "scholarship-ai-assistant:$image_tag" --query digest --output tsv)"
+            test -n "$digest"
+            echo "reference=$login_server/scholarship-ai-assistant@$digest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy and run migration job
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/azure/migration-job.bicep \
+            --parameters resourcePrefix="$RESOURCE_PREFIX" imageReference="$IMAGE_REFERENCE"
+          job_name="${RESOURCE_PREFIX}-migrate"
+          az containerapp job start --name "$job_name" --resource-group "$RESOURCE_GROUP"
+          for attempt in {1..45}; do
+            status="$(az containerapp job execution list --name "$job_name" --resource-group "$RESOURCE_GROUP" --query "sort_by([].properties, &startTime)[-1].status" --output tsv)"
+            if [ "$status" = "Succeeded" ]; then exit 0; fi
+            if [ "$status" = "Failed" ]; then
+              echo "Migration job failed. Inspect the protected Container Apps job logs; do not paste them into issues or chat."
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "Migration job did not complete before the 7.5-minute safety timeout."
+          exit 1
+
+      - name: Deploy candidate API revision
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          APP_ORIGIN: ${{ inputs.app_origin }}
+          WEBAUTHN_RP_ID: ${{ inputs.webauthn_rp_id }}
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/azure/application.bicep \
+            --parameters resourcePrefix="$RESOURCE_PREFIX" environment="$ENVIRONMENT" imageReference="$IMAGE_REFERENCE" appOrigin="$APP_ORIGIN" webauthnRpId="$WEBAUTHN_RP_ID" smtpFrom='${{ vars.APP_SMTP_FROM }}' smtpHost='${{ vars.APP_SMTP_HOST }}' betaProductOwnerContact='${{ vars.APP_BETA_PRODUCT_OWNER_CONTACT }}' betaSupportContact='${{ vars.APP_BETA_SUPPORT_CONTACT }}' betaModerationContact='${{ vars.APP_BETA_MODERATION_CONTACT }}' betaDataQualityContact='${{ vars.APP_BETA_DATA_QUALITY_CONTACT }}' betaIncidentContact='${{ vars.APP_BETA_INCIDENT_CONTACT }}' betaEnabled=${{ inputs.environment == 'beta' }} initialTrafficToLatest=true
+
+      - name: Verify API readiness without logging secrets
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show --name "${RESOURCE_PREFIX}-api" --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn --output tsv)"
+          for attempt in {1..30}; do
+            curl --fail --silent --show-error "https://$fqdn/health/ready" && exit 0
+            sleep 5
+          done
+          echo "Candidate did not become ready. The prior active revision remains available for rollback."
+          exit 1
+
+      - name: Deploy scheduled jobs only after API readiness
+        shell: bash
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          APP_ORIGIN: ${{ inputs.app_origin }}
+          WEBAUTHN_RP_ID: ${{ inputs.webauthn_rp_id }}
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/azure/scheduled-jobs.bicep \
+            --parameters resourcePrefix="$RESOURCE_PREFIX" environment="$ENVIRONMENT" imageReference="$IMAGE_REFERENCE" appOrigin="$APP_ORIGIN" webauthnRpId="$WEBAUTHN_RP_ID" smtpFrom='${{ vars.APP_SMTP_FROM }}' smtpHost='${{ vars.APP_SMTP_HOST }}'
+
+      - name: Record immutable release reference
+        run: echo "Deployed and health-checked ${{ steps.image.outputs.reference }}"
