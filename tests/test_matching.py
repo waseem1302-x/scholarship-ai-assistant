@@ -247,12 +247,10 @@ def test_matching_hides_unverified_opportunities(client: TestClient, db_session:
     create_user(db_session, email="student-unverified@example.com", role=UserRole.STUDENT)
     admin_headers = headers(login(client, "admin-unverified@example.com"))
     student_headers = headers(login(client, "student-unverified@example.com"))
-    assert (
-        client.put(
-            "/api/v1/profiles/me", json=profile_payload(), headers=student_headers
-        ).status_code
-        == 200
+    profile_response = client.put(
+        "/api/v1/profiles/me", json=profile_payload(), headers=student_headers
     )
+    assert profile_response.status_code == 200
     unverified = client.post(
         "/api/v1/admin/opportunities",
         json=opportunity_payload(name="Unverified Scholarship"),
@@ -337,12 +335,10 @@ def test_matching_persists_reproducible_evaluation_history(
     create_user(db_session, email="student-evaluation@example.com", role=UserRole.STUDENT)
     admin_headers = headers(login(client, "admin-evaluation@example.com"))
     student_headers = headers(login(client, "student-evaluation@example.com"))
-    assert (
-        client.put(
-            "/api/v1/profiles/me", json=profile_payload(), headers=student_headers
-        ).status_code
-        == 200
+    profile_response = client.put(
+        "/api/v1/profiles/me", json=profile_payload(), headers=student_headers
     )
+    assert profile_response.status_code == 200
     opportunity = create_verified_opportunity(
         client,
         admin_headers,
@@ -381,7 +377,10 @@ def test_matching_persists_reproducible_evaluation_history(
     assert (
         client.put(
             "/api/v1/profiles/me",
-            json=profile_payload(ielts_score="7.5"),
+            json=profile_payload(
+                ielts_score="7.5",
+                expected_version=profile_response.json()["version"],
+            ),
             headers=student_headers,
         ).status_code
         == 200

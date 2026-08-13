@@ -18,10 +18,14 @@ export interface StudentProfile {
   id: string;
   user_id: string;
   nationality: string | null;
+  nationality_code: string | null;
   country_of_residence: string | null;
+  country_of_residence_code: string | null;
   current_education_level: string | null;
   target_degree_level: string | null;
   intended_field: string | null;
+  intended_field_taxonomy: string | null;
+  intended_field_detail: string | null;
   academic_discipline: string | null;
   cgpa: number | null;
   percentage: number | null;
@@ -38,6 +42,7 @@ export interface StudentProfile {
   leadership_experience: string | null;
   financial_need: string | null;
   preferred_destination_countries: string[];
+  preferred_destination_country_codes: string[];
   preferred_study_mode: string | null;
   target_intake: string | null;
   target_intake_year: number | null;
@@ -45,6 +50,8 @@ export interface StudentProfile {
   additional_eligibility_information: string | null;
   profile_completeness: number;
   missing_recommended_fields: string[];
+  completeness_context: string;
+  version: number;
 }
 
 export interface ProfileDraft {

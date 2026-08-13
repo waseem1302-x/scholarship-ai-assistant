@@ -42,6 +42,20 @@ def test_alembic_schema_accepts_orm_enums_and_portable_timestamp_defaults(
     inspector = inspect(engine)
     profile_columns = {column["name"] for column in inspector.get_columns("student_profiles")}
     assert "target_intake_year" in profile_columns
+    assert {
+        "nationality_code",
+        "country_of_residence_code",
+        "intended_field_taxonomy",
+        "intended_field_detail",
+        "preferred_destination_country_codes",
+        "version",
+    } <= profile_columns
+    profile_indexes = {index["name"] for index in inspector.get_indexes("student_profiles")}
+    assert {
+        "ix_student_profiles_nationality_code",
+        "ix_student_profiles_country_of_residence_code",
+        "ix_student_profiles_intended_field_taxonomy",
+    } <= profile_indexes
     assert "source_excerpt_id" in {
         column["name"] for column in inspector.get_columns("eligibility_rules")
     }

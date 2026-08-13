@@ -65,8 +65,9 @@ export async function getProfile(): Promise<StudentProfile | null> {
   return (await apiClient.request<StudentProfile | null>("/profiles/me")) ?? null;
 }
 
-export async function saveProfile(draft: ProfileDraft): Promise<StudentProfile> {
-  return apiClient.request<StudentProfile>("/profiles/me", { method: "PUT", body: JSON.stringify(profilePayload(draft)) });
+export async function saveProfile(draft: ProfileDraft, currentProfile?: StudentProfile | null): Promise<StudentProfile> {
+  const payload = { ...profilePayload(draft), ...(currentProfile ? { expected_version: currentProfile.version } : {}) };
+  return apiClient.request<StudentProfile>("/profiles/me", { method: "PUT", body: JSON.stringify(payload) });
 }
 
 export async function getMatches(): Promise<OpportunityMatch[]> {

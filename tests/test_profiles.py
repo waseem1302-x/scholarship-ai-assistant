@@ -90,17 +90,153 @@ def test_student_can_create_and_update_incomplete_profile(
     assert created.status_code == 200
     body = created.json()
     assert body["nationality"] == "Pakistani"
+    assert body["nationality_code"] == "PK"
+    assert body["country_of_residence_code"] == "MY"
+    assert body["intended_field_taxonomy"] == "computer-science"
+    assert body["version"] == 1
+    assert body["completeness_context"] == "masters_profile"
     assert body["profile_completeness"] < 100
     assert "preferred_destination_countries" in body["missing_recommended_fields"]
 
     updated = client.put(
         "/api/v1/profiles/me",
-        json=profile_payload(target_degree_level="phd", preferred_destination_countries=["Japan"]),
+        json=profile_payload(
+            target_degree_level="phd",
+            preferred_destination_countries=["Japan"],
+            expected_version=body["version"],
+        ),
         headers=auth_headers(token),
     )
     assert updated.status_code == 200
-    assert updated.json()["target_degree_level"] == "phd"
-    assert updated.json()["preferred_destination_countries"] == ["Japan"]
+    updated_body = updated.json()
+    assert updated_body["target_degree_level"] == "phd"
+    assert updated_body["preferred_destination_countries"] == ["Japan"]
+    assert updated_body["version"] == 2
+    assert updated_body["completeness_context"] == "phd_profile"
+
+
+def test_profile_accepts_percentage_without_cgpa_scale(
+    client: TestClient, db_session: Session
+) -> None:
+    email = "percentage-profile@example.com"
+    create_student(db_session, email)
+    token = login(client, email)
+
+    response = client.put(
+        "/api/v1/profiles/me",
+        json=profile_payload(cgpa=None, grading_scale=None, percentage="88.5"),
+        headers=auth_headers(token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["percentage"] == "88.50"
+    assert "cgpa_or_percentage" not in body["missing_recommended_fields"]
+    assert "grading_scale" not in body["missing_recommended_fields"]
+
+
+def test_patch_preserves_omitted_profile_fields_and_uses_version(
+    client: TestClient, db_session: Session
+) -> None:
+    email = "patch-profile@example.com"
+    create_student(db_session, email)
+    token = login(client, email)
+    created = client.put(
+        "/api/v1/profiles/me",
+        json=profile_payload(preferred_destination_countries=["Malaysia", "Canada"]),
+        headers=auth_headers(token),
+    )
+    assert created.status_code == 200
+
+    patched = client.patch(
+        "/api/v1/profiles/me",
+        json={
+            "financial_need": "Updated need statement",
+            "country_of_residence": "Canada",
+            "intended_field": "History",
+            "expected_version": 1,
+        },
+        headers=auth_headers(token),
+    )
+
+    assert patched.status_code == 200
+    body = patched.json()
+    assert body["financial_need"] == "Updated need statement"
+    assert body["country_of_residence_code"] == "CA"
+    assert body["intended_field_taxonomy"] == "humanities"
+    assert body["preferred_destination_countries"] == ["Malaysia", "Canada"]
+    assert body["version"] == 2
+
+    cleared = client.patch(
+        "/api/v1/profiles/me",
+        json={"nationality": None, "preferred_destination_countries": [], "expected_version": 2},
+        headers=auth_headers(token),
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["nationality"] is None
+    assert cleared.json()["nationality_code"] is None
+    assert cleared.json()["preferred_destination_country_codes"] == []
+
+
+def test_profile_update_requires_current_version(
+    client: TestClient, db_session: Session
+) -> None:
+    email = "versioned-profile@example.com"
+    create_student(db_session, email)
+    token = login(client, email)
+    created = client.put(
+        "/api/v1/profiles/me",
+        json=profile_payload(),
+        headers=auth_headers(token),
+    )
+    assert created.status_code == 200
+
+    missing = client.put(
+        "/api/v1/profiles/me",
+        json=profile_payload(nationality="Malaysia"),
+        headers=auth_headers(token),
+    )
+    stale = client.patch(
+        "/api/v1/profiles/me",
+        json={"nationality": "Malaysia", "expected_version": 999},
+        headers=auth_headers(token),
+    )
+
+    assert missing.status_code == 409
+    assert missing.json()["error"]["code"] == "profile_version_required"
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "profile_version_conflict"
+
+
+def test_profile_validation_bounds_free_text_and_lists(
+    client: TestClient, db_session: Session
+) -> None:
+    email = "bounded-profile@example.com"
+    create_student(db_session, email)
+    token = login(client, email)
+
+    long_text = "x" * 2001
+    too_many_items = [f"paper {index}" for index in range(21)]
+    long_item = ["x" * 501]
+    text_response = client.put(
+        "/api/v1/profiles/me",
+        json=profile_payload(research_experience=long_text),
+        headers=auth_headers(token),
+    )
+    list_response = client.put(
+        "/api/v1/profiles/me",
+        json=profile_payload(publications=too_many_items),
+        headers=auth_headers(token),
+    )
+    item_response = client.put(
+        "/api/v1/profiles/me",
+        json=profile_payload(preferred_destination_countries=long_item),
+        headers=auth_headers(token),
+    )
+
+    assert text_response.status_code == 422
+    assert list_response.status_code == 422
+    assert item_response.status_code == 422
 
 
 def test_profiles_are_isolated_between_users(client: TestClient, db_session: Session) -> None:

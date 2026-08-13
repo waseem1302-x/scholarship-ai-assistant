@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { emptyProfileDraft } from "./types";
-import { listFromText, profilePayload } from "./workspace";
+import { emptyProfileDraft, type StudentProfile } from "./types";
+import { listFromText, profilePayload, saveProfile } from "./workspace";
 
 describe("student workspace payloads", () => {
   it("does not send test scores when the student has not taken that test", () => {
@@ -34,6 +34,21 @@ describe("student workspace payloads", () => {
     const payload = profilePayload({ ...emptyProfileDraft, target_intake_year: "2027" });
 
     expect(payload.target_intake_year).toBe(2027);
+  });
+
+  it("attaches expected_version only when saving an existing profile", async () => {
+    const requests: unknown[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(init ? JSON.parse(String(init.body)) : null);
+      return Promise.resolve(new Response(JSON.stringify({ version: 8 }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }) as typeof fetch;
+    const profile = { version: 7 } as StudentProfile;
+
+    await saveProfile(emptyProfileDraft, profile);
+
+    expect(requests[0]).toMatchObject({ expected_version: 7 });
+    globalThis.fetch = originalFetch;
   });
 
   it("removes empty list entries before a profile is saved", () => {

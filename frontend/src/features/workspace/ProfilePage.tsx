@@ -42,7 +42,7 @@ export function ProfilePage() {
   function update(key: keyof ProfileDraft, value: string) { setDraft((current) => ({ ...current, [key]: value })); }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setIsSaving(true); setMessage(null); setError(null);
-    try { const saved = await saveProfile(draft); setProfile(saved); setDraft(draftFromProfile(saved)); setMessage("Profile saved. Your match explanations now use this information."); }
+    try { const saved = await saveProfile(draft, profile); setProfile(saved); setDraft(draftFromProfile(saved)); setMessage("Profile saved. Your match explanations now use this information."); }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Unable to save your profile."); }
     finally { setIsSaving(false); }
   }

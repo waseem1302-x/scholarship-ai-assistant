@@ -99,7 +99,9 @@ class StudentProfile(Base):
         ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
     )
     nationality: Mapped[str | None] = mapped_column(String(100))
+    nationality_code: Mapped[str | None] = mapped_column(String(2), index=True)
     country_of_residence: Mapped[str | None] = mapped_column(String(100))
+    country_of_residence_code: Mapped[str | None] = mapped_column(String(2), index=True)
     current_education_level: Mapped[EducationLevel | None] = mapped_column(
         Enum(
             EducationLevel,
@@ -122,6 +124,8 @@ class StudentProfile(Base):
         index=True,
     )
     intended_field: Mapped[str | None] = mapped_column(String(255))
+    intended_field_taxonomy: Mapped[str | None] = mapped_column(String(120), index=True)
+    intended_field_detail: Mapped[str | None] = mapped_column(String(255))
     academic_discipline: Mapped[str | None] = mapped_column(String(255))
     cgpa: Mapped[Decimal | None] = mapped_column(Numeric(4, 2))
     percentage: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
@@ -158,6 +162,7 @@ class StudentProfile(Base):
     leadership_experience: Mapped[str | None] = mapped_column(Text)
     financial_need: Mapped[str | None] = mapped_column(Text)
     preferred_destination_countries: Mapped[list[str]] = mapped_column(JSON, default=list)
+    preferred_destination_country_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
     preferred_study_mode: Mapped[StudyMode | None] = mapped_column(
         Enum(
             StudyMode,
@@ -172,6 +177,7 @@ class StudentProfile(Base):
     target_intake_year: Mapped[int | None]
     application_constraints: Mapped[str | None] = mapped_column(Text)
     additional_eligibility_information: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )

@@ -45,3 +45,24 @@ Verification:
 
 - `.\.venv\Scripts\python.exe -m ruff check app tests\test_opportunities.py tests\test_applications.py tests\test_assistant.py tests\test_community.py tests\test_matching.py tests\test_source_monitor.py tests\test_lifecycle_reconciliation.py tests\test_seed_opportunities.py`
 - `.\.venv\Scripts\python.exe -m pytest tests\test_opportunities.py::test_source_verification_does_not_publish_record_without_review_action tests\test_opportunities.py::test_admin_create_cannot_publish_record_without_review_action tests\test_opportunities.py::test_admin_review_action_publish_and_flag_conflict_control_public_visibility tests\test_opportunities.py::test_source_hash_change_blocks_public_visibility_until_reverified tests\test_applications.py tests\test_command_centre.py tests\test_assistant.py tests\test_community.py tests\test_matching.py::test_matching_requires_profile tests\test_source_monitor.py tests\test_lifecycle_reconciliation.py tests\test_seed_opportunities.py`
+
+## 2026-08-14 Checkpoint: Weaknesses 44-49
+
+| ID | Status | Evidence | Remediation |
+| --- | --- | --- | --- |
+| 44 | Confirmed true, fixed | Student nationality and residence were stored only as free-text display strings. | Added canonical ISO alpha-2 country code fields for nationality, residence, and preferred destinations while preserving the user's display text. |
+| 45 | Confirmed true, fixed | Intended field and academic discipline were raw text only. | Added `intended_field_taxonomy` and `intended_field_detail` so canonical matching can be separated from user-entered wording. |
+| 46 | Confirmed true, fixed | Profile narrative and list fields lacked API-level bounds. | Added max lengths for free-text fields, list sizes, and list item lengths with regression tests. |
+| 47 | Confirmed true, fixed | Completeness always required CGPA/grading scale even when percentage was supplied instead. | Completeness now accepts either CGPA or percentage and only asks for grading scale when CGPA is present. |
+| 48 | Confirmed true, fixed | Profile updates only supported full `PUT`, making omitted fields vulnerable to accidental clearing by future clients. | Added `PATCH /profiles/me` with sparse updates and dependent canonical-field cleanup when source fields are cleared. |
+| 49 | Confirmed true, fixed | Profiles had no edit version or stale-write detection. | Added profile `version`, `expected_version` conflict checks for existing `PUT`/`PATCH`, frontend save support, and stale-write tests. |
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m ruff check app\modules\profiles tests\test_profiles.py tests\test_migrations.py tests\test_matching.py`
+- `.\.venv\Scripts\python.exe -m pytest tests\test_profiles.py tests\test_migrations.py -q`
+- `.\.venv\Scripts\python.exe -m pytest tests\test_matching.py::test_matching_persists_reproducible_evaluation_history -q`
+- `.\.venv\Scripts\python.exe -m pytest -q`
+- `pnpm --dir frontend test`
+- `pnpm --dir frontend build`
+- `git diff --check`
