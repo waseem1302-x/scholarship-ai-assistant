@@ -28,6 +28,7 @@ def test_production_login_limiting_uses_disposable_redis() -> None:
         email_smtp_host="smtp.example.test",
         email_smtp_username="api-user",
         email_smtp_password="smtp-password",
+        password_breach_check_enabled=True,
         auth_login_rate_limit_per_minute=1,
         auth_login_global_rate_limit_per_minute=10,
     )
