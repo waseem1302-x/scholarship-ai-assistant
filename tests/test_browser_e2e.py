@@ -23,7 +23,7 @@ def test_auth_form_is_keyboard_reachable(page: Page, live_base_url: str) -> None
     expect(page.get_by_role("link", name="Catalogue", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Dashboard", exact=True)).to_have_count(0)
     page.get_by_role("link", name="Get started").click()
-    email = page.get_by_label("Email address")
+    email = page.get_by_label("Email address", exact=True)
     password = page.get_by_label("Password")
     email.focus()
     expect(email).to_be_focused()
@@ -65,7 +65,7 @@ def test_react_frontend_can_register_and_sign_out(page: Page, live_base_url: str
 
     page.get_by_role("link", name="Get started").click()
     page.get_by_role("tab", name="Create account").click()
-    page.get_by_label("Email address").fill(email)
+    page.get_by_label("Email address", exact=True).fill(email)
     page.get_by_label("Password").fill("PhaseThree!2026")
     page.get_by_role("button", name="Create account").click()
 
@@ -87,7 +87,7 @@ def test_react_email_verification_and_password_reset(page: Page, live_base_url: 
     page.goto(live_base_url, wait_until="networkidle")
     page.get_by_role("link", name="Get started").click()
     page.get_by_role("tab", name="Create account").click()
-    page.get_by_label("Email address").fill(email)
+    page.get_by_label("Email address", exact=True).fill(email)
     page.get_by_label("Password").fill("LifecyclePassword2026")
     page.get_by_role("button", name="Create account").click()
 
@@ -100,7 +100,7 @@ def test_react_email_verification_and_password_reset(page: Page, live_base_url: 
 
     page.get_by_role("link", name="Return to workspace").click()
     page.goto(f"{live_base_url}/auth/password-reset", wait_until="networkidle")
-    page.get_by_label("Email address").fill(email)
+    page.get_by_label("Email address", exact=True).fill(email)
     page.get_by_role("button", name="Request password reset").click()
     reset_token = page.get_by_label("Development password reset token").inner_text()
     page.get_by_role("textbox", name="Reset token", exact=True).fill(reset_token)
@@ -109,8 +109,8 @@ def test_react_email_verification_and_password_reset(page: Page, live_base_url: 
     expect(page.get_by_role("heading", name="Password updated.")).to_be_visible()
 
     page.get_by_role("link", name="Sign in", exact=True).last.click()
-    expect(page.get_by_label("Email address")).to_be_visible()
-    page.get_by_label("Email address").fill(email)
+    expect(page.get_by_label("Email address", exact=True)).to_be_visible()
+    page.get_by_label("Email address", exact=True).fill(email)
     page.get_by_label("Password").fill(new_password)
     page.get_by_role("button", name="Sign in").click()
     expect(page).to_have_url(f"{live_base_url}/dashboard")
