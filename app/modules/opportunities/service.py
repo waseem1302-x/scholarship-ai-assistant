@@ -512,43 +512,36 @@ class OpportunityService:
     def list_data_quality_issues(
         self, *, limit: int, offset: int
     ) -> DataQualityIssueSearchResponse:
-        opportunities = self.repository.list_admin_opportunities(limit=None)
-        issues = self._sorted_issues(
-            issue
-            for opportunity in opportunities
-            for issue in self._data_quality_issues_for_opportunity(opportunity)
-        )
-        page = issues[offset : offset + limit]
+        page = [
+            DataQualityIssueResponse.model_validate(issue)
+            for issue in self.repository.list_data_quality_issues(limit=limit, offset=offset)
+        ]
+        total = self.repository.count_data_quality_issues()
         return DataQualityIssueSearchResponse(
             items=page,
-            pagination=self._pagination(
-                total=len(issues), limit=limit, offset=offset, count=len(page)
-            ),
+            pagination=self._pagination(total=total, limit=limit, offset=offset, count=len(page)),
         )
 
     def list_review_queue(self, *, limit: int, offset: int) -> ReviewQueueResponse:
-        opportunities = self.repository.list_admin_opportunities(limit=None)
-        items: list[ReviewQueueItemResponse] = []
-        for opportunity in opportunities:
-            reasons = self._sorted_issues(self._data_quality_issues_for_opportunity(opportunity))
-            review_reasons = [
-                reason
-                for reason in reasons
-                if reason.severity in {DataQualitySeverity.HIGH, DataQualitySeverity.MEDIUM}
-            ]
-            if review_reasons:
-                items.append(
-                    ReviewQueueItemResponse(
-                        opportunity=self.to_admin_response(opportunity),
-                        reasons=review_reasons,
-                    )
-                )
-        page = items[offset : offset + limit]
+        opportunities = self.repository.list_review_queue_opportunities(limit=limit, offset=offset)
+        issues_by_opportunity: dict[uuid.UUID, list[DataQualityIssueResponse]] = {}
+        for issue in self.repository.list_data_quality_issues_for_opportunities(
+            [opportunity.id for opportunity in opportunities]
+        ):
+            response = DataQualityIssueResponse.model_validate(issue)
+            if response.severity in {DataQualitySeverity.HIGH, DataQualitySeverity.MEDIUM}:
+                issues_by_opportunity.setdefault(response.opportunity_id, []).append(response)
+        items = [
+            ReviewQueueItemResponse(
+                opportunity=self.to_admin_response(opportunity),
+                reasons=self._sorted_issues(issues_by_opportunity[opportunity.id]),
+            )
+            for opportunity in opportunities
+        ]
+        total = self.repository.count_review_queue_opportunities()
         return ReviewQueueResponse(
-            items=page,
-            pagination=self._pagination(
-                total=len(items), limit=limit, offset=offset, count=len(page)
-            ),
+            items=items,
+            pagination=self._pagination(total=total, limit=limit, offset=offset, count=len(items)),
         )
 
     def list_public_opportunities(

@@ -378,6 +378,12 @@ class Source(Base):
     __table_args__ = (
         CheckConstraint("url = trim(url)", name="ck_sources_url_trimmed"),
         UniqueConstraint("opportunity_id", "url", name="uq_sources_opportunity_url"),
+        Index(
+            "ix_sources_review_status_freshness",
+            "verification_status",
+            "last_verified_at",
+            "opportunity_id",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

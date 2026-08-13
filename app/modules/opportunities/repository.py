@@ -1,18 +1,22 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import Select, String, and_, case, cast, func, literal, or_, select, union_all
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.modules.opportunities.lifecycle import SOURCE_FRESHNESS_DAYS
 from app.modules.opportunities.models import (
     ApplicationWindowState,
+    DataConfidence,
     DegreeLevel,
+    EligibilityRule,
+    EligibilityRuleType,
     FundingType,
     Opportunity,
     OpportunityStatus,
     Provider,
     Source,
+    SourceExcerpt,
     SourceType,
     University,
     VerificationStatus,
@@ -189,6 +193,304 @@ class OpportunityRepository:
             deadline_before=deadline_before,
         )
         return self._count_statement(statement)
+
+    def list_data_quality_issues(self, *, limit: int, offset: int) -> list[dict[str, object]]:
+        issues = self._data_quality_issues_statement().subquery()
+        severity_rank = case(
+            (issues.c.severity == "high", 0),
+            (issues.c.severity == "medium", 1),
+            else_=2,
+        )
+        statement = (
+            select(issues)
+            .order_by(severity_rank, issues.c.opportunity_name, issues.c.code)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [dict(row) for row in self.session.execute(statement).mappings()]
+
+    def count_data_quality_issues(self) -> int:
+        return (
+            self.session.scalar(
+                select(func.count()).select_from(self._data_quality_issues_statement().subquery())
+            )
+            or 0
+        )
+
+    def list_data_quality_issues_for_opportunities(
+        self, opportunity_ids: list[uuid.UUID]
+    ) -> list[dict[str, object]]:
+        if not opportunity_ids:
+            return []
+        issues = self._data_quality_issues_statement().subquery()
+        severity_rank = case(
+            (issues.c.severity == "high", 0),
+            (issues.c.severity == "medium", 1),
+            else_=2,
+        )
+        statement = (
+            select(issues)
+            .where(issues.c.opportunity_id.in_(opportunity_ids))
+            .order_by(severity_rank, issues.c.opportunity_name, issues.c.code)
+        )
+        return [dict(row) for row in self.session.execute(statement).mappings()]
+
+    def list_review_queue_opportunities(self, *, limit: int, offset: int) -> list[Opportunity]:
+        issue_rows = self._data_quality_issues_statement().subquery()
+        candidate_ids = select(issue_rows.c.opportunity_id).where(
+            issue_rows.c.severity.in_(["high", "medium"])
+        )
+        statement = (
+            select(Opportunity)
+            .where(Opportunity.id.in_(candidate_ids))
+            .options(
+                joinedload(Opportunity.provider),
+                joinedload(Opportunity.university),
+                selectinload(Opportunity.sources),
+                selectinload(Opportunity.cycles),
+                selectinload(Opportunity.eligibility_rules),
+            )
+            .order_by(Opportunity.name)
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(statement))
+
+    def count_review_queue_opportunities(self) -> int:
+        issue_rows = self._data_quality_issues_statement().subquery()
+        candidate_ids = select(issue_rows.c.opportunity_id).where(
+            issue_rows.c.severity.in_(["high", "medium"])
+        )
+        return (
+            self.session.scalar(
+                select(func.count()).select_from(
+                    select(Opportunity.id).where(Opportunity.id.in_(candidate_ids)).subquery()
+                )
+            )
+            or 0
+        )
+
+    @staticmethod
+    def _data_quality_issues_statement() -> Select[tuple[object, ...]]:
+        """Return one database row per quality issue, ready for SQL pagination."""
+        now = datetime.now(UTC)
+        stale_before = now - timedelta(days=SOURCE_FRESHNESS_DAYS)
+        best_source_id = (
+            select(Source.id)
+            .where(Source.opportunity_id == Opportunity.id)
+            .order_by(
+                case(
+                    (
+                        and_(
+                            Source.source_type == SourceType.OFFICIAL,
+                            Source.verification_status == VerificationStatus.OFFICIALLY_VERIFIED,
+                        ),
+                        0,
+                    ),
+                    else_=1,
+                ),
+                Source.date_collected,
+            )
+            .limit(1)
+            .scalar_subquery()
+        )
+
+        def issue(
+            code: str,
+            severity: str,
+            message: str,
+            condition: object,
+            *,
+            source_id: object | None = None,
+        ) -> Select[tuple[object, ...]]:
+            return select(
+                literal(code).label("code"),
+                literal(severity).label("severity"),
+                literal(message).label("message"),
+                Opportunity.id.label("opportunity_id"),
+                Opportunity.name.label("opportunity_name"),
+                (source_id if source_id is not None else best_source_id).label("source_id"),
+            ).where(condition)
+
+        source_requires_review = issue(
+            "source_requires_review",
+            "high",
+            "Source is not verified and requires curator review.",
+            Source.verification_status.in_(
+                [VerificationStatus.UNVERIFIED, VerificationStatus.NEEDS_REVIEW]
+            ),
+            source_id=Source.id,
+        ).join(Source, Source.opportunity_id == Opportunity.id)
+        source_conflict = issue(
+            "source_conflict",
+            "high",
+            "Source has conflicting information that must be resolved.",
+            Source.verification_status == VerificationStatus.CONFLICTING_INFORMATION,
+            source_id=Source.id,
+        ).join(Source, Source.opportunity_id == Opportunity.id)
+        source_never_verified = issue(
+            "source_never_verified",
+            "medium",
+            "Source has no recorded verification timestamp.",
+            Source.last_verified_at.is_(None),
+            source_id=Source.id,
+        ).join(Source, Source.opportunity_id == Opportunity.id)
+        source_stale = issue(
+            "source_stale",
+            "high",
+            f"Source has not been reverified within {SOURCE_FRESHNESS_DAYS} days.",
+            Source.last_verified_at < stale_before,
+            source_id=Source.id,
+        ).join(Source, Source.opportunity_id == Opportunity.id)
+        source_hash_missing = issue(
+            "source_hash_missing",
+            "low",
+            "Source has no stored content hash for change monitoring.",
+            Source.content_hash.is_(None),
+            source_id=Source.id,
+        ).join(Source, Source.opportunity_id == Opportunity.id)
+        missing_sources = issue(
+            "official_source_missing",
+            "high",
+            "Opportunity has no source evidence attached.",
+            ~Opportunity.sources.any(),
+        )
+        missing_deadline = issue(
+            "deadline_missing",
+            "high",
+            "Application deadline is missing or unknown.",
+            Opportunity.application_deadline.is_(None),
+        )
+        missing_documents = issue(
+            "required_documents_missing",
+            "medium",
+            "Required documents are not structured.",
+            cast(Opportunity.required_documents, String) == "[]",
+        )
+        missing_english = issue(
+            "english_requirement_missing",
+            "medium",
+            "English-language requirement is missing.",
+            Opportunity.english_language_requirement.is_(None),
+        )
+        missing_academic = issue(
+            "academic_requirement_missing",
+            "medium",
+            "Minimum academic requirement is missing.",
+            Opportunity.minimum_academic_requirement.is_(None),
+        )
+        missing_rules = issue(
+            "structured_eligibility_missing",
+            "high",
+            "Public opportunity has no structured eligibility rules and requires curator coverage.",
+            ~Opportunity.eligibility_rules.any(),
+        )
+
+        def missing_rule_types(*types: EligibilityRuleType) -> object:
+            return ~Opportunity.eligibility_rules.any(EligibilityRule.rule_type.in_(types))
+
+        unstructured_nationality = issue(
+            "unstructured_eligibility_nationality_eligibility",
+            "high",
+            "Public opportunity still depends on unstructured eligibility text: "
+            "nationality eligibility.",
+            and_(
+                Opportunity.nationality_eligibility.is_not(None),
+                missing_rule_types(EligibilityRuleType.NATIONALITY),
+            ),
+        )
+        unstructured_field = issue(
+            "unstructured_eligibility_field_eligibility",
+            "high",
+            "Public opportunity still depends on unstructured eligibility text: field eligibility.",
+            and_(
+                Opportunity.field_eligibility.is_not(None),
+                missing_rule_types(EligibilityRuleType.FIELD),
+            ),
+        )
+        unstructured_academic = issue(
+            "unstructured_eligibility_academic_requirement",
+            "high",
+            "Public opportunity still depends on unstructured eligibility text: "
+            "academic requirement.",
+            and_(
+                Opportunity.minimum_academic_requirement.is_not(None),
+                missing_rule_types(
+                    EligibilityRuleType.CGPA,
+                    EligibilityRuleType.PERCENTAGE,
+                    EligibilityRuleType.CURRENT_EDUCATION_LEVEL,
+                ),
+            ),
+        )
+        unstructured_english = issue(
+            "unstructured_eligibility_english_test_requirement",
+            "high",
+            "Public opportunity still depends on unstructured eligibility text: "
+            "english test requirement.",
+            and_(
+                or_(
+                    Opportunity.english_language_requirement.is_not(None),
+                    Opportunity.standardized_test_requirement.is_not(None),
+                ),
+                missing_rule_types(
+                    EligibilityRuleType.IELTS,
+                    EligibilityRuleType.TOEFL,
+                    EligibilityRuleType.DUOLINGO,
+                    EligibilityRuleType.ENGLISH_TEST_STATUS,
+                ),
+            ),
+        )
+        broken_evidence = issue(
+            "eligibility_rule_evidence_missing",
+            "high",
+            "Structured eligibility rule lacks a linked official source and immutable excerpt.",
+            or_(
+                EligibilityRule.source_id.is_(None),
+                EligibilityRule.source_excerpt_id.is_(None),
+                ~EligibilityRule.source.has(
+                    and_(
+                        Source.opportunity_id == Opportunity.id,
+                        Source.source_type == SourceType.OFFICIAL,
+                    )
+                ),
+                ~EligibilityRule.source_excerpt.has(
+                    SourceExcerpt.source_id == EligibilityRule.source_id
+                ),
+            ),
+            source_id=EligibilityRule.source_id,
+        ).join(EligibilityRule, EligibilityRule.opportunity_id == Opportunity.id)
+        funding_unknown = issue(
+            "funding_type_unknown",
+            "medium",
+            "Funding type is unknown.",
+            Opportunity.funding_type == FundingType.UNKNOWN,
+        )
+        low_confidence = issue(
+            "low_data_confidence",
+            "medium",
+            "Data confidence is low.",
+            Opportunity.data_confidence == DataConfidence.LOW,
+        )
+        return union_all(
+            source_requires_review,
+            source_conflict,
+            source_never_verified,
+            source_stale,
+            source_hash_missing,
+            missing_sources,
+            missing_deadline,
+            missing_documents,
+            missing_english,
+            missing_academic,
+            missing_rules,
+            unstructured_nationality,
+            unstructured_field,
+            unstructured_academic,
+            unstructured_english,
+            broken_evidence,
+            funding_unknown,
+            low_confidence,
+        )
 
     def _admin_opportunities_statement(
         self,

@@ -25,3 +25,14 @@ def test_window_state_filter_is_translated_to_sql(db_session) -> None:
 
     assert "CASE" in sql
     assert "catalogue_application_opening_date" in sql
+
+
+def test_data_quality_issue_queue_is_sql_queryable(db_session) -> None:
+    repository = OpportunityRepository(db_session)
+    statement = repository._data_quality_issues_statement().limit(20).offset(40)
+    sql = str(statement.compile(dialect=sqlite.dialect()))
+
+    assert "UNION ALL" in sql
+    assert "required_documents" in sql
+    assert "CAST" in sql
+    assert "LIMIT ? OFFSET ?" in sql

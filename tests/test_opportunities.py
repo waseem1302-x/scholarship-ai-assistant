@@ -858,6 +858,31 @@ def test_admin_data_quality_dashboard_reports_review_reasons(
     assert any(reason["severity"] == "high" for reason in response_items(queue)[0]["reasons"])
 
 
+def test_admin_quality_queues_use_sql_pagination(client: TestClient, db_session: Session) -> None:
+    headers = admin_headers(client, db_session)
+    for name in ["A Queue Scholarship", "B Queue Scholarship", "C Queue Scholarship"]:
+        create_opportunity(
+            client,
+            headers,
+            name=name,
+            application_deadline=None,
+            required_documents=[],
+            english_language_requirement=None,
+            minimum_academic_requirement=None,
+        )
+
+    queue = client.get("/api/v1/admin/review-queue?limit=1&offset=1", headers=headers)
+    issues = client.get("/api/v1/admin/data-quality-issues?limit=1&offset=1", headers=headers)
+
+    assert queue.status_code == 200
+    assert queue.json()["pagination"]["total"] == 3
+    assert queue.json()["pagination"]["count"] == 1
+    assert response_items(queue)[0]["opportunity"]["name"] == "B Queue Scholarship"
+    assert issues.status_code == 200
+    assert issues.json()["pagination"]["total"] >= 3
+    assert issues.json()["pagination"]["count"] == 1
+
+
 def test_source_hash_change_blocks_public_visibility_until_reverified(
     client: TestClient, db_session: Session
 ) -> None:
