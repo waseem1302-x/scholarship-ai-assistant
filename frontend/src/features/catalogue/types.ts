@@ -20,6 +20,7 @@ export interface OpportunitySummary {
   degree_level: DegreeLevel;
   application_deadline: string | null;
   funding_type: FundingType;
+  funding_classification?: "fully_funded" | "partial" | "unknown";
   funding_summary: string;
   verification_status: "officially_verified";
   last_verified_at: string | null;
@@ -33,6 +34,13 @@ export interface OpportunityDetail extends OpportunitySummary {
   nationality_eligibility: string | null;
   intake_year: number | null;
   tuition_coverage: string | null;
+  funding_policy?: string | null;
+  tuition_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
+  stipend_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
+  accommodation_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
+  travel_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
+  insurance_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
+  fees_coverage_status?: "confirmed" | "partial" | "not_covered" | "unknown";
   monthly_stipend_amount: number | null;
   monthly_stipend_currency: string | null;
   accommodation_coverage: string | null;

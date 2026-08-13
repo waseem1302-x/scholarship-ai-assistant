@@ -43,6 +43,16 @@ def opportunity_payload(**overrides: object) -> dict:
         "application_deadline": "2027-05-30T23:59:59Z",
         "intake_year": 2027,
         "funding_type": "full",
+        "funding_policy": (
+            "The official award policy confirms tuition, living stipend, accommodation, travel, "
+            "insurance, and mandatory fee coverage for the full study period."
+        ),
+        "tuition_coverage_status": "confirmed",
+        "stipend_coverage_status": "confirmed",
+        "accommodation_coverage_status": "confirmed",
+        "travel_coverage_status": "confirmed",
+        "insurance_coverage_status": "confirmed",
+        "fees_coverage_status": "confirmed",
         "tuition_coverage": "Full tuition coverage stated by the official source",
         "monthly_stipend_amount": "1200.00",
         "monthly_stipend_currency": "MYR",

@@ -46,7 +46,7 @@ function OpportunityDetailContent({ opportunity }: { opportunity: OpportunityDet
         <div className="tag-list detail-tags" aria-label="Opportunity snapshot">
           <span>{opportunity.country}</span>
           <span>{readableValue(opportunity.degree_level)}</span>
-          <span>{readableValue(opportunity.funding_type)} funding</span>
+          <span>{readableValue(opportunity.funding_classification ?? "unknown")}</span>
           <span>{deadlineLabel(opportunity.application_deadline)}</span>
         </div>
       </section>

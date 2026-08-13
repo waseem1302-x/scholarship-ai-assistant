@@ -39,6 +39,19 @@ class FundingType(StrEnum):
     UNKNOWN = "unknown"
 
 
+class FundingCoverageStatus(StrEnum):
+    CONFIRMED = "confirmed"
+    PARTIAL = "partial"
+    NOT_COVERED = "not_covered"
+    UNKNOWN = "unknown"
+
+
+class FundingClassification(StrEnum):
+    FULLY_FUNDED = "fully_funded"
+    PARTIAL = "partial"
+    UNKNOWN = "unknown"
+
+
 class OpportunityStatus(StrEnum):
     DRAFT = "draft"
     ACTIVE = "active"
@@ -229,6 +242,85 @@ class Opportunity(Base):
         ),
         default=FundingType.UNKNOWN,
         index=True,
+    )
+    funding_classification: Mapped[FundingClassification] = mapped_column(
+        Enum(
+            FundingClassification,
+            name="funding_classification",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=FundingClassification.UNKNOWN,
+        index=True,
+    )
+    funding_policy: Mapped[str | None] = mapped_column(Text)
+    tuition_coverage_status: Mapped[FundingCoverageStatus] = mapped_column(
+        Enum(
+            FundingCoverageStatus,
+            name="funding_coverage_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=FundingCoverageStatus.UNKNOWN,
+    )
+    stipend_coverage_status: Mapped[FundingCoverageStatus] = mapped_column(
+        Enum(
+            FundingCoverageStatus,
+            name="funding_coverage_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=FundingCoverageStatus.UNKNOWN,
+    )
+    accommodation_coverage_status: Mapped[FundingCoverageStatus] = mapped_column(
+        Enum(
+            FundingCoverageStatus,
+            name="funding_coverage_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=FundingCoverageStatus.UNKNOWN,
+    )
+    travel_coverage_status: Mapped[FundingCoverageStatus] = mapped_column(
+        Enum(
+            FundingCoverageStatus,
+            name="funding_coverage_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=FundingCoverageStatus.UNKNOWN,
+    )
+    insurance_coverage_status: Mapped[FundingCoverageStatus] = mapped_column(
+        Enum(
+            FundingCoverageStatus,
+            name="funding_coverage_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=FundingCoverageStatus.UNKNOWN,
+    )
+    fees_coverage_status: Mapped[FundingCoverageStatus] = mapped_column(
+        Enum(
+            FundingCoverageStatus,
+            name="funding_coverage_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=FundingCoverageStatus.UNKNOWN,
     )
     tuition_coverage: Mapped[str | None] = mapped_column(Text)
     monthly_stipend_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))

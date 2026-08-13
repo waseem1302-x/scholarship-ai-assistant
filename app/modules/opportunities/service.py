@@ -20,6 +20,8 @@ from app.modules.opportunities.models import (
     DuplicateSuggestion,
     DuplicateSuggestionStatus,
     EligibilityRule,
+    FundingClassification,
+    FundingCoverageStatus,
     Opportunity,
     OpportunityCycle,
     OpportunityStatus,
@@ -150,6 +152,14 @@ class OpportunityService:
             application_deadline=payload.application_deadline,
             intake_year=payload.intake_year,
             funding_type=payload.funding_type,
+            funding_classification=self._funding_classification(payload),
+            funding_policy=payload.funding_policy,
+            tuition_coverage_status=payload.tuition_coverage_status,
+            stipend_coverage_status=payload.stipend_coverage_status,
+            accommodation_coverage_status=payload.accommodation_coverage_status,
+            travel_coverage_status=payload.travel_coverage_status,
+            insurance_coverage_status=payload.insurance_coverage_status,
+            fees_coverage_status=payload.fees_coverage_status,
             tuition_coverage=payload.tuition_coverage,
             monthly_stipend_amount=payload.monthly_stipend_amount,
             monthly_stipend_currency=payload.monthly_stipend_currency,
@@ -681,6 +691,7 @@ class OpportunityService:
             degree_level=opportunity.degree_level,
             application_deadline=opportunity.application_deadline,
             funding_type=opportunity.funding_type,
+            funding_classification=opportunity.funding_classification,
             funding_summary=self._funding_summary(opportunity),
             verification_status=source.verification_status,
             last_verified_at=source.last_verified_at,
@@ -706,6 +717,13 @@ class OpportunityService:
             "field_eligibility": opportunity.field_eligibility,
             "nationality_eligibility": opportunity.nationality_eligibility,
             "intake_year": opportunity.intake_year,
+            "funding_policy": opportunity.funding_policy,
+            "tuition_coverage_status": opportunity.tuition_coverage_status,
+            "stipend_coverage_status": opportunity.stipend_coverage_status,
+            "accommodation_coverage_status": opportunity.accommodation_coverage_status,
+            "travel_coverage_status": opportunity.travel_coverage_status,
+            "insurance_coverage_status": opportunity.insurance_coverage_status,
+            "fees_coverage_status": opportunity.fees_coverage_status,
             "tuition_coverage": opportunity.tuition_coverage,
             "monthly_stipend_amount": opportunity.monthly_stipend_amount,
             "monthly_stipend_currency": opportunity.monthly_stipend_currency,
@@ -845,7 +863,7 @@ class OpportunityService:
 
     @staticmethod
     def _funding_summary(opportunity: Opportunity) -> str:
-        parts: list[str] = [opportunity.funding_type.value.replace("_", " ")]
+        parts: list[str] = [opportunity.funding_classification.value.replace("_", " ")]
         if opportunity.tuition_coverage:
             parts.append(f"tuition: {opportunity.tuition_coverage}")
         if opportunity.monthly_stipend_amount is not None:
@@ -858,6 +876,26 @@ class OpportunityService:
         if opportunity.travel_allowance:
             parts.append("travel mentioned")
         return "; ".join(parts)
+
+    @staticmethod
+    def _funding_classification(payload: OpportunityCreate) -> FundingClassification:
+        components = [
+            payload.tuition_coverage_status,
+            payload.stipend_coverage_status,
+            payload.accommodation_coverage_status,
+            payload.travel_coverage_status,
+            payload.insurance_coverage_status,
+            payload.fees_coverage_status,
+        ]
+        if payload.funding_policy and all(
+            component is FundingCoverageStatus.CONFIRMED for component in components
+        ):
+            return FundingClassification.FULLY_FUNDED
+        if any(component is not FundingCoverageStatus.UNKNOWN for component in components):
+            return FundingClassification.PARTIAL
+        if payload.funding_type.value in {"partial", "tuition_only", "stipend_only"}:
+            return FundingClassification.PARTIAL
+        return FundingClassification.UNKNOWN
 
     def _import_rows(
         self, payload: OpportunityImportRequest
@@ -929,6 +967,22 @@ class OpportunityService:
         if any(value for key, value in source.items() if key != "source_type"):
             source.setdefault("verification_status", VerificationStatus.NEEDS_REVIEW.value)
             row["source"] = source
+
+        component_fields = (
+            "tuition_coverage_status",
+            "stipend_coverage_status",
+            "accommodation_coverage_status",
+            "travel_coverage_status",
+            "insurance_coverage_status",
+            "fees_coverage_status",
+        )
+        if row.get("funding_type") == "full" and not all(
+            row.get(field) == FundingCoverageStatus.CONFIRMED.value for field in component_fields
+        ):
+            row["funding_type"] = "unknown"
+            warnings.append(
+                "Imported full-funding claim was set to unknown until every component is verified"
+            )
         return row, warnings
 
     @staticmethod

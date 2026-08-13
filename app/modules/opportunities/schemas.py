@@ -22,6 +22,8 @@ from app.modules.opportunities.models import (
     DuplicateSuggestionStatus,
     EligibilityOperator,
     EligibilityRuleType,
+    FundingClassification,
+    FundingCoverageStatus,
     FundingType,
     OpportunityStatus,
     SourceType,
@@ -124,6 +126,13 @@ class OpportunityCreate(BaseModel):
     application_deadline: datetime | None = None
     intake_year: int | None = Field(default=None, ge=2000, le=2100)
     funding_type: FundingType = FundingType.UNKNOWN
+    funding_policy: str | None = Field(default=None, min_length=20, max_length=2000)
+    tuition_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
+    stipend_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
+    accommodation_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
+    travel_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
+    insurance_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
+    fees_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
     tuition_coverage: str | None = None
     monthly_stipend_amount: Decimal | None = Field(default=None, ge=0)
     monthly_stipend_currency: str | None = Field(default=None, min_length=3, max_length=3)
@@ -178,15 +187,22 @@ class OpportunityCreate(BaseModel):
         ):
             raise ValueError("Application deadline cannot be before the opening date")
 
-        funding_fields = [
-            self.tuition_coverage,
-            self.monthly_stipend_amount,
-            self.accommodation_coverage,
-            self.travel_allowance,
-            self.health_insurance,
+        components = [
+            self.tuition_coverage_status,
+            self.stipend_coverage_status,
+            self.accommodation_coverage_status,
+            self.travel_coverage_status,
+            self.insurance_coverage_status,
+            self.fees_coverage_status,
         ]
-        if self.funding_type is FundingType.FULL and not any(funding_fields):
-            raise ValueError("Full funding requires explicit structured coverage evidence")
+        if self.funding_type is FundingType.FULL and (
+            not self.funding_policy
+            or any(component is not FundingCoverageStatus.CONFIRMED for component in components)
+        ):
+            raise ValueError(
+                "Full funding requires a documented policy and confirmed tuition, stipend, "
+                "accommodation, travel, insurance, and fee coverage"
+            )
 
         if self.monthly_stipend_amount is not None and self.monthly_stipend_currency is None:
             raise ValueError("Monthly stipend currency is required when amount is present")
@@ -371,6 +387,7 @@ class OpportunitySummaryResponse(BaseModel):
     degree_level: DegreeLevel
     application_deadline: datetime | None
     funding_type: FundingType
+    funding_classification: FundingClassification
     funding_summary: str
     verification_status: VerificationStatus
     last_verified_at: datetime | None
@@ -389,6 +406,13 @@ class OpportunityDetailResponse(OpportunitySummaryResponse):
     nationality_eligibility: str | None
     intake_year: int | None
     tuition_coverage: str | None
+    funding_policy: str | None
+    tuition_coverage_status: FundingCoverageStatus
+    stipend_coverage_status: FundingCoverageStatus
+    accommodation_coverage_status: FundingCoverageStatus
+    travel_coverage_status: FundingCoverageStatus
+    insurance_coverage_status: FundingCoverageStatus
+    fees_coverage_status: FundingCoverageStatus
     monthly_stipend_amount: Decimal | None
     monthly_stipend_currency: str | None
     accommodation_coverage: str | None

@@ -19,7 +19,7 @@ function OpportunityCard({ opportunity }: { opportunity: OpportunitySummary }) {
       <div className="tag-list" aria-label="Opportunity summary">
         <span>{opportunity.country}</span>
         <span>{readableValue(opportunity.degree_level)}</span>
-        <span>{readableValue(opportunity.funding_type)} funding</span>
+        <span>{readableValue(opportunity.funding_classification ?? "unknown")}</span>
       </div>
       <p className="funding-summary">{opportunity.funding_summary}</p>
       <p className="evidence-caption">

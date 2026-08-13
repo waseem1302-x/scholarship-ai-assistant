@@ -23,7 +23,7 @@ from app.modules.opportunities.models import (
     EligibilityOperator,
     EligibilityRule,
     EligibilityRuleType,
-    FundingType,
+    FundingClassification,
     Opportunity,
 )
 from app.modules.opportunities.repository import OpportunityRepository
@@ -432,25 +432,19 @@ class MatchingService:
                     "Financial need or funding preference is not described in your profile."
                 ],
             )
-        if opportunity.funding_type in {
-            FundingType.FULL,
-            FundingType.TUITION_ONLY,
-            FundingType.STIPEND_ONLY,
-        }:
+        if opportunity.funding_classification is FundingClassification.FULLY_FUNDED:
             return RuleResult(
                 "funding",
                 5,
                 5,
-                satisfied=[
-                    f"Funding type may support your need: {opportunity.funding_type.value}."
-                ],
+                satisfied=["All documented funding components are confirmed."],
             )
-        if opportunity.funding_type is FundingType.PARTIAL:
+        if opportunity.funding_classification is FundingClassification.PARTIAL:
             return RuleResult(
                 "funding",
                 5,
                 2.5,
-                uncertain=["Partial funding may not fully meet your financial need."],
+                uncertain=["Confirmed funding components may not fully meet your financial need."],
                 next_steps=["Check remaining costs before prioritizing this opportunity."],
             )
         return RuleResult(

@@ -57,6 +57,16 @@ def opportunity_payload(**overrides: object) -> dict:
         "application_deadline": "2026-05-30T23:59:59Z",
         "intake_year": 2026,
         "funding_type": "full",
+        "funding_policy": (
+            "The official award policy confirms tuition, living stipend, accommodation, travel, "
+            "insurance, and mandatory fee coverage for the full study period."
+        ),
+        "tuition_coverage_status": "confirmed",
+        "stipend_coverage_status": "confirmed",
+        "accommodation_coverage_status": "confirmed",
+        "travel_coverage_status": "confirmed",
+        "insurance_coverage_status": "confirmed",
+        "fees_coverage_status": "confirmed",
         "tuition_coverage": "Tuition fees covered according to the official call",
         "monthly_stipend_amount": "1500.00",
         "monthly_stipend_currency": "myr",
@@ -777,11 +787,13 @@ def test_import_reports_validation_errors_per_row(client: TestClient, db_session
     headers = admin_headers(client, db_session)
     invalid = opportunity_payload(
         name="Invalid Import Scholarship",
-        tuition_coverage=None,
-        monthly_stipend_amount=None,
-        accommodation_coverage=None,
-        travel_allowance=None,
-        health_insurance=None,
+        funding_policy=None,
+        tuition_coverage_status="unknown",
+        stipend_coverage_status="unknown",
+        accommodation_coverage_status="unknown",
+        travel_coverage_status="unknown",
+        insurance_coverage_status="unknown",
+        fees_coverage_status="unknown",
     )
 
     response = client.post(
@@ -1257,17 +1269,35 @@ def test_full_funding_requires_structured_coverage_evidence(
 ) -> None:
     headers = admin_headers(client, db_session)
     invalid_payload = opportunity_payload(
-        tuition_coverage=None,
-        monthly_stipend_amount=None,
-        accommodation_coverage=None,
-        travel_allowance=None,
-        health_insurance=None,
+        funding_policy=None,
+        tuition_coverage_status="unknown",
+        stipend_coverage_status="unknown",
+        accommodation_coverage_status="unknown",
+        travel_coverage_status="unknown",
+        insurance_coverage_status="unknown",
+        fees_coverage_status="unknown",
     )
 
     response = client.post("/api/v1/admin/opportunities", json=invalid_payload, headers=headers)
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_full_funding_requires_every_component_and_a_documented_policy(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    incomplete = opportunity_payload(accommodation_coverage_status="unknown")
+
+    rejected = client.post("/api/v1/admin/opportunities", json=incomplete, headers=headers)
+    accepted = client.post(
+        "/api/v1/admin/opportunities", json=opportunity_payload(), headers=headers
+    )
+
+    assert rejected.status_code == 422
+    assert accepted.status_code == 201
+    assert accepted.json()["funding_classification"] == "fully_funded"
 
 
 def test_deadline_cannot_be_before_opening_date(client: TestClient, db_session: Session) -> None:
