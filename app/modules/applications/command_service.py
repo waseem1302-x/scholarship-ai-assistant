@@ -62,6 +62,15 @@ from app.modules.opportunities.models import (
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.service import OpportunityService
 
+REMINDER_TRANSITIONS = {
+    ReminderStatus.SCHEDULED: frozenset({ReminderStatus.SNOOZED, ReminderStatus.CANCELLED}),
+    ReminderStatus.SNOOZED: frozenset({ReminderStatus.SCHEDULED, ReminderStatus.CANCELLED}),
+    ReminderStatus.DELIVERED: frozenset({ReminderStatus.READ, ReminderStatus.SNOOZED}),
+    ReminderStatus.READ: frozenset(),
+    ReminderStatus.CANCELLED: frozenset({ReminderStatus.SCHEDULED}),
+    ReminderStatus.FAILED: frozenset({ReminderStatus.SCHEDULED, ReminderStatus.CANCELLED}),
+}
+
 
 class ApplicationCommandService:
     def __init__(self, session: Session, *, now: datetime | None = None) -> None:
@@ -409,11 +418,14 @@ class ApplicationCommandService:
             raise self._not_found("reminder")
         values = payload.model_dump(exclude_unset=True)
         status = values.get("status")
+        if status is not None and status != reminder.status:
+            self._validate_reminder_transition(reminder.status, status)
         if status is ReminderStatus.READ:
             reminder.read_at = self._current_time()
         if status is ReminderStatus.SCHEDULED:
             reminder.delivered_at = None
             reminder.read_at = None
+            reminder.failure_reason = None
         for field, value in values.items():
             setattr(reminder, field, value)
         self.repository.add_event(
@@ -425,6 +437,15 @@ class ApplicationCommandService:
         self.session.commit()
         self.session.refresh(reminder)
         return ApplicationReminderResponse.model_validate(reminder)
+
+    def _validate_reminder_transition(
+        self, current: ReminderStatus, target: ReminderStatus
+    ) -> None:
+        if target not in REMINDER_TRANSITIONS[current]:
+            raise AppError(
+                "invalid_reminder_transition",
+                f"Cannot move reminder from {current} to {target}",
+            )
 
     def create_document(
         self,
@@ -752,15 +773,21 @@ class ApplicationCommandService:
                 "Verify official application deadline",
                 TaskPriority.HIGH,
             )
+        latest_evaluation = self.session.scalar(
+            select(MatchEvaluation)
+            .where(MatchEvaluation.user_id == application.user_id)
+            .order_by(MatchEvaluation.evaluated_at.desc(), MatchEvaluation.id.desc())
+            .limit(1)
+        )
+        if latest_evaluation is None:
+            return
         readiness_actions = self.session.scalars(
             select(MatchRuleOutcome)
             .join(MatchEvaluationResult)
-            .join(MatchEvaluation)
             .where(
-                MatchEvaluation.user_id == application.user_id,
+                MatchEvaluationResult.evaluation_id == latest_evaluation.id,
                 MatchEvaluationResult.opportunity_id == opportunity.id,
             )
-            .order_by(MatchEvaluation.evaluated_at.desc())
         ).all()
         for outcome in readiness_actions:
             category = (

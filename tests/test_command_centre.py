@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -198,9 +198,41 @@ def test_phase_four_next_actions_generate_distinct_personal_tasks(
     opportunity = create_verified_opportunity(client, admin_headers)
     owner = db_session.scalar(select(User).where(User.email == "owner-readiness@example.com"))
     assert owner is not None
+    old_evaluation = MatchEvaluation(
+        user_id=owner.id,
+        matcher_version="phase4-test",
+        evaluated_at=datetime(2027, 1, 1, tzinfo=UTC),
+        expires_at=datetime(2028, 1, 1, tzinfo=UTC),
+        profile_snapshot_json={},
+        profile_snapshot_hash="b" * 64,
+    )
+    old_result = MatchEvaluationResult(
+        evaluation=old_evaluation,
+        opportunity_id=uuid.UUID(opportunity["id"]),
+        rank=1,
+        match_score=40,
+        fit_score=40,
+        score_label="old",
+        eligibility_status="unknown",
+        confidence="low",
+        evidence_completeness=20,
+        opportunity_snapshot_json={},
+        source_snapshot_json=None,
+    )
+    old_result.rule_outcomes.append(
+        MatchRuleOutcome(
+            rule_name="profile",
+            outcome="unknown",
+            reason_code="profile_stale",
+            message="Old profile information is incomplete.",
+            confidence="low",
+            next_actions_json=["Old stale action"],
+        )
+    )
     evaluation = MatchEvaluation(
         user_id=owner.id,
         matcher_version="phase4-test",
+        evaluated_at=datetime(2027, 1, 1, tzinfo=UTC) + timedelta(minutes=5),
         expires_at=datetime(2028, 1, 1, tzinfo=UTC),
         profile_snapshot_json={},
         profile_snapshot_hash="a" * 64,
@@ -228,7 +260,7 @@ def test_phase_four_next_actions_generate_distinct_personal_tasks(
             next_actions_json=["Add your current education level"],
         )
     )
-    db_session.add(evaluation)
+    db_session.add_all([old_evaluation, evaluation])
     db_session.commit()
 
     created = client.post(
@@ -238,6 +270,7 @@ def test_phase_four_next_actions_generate_distinct_personal_tasks(
     generated = {task["title"]: task for task in created.json()["tasks"]}
     assert generated["Add your current education level"]["category"] == "personal"
     assert generated["Add your current education level"]["is_generated"] is True
+    assert "Old stale action" not in generated
 
 
 def test_application_keeps_separate_personal_and_official_timezones(
@@ -513,3 +546,42 @@ def test_reminder_worker_records_a_failure_without_delivering_duplicates(
     assert health.json()["failed_count"] == 1
     delivered = client.get(f"/api/v1/applications/{application['id']}", headers=owner_headers)
     assert delivered.json()["reminders"][0]["status"] == "scheduled"
+
+
+def test_reminder_updates_follow_state_machine(client: TestClient, db_session: Session) -> None:
+    create_user(db_session, email="admin-reminder-state@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="owner-reminder-state@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-reminder-state@example.com"))
+    owner_headers = headers(login(client, "owner-reminder-state@example.com"))
+    opportunity = create_verified_opportunity(client, admin_headers)
+    application = client.post(
+        "/api/v1/applications", json={"opportunity_id": opportunity["id"]}, headers=owner_headers
+    ).json()
+    reminder = client.post(
+        f"/api/v1/applications/{application['id']}/reminders",
+        json={"scheduled_at": "2028-05-01T09:00:00+00:00", "message": "State test"},
+        headers=owner_headers,
+    ).json()
+
+    invalid = client.patch(
+        f"/api/v1/applications/{application['id']}/reminders/{reminder['id']}",
+        json={"status": "read"},
+        headers=owner_headers,
+    )
+    cancelled = client.patch(
+        f"/api/v1/applications/{application['id']}/reminders/{reminder['id']}",
+        json={"status": "cancelled"},
+        headers=owner_headers,
+    )
+    rescheduled = client.patch(
+        f"/api/v1/applications/{application['id']}/reminders/{reminder['id']}",
+        json={"status": "scheduled", "scheduled_at": "2028-05-02T09:00:00+00:00"},
+        headers=owner_headers,
+    )
+
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "invalid_reminder_transition"
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert rescheduled.status_code == 200
+    assert rescheduled.json()["status"] == "scheduled"

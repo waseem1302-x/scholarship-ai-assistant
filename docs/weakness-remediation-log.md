@@ -83,6 +83,20 @@ Verification:
 - `.\.venv\Scripts\python.exe -m pytest tests\test_command_centre.py tests\test_migrations.py -q`
 - `.\.venv\Scripts\python.exe -m pytest -q`
 - `pnpm --dir frontend build`
+
+## 2026-08-14 Checkpoint: Weaknesses 65-67
+
+| ID | Status | Evidence | Remediation |
+| --- | --- | --- | --- |
+| 65 | Confirmed true, fixed | Starter task generation scanned all historical match rule outcomes for the opportunity and ordered by evaluation time. | Starter tasks now use exactly the latest `MatchEvaluation` for the student, preventing stale next-actions from older evaluations from reappearing. |
+| 66 | Verified already fixed | Application and opportunity services both route official source selection through `EvidencePolicy.select_current_official_source()`. | No code change required in this checkpoint. |
+| 67 | Confirmed true, fixed | Reminder updates accepted arbitrary user-driven status changes. | Added an explicit reminder transition map and regression coverage for invalid scheduled-to-read transitions and valid cancel/reschedule transitions. |
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m ruff check app\modules\applications\command_service.py tests\test_command_centre.py`
+- `.\.venv\Scripts\python.exe -m pytest tests\test_command_centre.py -q`
+- `.\.venv\Scripts\python.exe -m pytest -q`
 - `git diff --check`
 
 ## 2026-08-14 Checkpoint: Weaknesses 50-58
