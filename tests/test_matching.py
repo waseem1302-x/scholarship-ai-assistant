@@ -168,7 +168,7 @@ def test_matching_ranks_verified_opportunities_and_explains_fit(
             {"rule_type": "ielts", "operator": "gte", "value": 6.5},
         ],
     )
-    weak = create_verified_opportunity(
+    create_verified_opportunity(
         client,
         admin_headers,
         name="PhD History Scholarship",
@@ -193,15 +193,16 @@ def test_matching_ranks_verified_opportunities_and_explains_fit(
 
     assert response.status_code == 200
     results = response.json()["results"]
-    assert [item["opportunity"]["id"] for item in results] == [strong["id"], weak["id"]]
-    assert results[0]["match_score"] > results[1]["match_score"]
+    assert [item["opportunity"]["id"] for item in results] == [strong["id"]]
     assert results[0]["score_label"] == "strong_match"
+    assert results[0]["eligibility_status"] == "potentially_eligible"
+    assert results[0]["profile_completeness"] >= 80
+    assert results[0]["preference_fit"] is not None
     assert "not a probability" in results[0]["disclaimer"]
     assert any(
         "Nationality requirement is satisfied" in item
         for item in results[0]["explanation"]["satisfied"]
     )
-    assert any("target degree" in item.lower() for item in results[1]["explanation"]["missing"])
 
 
 def test_structured_rule_scores_are_normalized_regardless_of_rule_count(
@@ -325,7 +326,7 @@ def test_structured_hard_exclusion_never_receives_a_strong_match(
     assert result["eligibility_status"] == "ineligible"
     assert result["fit_score"] is None
     assert result["score_label"] == "not_eligible"
-    assert result["matcher_version"] == "2026-08-11.structured-hard-gates.v1"
+    assert result["matcher_version"] == "2026-08-14.separated-fit-confidence.v1"
 
 
 def test_matching_persists_reproducible_evaluation_history(
@@ -357,7 +358,7 @@ def test_matching_persists_reproducible_evaluation_history(
     first_evaluation_id = first_response.json()["evaluation_id"]
     first = db_session.get(MatchEvaluation, uuid.UUID(first_evaluation_id))
     assert first is not None
-    assert first.matcher_version == "2026-08-11.structured-hard-gates.v1"
+    assert first.matcher_version == "2026-08-14.separated-fit-confidence.v1"
     assert len(first.profile_snapshot_hash) == 64
     assert first.profile_snapshot_json["identity"]["nationality"] == "Pakistani"
     assert first.expires_at > first.evaluated_at
@@ -456,7 +457,7 @@ def test_structured_rules_cover_all_profile_backed_categories_and_operators(
     assert result["opportunity"]["id"] == created["id"]
     assert result["failed_criteria"] == []
     assert result["unknown_criteria"] == []
-    assert result["eligibility_status"] == "eligible"
+    assert result["eligibility_status"] == "potentially_eligible"
     assert all(
         rule["source_id"] == created["sources"][0]["id"] for rule in created["eligibility_rules"]
     )
@@ -489,8 +490,79 @@ def test_missing_or_waived_structured_test_evidence_stays_unknown(
     result = client.get("/api/v1/matches/me", headers=student_headers).json()["results"][0]
 
     assert result["eligibility_status"] == "likely_eligible"
+    assert result["fit_score"] == 0
     assert result["failed_criteria"] == []
+    assert result["eligibility_failures"] == []
+    assert result["missing_information"] == result["unknown_criteria"]
     assert any("waiver" in item.lower() for item in result["unknown_criteria"])
+
+
+def test_preference_mismatches_are_separate_from_eligibility_failures(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-preference@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="student-preference@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-preference@example.com"))
+    student_headers = headers(login(client, "student-preference@example.com"))
+    assert (
+        client.put(
+            "/api/v1/profiles/me",
+            json=profile_payload(preferred_destination_countries=["Malaysia"]),
+            headers=student_headers,
+        ).status_code
+        == 200
+    )
+    created = create_verified_opportunity(
+        client,
+        admin_headers,
+        name="Canada AI Scholarship",
+        country="Canada",
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]},
+            {"rule_type": "target_degree", "operator": "equals", "value": "masters"},
+            {"rule_type": "field", "operator": "in", "value": ["Artificial Intelligence"]},
+        ],
+    )
+
+    result = client.get("/api/v1/matches/me", headers=student_headers).json()["results"][0]
+
+    assert result["opportunity"]["id"] == created["id"]
+    assert result["fit_score"] == 100
+    assert result["failed_criteria"] == []
+    assert result["eligibility_failures"] == []
+    assert result["preference_fit"] < 100
+    assert any("preferred destination" in item for item in result["preference_mismatches"])
+
+
+def test_incompatible_gpa_scales_are_uncertain_not_converted(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="admin-gpa-scale@example.com", role=UserRole.ADMIN)
+    create_user(db_session, email="student-gpa-scale@example.com", role=UserRole.STUDENT)
+    admin_headers = headers(login(client, "admin-gpa-scale@example.com"))
+    student_headers = headers(login(client, "student-gpa-scale@example.com"))
+    assert (
+        client.put(
+            "/api/v1/profiles/me",
+            json=profile_payload(cgpa="9.00", grading_scale="10.00"),
+            headers=student_headers,
+        ).status_code
+        == 200
+    )
+    create_verified_opportunity(
+        client,
+        admin_headers,
+        eligibility_rules=[
+            {"rule_type": "cgpa", "operator": "gte", "value": 3.0, "grading_scale": 4.0}
+        ],
+    )
+
+    result = client.get("/api/v1/matches/me", headers=student_headers).json()["results"][0]
+
+    assert result["fit_score"] == 0
+    assert result["failed_criteria"] == []
+    assert any("CGPA scales differ" in item for item in result["missing_information"])
+    assert any("Missing profile or source data" in item for item in result["confidence_factors"])
 
 
 def test_unstructured_eligibility_is_admin_visible_and_never_a_hard_failure(

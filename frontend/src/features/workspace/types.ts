@@ -89,8 +89,14 @@ export interface OpportunityMatch {
   score_label: string;
   eligibility_status: string;
   fit_score: number | null;
+  preference_fit: number | null;
   evidence_completeness: number;
+  profile_completeness: number;
   confidence: string;
+  confidence_factors: string[];
+  eligibility_failures: string[];
+  preference_mismatches: string[];
+  missing_information: string[];
   failed_criteria: string[];
   unknown_criteria: string[];
   warnings: string[];

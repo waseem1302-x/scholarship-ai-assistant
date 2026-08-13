@@ -16,9 +16,11 @@ function MatchCard({ match }: { match: OpportunityMatch }) {
   return <article className="match-card">
     <div className="match-card-header"><div><p className="eyebrow">{match.score_label}</p><h2>{match.opportunity.name}</h2><p>{match.opportunity.country} · {readableValue(match.opportunity.degree_level)} · {deadlineLabel(match.opportunity.application_deadline)}</p></div>
       <div className={`fit-score ${hardFailure ? "blocked" : ""}`}><strong>{hardFailure ? "--" : match.fit_score ?? match.match_score}</strong><span>{hardFailure ? humanize(match.eligibility_status) : "fit score"}</span></div></div>
-    <div className="match-meta"><span>Evidence completeness {match.evidence_completeness}%</span><span>{humanize(match.confidence)} confidence</span><span>Matcher {match.matcher_version}</span></div>
+    <div className="match-meta"><span>Evidence completeness {match.evidence_completeness}%</span><span>Profile completeness {match.profile_completeness}%</span><span>{humanize(match.confidence)} confidence</span>{match.preference_fit !== null ? <span>Preference fit {match.preference_fit}%</span> : null}<span>Matcher {match.matcher_version}</span></div>
     {hardFailure ? <p className="hard-gate">This opportunity has one or more known hard eligibility failures. It is shown for transparency, not as a recommendation.</p> : null}
     <div className="explanation-grid"><Explanation title="Already aligned" values={match.explanation.satisfied} tone="positive" /><Explanation title="Information to add" values={match.explanation.missing} tone="attention" /><Explanation title="Still uncertain" values={match.explanation.uncertain} tone="neutral" /><Explanation title="Next steps" values={match.explanation.next_steps} tone="next" /></div>
+    {match.preference_mismatches.length ? <Explanation title="Preference mismatches" values={match.preference_mismatches} tone="attention" /> : null}
+    {match.confidence_factors.length ? <Explanation title="Confidence factors" values={match.confidence_factors} tone="neutral" /> : null}
     {match.warnings.length ? <Explanation title="Warnings" values={match.warnings} tone="attention" /> : null}
     <p className="match-disclaimer">{match.disclaimer}</p>
     <Link className="detail-link" to={`/catalogue/${match.opportunity.id}`}>Review official opportunity details</Link>

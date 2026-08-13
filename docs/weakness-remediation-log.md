@@ -66,3 +66,25 @@ Verification:
 - `pnpm --dir frontend test`
 - `pnpm --dir frontend build`
 - `git diff --check`
+
+## 2026-08-14 Checkpoint: Weaknesses 50-58
+
+| ID | Status | Evidence | Remediation |
+| --- | --- | --- | --- |
+| 50 | Verified already fixed | Matcher already normalized scores by total available rule weight and had a regression test for variable rule counts. | No new scoring-normalization change required; the matcher version was bumped because later scoring semantics changed. |
+| 51 | Confirmed true, fixed | Unknown structured, fallback, deadline, location, and funding outcomes awarded partial score. | Unknown outcomes now score zero and reduce confidence instead of improving fit. |
+| 52 | Confirmed true, fixed | Eligibility, preference fit, deadline freshness, and funding preference were combined into one score. | Matching now separates eligibility fit, preference fit, profile completeness, evidence completeness, confidence factors, failures, mismatches, and missing information. |
+| 53 | Confirmed true, fixed | Fallback unstructured eligibility could still produce a non-zero fit score while major requirements were not captured. | Unstructured fallback eligibility remains `unknown`; missing hard-rule information is reported as missing information rather than a strong conclusion. |
+| 54 | Confirmed true, fixed | Fully satisfied captured structured rules returned `eligible`. | Successful captured-rule results now return `potentially_eligible` to avoid overstating provider decisions. |
+| 55 | Confirmed true, fixed | Preference misses, such as destination-country mismatches, appeared in `failed_criteria`. | Compatibility `failed_criteria` now contains eligibility failures only; preference misses are reported in `preference_mismatches`. |
+| 56 | Confirmed true, improved | Confidence was derived only from answered-rule count. | Confidence now includes rule coverage, source verification/freshness, structured-rule coverage, data-confidence flags, and missing-information factors. |
+| 57 | Confirmed true, partially improved | Every public opportunity was evaluated and persisted for every match request. | Added degree-level candidate pre-filtering before rule evaluation and persistence so obvious non-candidates are not written into each evaluation run. |
+| 58 | Confirmed true, fixed | CGPA was linearly converted between grading scales without documented equivalence. | CGPA comparisons now require matching scales; incompatible scales become uncertain and require documented equivalence. |
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m ruff check app\modules\matching tests\test_matching.py tests\test_browser_e2e.py`
+- `.\.venv\Scripts\python.exe -m pytest tests\test_matching.py -q`
+- `.\.venv\Scripts\python.exe -m pytest -q`
+- `pnpm --dir frontend test`
+- `pnpm --dir frontend build`
