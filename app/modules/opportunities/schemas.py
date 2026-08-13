@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     BaseModel,
@@ -87,6 +88,16 @@ class OpportunityCycleCreate(BaseModel):
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
     is_rolling: bool = False
     is_archived: bool = False
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        timezone = value.strip()
+        try:
+            ZoneInfo(timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("Timezone must be a valid IANA timezone") from exc
+        return timezone
 
     @model_validator(mode="after")
     def validate_dates(self) -> OpportunityCycleCreate:

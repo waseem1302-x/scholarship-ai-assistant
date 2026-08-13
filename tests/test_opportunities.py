@@ -163,6 +163,25 @@ def test_opportunity_limits_eligibility_rule_count(client: TestClient, db_sessio
     assert response.status_code == 422
 
 
+def test_opportunity_cycle_requires_an_iana_timezone(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    invalid = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(application_cycles=[{"timezone": "Mars/Olympus"}]),
+        headers=headers,
+    )
+    valid = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(application_cycles=[{"timezone": "Asia/Kuala_Lumpur"}]),
+        headers=headers,
+    )
+
+    assert invalid.status_code == 422
+    assert valid.status_code == 201
+
+
 def test_admin_bootstrap_promotes_existing_user(client: TestClient, db_session: Session) -> None:
     create_user(db_session, email=STUDENT_EMAIL, role=UserRole.STUDENT)
 
