@@ -69,6 +69,12 @@ class DataConfidence(StrEnum):
     HIGH = "high"
 
 
+class DuplicateSuggestionStatus(StrEnum):
+    PENDING = "pending"
+    CONFIRMED_DUPLICATE = "confirmed_duplicate"
+    DISMISSED = "dismissed"
+
+
 class ApplicationWindowState(StrEnum):
     UPCOMING = "upcoming"
     OPEN = "open"
@@ -115,6 +121,7 @@ class Provider(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255))
+    canonical_id: Mapped[str | None] = mapped_column(String(120), unique=True, index=True)
     website_url: Mapped[str | None] = mapped_column(String(2048))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
@@ -159,14 +166,15 @@ class Opportunity(Base):
             "intake_year IS NULL OR intake_year >= 2000",
             name="ck_intake_year_range",
         ),
-        UniqueConstraint(
-            "provider_id",
-            "name",
-            "country",
-            "intake_year",
-            name="uq_opportunities_provider_name_country_intake",
-        ),
         Index("ix_opportunities_country_degree", "country", "degree_level"),
+        Index(
+            "ix_opportunities_canonical_identity",
+            "provider_id",
+            "programme_family_id",
+            "cycle_id",
+            "degree_level",
+            "funding_type",
+        ),
         Index(
             "ix_opportunities_catalogue_window",
             "status",
@@ -180,6 +188,8 @@ class Opportunity(Base):
     provider_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("providers.id"), index=True)
     university_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("universities.id"))
     name: Mapped[str] = mapped_column(String(255))
+    programme_family_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    cycle_id: Mapped[str | None] = mapped_column(String(120), index=True)
     country: Mapped[str] = mapped_column(String(100), index=True)
     degree_level: Mapped[DegreeLevel] = mapped_column(
         Enum(
@@ -277,6 +287,11 @@ class Opportunity(Base):
     )
     verification_records: Mapped[list["VerificationRecord"]] = relationship(
         back_populates="opportunity", cascade="all, delete-orphan"
+    )
+    duplicate_suggestions: Mapped[list["DuplicateSuggestion"]] = relationship(
+        foreign_keys="DuplicateSuggestion.opportunity_id",
+        back_populates="opportunity",
+        cascade="all, delete-orphan",
     )
     cycles: Mapped[list["OpportunityCycle"]] = relationship(
         back_populates="opportunity", cascade="all, delete-orphan"
@@ -391,6 +406,7 @@ class Source(Base):
         ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
     )
     url: Mapped[str] = mapped_column(String(2048))
+    canonical_url: Mapped[str | None] = mapped_column(String(2048), index=True)
     source_type: Mapped[SourceType] = mapped_column(
         Enum(
             SourceType,
@@ -430,6 +446,50 @@ class Source(Base):
     excerpts: Mapped[list["SourceExcerpt"]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
     )
+
+
+class DuplicateSuggestion(Base):
+    """A potential duplicate that must be confirmed by a human reviewer."""
+
+    __tablename__ = "duplicate_suggestions"
+    __table_args__ = (
+        UniqueConstraint(
+            "opportunity_id", "matched_opportunity_id", name="uq_duplicate_suggestion_pair"
+        ),
+        Index("ix_duplicate_suggestions_status_score", "status", "score"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    matched_opportunity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    status: Mapped[DuplicateSuggestionStatus] = mapped_column(
+        Enum(
+            DuplicateSuggestionStatus,
+            name="duplicate_suggestion_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=DuplicateSuggestionStatus.PENDING,
+        index=True,
+    )
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    opportunity: Mapped[Opportunity] = relationship(
+        foreign_keys=[opportunity_id], back_populates="duplicate_suggestions"
+    )
+    matched_opportunity: Mapped[Opportunity] = relationship(foreign_keys=[matched_opportunity_id])
+    reviewed_by: Mapped[User | None] = relationship()
 
 
 class SourceExcerpt(Base):

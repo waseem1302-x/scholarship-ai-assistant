@@ -563,6 +563,109 @@ def test_duplicate_opportunity_is_rejected(client: TestClient, db_session: Sessi
     assert duplicate.json()["error"]["code"] == "duplicate_opportunity"
 
 
+def test_canonical_identity_rejects_variants_without_blocking_distinct_tracks(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    create_opportunity(
+        client,
+        headers,
+        name="Commonwealth Scholarship",
+        provider_name="Commonwealth Secretariat",
+        provider_canonical_id="commonwealth-secretariat",
+        programme_family_id="commonwealth-scholarship",
+        cycle_id="2027",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/commonwealth?utm_source=directory",
+        },
+    )
+
+    duplicate = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(
+            name="Commonwealth Scholarships",
+            provider_name="Commonwealth Scholarship Commission",
+            provider_canonical_id="commonwealth-secretariat",
+            programme_family_id="commonwealth-scholarship",
+            cycle_id="2027",
+            source={
+                **opportunity_payload()["source"],
+                "url": "https://example.edu/commonwealth",
+            },
+        ),
+        headers=headers,
+    )
+    distinct_track = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(
+            name="Commonwealth Scholarship",
+            provider_name="Commonwealth Scholarship Commission",
+            provider_canonical_id="commonwealth-secretariat",
+            programme_family_id="commonwealth-scholarship",
+            cycle_id="2027",
+            degree_level="phd",
+            source={
+                **opportunity_payload()["source"],
+                "url": "https://example.edu/commonwealth-phd",
+            },
+        ),
+        headers=headers,
+    )
+
+    assert duplicate.status_code == 409
+    assert distinct_track.status_code == 201
+
+
+def test_fuzzy_duplicate_suggestion_requires_human_decision(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    first = create_opportunity(
+        client,
+        headers,
+        name="Commonwealth Scholarship",
+        provider_name="Commonwealth Secretariat",
+        provider_canonical_id="commonwealth-secretariat",
+        programme_family_id="commonwealth-scholarship-masters",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/commonwealth-scholarship",
+        },
+    )
+    second = create_opportunity(
+        client,
+        headers,
+        name="Commonwealth Scholarships",
+        provider_name="Commonwealth Scholarship Commission",
+        provider_canonical_id="commonwealth-secretariat",
+        programme_family_id="commonwealth-scholarship-general",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/commonwealth-scholarship/",
+        },
+    )
+
+    suggestions = client.get("/api/v1/admin/duplicate-suggestions", headers=headers)
+
+    assert suggestions.status_code == 200
+    suggestion = response_items(suggestions)[0]
+    assert suggestion["opportunity_id"] == second["id"]
+    assert suggestion["matched_opportunity_id"] == first["id"]
+    assert suggestion["status"] == "pending"
+    assert float(suggestion["score"]) >= 0.95
+
+    decision = client.post(
+        f"/api/v1/admin/duplicate-suggestions/{suggestion['id']}/decision",
+        json={"is_duplicate": False},
+        headers=headers,
+    )
+
+    assert decision.status_code == 200
+    assert decision.json()["status"] == "dismissed"
+    assert response_items(client.get("/api/v1/admin/duplicate-suggestions", headers=headers)) == []
+
+
 def test_admin_imports_opportunities_as_drafts_requiring_review(
     client: TestClient, db_session: Session
 ) -> None:

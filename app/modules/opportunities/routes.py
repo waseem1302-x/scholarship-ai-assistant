@@ -20,6 +20,9 @@ from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
     AdminOpportunitySearchResponse,
     DataQualityIssueSearchResponse,
+    DuplicateSuggestionDecision,
+    DuplicateSuggestionResponse,
+    DuplicateSuggestionSearchResponse,
     OpportunityCreate,
     OpportunityDetailResponse,
     OpportunityImportRequest,
@@ -147,6 +150,34 @@ def list_data_quality_issues(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> DataQualityIssueSearchResponse:
     return service.list_data_quality_issues(limit=limit, offset=offset)
+
+
+@router.get(
+    "/admin/duplicate-suggestions",
+    response_model=DuplicateSuggestionSearchResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
+)
+def list_duplicate_suggestions(
+    _admin: AdminReader,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DuplicateSuggestionSearchResponse:
+    return service.list_duplicate_suggestions(limit=limit, offset=offset)
+
+
+@router.post(
+    "/admin/duplicate-suggestions/{suggestion_id}/decision",
+    response_model=DuplicateSuggestionResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE, 404: NOT_FOUND_RESPONSE},
+)
+def review_duplicate_suggestion(
+    suggestion_id: uuid.UUID,
+    payload: DuplicateSuggestionDecision,
+    admin: AdminUser,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> DuplicateSuggestionResponse:
+    return service.review_duplicate_suggestion(suggestion_id, payload, reviewed_by=admin)
 
 
 @router.post(

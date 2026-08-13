@@ -1,5 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from difflib import SequenceMatcher
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import Select, String, and_, case, cast, func, literal, or_, select, union_all
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -9,6 +11,8 @@ from app.modules.opportunities.models import (
     ApplicationWindowState,
     DataConfidence,
     DegreeLevel,
+    DuplicateSuggestion,
+    DuplicateSuggestionStatus,
     EligibilityRule,
     EligibilityRuleType,
     FundingType,
@@ -32,6 +36,9 @@ class OpportunityRepository:
             select(Provider).where(func.lower(Provider.name) == name.lower())
         )
 
+    def get_provider_by_canonical_id(self, canonical_id: str) -> Provider | None:
+        return self.session.scalar(select(Provider).where(Provider.canonical_id == canonical_id))
+
     def find_duplicate_opportunity(
         self,
         *,
@@ -51,14 +58,39 @@ class OpportunityRepository:
             )
         )
 
-    def get_or_create_provider(self, name: str, website_url: str | None) -> Provider:
-        provider = self.get_provider_by_name(name)
+    def find_duplicate_by_canonical_identity(
+        self,
+        *,
+        provider_id: uuid.UUID,
+        programme_family_id: str,
+        cycle_id: str | None,
+        degree_level: DegreeLevel,
+        funding_type: FundingType,
+    ) -> Opportunity | None:
+        return self.session.scalar(
+            select(Opportunity).where(
+                Opportunity.provider_id == provider_id,
+                Opportunity.programme_family_id == programme_family_id,
+                Opportunity.cycle_id == cycle_id,
+                Opportunity.degree_level == degree_level,
+                Opportunity.funding_type == funding_type,
+            )
+        )
+
+    def get_or_create_provider(
+        self, name: str, website_url: str | None, canonical_id: str
+    ) -> Provider:
+        provider = self.get_provider_by_canonical_id(canonical_id) or self.get_provider_by_name(
+            name
+        )
         if provider is not None:
             if website_url and provider.website_url is None:
                 provider.website_url = website_url
+            if not provider.canonical_id:
+                provider.canonical_id = canonical_id
             return provider
 
-        provider = Provider(name=name, website_url=website_url)
+        provider = Provider(name=name, website_url=website_url, canonical_id=canonical_id)
         self.session.add(provider)
         self.session.flush()
         return provider
@@ -103,6 +135,98 @@ class OpportunityRepository:
 
     def get_source(self, source_id: uuid.UUID) -> Source | None:
         return self.session.get(Source, source_id)
+
+    def find_opportunities_by_canonical_url(self, canonical_url: str) -> list[Opportunity]:
+        statement = (
+            select(Opportunity)
+            .join(Source)
+            .where(Source.canonical_url == canonical_url)
+            .options(joinedload(Opportunity.provider), selectinload(Opportunity.sources))
+        )
+        return list(self.session.scalars(statement))
+
+    def create_duplicate_suggestions(self, opportunity: Opportunity) -> None:
+        existing_ids = {
+            suggestion.matched_opportunity_id for suggestion in opportunity.duplicate_suggestions
+        }
+        canonical_urls = {
+            source.canonical_url for source in opportunity.sources if source.canonical_url
+        }
+        candidates = self.session.scalars(
+            select(Opportunity)
+            .where(
+                Opportunity.id != opportunity.id,
+                or_(
+                    and_(
+                        Opportunity.provider_id == opportunity.provider_id,
+                        Opportunity.country == opportunity.country,
+                    ),
+                    Opportunity.sources.any(Source.canonical_url.in_(canonical_urls)),
+                ),
+            )
+            .options(joinedload(Opportunity.provider), selectinload(Opportunity.sources))
+        )
+        for candidate in candidates:
+            if candidate.id in existing_ids:
+                continue
+            candidate_urls = {
+                source.canonical_url for source in candidate.sources if source.canonical_url
+            }
+            score = max(
+                SequenceMatcher(
+                    None, opportunity.name.casefold(), candidate.name.casefold()
+                ).ratio(),
+                0.95 if canonical_urls & candidate_urls else 0.0,
+            )
+            if score >= 0.80:
+                self.session.add(
+                    DuplicateSuggestion(
+                        opportunity_id=opportunity.id,
+                        matched_opportunity_id=candidate.id,
+                        score=score,
+                    )
+                )
+
+    def list_duplicate_suggestions(self, *, limit: int, offset: int) -> list[DuplicateSuggestion]:
+        statement = (
+            select(DuplicateSuggestion)
+            .where(DuplicateSuggestion.status == DuplicateSuggestionStatus.PENDING)
+            .options(
+                joinedload(DuplicateSuggestion.opportunity),
+                joinedload(DuplicateSuggestion.matched_opportunity),
+            )
+            .order_by(DuplicateSuggestion.score.desc(), DuplicateSuggestion.created_at)
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(statement))
+
+    def count_duplicate_suggestions(self) -> int:
+        return (
+            self.session.scalar(
+                select(func.count())
+                .select_from(DuplicateSuggestion)
+                .where(DuplicateSuggestion.status == DuplicateSuggestionStatus.PENDING)
+            )
+            or 0
+        )
+
+    def get_duplicate_suggestion(self, suggestion_id: uuid.UUID) -> DuplicateSuggestion | None:
+        return self.session.scalar(
+            select(DuplicateSuggestion)
+            .where(DuplicateSuggestion.id == suggestion_id)
+            .options(
+                joinedload(DuplicateSuggestion.opportunity),
+                joinedload(DuplicateSuggestion.matched_opportunity),
+            )
+        )
+
+    @staticmethod
+    def canonicalize_url(url: str) -> str:
+        parsed = urlsplit(url.strip())
+        query = urlencode(sorted(parse_qsl(parsed.query, keep_blank_values=True)))
+        path = parsed.path.rstrip("/") or "/"
+        return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, query, ""))
 
     def list_sources_due_for_monitoring(
         self,

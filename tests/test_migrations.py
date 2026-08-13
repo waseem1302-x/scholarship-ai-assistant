@@ -22,7 +22,6 @@ from app.modules.opportunities.models import (
     DegreeLevel,
     FundingType,
     OpportunityStatus,
-    Provider,
     SourceType,
     VerificationStatus,
 )
@@ -108,9 +107,11 @@ def test_application_command_centre_migration_preserves_legacy_tracker_data(
                 "is_active": True,
             },
         )
-        provider = Provider(name="Legacy Provider")
-        session.add(provider)
-        session.flush()
+        provider_id = uuid.uuid4()
+        session.execute(
+            text("INSERT INTO providers (id, name) VALUES (:id, :name)"),
+            {"id": provider_id.hex, "name": "Legacy Provider"},
+        )
         opportunity_id = uuid.uuid4()
         source_id = uuid.uuid4()
         # The database is intentionally pinned to the historic 0009 schema.
@@ -127,7 +128,7 @@ def test_application_command_centre_migration_preserves_legacy_tracker_data(
             ),
             {
                 "id": opportunity_id.hex,
-                "provider_id": provider.id.hex,
+                "provider_id": provider_id.hex,
                 "name": "Legacy Scholarship",
                 "country": "Malaysia",
                 "degree_level": DegreeLevel.MASTERS.value,

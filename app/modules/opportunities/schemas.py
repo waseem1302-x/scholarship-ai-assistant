@@ -19,6 +19,7 @@ from app.modules.opportunities.models import (
     ApplicationWindowState,
     DataConfidence,
     DegreeLevel,
+    DuplicateSuggestionStatus,
     EligibilityOperator,
     EligibilityRuleType,
     FundingType,
@@ -109,6 +110,9 @@ class SourceCreate(BaseModel):
 class OpportunityCreate(BaseModel):
     name: str = Field(min_length=3, max_length=255)
     provider_name: str = Field(min_length=2, max_length=255)
+    provider_canonical_id: str | None = Field(default=None, min_length=2, max_length=120)
+    programme_family_id: str | None = Field(default=None, min_length=2, max_length=120)
+    cycle_id: str | None = Field(default=None, min_length=2, max_length=120)
     provider_website_url: HttpUrl | None = None
     university_name: str | None = Field(default=None, min_length=2, max_length=255)
     university_website_url: HttpUrl | None = None
@@ -141,7 +145,16 @@ class OpportunityCreate(BaseModel):
     application_cycles: list[OpportunityCycleCreate] = Field(default_factory=list)
     source: SourceCreate
 
-    @field_validator("name", "provider_name", "university_name", "country", mode="before")
+    @field_validator(
+        "name",
+        "provider_name",
+        "provider_canonical_id",
+        "programme_family_id",
+        "cycle_id",
+        "university_name",
+        "country",
+        mode="before",
+    )
     @classmethod
     def strip_text(cls, value: str | None) -> str | None:
         return value.strip() if isinstance(value, str) else value
@@ -236,6 +249,26 @@ class OpportunityImportRowResult(BaseModel):
     opportunity_id: uuid.UUID | None = None
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class DuplicateSuggestionDecision(BaseModel):
+    is_duplicate: bool
+
+
+class DuplicateSuggestionResponse(BaseModel):
+    id: uuid.UUID
+    opportunity_id: uuid.UUID
+    opportunity_name: str
+    matched_opportunity_id: uuid.UUID
+    matched_opportunity_name: str
+    score: Decimal
+    status: DuplicateSuggestionStatus
+    created_at: datetime
+
+
+class DuplicateSuggestionSearchResponse(BaseModel):
+    items: list[DuplicateSuggestionResponse]
+    pagination: PaginationMeta
 
 
 class OpportunityImportResponse(BaseModel):

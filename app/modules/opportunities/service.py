@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -16,6 +17,8 @@ from app.modules.opportunities.lifecycle import (
 )
 from app.modules.opportunities.models import (
     ApplicationWindowState,
+    DuplicateSuggestion,
+    DuplicateSuggestionStatus,
     EligibilityRule,
     Opportunity,
     OpportunityCycle,
@@ -33,6 +36,9 @@ from app.modules.opportunities.schemas import (
     DataQualityIssueResponse,
     DataQualityIssueSearchResponse,
     DataQualitySeverity,
+    DuplicateSuggestionDecision,
+    DuplicateSuggestionResponse,
+    DuplicateSuggestionSearchResponse,
     EligibilityRuleCreate,
     ImportRowStatus,
     OpportunityCreate,
@@ -88,16 +94,6 @@ class OpportunityService:
     def _create_opportunity(
         self, payload: OpportunityCreate, *, created_by: User, commit: bool
     ) -> AdminOpportunityResponse:
-        if self.repository.find_duplicate_opportunity(
-            provider_name=payload.provider_name,
-            name=payload.name,
-            country=payload.country,
-            intake_year=payload.intake_year,
-        ):
-            raise ConflictError(
-                "duplicate_opportunity",
-                "An opportunity with the same provider, name, country, and intake already exists",
-            )
         if payload.eligibility_rules and payload.source.source_type is not SourceType.OFFICIAL:
             raise AppError(
                 "eligibility_rule_official_source_required",
@@ -116,7 +112,24 @@ class OpportunityService:
         provider = self.repository.get_or_create_provider(
             payload.provider_name,
             str(payload.provider_website_url) if payload.provider_website_url else None,
+            payload.provider_canonical_id or self._canonical_identifier(payload.provider_name),
         )
+        programme_family_id = payload.programme_family_id or self._canonical_identifier(
+            payload.name
+        )
+        cycle_id = payload.cycle_id or (str(payload.intake_year) if payload.intake_year else None)
+        if self.repository.find_duplicate_by_canonical_identity(
+            provider_id=provider.id,
+            programme_family_id=programme_family_id,
+            cycle_id=cycle_id,
+            degree_level=payload.degree_level,
+            funding_type=payload.funding_type,
+        ):
+            raise ConflictError(
+                "duplicate_opportunity",
+                "An opportunity with the same canonical provider, programme family, cycle, "
+                "degree, and funding already exists",
+            )
         university = self.repository.get_or_create_university(
             payload.university_name,
             payload.country,
@@ -127,6 +140,8 @@ class OpportunityService:
             provider_id=provider.id,
             university_id=university.id if university else None,
             name=payload.name,
+            programme_family_id=programme_family_id,
+            cycle_id=cycle_id,
             country=payload.country,
             degree_level=payload.degree_level,
             field_eligibility=payload.field_eligibility,
@@ -156,6 +171,7 @@ class OpportunityService:
         )
         source = Source(
             url=str(payload.source.url),
+            canonical_url=self.repository.canonicalize_url(str(payload.source.url)),
             source_type=payload.source.source_type,
             title=payload.source.title.strip(),
             publication_date=payload.source.publication_date,
@@ -184,6 +200,7 @@ class OpportunityService:
         materialize_catalogue_window(opportunity)
         self.repository.add_opportunity(opportunity)
         self.session.flush()
+        self.repository.create_duplicate_suggestions(opportunity)
         if payload.eligibility_rules:
             excerpt = SourceExcerpt(
                 source_id=source.id,
@@ -976,6 +993,66 @@ class OpportunityService:
             payload.name.lower(),
             payload.country.lower(),
             payload.intake_year,
+        )
+
+    def list_duplicate_suggestions(
+        self, *, limit: int, offset: int
+    ) -> DuplicateSuggestionSearchResponse:
+        suggestions = self.repository.list_duplicate_suggestions(limit=limit, offset=offset)
+        total = self.repository.count_duplicate_suggestions()
+        return DuplicateSuggestionSearchResponse(
+            items=[self._duplicate_suggestion_response(suggestion) for suggestion in suggestions],
+            pagination=self._pagination(
+                total=total, limit=limit, offset=offset, count=len(suggestions)
+            ),
+        )
+
+    def review_duplicate_suggestion(
+        self, suggestion_id: uuid.UUID, payload: DuplicateSuggestionDecision, *, reviewed_by: User
+    ) -> DuplicateSuggestionResponse:
+        suggestion = self.repository.get_duplicate_suggestion(suggestion_id)
+        if suggestion is None:
+            raise AppError(
+                "duplicate_suggestion_not_found", "Duplicate suggestion was not found", 404
+            )
+        suggestion.status = (
+            DuplicateSuggestionStatus.CONFIRMED_DUPLICATE
+            if payload.is_duplicate
+            else DuplicateSuggestionStatus.DISMISSED
+        )
+        suggestion.reviewed_by_user_id = reviewed_by.id
+        suggestion.reviewed_at = datetime.now(UTC)
+        self.session.add(
+            AuditLog(
+                actor_user_id=reviewed_by.id,
+                action="duplicate_suggestion_reviewed",
+                entity_type="duplicate_suggestion",
+                entity_id=str(suggestion.id),
+                metadata_json={"is_duplicate": payload.is_duplicate},
+            )
+        )
+        self.session.commit()
+        self.session.refresh(suggestion)
+        return self._duplicate_suggestion_response(suggestion)
+
+    @staticmethod
+    def _canonical_identifier(value: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+        return normalized[:120] or "catalogue-record"
+
+    @staticmethod
+    def _duplicate_suggestion_response(
+        suggestion: DuplicateSuggestion,
+    ) -> DuplicateSuggestionResponse:
+        return DuplicateSuggestionResponse(
+            id=suggestion.id,
+            opportunity_id=suggestion.opportunity_id,
+            opportunity_name=suggestion.opportunity.name,
+            matched_opportunity_id=suggestion.matched_opportunity_id,
+            matched_opportunity_name=suggestion.matched_opportunity.name,
+            score=suggestion.score,
+            status=suggestion.status,
+            created_at=suggestion.created_at,
         )
 
     @staticmethod
