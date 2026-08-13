@@ -130,6 +130,26 @@ def test_student_cannot_create_opportunity(client: TestClient, db_session: Sessi
     assert response.json()["error"]["code"] == "forbidden"
 
 
+def test_opportunity_rejects_oversized_text_and_list_items(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+
+    oversized_text = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(field_eligibility="x" * 2_001),
+        headers=headers,
+    )
+    oversized_list_item = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(required_documents=["x" * 501]),
+        headers=headers,
+    )
+
+    assert oversized_text.status_code == 422
+    assert oversized_list_item.status_code == 422
+
+
 def test_admin_bootstrap_promotes_existing_user(client: TestClient, db_session: Session) -> None:
     create_user(db_session, email=STUDENT_EMAIL, role=UserRole.STUDENT)
 

@@ -105,7 +105,7 @@ class SourceCreate(BaseModel):
     title: str = Field(min_length=3, max_length=255)
     publication_date: datetime | None = None
     content_hash: str | None = Field(default=None, min_length=32, max_length=64)
-    relevant_excerpt: str = Field(min_length=20)
+    relevant_excerpt: str = Field(min_length=20, max_length=12_000)
     verification_status: VerificationStatus = VerificationStatus.NEEDS_REVIEW
 
 
@@ -120,8 +120,8 @@ class OpportunityCreate(BaseModel):
     university_website_url: HttpUrl | None = None
     country: str = Field(min_length=2, max_length=100)
     degree_level: DegreeLevel
-    field_eligibility: str | None = None
-    nationality_eligibility: str | None = None
+    field_eligibility: str | None = Field(default=None, max_length=2_000)
+    nationality_eligibility: str | None = Field(default=None, max_length=2_000)
     application_opening_date: datetime | None = None
     application_deadline: datetime | None = None
     intake_year: int | None = Field(default=None, ge=2000, le=2100)
@@ -133,23 +133,23 @@ class OpportunityCreate(BaseModel):
     travel_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
     insurance_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
     fees_coverage_status: FundingCoverageStatus = FundingCoverageStatus.UNKNOWN
-    tuition_coverage: str | None = None
+    tuition_coverage: str | None = Field(default=None, max_length=2_000)
     monthly_stipend_amount: Decimal | None = Field(default=None, ge=0)
     monthly_stipend_currency: str | None = Field(default=None, min_length=3, max_length=3)
-    accommodation_coverage: str | None = None
-    travel_allowance: str | None = None
-    health_insurance: str | None = None
-    application_fee_info: str | None = None
-    english_language_requirement: str | None = None
-    standardized_test_requirement: str | None = None
-    minimum_academic_requirement: str | None = None
-    required_documents: list[str] = Field(default_factory=list)
-    application_method: str | None = None
+    accommodation_coverage: str | None = Field(default=None, max_length=2_000)
+    travel_allowance: str | None = Field(default=None, max_length=2_000)
+    health_insurance: str | None = Field(default=None, max_length=2_000)
+    application_fee_info: str | None = Field(default=None, max_length=2_000)
+    english_language_requirement: str | None = Field(default=None, max_length=2_000)
+    standardized_test_requirement: str | None = Field(default=None, max_length=2_000)
+    minimum_academic_requirement: str | None = Field(default=None, max_length=2_000)
+    required_documents: list[str] = Field(default_factory=list, max_length=30)
+    application_method: str | None = Field(default=None, max_length=1_000)
     application_url: HttpUrl | None = None
     status: OpportunityStatus = OpportunityStatus.DRAFT
     data_confidence: DataConfidence = DataConfidence.LOW
-    notes: str | None = None
-    eligibility_warnings: list[str] = Field(default_factory=list)
+    notes: str | None = Field(default=None, max_length=8_000)
+    eligibility_warnings: list[str] = Field(default_factory=list, max_length=30)
     eligibility_rules: list[EligibilityRuleCreate] = Field(default_factory=list)
     application_cycles: list[OpportunityCycleCreate] = Field(default_factory=list)
     source: SourceCreate
@@ -176,7 +176,10 @@ class OpportunityCreate(BaseModel):
     @field_validator("required_documents", "eligibility_warnings")
     @classmethod
     def clean_list(cls, values: list[str]) -> list[str]:
-        return [item.strip() for item in values if item.strip()]
+        cleaned = [item.strip() for item in values if item.strip()]
+        if any(len(item) > 500 for item in cleaned):
+            raise ValueError("List items must not exceed 500 characters")
+        return cleaned
 
     @model_validator(mode="after")
     def validate_dates_and_funding(self) -> OpportunityCreate:
@@ -213,7 +216,7 @@ class OpportunityCreate(BaseModel):
 class VerificationUpdate(BaseModel):
     source_id: uuid.UUID | None = None
     verification_status: VerificationStatus
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=2_000)
 
 
 class ReviewAction(StrEnum):
