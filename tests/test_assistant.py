@@ -29,7 +29,7 @@ def student_headers(client: TestClient, db_session: Session, email: str) -> dict
     return headers
 
 
-def verified_opportunity(client: TestClient, db_session: Session) -> dict:
+def verified_opportunity(client: TestClient, db_session: Session, **overrides: object) -> dict:
     admin = admin_headers(client, db_session)
     now = datetime.now(UTC)
     created = create_opportunity(
@@ -37,6 +37,7 @@ def verified_opportunity(client: TestClient, db_session: Session) -> dict:
         admin,
         application_opening_date=(now - timedelta(days=1)).isoformat(),
         application_deadline=(now + timedelta(days=30)).isoformat(),
+        **overrides,
     )
     publish_opportunity(client, admin, created)
     return created
@@ -241,10 +242,18 @@ def test_assistant_persists_safe_provider_failure(client: TestClient, db_session
     assert result.response.citations == []
 
 
-def test_profile_matching_explains_used_and_missing_signals(
+def test_profile_matching_uses_canonical_rule_evaluation(
     client: TestClient, db_session: Session
 ) -> None:
-    verified_opportunity(client, db_session)
+    verified_opportunity(
+        client,
+        db_session,
+        nationality_eligibility="International applicants may apply.",
+        eligibility_rules=[
+            {"rule_type": "nationality", "operator": "in", "value": ["Pakistani"]},
+            {"rule_type": "target_degree", "operator": "equals", "value": "masters"},
+        ],
+    )
     headers = student_headers(client, db_session, "profile-match@example.com")
     user = db_session.scalar(select(User).where(User.email == "profile-match@example.com"))
     assert user is not None
@@ -264,8 +273,13 @@ def test_profile_matching_explains_used_and_missing_signals(
     )
     assert response.status_code == 200
     match = response.json()["response"]["possible_matches"][0]
-    assert "target degree" in match["reason"]
-    assert "nationality" in match["reason"]
+    assert "Canonical eligibility check" in match["reason"]
+    assert "nationality" not in match["reason"].casefold()
+    assert any(
+        "Nationality requirement is not satisfied" in warning
+        for warning in response.json()["response"]["warnings"]
+    )
+    assert response.json()["response"]["confidence"] in {"low", "medium"}
 
 
 def test_private_progress_requires_opt_in_and_only_returns_owned_workspace(

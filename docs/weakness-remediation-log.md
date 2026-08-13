@@ -97,6 +97,30 @@ Verification:
 - `.\.venv\Scripts\python.exe -m ruff check app\modules\applications\command_service.py tests\test_command_centre.py`
 - `.\.venv\Scripts\python.exe -m pytest tests\test_command_centre.py -q`
 - `.\.venv\Scripts\python.exe -m pytest -q`
+
+## 2026-08-14 Checkpoint: Weaknesses 68-78
+
+| ID | Status | Evidence | Remediation |
+| --- | --- | --- | --- |
+| 68 | Verified product-positioning constraint | The default provider is explicitly deterministic and returns server-composed evidence without model inference. | Provider naming and comments already present this as an evidence-template provider rather than unreviewed model reasoning. |
+| 69 | Confirmed true, fixed | Assistant profile-match explanations used a local `_profile_match_reason()` heuristic separate from `MatchingService`. | Assistant profile reasoning now calls canonical `MatchingService.match_opportunity()` for selected opportunities. |
+| 70 | Confirmed true, fixed | Assistant field/nationality profile matching used substring containment against prose eligibility text. | Removed substring profile matching and route profile reasoning through structured canonical matching. |
+| 71 | Confirmed true, fixed | Assistant treated the mere presence of profile values as useful match signals for rule categories. | Assistant now reports canonical rule outcomes, missing information, and known eligibility failures from the matcher. |
+| 72 | Confirmed true, improved | Assistant response confidence defaulted to medium for normal composed answers. | Response confidence now derives from canonical match confidence and warning presence when profile matching is used. |
+| 73 | Confirmed true, partially improved | Retrieval is still keyword/SQL based. | Added data-layer candidate limiting before evidence-policy processing; full-text/hybrid retrieval remains future work. |
+| 74 | Confirmed true, improved | Assistant retrieved candidates before applying final limits. | Unselected keyword retrieval now applies a SQL candidate limit before in-memory evidence-policy filtering. |
+| 75 | Confirmed true, not fully fixed | Unsupported-intent detection remains phrase-based. | Not changed in this checkpoint; requires a broader capability-routing design. |
+| 76 | Confirmed true, fixed | Frontend always sent `use_profile: true` for Assistant questions. | Added a visible `Use my profile for this question` checkbox and send profile data only when selected. |
+| 77 | Confirmed true, fixed | Assistant confidence existed in the backend response but was not shown in the answer header. | Assistant UI now displays evidence confidence beside the answer. |
+| 78 | Confirmed true, improved | Citations were grouped separately from claims. | Facts, possible-match reasons, and requirements now render inline citation anchors tied to official citation IDs. |
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m ruff check app\modules\assistant tests\test_assistant.py`
+- `.\.venv\Scripts\python.exe -m pytest tests\test_assistant.py -q`
+- `.\.venv\Scripts\python.exe -m pytest -q`
+- `pnpm --dir frontend test`
+- `pnpm --dir frontend build`
 - `git diff --check`
 
 ## 2026-08-14 Checkpoint: Weaknesses 50-58

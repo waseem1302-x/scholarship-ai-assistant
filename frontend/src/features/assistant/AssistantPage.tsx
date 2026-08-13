@@ -16,8 +16,9 @@ type ProgressItem = { opportunity_id: string; name: string; lifecycle: string; o
 type ResponseBody = {
   answer: string;
   answer_type: string;
+  confidence: string;
   facts: { text: string; citation_ids: string[] }[];
-  possible_matches: { opportunity_id: string; name: string; reason: string }[];
+  possible_matches: { opportunity_id: string; name: string; reason: string; citation_ids: string[] }[];
   requirements_to_check: { text: string; citation_ids: string[] }[];
   private_progress: ProgressItem[];
   next_actions: string[];
@@ -55,6 +56,14 @@ function assistantErrorMessage(error: unknown): string {
   return error.message;
 }
 
+function CitationRefs({ ids, citations }: { ids: string[]; citations: Citation[] }) {
+  if (!ids.length) return null;
+  return <span className="citation-refs">{ids.map((id) => {
+    const index = citations.findIndex((citation) => citation.id === id);
+    return <a key={id} href={`#citation-${id}`}>[{index >= 0 ? index + 1 : "?"}]</a>;
+  })}</span>;
+}
+
 export function AssistantPage() {
   const { user, isRestoring } = useAuth();
   const [question, setQuestion] = useState("");
@@ -63,6 +72,7 @@ export function AssistantPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [preferences, setPreferences] = useState<Preferences | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [useProfile, setUseProfile] = useState(false);
   const [useApplicationData, setUseApplicationData] = useState(false);
 
   useEffect(() => {
@@ -133,7 +143,7 @@ export function AssistantPage() {
     try {
       const result = await apiClient.request<Answer>("/assistant/answers", {
         method: "POST",
-        body: JSON.stringify({ question, use_profile: true, use_application_data: useApplicationData }),
+        body: JSON.stringify({ question, use_profile: useProfile, use_application_data: useApplicationData }),
       });
       setAnswer(result);
       if (result.status === "failed") {
@@ -197,6 +207,7 @@ export function AssistantPage() {
       <form onSubmit={ask} className="assistant-form">
         <label htmlFor="assistant-question">Ask about scholarships, requirements, funding, deadlines, or your progress</label>
         <textarea id="assistant-question" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={4000} required placeholder="For example: Find master's scholarships in Malaysia" />
+        <label className="assistant-opt-in"><input type="checkbox" checked={useProfile} onChange={(event) => setUseProfile(event.target.checked)} /> Use my profile for this question</label>
         <label className="assistant-opt-in"><input type="checkbox" checked={useApplicationData} onChange={(event) => setUseApplicationData(event.target.checked)} /> Use my private application workspace for progress or priority questions</label>
         <div><button className="button button-primary" disabled={loading || !preferences?.consented}>{loading ? "Checking verified sources…" : "Ask assistant"}</button></div>
       </form>
@@ -210,11 +221,11 @@ export function AssistantPage() {
       </li>)}</ul>
     </section> : null}
     {answer ? <section className="assistant-answer" aria-live="polite">
-      <div className="assistant-answer-head"><div><p className="eyebrow">{answer.status === "completed" ? "Source-backed response" : "Transparent uncertainty"}</p><h2>{answer.response.answer}</h2></div>{answer.status === "completed" ? <button className="button button-quiet" type="button" onClick={save} disabled={answer.saved_to_workspace}>{answer.saved_to_workspace ? "Saved" : "Save result"}</button> : null}</div>
+      <div className="assistant-answer-head"><div><p className="eyebrow">{answer.status === "completed" ? "Source-backed response" : "Transparent uncertainty"}</p><h2>{answer.response.answer}</h2><p>Evidence confidence: {answer.response.confidence}</p></div>{answer.status === "completed" ? <button className="button button-quiet" type="button" onClick={save} disabled={answer.saved_to_workspace}>{answer.saved_to_workspace ? "Saved" : "Save result"}</button> : null}</div>
       {answer.response.warnings.length ? <div className="assistant-warning" role="alert"><strong>Check before acting</strong><ul>{answer.response.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div> : null}
-      {answer.response.facts.length ? <div className="assistant-section"><h3>Verified facts</h3><ul>{answer.response.facts.map((fact) => <li key={fact.text}>{fact.text}</li>)}</ul></div> : null}
-      {answer.response.possible_matches.length ? <div className="assistant-section"><h3>Possible matches</h3>{answer.response.possible_matches.map((match) => <article key={match.opportunity_id}><Link to={`/catalogue/${match.opportunity_id}`}>{match.name}</Link><p>{match.reason}</p><button type="button" onClick={() => startApplication(match.opportunity_id, match.name)}>Create application plan</button></article>)}</div> : null}
-      {answer.response.requirements_to_check.length ? <div className="assistant-section"><h3>Requirements to confirm</h3><ul>{answer.response.requirements_to_check.map((item) => <li key={item.text}>{item.text}</li>)}</ul></div> : null}
+      {answer.response.facts.length ? <div className="assistant-section"><h3>Verified facts</h3><ul>{answer.response.facts.map((fact) => <li key={fact.text}>{fact.text} <CitationRefs ids={fact.citation_ids} citations={answer.response.citations} /></li>)}</ul></div> : null}
+      {answer.response.possible_matches.length ? <div className="assistant-section"><h3>Possible matches</h3>{answer.response.possible_matches.map((match) => <article key={match.opportunity_id}><Link to={`/catalogue/${match.opportunity_id}`}>{match.name}</Link><p>{match.reason} <CitationRefs ids={match.citation_ids} citations={answer.response.citations} /></p><button type="button" onClick={() => startApplication(match.opportunity_id, match.name)}>Create application plan</button></article>)}</div> : null}
+      {answer.response.requirements_to_check.length ? <div className="assistant-section"><h3>Requirements to confirm</h3><ul>{answer.response.requirements_to_check.map((item) => <li key={item.text}>{item.text} <CitationRefs ids={item.citation_ids} citations={answer.response.citations} /></li>)}</ul></div> : null}
       {answer.response.private_progress.length ? <div className="assistant-section"><h3>Private application progress</h3><ul>{answer.response.private_progress.map((item) => <li key={item.opportunity_id}><strong>{item.name}</strong>: {item.lifecycle}; {item.outstanding_tasks} outstanding task(s).</li>)}</ul></div> : null}
       {answer.response.next_actions.length ? <div className="assistant-section"><h3>Suggested next steps</h3><ol>{answer.response.next_actions.map((item) => <li key={item}>{item}</li>)}</ol></div> : null}
       {answer.response.citations.length ? <div className="assistant-section"><h3>Official citations</h3>{answer.response.citations.map((citation) => <article className="assistant-citation" key={citation.id}><div><strong>{citation.source_title}</strong><p>{citation.excerpt}</p><small>{citation.freshness} {citation.last_verified_at ? `· verified ${new Date(citation.last_verified_at).toLocaleDateString()}` : ""}</small></div><a className="button button-quiet" href={citation.source_url} target="_blank" rel="noreferrer" aria-label={`Open official source: ${citation.source_title}`}>Open source</a></article>)}</div> : null}

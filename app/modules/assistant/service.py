@@ -41,6 +41,7 @@ from app.modules.assistant.schemas import (
     SaveAnswerResponse,
 )
 from app.modules.auth.models import User, utc_now
+from app.modules.matching.service import MatchingService
 from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.lifecycle import effective_application_window
 from app.modules.opportunities.models import (
@@ -50,7 +51,9 @@ from app.modules.opportunities.models import (
     Source,
     SourceExcerpt,
 )
+from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.profiles.models import StudentProfile
+from app.modules.profiles.repository import StudentProfileRepository
 
 
 class AssistantService:
@@ -474,6 +477,8 @@ class AssistantService:
                     )
                 )
             statement = statement.where(or_(*predicates))
+        if not selected_opportunity_ids:
+            statement = statement.limit(self.settings.assistant_max_retrieval_results * 4)
         candidates = self.session.scalars(statement).unique().all()
         accepted: list[tuple[Opportunity, Source]] = []
         rejected = {"unverified": 0, "stale": 0, "conflicting_or_expired": 0}
@@ -504,6 +509,15 @@ class AssistantService:
         matches: list[PossibleMatchResponse] = []
         requirements: list[RequirementResponse] = []
         warnings: list[str] = []
+        confidence_values: list[str] = []
+        matcher = (
+            MatchingService(
+                StudentProfileRepository(self.session),
+                OpportunityRepository(self.session),
+            )
+            if profile is not None
+            else None
+        )
         for opportunity, source in opportunities[:3]:
             listed_degree = opportunity.degree_level.value.replace("_", " ")
             claim = (
@@ -570,8 +584,12 @@ class AssistantService:
                                 citation_ids=[uuid.uuid4()],
                             )
                         )
-            reason, profile_warnings = self._profile_match_reason(opportunity, profile)
+            reason, profile_warnings, match_confidence = self._profile_match_reason(
+                opportunity, profile, matcher
+            )
             warnings.extend(profile_warnings)
+            if match_confidence:
+                confidence_values.append(match_confidence)
             matches.append(
                 PossibleMatchResponse(
                     opportunity_id=opportunity.id,
@@ -602,7 +620,7 @@ class AssistantService:
         return AssistantStructuredResponse(
             answer=answer[: self.settings.assistant_max_response_characters],
             answer_type=answer_type,
-            confidence="medium",
+            confidence=self._response_confidence(confidence_values, warnings),
             facts=facts,
             possible_matches=matches,
             requirements_to_check=requirements,
@@ -699,63 +717,53 @@ class AssistantService:
             f"{outstanding} outstanding task(s)."
         )
 
-    @staticmethod
     def _profile_match_reason(
-        opportunity: Opportunity, profile: StudentProfile | None
-    ) -> tuple[str, list[str]]:
-        if profile is None:
-            return "It matches terms in your question.", []
-        matches: list[str] = []
-        missing: list[str] = []
-        if profile.target_degree_level:
-            if profile.target_degree_level.value == opportunity.degree_level.value:
-                matches.append("target degree")
-        else:
-            missing.append("target degree")
-        if profile.intended_field:
-            if (
-                opportunity.field_eligibility
-                and profile.intended_field.casefold() in opportunity.field_eligibility.casefold()
-            ):
-                matches.append("intended field")
-        else:
-            missing.append("intended field")
-        if profile.nationality:
-            if (
-                opportunity.nationality_eligibility
-                and profile.nationality.casefold() in opportunity.nationality_eligibility.casefold()
-            ):
-                matches.append("nationality")
-        else:
-            missing.append("nationality")
-        rules = {rule.rule_type.value for rule in opportunity.eligibility_rules}
-        profile_values = {
-            "cgpa": profile.cgpa,
-            "percentage": profile.percentage,
-            "ielts": profile.ielts_score,
-            "toefl": profile.toefl_score,
-            "work_experience_months": profile.work_experience_months,
-            "current_education_level": profile.current_education_level,
-            "study_mode": profile.preferred_study_mode,
-            "intake_year": profile.target_intake_year,
-        }
-        for key, value in profile_values.items():
-            if key in rules:
-                if value is None:
-                    missing.append(key.replace("_", " "))
-                else:
-                    matches.append(key.replace("_", " "))
-        reason = "It matches terms in your question."
-        if matches:
-            reason = "Profile signals considered: " + ", ".join(matches)
-            reason += "; confirm every official condition."
-        warnings = []
-        if missing:
-            missing_values = ", ".join(sorted(set(missing)))
-            warnings.append(
-                f"Profile data still needed to assess listed conditions: {missing_values}."
+        self,
+        opportunity: Opportunity,
+        profile: StudentProfile | None,
+        matcher: MatchingService | None,
+    ) -> tuple[str, list[str], str | None]:
+        if profile is None or matcher is None:
+            return "It matches terms in your question.", [], None
+        match = matcher.match_opportunity(profile, opportunity)
+        warnings = list(
+            dict.fromkeys(
+                match.eligibility_failures
+                + match.preference_mismatches
+                + match.missing_information
+                + match.warnings
             )
-        return reason, warnings
+        )
+        if match.eligibility_status == "ineligible":
+            reason = (
+                "Canonical eligibility check found a known issue; review the official "
+                "requirements before prioritizing this scholarship."
+            )
+        elif match.fit_score is not None:
+            reason = (
+                f"Canonical match status: {match.eligibility_status.replace('_', ' ')} "
+                f"with {match.fit_score}% captured eligibility fit."
+            )
+        else:
+            reason = (
+                f"Canonical match status: {match.eligibility_status.replace('_', ' ')}; "
+                "more official or profile evidence is needed."
+            )
+        if match.preference_fit is not None:
+            reason += f" Preference fit is {match.preference_fit}%."
+        return reason, warnings, match.confidence
+
+    @staticmethod
+    def _response_confidence(confidence_values: list[str], warnings: list[str]) -> str:
+        if warnings:
+            return "low" if "low" in confidence_values else "medium"
+        if "low" in confidence_values:
+            return "low"
+        if "medium" in confidence_values:
+            return "medium"
+        if "high" in confidence_values:
+            return "high"
+        return "medium"
 
     @staticmethod
     def _blocked_response() -> AssistantStructuredResponse:
