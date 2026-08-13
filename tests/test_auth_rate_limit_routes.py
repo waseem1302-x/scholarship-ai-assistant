@@ -155,3 +155,33 @@ def test_account_recovery_limit_returns_its_dedicated_error_code() -> None:
 
     assert response.status_code == 429
     assert response.json()["error"]["code"] == "account_recovery_rate_limited"
+
+
+def test_login_uses_a_global_defensive_threshold() -> None:
+    settings = limiter_settings(
+        auth_login_rate_limit_per_minute=10,
+        auth_login_global_rate_limit_per_minute=10,
+    )
+    store = RecordingStore()
+    client = protected_client(settings, store)
+
+    response = client.post("/api/v1/auth/login", json={"email": "student@example.test"})
+
+    assert response.status_code == 200
+    assert "auth_login:global" in store.keys
+
+
+def test_global_login_threshold_blocks_before_per_account_limits() -> None:
+    settings = limiter_settings(
+        auth_login_rate_limit_per_minute=10,
+        auth_login_global_rate_limit_per_minute=1,
+    )
+    client = protected_client(settings, RecordingStore())
+
+    assert (
+        client.post("/api/v1/auth/login", json={"email": "first@example.test"}).status_code == 200
+    )
+    response = client.post("/api/v1/auth/login", json={"email": "second@example.test"})
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "auth_login_rate_limited"

@@ -140,6 +140,15 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
             # independent tests; production behavior is exercised with
             # injected stores below without cross-test counter leakage.
             return await call_next(request)
+        if route_class == "auth_login":
+            blocked = self._consume_request(
+                ["auth_login:global"],
+                self.settings.auth_login_global_rate_limit_per_minute,
+                "auth_login_rate_limited",
+                "Too many login attempts. Try again shortly.",
+            )
+            if blocked is not None:
+                return blocked
         keys = await self._keys_for(request, route_class)
         maximum, code, message = self._limit_for(route_class)
         blocked = self._consume_request(keys, maximum, code, message)

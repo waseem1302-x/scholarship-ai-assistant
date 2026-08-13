@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     rate_limit_redis_url: SecretStr | None = Field(default=None, repr=False)
     rate_limit_redis_timeout_seconds: int = Field(default=2, ge=1, le=10)
     auth_login_rate_limit_per_minute: int = Field(default=10, ge=1, le=120)
+    auth_login_global_rate_limit_per_minute: int = Field(default=300, ge=1, le=10_000)
     auth_registration_rate_limit_per_minute: int = Field(default=5, ge=1, le=120)
     account_recovery_rate_limit_per_minute: int = Field(default=5, ge=1, le=120)
     account_verification_rate_limit_per_minute: int = Field(default=10, ge=1, le=120)
