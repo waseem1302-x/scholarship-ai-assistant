@@ -7,7 +7,7 @@ from app.core.feature_gates import FeatureGateMiddleware
 
 def gated_client(**changes: object) -> TestClient:
     settings = Settings(
-        env="development",
+        env="test",
         database_url="sqlite+pysqlite:///:memory:",
         jwt_secret="feature-gate-test-secret-at-least-32-characters",
         **changes,
@@ -33,7 +33,7 @@ def gated_client(**changes: object) -> TestClient:
     return TestClient(app)
 
 
-def test_disabled_feature_gates_block_high_risk_routes_and_preserve_data_rights() -> None:
+def test_disabled_feature_gates_apply_in_test_environment_and_preserve_data_rights() -> None:
     client = gated_client(
         assistant_enabled=False,
         document_lab_enabled=False,

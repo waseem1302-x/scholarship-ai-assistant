@@ -10,14 +10,29 @@ from sqlalchemy.pool import StaticPool
 os.environ["APP_ENV"] = "test"
 os.environ["APP_DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 os.environ["APP_JWT_SECRET"] = "test-secret-that-is-at-least-32-characters-long"
+# Keep production-equivalent feature gates active. The shared application
+# explicitly enables the capabilities its integration tests exercise.
+TEST_APPLICATION_FEATURE_FLAGS = {
+    "APP_ASSISTANT_ENABLED": "true",
+    "APP_DOCUMENT_LAB_ENABLED": "true",
+    "APP_COMMUNITY_ENABLED": "true",
+    "APP_CATALOGUE_MAINTENANCE_MODE": "false",
+}
+os.environ.update(TEST_APPLICATION_FEATURE_FLAGS)
 # Request-limit behavior is covered with an injected small limit. The shared
 # TestClient address should not make otherwise independent test users collide.
 os.environ["APP_ASSISTANT_RATE_LIMIT_PER_MINUTE"] = "120"
 os.environ["APP_COMMUNITY_WRITE_RATE_LIMIT_PER_MINUTE"] = "120"
 
-from app.db.base import Base
-from app.db.session import get_db
-from app.main import app
+# Imports intentionally follow test environment setup so the shared app caches it.
+from app.db.base import Base  # noqa: E402
+from app.db.session import get_db  # noqa: E402
+from app.main import app  # noqa: E402
+
+# The shared application has cached its explicit test settings. Remove these
+# temporary environment values so standalone Settings tests remain isolated.
+for feature_flag_name in TEST_APPLICATION_FEATURE_FLAGS:
+    os.environ.pop(feature_flag_name, None)
 
 test_engine = create_engine(
     "sqlite+pysqlite:///:memory:",

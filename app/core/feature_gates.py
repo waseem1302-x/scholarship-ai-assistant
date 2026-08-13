@@ -19,8 +19,6 @@ class FeatureGateMiddleware(BaseHTTPMiddleware):
         self.settings = settings
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        if self.settings.env == "test":
-            return await call_next(request)
         path = request.url.path
         code: str | None = None
         message: str | None = None
