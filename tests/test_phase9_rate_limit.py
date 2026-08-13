@@ -7,6 +7,7 @@ from app.core.config import Settings
 from app.core.rate_limit import (
     AuthRateLimitMiddleware,
     RateLimitStoreUnavailable,
+    RedisRateLimitStore,
 )
 
 
@@ -17,6 +18,16 @@ class UnavailableStore:
 
     def health(self) -> bool:
         return False
+
+
+class ScriptRecordingRedisClient:
+    def __init__(self, response: tuple[int, int]) -> None:
+        self.response = response
+        self.calls: list[tuple[object, ...]] = []
+
+    def eval(self, *args: object) -> tuple[int, int]:
+        self.calls.append(args)
+        return self.response
 
 
 def test_shared_store_outage_fails_closed_before_high_cost_work() -> None:
@@ -74,3 +85,34 @@ def test_in_memory_limiter_preserves_existing_assistant_contract() -> None:
 
     assert limiter._consume(["assistant:user:test"], datetime.now(UTC)) is None
     assert limiter._consume(["assistant:user:test"], datetime.now(UTC)) is not None
+
+
+def test_redis_limiter_uses_an_atomic_sliding_window_script() -> None:
+    client = ScriptRecordingRedisClient((1, 0))
+    limiter = RedisRateLimitStore.__new__(RedisRateLimitStore)
+    limiter._client = client
+
+    result = limiter.consume(key="auth_login:global", limit=10, window_seconds=60)
+
+    script, num_keys, key, _now, window, limit, member = client.calls[0]
+    assert result.allowed is True
+    assert "ZREMRANGEBYSCORE" in script
+    assert "ZRANGE" in script
+    assert "ZADD" in script
+    assert "PEXPIRE" in script
+    assert num_keys == 1
+    assert key == "phase9:rate-limit:auth_login:global"
+    assert window == 60_000
+    assert limit == 10
+    assert isinstance(member, str)
+
+
+def test_redis_sliding_window_returns_atomic_retry_after() -> None:
+    client = ScriptRecordingRedisClient((0, 17))
+    limiter = RedisRateLimitStore.__new__(RedisRateLimitStore)
+    limiter._client = client
+
+    result = limiter.consume(key="account_recovery:ip:test", limit=5, window_seconds=60)
+
+    assert result.allowed is False
+    assert result.retry_after_seconds == 17

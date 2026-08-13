@@ -6,6 +6,7 @@ atomic counters.
 """
 
 import json
+import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -61,15 +62,20 @@ class InMemoryRateLimitStore:
 
 
 class RedisRateLimitStore:
-    """Fixed-window Redis limiter with atomic increment/expiry and safe failure."""
+    """Atomic Redis sliding-window limiter with safe failure behavior."""
 
     _CONSUME = """
-    local count = redis.call('INCR', KEYS[1])
-    if count == 1 then
-      redis.call('EXPIRE', KEYS[1], ARGV[1])
+    local cutoff = tonumber(ARGV[1]) - tonumber(ARGV[2])
+    redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, cutoff)
+    local count = redis.call('ZCARD', KEYS[1])
+    if count >= tonumber(ARGV[3]) then
+      local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+      local retry_after_ms = tonumber(oldest[2]) + tonumber(ARGV[2]) - tonumber(ARGV[1])
+      return {0, math.max(1, math.ceil(retry_after_ms / 1000))}
     end
-    local ttl = redis.call('TTL', KEYS[1])
-    return {count, ttl}
+    redis.call('ZADD', KEYS[1], ARGV[1], ARGV[4])
+    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+    return {1, 0}
     """
 
     def __init__(self, url: str, timeout_seconds: int) -> None:
@@ -81,15 +87,21 @@ class RedisRateLimitStore:
         )
 
     def consume(self, *, key: str, limit: int, window_seconds: int) -> RateLimitResult:
+        now_milliseconds = int(datetime.now(UTC).timestamp() * 1000)
+        window_milliseconds = window_seconds * 1000
         try:
-            count, ttl = self._client.eval(
-                self._CONSUME, 1, f"phase9:rate-limit:{key}", window_seconds
+            allowed, retry_after = self._client.eval(
+                self._CONSUME,
+                1,
+                f"phase9:rate-limit:{key}",
+                now_milliseconds,
+                window_milliseconds,
+                limit,
+                f"{now_milliseconds}:{uuid.uuid4().hex}",
             )
         except RedisError as exc:
             raise RateLimitStoreUnavailable("The shared rate-limit store is unavailable") from exc
-        if int(count) > limit:
-            return RateLimitResult(False, max(1, int(ttl)))
-        return RateLimitResult(True)
+        return RateLimitResult(bool(int(allowed)), int(retry_after))
 
     def health(self) -> bool:
         try:
