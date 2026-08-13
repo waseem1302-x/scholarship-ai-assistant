@@ -66,6 +66,8 @@ def production_settings() -> Settings:
         cors_origins="https://beta.example.test",
         trusted_proxy_ips="10.0.0.1",
         password_breach_check_enabled=True,
+        operations_health_token="production-operations-token",
+        metrics_backend="external",
     )
 
 

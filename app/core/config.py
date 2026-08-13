@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     trusted_proxy_ips: str = ""
     trusted_proxy_mode: Literal["explicit", "azure-container-apps"] = "explicit"
     operational_job_stale_minutes: int = Field(default=15, ge=1, le=1440)
+    operations_health_token: SecretStr | None = Field(default=None, repr=False)
+    metrics_backend: Literal["in_memory", "external"] = "in_memory"
 
     # Phase 9 beta and capability controls. These remain server-side so that a
     # high-risk capability can be paused without a frontend release.
@@ -233,6 +235,10 @@ class Settings(BaseSettings):
                     "Remote Document Lab analysis requires explicit privacy and vendor approval"
                 )
         if self.env == "production":
+            if self.operations_health_token is None:
+                raise ValueError("Production requires APP_OPERATIONS_HEALTH_TOKEN")
+            if self.metrics_backend != "external":
+                raise ValueError("Production requires an external metrics backend")
             if self.rate_limit_backend != "redis" or self.rate_limit_redis_url is None:
                 raise ValueError(
                     "Production requires APP_RATE_LIMIT_BACKEND=redis and APP_RATE_LIMIT_REDIS_URL"

@@ -1,3 +1,5 @@
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -12,7 +14,9 @@ from sqlalchemy import (
     Index,
     LargeBinary,
     String,
+    event,
     func,
+    select,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -210,8 +214,60 @@ class AuditLog(Base):
     entity_type: Mapped[str] = mapped_column(String(100))
     entity_id: Mapped[str | None] = mapped_column(String(64))
     metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    previous_integrity_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    integrity_hash: Mapped[str] = mapped_column(String(64), default="pending", index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
 
     actor: Mapped[User | None] = relationship()
+
+
+def audit_integrity_hash(
+    *,
+    previous_hash: str | None,
+    audit_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None,
+    action: str,
+    entity_type: str,
+    entity_id: str | None,
+    metadata_json: dict[str, object],
+    created_at: datetime,
+) -> str:
+    payload = {
+        "previous_hash": previous_hash,
+        "id": str(audit_id),
+        "actor_user_id": str(actor_user_id) if actor_user_id else None,
+        "action": action,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "metadata_json": metadata_json,
+        "created_at": created_at.isoformat(),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+
+
+@event.listens_for(AuditLog, "before_insert")
+def set_audit_integrity_hash(_mapper, connection, target: AuditLog) -> None:
+    if target.id is None:
+        target.id = uuid.uuid4()
+    if target.created_at is None:
+        target.created_at = utc_now()
+    previous_hash = connection.execute(
+        select(AuditLog.integrity_hash)
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    target.previous_integrity_hash = previous_hash
+    target.integrity_hash = audit_integrity_hash(
+        previous_hash=previous_hash,
+        audit_id=target.id,
+        actor_user_id=target.actor_user_id,
+        action=target.action,
+        entity_type=target.entity_type,
+        entity_id=target.entity_id,
+        metadata_json=target.metadata_json or {},
+        created_at=target.created_at,
+    )

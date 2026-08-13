@@ -1,5 +1,6 @@
 """Operational health endpoint registration."""
 
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -49,6 +50,7 @@ def register_health_routes(application: FastAPI, settings: Settings) -> None:
         request: Request,
         session: Annotated[Session, Depends(get_db)],
     ) -> dict[str, object]:
+        _require_operations_access(request, settings)
         from app.core.email import get_account_email_sender
         from app.core.rate_limit import create_rate_limit_store
 
@@ -75,11 +77,42 @@ def register_health_routes(application: FastAPI, settings: Settings) -> None:
                 "processed_count": job.processed_count,
                 "failed_count": job.failed_count,
                 "last_error_code": job.last_error_code,
+                "recent_runs": [
+                    {
+                        "run_id": str(run.id),
+                        "started_at": run.started_at.isoformat(),
+                        "completed_at": run.completed_at.isoformat()
+                        if run.completed_at
+                        else None,
+                        "duration_ms": run.duration_ms,
+                        "processed": run.processed_count,
+                        "failed": run.failed_count,
+                        "error_code": run.error_code,
+                        "release_version": run.release_version,
+                    }
+                    for run in job.recent_runs[:10]
+                ],
             }
         return {
             "release_version": settings.release_version,
             "rate_limit_store_healthy": rate_limit_store_healthy,
             "account_email_healthy": account_email_healthy,
+            "metrics_backend": settings.metrics_backend,
             "metrics": request.app.state.metrics.snapshot(),
             "jobs": jobs,
         }
+
+
+def _require_operations_access(request: Request, settings: Settings) -> None:
+    expected = (
+        settings.operations_health_token.get_secret_value()
+        if settings.operations_health_token
+        else None
+    )
+    if not expected:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    authorization = request.headers.get("authorization", "")
+    bearer = authorization.removeprefix("Bearer ").strip() if authorization else ""
+    supplied = request.headers.get("x-operations-token") or bearer
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")

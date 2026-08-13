@@ -58,6 +58,8 @@ def test_production_requires_phase_nine_shared_limiter_and_transactional_email()
             migration_database_url="postgresql+psycopg://migrator:secret@example.test/scholarship",
             cors_origins="https://beta.example.test",
             trusted_proxy_ips="10.0.0.10",
+            operations_health_token="production-operations-token",
+            metrics_backend="external",
         )
 
 
@@ -90,6 +92,8 @@ def test_production_beta_requires_named_owners_and_passkey_relying_party() -> No
             beta_enabled=True,
             cors_origins="https://beta.example.test",
             trusted_proxy_ips="10.0.0.10",
+            operations_health_token="production-operations-token",
+            metrics_backend="external",
         )
 
 
@@ -150,6 +154,8 @@ def _production_settings(**changes: object) -> dict[str, object]:
         "cors_origins": "https://beta.example.test",
         "trusted_proxy_ips": "10.0.0.10",
         "password_breach_check_enabled": True,
+        "operations_health_token": "production-operations-token",
+        "metrics_backend": "external",
     }
     values.update(changes)
     return values
@@ -223,11 +229,16 @@ def test_primary_response_has_browser_security_headers(client) -> None:
 
 
 def test_operational_health_exposes_only_safe_aggregate_data(client) -> None:
-    response = client.get("/health/operations")
+    assert client.get("/health/operations").status_code == 404
+    response = client.get(
+        "/health/operations",
+        headers={"X-Operations-Token": "test-operations-token"},
+    )
 
     assert response.status_code == 200
     assert response.json()["rate_limit_store_healthy"] is True
     assert response.json()["account_email_healthy"] is False
+    assert response.json()["metrics_backend"] == "in_memory"
     assert "student@example.com" not in response.text
 
 

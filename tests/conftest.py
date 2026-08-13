@@ -27,6 +27,7 @@ os.environ.update(TEST_APPLICATION_FEATURE_FLAGS)
 # TestClient address should not make otherwise independent test users collide.
 os.environ["APP_ASSISTANT_RATE_LIMIT_PER_MINUTE"] = "120"
 os.environ["APP_COMMUNITY_WRITE_RATE_LIMIT_PER_MINUTE"] = "120"
+os.environ["APP_OPERATIONS_HEALTH_TOKEN"] = "test-operations-token"
 
 # Imports intentionally follow test environment setup so the shared app caches it.
 from app.db.base import Base  # noqa: E402

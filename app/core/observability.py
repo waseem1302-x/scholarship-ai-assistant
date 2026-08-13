@@ -53,28 +53,48 @@ def configure_observability(settings: Settings) -> None:
 
 @dataclass
 class OperationalMetrics:
+    LATENCY_BUCKETS_MS = (50, 100, 250, 500, 1000, 2500, 5000)
+
     _lock: Lock = field(default_factory=Lock)
     requests: Counter[str] = field(default_factory=Counter)
     errors: Counter[str] = field(default_factory=Counter)
     latency_total_ms: Counter[str] = field(default_factory=Counter)
+    latency_buckets: Counter[tuple[str, str]] = field(default_factory=Counter)
 
     def record(self, route_class: str, status_code: int, latency_ms: int) -> None:
         with self._lock:
             self.requests[route_class] += 1
             self.latency_total_ms[route_class] += latency_ms
+            bucket = self._latency_bucket(latency_ms)
+            self.latency_buckets[(route_class, bucket)] += 1
             if status_code >= 500:
                 self.errors[route_class] += 1
 
-    def snapshot(self) -> dict[str, dict[str, int]]:
+    def snapshot(self) -> dict[str, dict[str, int | dict[str, int]]]:
         with self._lock:
             return {
                 route: {
                     "requests": self.requests[route],
                     "server_errors": self.errors[route],
                     "latency_total_ms": self.latency_total_ms[route],
+                    "latency_buckets_ms": {
+                        bucket: self.latency_buckets[(route, bucket)]
+                        for bucket in self._bucket_labels()
+                    },
                 }
                 for route in sorted(self.requests)
             }
+
+    @classmethod
+    def _latency_bucket(cls, latency_ms: int) -> str:
+        for bucket in cls.LATENCY_BUCKETS_MS:
+            if latency_ms <= bucket:
+                return f"le_{bucket}"
+        return "gt_5000"
+
+    @classmethod
+    def _bucket_labels(cls) -> list[str]:
+        return [f"le_{bucket}" for bucket in cls.LATENCY_BUCKETS_MS] + ["gt_5000"]
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
