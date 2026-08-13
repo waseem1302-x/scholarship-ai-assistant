@@ -1,13 +1,14 @@
 import { createContext, type FormEvent, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { apiClient, type User } from "../api/client";
+import { ApiError, apiClient, type User } from "../api/client";
 
 type AuthMode = "login" | "register";
 
 interface AuthContextValue {
   user: User | null;
   isRestoring: boolean;
+  sessionError: string | null;
   signIn: (
     mode: AuthMode,
     email: string,
@@ -24,17 +25,34 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const sessionGeneration = useRef(0);
 
   useEffect(() => {
     let mounted = true;
     const generation = sessionGeneration.current;
-    void apiClient.restoreSession().then((restoredUser) => {
-      if (mounted && generation === sessionGeneration.current) {
-        setUser(restoredUser);
-        setIsRestoring(false);
-      }
-    });
+    void apiClient
+      .restoreSession()
+      .then((restoredUser) => {
+        if (mounted && generation === sessionGeneration.current) {
+          setUser(restoredUser);
+          setSessionError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (mounted && generation === sessionGeneration.current) {
+          setSessionError(
+            error instanceof ApiError && error.status >= 500
+              ? "We could not restore your session because the service is temporarily unavailable."
+              : "We could not restore your session. Check your connection and try again.",
+          );
+        }
+      })
+      .finally(() => {
+        if (mounted && generation === sessionGeneration.current) {
+          setIsRestoring(false);
+        }
+      });
     return () => {
       mounted = false;
     };
@@ -44,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       isRestoring,
+      sessionError,
       async signIn(mode, email, password, invitationCode, acceptBetaTerms) {
         sessionGeneration.current += 1;
         const result = await apiClient.signIn(
@@ -54,19 +73,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           acceptBetaTerms,
         );
         setUser(result.user);
+        setSessionError(null);
         setIsRestoring(false);
       },
       async signOut() {
         await apiClient.signOut();
         sessionGeneration.current += 1;
         setUser(null);
+        setSessionError(null);
         setIsRestoring(false);
       },
       updateUser(nextUser) {
         setUser(nextUser);
       },
     }),
-    [isRestoring, user],
+    [isRestoring, sessionError, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

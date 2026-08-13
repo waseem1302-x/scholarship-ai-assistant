@@ -82,3 +82,47 @@ describe("logout", () => {
     expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBeNull();
   });
 });
+
+describe("refresh", () => {
+  it("treats only an invalid refresh credential as an expired session", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Invalid refresh token" } }, 401))
+      .mockResolvedValueOnce(jsonResponse({ id: "student-id" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient();
+    client.setAccessToken("access-token");
+
+    await expect(client.restoreSession()).resolves.toBeNull();
+    await client.currentUser();
+
+    expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBeNull();
+  });
+
+  it("preserves the session and surfaces a temporary refresh service failure", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "Service unavailable" } }, 503))
+      .mockResolvedValueOnce(jsonResponse({ id: "student-id" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient();
+    client.setAccessToken("access-token");
+
+    await expect(client.restoreSession()).rejects.toMatchObject({ status: 503 });
+    await client.currentUser();
+
+    expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBe("Bearer access-token");
+  });
+
+  it("preserves the session when the refresh request cannot reach the server", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Network request failed"))
+      .mockResolvedValueOnce(jsonResponse({ id: "student-id" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient();
+    client.setAccessToken("access-token");
+
+    await expect(client.restoreSession()).rejects.toThrow("Network request failed");
+    await client.currentUser();
+
+    expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBe("Bearer access-token");
+  });
+});

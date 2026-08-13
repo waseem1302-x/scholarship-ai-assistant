@@ -1,12 +1,23 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const apiMocks = vi.hoisted(() => ({
-  restoreSession: vi.fn(),
-  signOut: vi.fn(),
-}));
+const apiMocks = vi.hoisted(() => {
+  class ApiError extends Error {
+    constructor(message: string, public readonly status: number) {
+      super(message);
+    }
+  }
+  return {
+    restoreSession: vi.fn(),
+    signOut: vi.fn(),
+    ApiError,
+  };
+});
 
-vi.mock("../api/client", () => ({ apiClient: apiMocks }));
+vi.mock("../api/client", () => ({
+  apiClient: apiMocks,
+  ApiError: apiMocks.ApiError,
+}));
 
 import { AuthProvider, useAuth } from "./AuthProvider";
 
@@ -20,10 +31,11 @@ const user = {
 };
 
 function SessionProbe() {
-  const { user: currentUser, signOut } = useAuth();
+  const { user: currentUser, sessionError, signOut } = useAuth();
   return (
     <>
       <p>{currentUser?.email ?? "signed out"}</p>
+      {sessionError ? <p role="alert">{sessionError}</p> : null}
       <button type="button" onClick={() => void signOut().catch(() => undefined)}>
         Sign out
       </button>
@@ -66,5 +78,21 @@ describe("AuthProvider logout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await screen.findByText("signed out");
+  });
+});
+
+describe("AuthProvider session restoration", () => {
+  it("shows a temporary-service message rather than reporting an expired session", async () => {
+    apiMocks.restoreSession.mockRejectedValue(new apiMocks.ApiError("Unavailable", 503));
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>,
+    );
+
+    expect(
+      await screen.findByText(/could not restore your session because the service is temporarily unavailable/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("signed out")).toBeInTheDocument();
   });
 });

@@ -322,28 +322,35 @@ export class ApiClient {
   }
 
   private async refreshRequest(): Promise<TokenResponse | null> {
-    try {
-      const response = await fetch("/api/v1/auth/refresh", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          ...(readCsrfToken() ? { "X-CSRF-Token": decodeURIComponent(readCsrfToken()!) } : {}),
-        },
-        body: JSON.stringify({}),
-        credentials: "same-origin",
-      });
-      if (!response.ok) {
-        this.setAccessToken(null);
-        return null;
-      }
-      const result = (await response.json()) as TokenResponse;
-      this.setAccessToken(result.access_token);
-      return result;
-    } catch {
+    const response = await fetch("/api/v1/auth/refresh", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(readCsrfToken() ? { "X-CSRF-Token": decodeURIComponent(readCsrfToken()!) } : {}),
+      },
+      body: JSON.stringify({}),
+      credentials: "same-origin",
+    });
+    if (response.status === 401) {
       this.setAccessToken(null);
       return null;
     }
+    const text = await response.text();
+    let body: TokenResponse | ApiErrorBody | null = null;
+    if (text) {
+      try {
+        body = JSON.parse(text) as TokenResponse | ApiErrorBody;
+      } catch {
+        throw new ApiError(`Request returned an invalid response (${response.status}).`, response.status);
+      }
+    }
+    if (!response.ok) {
+      throw new ApiError(errorMessage(body as ApiErrorBody | null, response.status), response.status);
+    }
+    const result = body as TokenResponse;
+    this.setAccessToken(result.access_token);
+    return result;
   }
 }
 

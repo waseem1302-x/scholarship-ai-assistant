@@ -32,7 +32,7 @@ function Brand() {
 }
 
 function Topbar() {
-  const { user, isRestoring, signOut } = useAuth();
+  const { user, isRestoring, sessionError, signOut } = useAuth();
   const navigate = useNavigate();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
@@ -115,6 +115,7 @@ function Topbar() {
         </div>
       </nav>
       {logoutError ? <p className="form-error page-width" role="alert">{logoutError}</p> : null}
+      {sessionError ? <p className="form-error page-width" role="alert">{sessionError}</p> : null}
     </header>
   );
 }
