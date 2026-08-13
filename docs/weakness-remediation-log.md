@@ -65,6 +65,24 @@ Verification:
 - `.\.venv\Scripts\python.exe -m pytest -q`
 - `pnpm --dir frontend test`
 - `pnpm --dir frontend build`
+
+## 2026-08-14 Checkpoint: Weaknesses 59-64
+
+| ID | Status | Evidence | Remediation |
+| --- | --- | --- | --- |
+| 59 | Confirmed true, fixed | Reminder idempotency used a globally unique client key and looked up reminders by key only. | Reminder idempotency is now unique and queried by `(application_id, idempotency_key)`, with a cross-tenant regression test. |
+| 60 | Confirmed true, fixed | Application version was checked in memory before commit. | Application updates now require `expected_version` and use an atomic conditional SQL update with `WHERE version = expected_version`. |
+| 61 | Confirmed true, fixed | Delete-all loaded at most 500 application records before deletion. | Delete-all now selects all owner applications without the 500 cap before deleting the normalized workspace and saved-opportunity tracker data. |
+| 62 | Confirmed true, fixed | Export loaded at most 500 applications and 1000 events per application. | Export now uses uncapped owner-scoped application and event queries. |
+| 63 | Confirmed true, fixed | Operational reporting loaded all tasks and reminders, then counted in Python. | Operational reporting now uses SQL grouped counts and filtered count queries. |
+| 64 | Confirmed true, fixed | Application list/get/dashboard called deadline sync and could commit during reads. | Read routes now project current deadline state without mutating stored applications or creating deadline events. |
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m ruff check app\modules\applications tests\test_command_centre.py tests\test_migrations.py alembic\versions\20260814_0030_application_command_centre_hardening.py`
+- `.\.venv\Scripts\python.exe -m pytest tests\test_command_centre.py tests\test_migrations.py -q`
+- `.\.venv\Scripts\python.exe -m pytest -q`
+- `pnpm --dir frontend build`
 - `git diff --check`
 
 ## 2026-08-14 Checkpoint: Weaknesses 50-58

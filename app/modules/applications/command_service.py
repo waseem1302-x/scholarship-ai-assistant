@@ -4,7 +4,7 @@ import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -120,12 +120,10 @@ class ApplicationCommandService:
 
     def list(self, user: User, *, limit: int, offset: int) -> tuple[list[ApplicationResponse], int]:
         records, total = self.repository.list(user.id, limit=limit, offset=offset)
-        self._sync_deadlines(records, user)
         return [self.to_response(item) for item in records], total
 
     def get(self, application_id: uuid.UUID, *, user: User) -> ApplicationResponse:
         application = self._application(application_id, user)
-        self._sync_deadlines([application], user)
         return self.to_response(application)
 
     def update(
@@ -138,28 +136,47 @@ class ApplicationCommandService:
         application = self._application(application_id, user)
         values = payload.model_dump(exclude_unset=True)
         expected = values.pop("expected_version", None)
-        if expected is not None and expected != application.version:
+        if expected is None:
+            raise ConflictError(
+                "application_version_required",
+                "Application updates require expected_version to prevent overwriting newer edits",
+            )
+        if expected != application.version:
             raise ConflictError(
                 "application_version_conflict",
                 "This application was updated elsewhere; refresh and try again",
             )
         lifecycle = values.get("lifecycle")
+        update_values = dict(values)
         if lifecycle is not None and lifecycle != application.lifecycle:
             previous_lifecycle = application.lifecycle
             self._validate_transition(previous_lifecycle, lifecycle)
-            application.lifecycle = lifecycle
             if lifecycle is ApplicationLifecycle.SUBMITTED and application.submitted_at is None:
-                application.submitted_at = self._current_time()
+                update_values["submitted_at"] = self._current_time()
+        statement = (
+            update(Application)
+            .where(
+                Application.id == application.id,
+                Application.user_id == user.id,
+                Application.version == expected,
+            )
+            .values(**update_values, version=Application.version + 1)
+            .execution_options(synchronize_session=False)
+        )
+        result = self.session.execute(statement)
+        if result.rowcount != 1:
+            self.session.rollback()
+            raise ConflictError(
+                "application_version_conflict",
+                "This application was updated elsewhere; refresh and try again",
+            )
+        if lifecycle is not None and lifecycle != application.lifecycle:
             self.repository.add_event(
                 application.id,
                 user.id,
                 "application.lifecycle_changed",
-                {"from": str(previous_lifecycle), "to": str(lifecycle)},
+                {"from": str(application.lifecycle), "to": str(lifecycle)},
             )
-        for field, value in values.items():
-            if field != "lifecycle":
-                setattr(application, field, value)
-        application.version += 1
         self.repository.add_event(
             application.id,
             user.id,
@@ -167,8 +184,8 @@ class ApplicationCommandService:
             {"fields": sorted(values)},
         )
         self.session.commit()
-        self.session.refresh(application)
-        return self.to_response(self.repository.get(application.id, user.id) or application)
+        updated = self.repository.get(application.id, user.id)
+        return self.to_response(updated or application)
 
     def delete(self, application_id: uuid.UUID, *, user: User) -> None:
         application = self._application(application_id, user)
@@ -177,7 +194,9 @@ class ApplicationCommandService:
 
     def delete_all_application_data(self, *, user: User) -> None:
         """Delete the normalized workspace and the legacy tracker it supersedes."""
-        applications, _ = self.repository.list(user.id, limit=500, offset=0)
+        applications = self.session.scalars(
+            select(Application).where(Application.user_id == user.id)
+        ).all()
         for application in applications:
             self.session.delete(application)
         for item in self.session.query(SavedOpportunity).filter_by(user_id=user.id).all():
@@ -340,8 +359,11 @@ class ApplicationCommandService:
             payload.scheduled_at,
             payload.message,
         )
-        existing = (
-            self.session.query(ApplicationReminder).filter_by(idempotency_key=key).one_or_none()
+        existing = self.session.scalar(
+            select(ApplicationReminder).where(
+                ApplicationReminder.application_id == application.id,
+                ApplicationReminder.idempotency_key == key,
+            )
         )
         if existing:
             return ApplicationReminderResponse.model_validate(existing)
@@ -362,7 +384,14 @@ class ApplicationCommandService:
             self.session.commit()
         except IntegrityError:
             self.session.rollback()
-            existing = self.session.query(ApplicationReminder).filter_by(idempotency_key=key).one()
+            existing = self.session.scalar(
+                select(ApplicationReminder).where(
+                    ApplicationReminder.application_id == application.id,
+                    ApplicationReminder.idempotency_key == key,
+                )
+            )
+            if existing is None:
+                raise
             return ApplicationReminderResponse.model_validate(existing)
         self.session.refresh(reminder)
         return ApplicationReminderResponse.model_validate(reminder)
@@ -452,7 +481,6 @@ class ApplicationCommandService:
 
     def dashboard(self, user: User) -> CommandCentreResponse:
         applications, _ = self.repository.list(user.id, limit=100, offset=0)
-        self._sync_deadlines(applications, user)
         now = self._as_utc(self._current_time())
         soon = now + timedelta(days=14)
         tasks = self.repository.tasks_for_dashboard(
@@ -478,7 +506,8 @@ class ApplicationCommandService:
             approaching_deadlines=[
                 self.to_response(item)
                 for item in applications
-                if item.official_deadline and self._as_utc(item.official_deadline) <= soon
+                if self._deadline_projection(item)[0]
+                and self._as_utc(self._deadline_projection(item)[0]) <= soon
             ][:20],
             submitted_applications=[
                 self.to_response(item)
@@ -498,40 +527,51 @@ class ApplicationCommandService:
             recently_changed_opportunities=[
                 self.to_response(item)
                 for item in applications
-                if item.official_deadline_state is not DeadlineState.KNOWN
+                if self._deadline_projection(item)[2] is not DeadlineState.KNOWN
             ][:20],
         )
 
     def operational_report(self) -> ApplicationOperationalReportResponse:
         """Return aggregate health counters without returning private student text."""
         now = self._as_utc(self._current_time())
-        tasks = self.session.scalars(select(ApplicationTask)).all()
-        reminders = self.session.scalars(select(ApplicationReminder)).all()
         open_statuses = {
             TaskStatus.TODO,
             TaskStatus.IN_PROGRESS,
             TaskStatus.BLOCKED,
         }
-        open_tasks = [task for task in tasks if task.status in open_statuses]
-        overdue = [task for task in open_tasks if task.due_at and self._as_utc(task.due_at) < now]
-        delivered = sum(reminder.status is ReminderStatus.DELIVERED for reminder in reminders)
-        failed = sum(reminder.status is ReminderStatus.FAILED for reminder in reminders)
+        task_counts = dict(
+            self.session.execute(
+                select(ApplicationTask.status, func.count()).group_by(ApplicationTask.status)
+            ).all()
+        )
+        delivered = self._reminder_count(ReminderStatus.DELIVERED)
+        failed = self._reminder_count(ReminderStatus.FAILED)
         attempted = delivered + failed
         health = self.session.get(ReminderWorkerHealth, "default")
+        open_tasks = sum(task_counts.get(status, 0) for status in open_statuses)
+        overdue = self.session.scalar(
+            select(func.count())
+            .select_from(ApplicationTask)
+            .where(
+                ApplicationTask.status.in_(open_statuses),
+                ApplicationTask.due_at.is_not(None),
+                ApplicationTask.due_at < now,
+            )
+        ) or 0
         return ApplicationOperationalReportResponse(
             generated_at=now,
             reminder_delivery_rate=round(delivered / attempted, 4) if attempted else None,
             reminders_delivered=delivered,
             reminders_failed=failed,
-            overdue_open_tasks=len(overdue),
-            open_tasks=len(open_tasks),
+            overdue_open_tasks=overdue,
+            open_tasks=open_tasks,
             task_completion_funnel={
-                "total": len(tasks),
-                "todo": sum(task.status is TaskStatus.TODO for task in tasks),
-                "in_progress": sum(task.status is TaskStatus.IN_PROGRESS for task in tasks),
-                "blocked": sum(task.status is TaskStatus.BLOCKED for task in tasks),
-                "completed": sum(task.status is TaskStatus.COMPLETED for task in tasks),
-                "dismissed": sum(task.status is TaskStatus.DISMISSED for task in tasks),
+                "total": sum(task_counts.values()),
+                "todo": task_counts.get(TaskStatus.TODO, 0),
+                "in_progress": task_counts.get(TaskStatus.IN_PROGRESS, 0),
+                "blocked": task_counts.get(TaskStatus.BLOCKED, 0),
+                "completed": task_counts.get(TaskStatus.COMPLETED, 0),
+                "dismissed": task_counts.get(TaskStatus.DISMISSED, 0),
             },
             failure_counts={
                 "failed_reminders": failed,
@@ -546,10 +586,10 @@ class ApplicationCommandService:
         return [ApplicationEventResponse.model_validate(event) for event in events], total
 
     def export(self, user: User) -> dict[str, object]:
-        applications, _ = self.repository.list(user.id, limit=500, offset=0)
+        applications = self.repository.list_all(user.id)
         result: list[dict[str, object]] = []
         for application in applications:
-            events, _ = self.repository.events(application.id, user.id, limit=1000, offset=0)
+            events = self.repository.events_all(application.id, user.id)
             value = self.to_response(application).model_dump(mode="json")
             value["events"] = [
                 ApplicationEventResponse.model_validate(event).model_dump(mode="json")
@@ -562,21 +602,24 @@ class ApplicationCommandService:
         }
 
     def to_response(self, application: Application) -> ApplicationResponse:
+        official_deadline, official_timezone, official_state, source = self._deadline_projection(
+            application
+        )
         return ApplicationResponse(
             id=application.id,
             lifecycle=application.lifecycle,
-            official_deadline=application.official_deadline,
-            official_deadline_timezone=application.official_deadline_timezone,
-            official_deadline_state=application.official_deadline_state,
-            official_deadline_source_id=application.official_deadline_source_id,
+            official_deadline=official_deadline,
+            official_deadline_timezone=official_timezone,
+            official_deadline_state=official_state,
+            official_deadline_source_id=source.id if source else None,
             official_deadline_excerpt_id=application.official_deadline_excerpt_id,
-            official_deadline_verified_at=application.official_deadline_verified_at,
+            official_deadline_verified_at=source.last_verified_at if source else None,
             personal_deadline=application.personal_deadline,
             personal_deadline_timezone=application.personal_deadline_timezone,
             deadline_urgency=urgency_for_deadline(
-                application.official_deadline,
-                deadline_changed=application.official_deadline_state is DeadlineState.CHANGED,
-                deadline_uncertain=application.official_deadline_state is DeadlineState.UNCERTAIN,
+                official_deadline,
+                deadline_changed=official_state is DeadlineState.CHANGED,
+                deadline_uncertain=official_state is DeadlineState.UNCERTAIN,
                 now=self._current_time(),
             ),
             notes=application.notes,
@@ -598,6 +641,32 @@ class ApplicationCommandService:
                 for document in application.documents
             ],
         )
+
+    def _reminder_count(self, status: ReminderStatus) -> int:
+        return (
+            self.session.scalar(
+                select(func.count())
+                .select_from(ApplicationReminder)
+                .where(ApplicationReminder.status == status)
+            )
+            or 0
+        )
+
+    def _deadline_projection(
+        self, application: Application
+    ) -> tuple[datetime | None, str, DeadlineState, Source | None]:
+        source = self._official_source(application.opportunity)
+        official_deadline, official_timezone = self._official_deadline_context(
+            application.opportunity, source
+        )
+        if not official_deadline or not source:
+            return official_deadline, official_timezone, DeadlineState.UNCERTAIN, source
+        if (
+            application.official_deadline
+            and self._as_utc(application.official_deadline) != self._as_utc(official_deadline)
+        ):
+            return official_deadline, official_timezone, DeadlineState.CHANGED, source
+        return official_deadline, official_timezone, DeadlineState.KNOWN, source
 
     def _application(self, application_id: uuid.UUID, user: User) -> Application:
         application = self.repository.get(application_id, user.id)

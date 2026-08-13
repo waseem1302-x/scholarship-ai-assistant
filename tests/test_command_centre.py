@@ -7,6 +7,7 @@ from sqlalchemy import event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.cli.dispatch_reminders import dispatch_due_reminders
+from app.modules.applications.models import Application, ApplicationEvent, DeadlineState
 from app.modules.auth.models import User, UserRole
 from app.modules.matching.models import MatchEvaluation, MatchEvaluationResult, MatchRuleOutcome
 from tests.test_applications import create_user, create_verified_opportunity, headers, login
@@ -99,11 +100,16 @@ def test_reminder_idempotency_and_export_are_owner_scoped(
 ) -> None:
     create_user(db_session, email="admin-reminder@example.com", role=UserRole.ADMIN)
     create_user(db_session, email="owner-reminder@example.com", role=UserRole.STUDENT)
+    create_user(db_session, email="other-reminder@example.com", role=UserRole.STUDENT)
     admin_headers = headers(login(client, "admin-reminder@example.com"))
     owner_headers = headers(login(client, "owner-reminder@example.com"))
+    other_headers = headers(login(client, "other-reminder@example.com"))
     opportunity = create_verified_opportunity(client, admin_headers)
     application = client.post(
         "/api/v1/applications", json={"opportunity_id": opportunity["id"]}, headers=owner_headers
+    ).json()
+    other_application = client.post(
+        "/api/v1/applications", json={"opportunity_id": opportunity["id"]}, headers=other_headers
     ).json()
     payload = {"scheduled_at": "2027-05-20T09:00:00+08:00", "message": "Check the portal."}
     first = client.post(
@@ -114,6 +120,29 @@ def test_reminder_idempotency_and_export_are_owner_scoped(
     )
     assert first.status_code == second.status_code == 201
     assert first.json()["id"] == second.json()["id"]
+    shared_payload = {
+        "scheduled_at": "2027-05-22T09:00:00+08:00",
+        "message": "Shared key, private app.",
+        "idempotency_key": "shared-key-001",
+    }
+    owner_scoped = client.post(
+        f"/api/v1/applications/{application['id']}/reminders",
+        json=shared_payload,
+        headers=owner_headers,
+    )
+    other_scoped = client.post(
+        f"/api/v1/applications/{other_application['id']}/reminders",
+        json=shared_payload,
+        headers=other_headers,
+    )
+    owner_repeat = client.post(
+        f"/api/v1/applications/{application['id']}/reminders",
+        json=shared_payload,
+        headers=owner_headers,
+    )
+    assert owner_scoped.status_code == other_scoped.status_code == owner_repeat.status_code == 201
+    assert owner_repeat.json()["id"] == owner_scoped.json()["id"]
+    assert other_scoped.json()["id"] != owner_scoped.json()["id"]
     worker_session = sessionmaker(bind=db_session.get_bind(), expire_on_commit=False)
     assert (
         dispatch_due_reminders(
@@ -272,6 +301,17 @@ def test_source_verification_loss_makes_deadline_uncertain(
     assert refreshed.status_code == 200, refreshed.json()
     assert refreshed.json()["official_deadline_state"] == "uncertain"
     assert refreshed.json()["deadline_urgency"] == "deadline_uncertain"
+    db_session.expire_all()
+    stored = db_session.get(Application, uuid.UUID(application["id"]))
+    assert stored is not None
+    assert stored.official_deadline_state is DeadlineState.KNOWN
+    deadline_events = db_session.scalars(
+        select(ApplicationEvent).where(
+            ApplicationEvent.application_id == stored.id,
+            ApplicationEvent.event_type == "deadline.changed",
+        )
+    ).all()
+    assert deadline_events == []
 
 
 def test_document_metadata_is_private_and_never_claims_official_acceptance(
@@ -344,6 +384,13 @@ def test_application_conflicts_are_detected_and_event_metadata_is_redacted(
         headers=owner_headers,
     )
     assert changed.status_code == 200
+    missing_version = client.patch(
+        f"/api/v1/applications/{application['id']}",
+        json={"notes": "missing version"},
+        headers=owner_headers,
+    )
+    assert missing_version.status_code == 409
+    assert missing_version.json()["error"]["code"] == "application_version_required"
     stale = client.patch(
         f"/api/v1/applications/{application['id']}",
         json={"notes": "other update", "expected_version": application["version"]},

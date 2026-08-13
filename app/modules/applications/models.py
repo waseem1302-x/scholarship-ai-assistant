@@ -305,7 +305,11 @@ class ApplicationTask(Base):
 class ApplicationReminder(Base):
     __tablename__ = "application_reminders"
     __table_args__ = (
-        UniqueConstraint("idempotency_key", name="uq_application_reminders_idempotency"),
+        UniqueConstraint(
+            "application_id",
+            "idempotency_key",
+            name="uq_application_reminders_application_idempotency",
+        ),
         Index(
             "ix_application_reminders_status_scheduled",
             "status",

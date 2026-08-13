@@ -56,6 +56,14 @@ def test_alembic_schema_accepts_orm_enums_and_portable_timestamp_defaults(
         "ix_student_profiles_country_of_residence_code",
         "ix_student_profiles_intended_field_taxonomy",
     } <= profile_indexes
+    reminder_constraints = {
+        constraint["name"]: set(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("application_reminders")
+    }
+    assert reminder_constraints["uq_application_reminders_application_idempotency"] == {
+        "application_id",
+        "idempotency_key",
+    }
     assert "source_excerpt_id" in {
         column["name"] for column in inspector.get_columns("eligibility_rules")
     }

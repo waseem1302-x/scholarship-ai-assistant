@@ -73,6 +73,18 @@ class ApplicationRepository:
         )
         return items, total
 
+    def list_all(self, user_id: uuid.UUID) -> list[Application]:
+        return (
+            self.session.scalars(
+                select(Application)
+                .where(Application.user_id == user_id)
+                .options(*self._detail_options())
+                .order_by(Application.created_at, Application.id)
+            )
+            .unique()
+            .all()
+        )
+
     def tasks_for_dashboard(
         self, user_id: uuid.UUID, statuses: tuple[TaskStatus, ...]
     ) -> list[ApplicationTask]:
@@ -133,6 +145,16 @@ class ApplicationRepository:
         return self.session.scalars(
             base.order_by(ApplicationEvent.created_at.desc()).limit(limit).offset(offset)
         ).all(), total
+
+    def events_all(self, application_id: uuid.UUID, user_id: uuid.UUID) -> list[ApplicationEvent]:
+        owner = select(Application.id).where(
+            Application.id == application_id, Application.user_id == user_id
+        )
+        return self.session.scalars(
+            select(ApplicationEvent)
+            .where(ApplicationEvent.application_id.in_(owner))
+            .order_by(ApplicationEvent.created_at.desc(), ApplicationEvent.id.desc())
+        ).all()
 
     def get_task(
         self, application_id: uuid.UUID, task_id: uuid.UUID, user_id: uuid.UUID
