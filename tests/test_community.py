@@ -13,6 +13,7 @@ from tests.test_opportunities import (
     create_opportunity,
     create_user,
     login,
+    publish_opportunity,
 )
 
 
@@ -40,15 +41,7 @@ def verified_opportunity(client: TestClient, db_session: Session) -> dict:
         application_opening_date=(now - timedelta(days=1)).isoformat(),
         application_deadline=(now + timedelta(days=30)).isoformat(),
     )
-    response = client.patch(
-        f"/api/v1/admin/opportunities/{created['id']}/verification",
-        json={
-            "verification_status": "officially_verified",
-            "notes": "Official source checked.",
-        },
-        headers=admin,
-    )
-    assert response.status_code == 200
+    publish_opportunity(client, admin, created)
     return created
 
 

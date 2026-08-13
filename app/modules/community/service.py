@@ -41,12 +41,10 @@ from app.modules.community.schemas import (
     CommunityReportCreate,
     CommunityReportResponse,
 )
+from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.models import (
     Opportunity,
     OpportunityStatus,
-    Source,
-    SourceType,
-    VerificationStatus,
 )
 
 
@@ -499,21 +497,18 @@ class CommunityService:
         return preference
 
     def _verified_opportunity(self, opportunity_id: uuid.UUID) -> Opportunity:
-        opportunity = self.session.get(Opportunity, opportunity_id)
+        opportunity = self.session.scalar(
+            select(Opportunity)
+            .where(Opportunity.id == opportunity_id)
+            .options(selectinload(Opportunity.sources))
+        )
         if opportunity is None or opportunity.status is not OpportunityStatus.ACTIVE:
             raise AppError(
                 "community_opportunity_not_found",
                 "Verified scholarship not found",
                 404,
             )
-        official = self.session.scalar(
-            select(Source).where(
-                Source.opportunity_id == opportunity.id,
-                Source.source_type == SourceType.OFFICIAL,
-                Source.verification_status == VerificationStatus.OFFICIALLY_VERIFIED,
-            )
-        )
-        if official is None:
+        if EvidencePolicy.select_current_official_source(opportunity.sources) is None:
             raise AppError(
                 "community_opportunity_not_found",
                 "Verified scholarship not found",

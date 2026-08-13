@@ -18,8 +18,11 @@ from app.modules.opportunities.source_monitor import (
     FetchedSource,
     SourceFetchError,
     SourceMonitor,
+    extract_evidence_section,
     extract_excerpt,
+    normalize_evidence_text,
     validate_monitor_url,
+    validate_response_peer,
 )
 
 NOW = datetime(2026, 8, 12, tzinfo=UTC)
@@ -38,6 +41,7 @@ class FakeFetcher:
             final_url=url,
             content_hash=hashlib.sha256(payload).hexdigest(),
             excerpt_text=extract_excerpt(payload),
+            section_label="Automated source monitor",
             bytes_read=len(payload),
         )
 
@@ -187,3 +191,48 @@ def test_monitor_url_validation_blocks_unsafe_targets() -> None:
         except SourceFetchError:
             continue
         raise AssertionError(f"Unsafe monitor URL was accepted: {url}")
+
+
+def test_monitor_normalizes_dynamic_html_before_section_hashing() -> None:
+    first = normalize_evidence_text(
+        b"<html><script>analytics('abc123456789')</script>"
+        b"<main><h2>Eligibility</h2><p>Applicants must be international students.</p>"
+        b"<p>Rendered at 12:34:56</p></main></html>"
+    )
+    second = normalize_evidence_text(
+        b"<html><script>analytics('def987654321')</script>"
+        b"<main><h2>Eligibility</h2><p>Applicants must be international students.</p>"
+        b"<p>Rendered at 23:45:01</p></main></html>"
+    )
+    first_section = extract_evidence_section(first)
+    second_section = extract_evidence_section(second)
+
+    assert first_section is not None
+    assert second_section is not None
+    assert first_section.label == "Eligibility"
+    assert first_section.text == second_section.text
+
+
+class PeerSocket:
+    def __init__(self, address: str) -> None:
+        self.address = address
+
+    def getpeername(self) -> tuple[str, int]:
+        return (self.address, 443)
+
+
+class PeerResponse:
+    def __init__(self, address: str) -> None:
+        self.fp = type("Fp", (), {})()
+        self.fp.raw = type("Raw", (), {})()
+        self.fp.raw._sock = PeerSocket(address)
+
+
+def test_response_peer_validation_rejects_private_addresses() -> None:
+    validate_response_peer(PeerResponse("93.184.216.34"))
+
+    try:
+        validate_response_peer(PeerResponse("127.0.0.1"))
+    except SourceFetchError:
+        return
+    raise AssertionError("Private response peer address was accepted")

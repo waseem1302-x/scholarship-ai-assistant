@@ -14,11 +14,10 @@ from app.modules.applications.schemas import (
     SavedOpportunityUpdate,
 )
 from app.modules.auth.models import User
+from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.models import (
     Opportunity,
     OpportunityStatus,
-    SourceType,
-    VerificationStatus,
 )
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.service import OpportunityService
@@ -161,12 +160,7 @@ class SavedOpportunityService:
                 status.HTTP_404_NOT_FOUND,
             )
 
-        has_verified_official_source = any(
-            source.source_type is SourceType.OFFICIAL
-            and source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
-            for source in opportunity.sources
-        )
-        if not has_verified_official_source:
+        if EvidencePolicy.select_current_official_source(opportunity.sources) is None:
             raise AppError(
                 "opportunity_not_available",
                 "Only active officially verified opportunities can be saved",

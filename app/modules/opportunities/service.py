@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError
 from app.modules.auth.models import AuditLog, User
+from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.lifecycle import (
     SOURCE_FRESHNESS_DAYS,
     effective_application_window,
@@ -98,6 +99,12 @@ class OpportunityService:
     def _create_opportunity(
         self, payload: OpportunityCreate, *, created_by: User, commit: bool
     ) -> AdminOpportunityResponse:
+        if payload.status is OpportunityStatus.ACTIVE:
+            raise AppError(
+                "record_publish_action_required",
+                "New opportunities must be reviewed and published through a review action",
+                422,
+            )
         if payload.eligibility_rules and payload.source.source_type is not SourceType.OFFICIAL:
             raise AppError(
                 "eligibility_rule_official_source_required",
@@ -395,9 +402,14 @@ class OpportunityService:
         source.verified_by_user_id = checked_by.id
         if payload.verification_status is VerificationStatus.OFFICIALLY_VERIFIED:
             source.last_verified_at = datetime.now(UTC)
-            opportunity.status = OpportunityStatus.ACTIVE
         elif payload.verification_status is VerificationStatus.EXPIRED:
             opportunity.status = OpportunityStatus.EXPIRED
+        elif payload.verification_status in {
+            VerificationStatus.NEEDS_REVIEW,
+            VerificationStatus.UNVERIFIED,
+            VerificationStatus.CONFLICTING_INFORMATION,
+        }:
+            opportunity.status = OpportunityStatus.DRAFT
 
         self.session.add(
             VerificationRecord(
@@ -414,7 +426,7 @@ class OpportunityService:
                 action="source_verification_updated",
                 entity_type="opportunity",
                 entity_id=str(opportunity.id),
-                metadata_json={"verification_status": payload.verification_status.value},
+            metadata_json={"verification_status": payload.verification_status.value},
             )
         )
         self.session.commit()
@@ -857,24 +869,11 @@ class OpportunityService:
 
     @staticmethod
     def _official_source(opportunity: Opportunity) -> Source | None:
-        verified_sources = [
-            source
-            for source in opportunity.sources
-            if source.source_type is SourceType.OFFICIAL
-            and source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
-        ]
-        return max(
-            verified_sources,
-            key=lambda source: source.last_verified_at or source.date_collected,
-            default=None,
-        )
+        return EvidencePolicy.select_current_official_source(opportunity.sources)
 
     @staticmethod
     def _best_source(opportunity: Opportunity) -> Source:
-        official = OpportunityService._official_source(opportunity)
-        if official is not None:
-            return official
-        return opportunity.sources[0]
+        return EvidencePolicy.select_review_source(opportunity.sources) or opportunity.sources[0]
 
     @staticmethod
     def _funding_summary(opportunity: Opportunity) -> str:
@@ -1413,10 +1412,7 @@ class OpportunityService:
 
     @staticmethod
     def _source_can_publish(source: Source) -> bool:
-        return (
-            source.source_type is SourceType.OFFICIAL
-            and source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
-        )
+        return EvidencePolicy.source_can_publish(source)
 
     @staticmethod
     def _as_utc(value: datetime) -> datetime:

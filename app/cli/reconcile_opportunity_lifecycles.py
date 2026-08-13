@@ -6,13 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.session import SessionLocal
+from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.lifecycle import effective_application_window
 from app.modules.opportunities.models import (
     ApplicationWindowState,
     Opportunity,
     OpportunityStatus,
 )
-from app.modules.opportunities.service import OpportunityService
 
 
 def reconcile_opportunity_lifecycles(session: Session, *, dry_run: bool = False) -> dict[str, int]:
@@ -26,7 +26,7 @@ def reconcile_opportunity_lifecycles(session: Session, *, dry_run: bool = False)
     for opportunity in opportunities:
         if opportunity.status is not OpportunityStatus.ACTIVE:
             continue
-        source = OpportunityService._official_source(opportunity)
+        source = EvidencePolicy.select_current_official_source(opportunity.sources)
         window = effective_application_window(opportunity, source)
         if window.state is ApplicationWindowState.CLOSED:
             closed += 1

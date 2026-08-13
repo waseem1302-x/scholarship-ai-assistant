@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.modules.auth.models import User, UserRole
+from tests.test_opportunities import publish_opportunity
 
 PASSWORD = "ApplicationsPassword123"
 
@@ -83,13 +84,7 @@ def create_verified_opportunity(
         headers=admin_headers,
     )
     assert created.status_code == 201
-    verified = client.patch(
-        f"/api/v1/admin/opportunities/{created.json()['id']}/verification",
-        json={"verification_status": "officially_verified"},
-        headers=admin_headers,
-    )
-    assert verified.status_code == 200
-    return verified.json()
+    return publish_opportunity(client, admin_headers, created.json())
 
 
 def test_student_can_save_verified_opportunity_and_track_documents(

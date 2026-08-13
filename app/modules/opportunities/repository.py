@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.lifecycle import SOURCE_FRESHNESS_DAYS
 from app.modules.opportunities.models import (
     ApplicationFeeStatus,
@@ -856,6 +857,14 @@ class OpportunityRepository:
             .where(
                 Opportunity.status == OpportunityStatus.ACTIVE,
                 Opportunity.sources.any(and_(*official_source_filters)),
+                ~Opportunity.sources.any(
+                    and_(
+                        Source.source_type == SourceType.OFFICIAL,
+                        Source.verification_status.in_(
+                            EvidencePolicy.DISQUALIFYING_OFFICIAL_STATUSES
+                        ),
+                    )
+                ),
             )
             .options(
                 joinedload(Opportunity.provider),

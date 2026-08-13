@@ -12,7 +12,13 @@ from app.modules.assistant.service import AssistantService
 from app.modules.auth.models import User, UserRole
 from app.modules.opportunities.models import Source, VerificationStatus
 from app.modules.profiles.models import StudentProfile, TargetDegreeLevel
-from tests.test_opportunities import admin_headers, create_opportunity, create_user, login
+from tests.test_opportunities import (
+    admin_headers,
+    create_opportunity,
+    create_user,
+    login,
+    publish_opportunity,
+)
 
 
 def student_headers(client: TestClient, db_session: Session, email: str) -> dict[str, str]:
@@ -32,12 +38,7 @@ def verified_opportunity(client: TestClient, db_session: Session) -> dict:
         application_opening_date=(now - timedelta(days=1)).isoformat(),
         application_deadline=(now + timedelta(days=30)).isoformat(),
     )
-    checked = client.patch(
-        f"/api/v1/admin/opportunities/{created['id']}/verification",
-        json={"verification_status": "officially_verified", "notes": "Checked official source"},
-        headers=admin,
-    )
-    assert checked.status_code == 200
+    publish_opportunity(client, admin, created)
     return created
 
 
@@ -157,14 +158,7 @@ def test_source_prompt_text_is_never_treated_as_an_instruction(
             "verification_status": "needs_review",
         },
     )
-    assert (
-        client.patch(
-            f"/api/v1/admin/opportunities/{created['id']}/verification",
-            json={"verification_status": "officially_verified", "notes": "Verified source"},
-            headers=admin,
-        ).status_code
-        == 200
-    )
+    publish_opportunity(client, admin, created)
     headers = student_headers(client, db_session, "injection-test@example.com")
     response = client.post(
         "/api/v1/assistant/answers",

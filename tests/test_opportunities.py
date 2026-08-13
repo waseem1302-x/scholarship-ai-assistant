@@ -109,6 +109,20 @@ def create_opportunity(client: TestClient, headers: dict[str, str], **overrides:
     return response.json()
 
 
+def publish_opportunity(client: TestClient, headers: dict[str, str], opportunity: dict) -> dict:
+    response = client.post(
+        f"/api/v1/admin/opportunities/{opportunity['id']}/review-actions",
+        json={
+            "action": "publish",
+            "source_id": opportunity["sources"][0]["id"],
+            "notes": "Official source checked and record reviewed for publication.",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def response_items(response) -> list[dict]:
     return response.json()["items"]
 
@@ -244,7 +258,7 @@ def test_admin_bootstrap_promotes_existing_user(client: TestClient, db_session: 
     assert token_response.json()["user"]["role"] == "admin"
 
 
-def test_unverified_opportunity_is_hidden_until_admin_verifies_source(
+def test_source_verification_does_not_publish_record_without_review_action(
     client: TestClient, db_session: Session
 ) -> None:
     headers = admin_headers(client, db_session)
@@ -264,14 +278,41 @@ def test_unverified_opportunity_is_hidden_until_admin_verifies_source(
     )
     assert verified.status_code == 200
     body = verified.json()
-    assert body["status"] == "active"
+    assert body["status"] == "draft"
     assert body["verification_status"] == "officially_verified"
     assert body["last_verified_at"] is not None
 
     public = client.get("/api/v1/opportunities")
     assert public.status_code == 200
-    assert response_items(public)[0]["official_source_url"] == created["official_source_url"]
-    assert response_pagination(public)["total"] == 1
+    assert response_items(public) == []
+
+    published = publish_opportunity(client, headers, created)
+    assert published["status"] == "active"
+    public_after_publish = client.get("/api/v1/opportunities")
+    assert response_items(public_after_publish)[0]["official_source_url"] == created[
+        "official_source_url"
+    ]
+
+
+def test_admin_create_cannot_publish_record_without_review_action(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+
+    response = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(
+            status="active",
+            source={
+                **opportunity_payload()["source"],
+                "verification_status": "officially_verified",
+            },
+        ),
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "record_publish_action_required"
 
 
 def test_open_now_excludes_closed_future_and_unknown_deadline_records(
@@ -309,14 +350,7 @@ def test_open_now_excludes_closed_future_and_unknown_deadline_records(
         ),
     ]
     for record in records:
-        assert (
-            client.patch(
-                f"/api/v1/admin/opportunities/{record['id']}/verification",
-                json={"verification_status": "officially_verified"},
-                headers=headers,
-            ).status_code
-            == 200
-        )
+        publish_opportunity(client, headers, record)
 
     response = client.get("/api/v1/opportunities?open_now=true")
 
@@ -350,14 +384,7 @@ def test_public_window_filters_paginate_in_the_database(
             application_opening_date=(now - timedelta(days=1)).isoformat(),
             application_deadline=(now + timedelta(days=30)).isoformat(),
         )
-        assert (
-            client.patch(
-                f"/api/v1/admin/opportunities/{created['id']}/verification",
-                json={"verification_status": "officially_verified"},
-                headers=headers,
-            ).status_code
-            == 200
-        )
+        publish_opportunity(client, headers, created)
 
     response = client.get("/api/v1/opportunities?open_now=true&limit=1&offset=1")
 
@@ -407,14 +434,7 @@ def test_public_catalogue_prioritizes_open_then_upcoming_then_other_verified_rec
         ),
     ]
     for record in records:
-        assert (
-            client.patch(
-                f"/api/v1/admin/opportunities/{record['id']}/verification",
-                json={"verification_status": "officially_verified"},
-                headers=headers,
-            ).status_code
-            == 200
-        )
+        publish_opportunity(client, headers, record)
 
     response = client.get("/api/v1/opportunities")
 
@@ -446,13 +466,8 @@ def test_public_search_filters_verified_opportunities(
             "title": "Turkiye Scholarships official page",
         },
     )
-    for opportunity_id in [malaysia["id"], turkey["id"]]:
-        response = client.patch(
-            f"/api/v1/admin/opportunities/{opportunity_id}/verification",
-            json={"verification_status": "officially_verified"},
-            headers=headers,
-        )
-        assert response.status_code == 200
+    for opportunity in [malaysia, turkey]:
+        publish_opportunity(client, headers, opportunity)
 
     filtered = client.get("/api/v1/opportunities?country=Malaysia&degree_level=masters")
     assert filtered.status_code == 200
@@ -499,13 +514,8 @@ def test_public_search_returns_pagination_metadata(client: TestClient, db_sessio
             "title": "C third source",
         },
     )
-    for opportunity_id in [first["id"], second["id"], third["id"]]:
-        response = client.patch(
-            f"/api/v1/admin/opportunities/{opportunity_id}/verification",
-            json={"verification_status": "officially_verified"},
-            headers=headers,
-        )
-        assert response.status_code == 200
+    for opportunity in [first, second, third]:
+        publish_opportunity(client, headers, opportunity)
 
     page = client.get("/api/v1/opportunities?limit=2&offset=1")
 
@@ -584,13 +594,8 @@ def test_public_search_supports_advanced_structured_filters(
             "title": "History award official page",
         },
     )
-    for opportunity_id in [ai["id"], history["id"]]:
-        response = client.patch(
-            f"/api/v1/admin/opportunities/{opportunity_id}/verification",
-            json={"verification_status": "officially_verified"},
-            headers=headers,
-        )
-        assert response.status_code == 200
+    for opportunity in [ai, history]:
+        publish_opportunity(client, headers, opportunity)
 
     filtered = client.get(
         "/api/v1/opportunities"
@@ -656,13 +661,8 @@ def test_public_search_uses_structured_eligibility_rules_not_prose(
             "title": "Structured source",
         },
     )
-    for opportunity_id in [unsafe_prose["id"], broad_except_pakistan["id"], eligible["id"]]:
-        response = client.patch(
-            f"/api/v1/admin/opportunities/{opportunity_id}/verification",
-            json={"verification_status": "officially_verified"},
-            headers=headers,
-        )
-        assert response.status_code == 200
+    for opportunity in [unsafe_prose, broad_except_pakistan, eligible]:
+        publish_opportunity(client, headers, opportunity)
 
     filtered = client.get("/api/v1/opportunities?nationality=Pakistani")
 
@@ -703,12 +703,7 @@ def test_admin_opportunity_list_supports_review_and_status_filters(
             "title": "Draft review source",
         },
     )
-    verified = client.patch(
-        f"/api/v1/admin/opportunities/{active['id']}/verification",
-        json={"verification_status": "officially_verified"},
-        headers=headers,
-    )
-    assert verified.status_code == 200
+    publish_opportunity(client, headers, active)
 
     active_filter = client.get("/api/v1/admin/opportunities?status=active", headers=headers)
     review_filter = client.get("/api/v1/admin/opportunities?needs_review=true", headers=headers)
@@ -1235,12 +1230,7 @@ def test_source_hash_change_blocks_public_visibility_until_reverified(
             "content_hash": "a" * 64,
         },
     )
-    verified = client.patch(
-        f"/api/v1/admin/opportunities/{created['id']}/verification",
-        json={"verification_status": "officially_verified"},
-        headers=headers,
-    )
-    assert verified.status_code == 200
+    publish_opportunity(client, headers, created)
     assert response_items(client.get("/api/v1/opportunities"))[0]["id"] == created["id"]
 
     source_id = created["sources"][0]["id"]

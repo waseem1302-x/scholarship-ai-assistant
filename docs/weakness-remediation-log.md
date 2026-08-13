@@ -29,3 +29,19 @@ Verification:
 - `.\.venv\Scripts\python.exe -m pytest`
 - `pnpm test`
 - `pnpm build`
+
+## 2026-08-14 Checkpoint: Weaknesses 38-43
+
+| ID | Status | Evidence | Remediation |
+| --- | --- | --- | --- |
+| 38 | Confirmed true, fixed | `verify_source()` promoted records to `active` when one source became officially verified. | Source verification no longer publishes records; new active records are rejected at create time, and explicit `publish` review action is required for public visibility. |
+| 39 | Confirmed true, fixed | Opportunity, applications, Assistant, community, and lifecycle code selected official sources with separate local predicates. | Added shared `EvidencePolicy.select_current_official_source()` and routed affected modules through it, including conflict/expired/archive rejection. |
+| 40 | Confirmed true, hardened | Monitor validated DNS before opening a later urllib connection. | Added post-connect peer-address validation and rejects private/reserved peers after connection establishment. |
+| 41 | Confirmed true, improved | Monitor hashed raw fetched bytes, making dynamic page noise look like factual changes. | Monitor now hashes normalized scholarship evidence text/sections with script/style/timestamp/noisy-token stripping. |
+| 42 | Confirmed true, improved | Excerpt extraction stripped all HTML and took the first text block only. | Added section-aware extraction with labels for deadline, eligibility, funding, documents, and application process evidence. |
+| 43 | Confirmed true, partially improved | No provider-specific crawl policy object existed. | Added `SourceCrawlPolicy` support for host-level timeout, byte limit, interval, and user-agent configuration. |
+
+Verification:
+
+- `.\.venv\Scripts\python.exe -m ruff check app tests\test_opportunities.py tests\test_applications.py tests\test_assistant.py tests\test_community.py tests\test_matching.py tests\test_source_monitor.py tests\test_lifecycle_reconciliation.py tests\test_seed_opportunities.py`
+- `.\.venv\Scripts\python.exe -m pytest tests\test_opportunities.py::test_source_verification_does_not_publish_record_without_review_action tests\test_opportunities.py::test_admin_create_cannot_publish_record_without_review_action tests\test_opportunities.py::test_admin_review_action_publish_and_flag_conflict_control_public_visibility tests\test_opportunities.py::test_source_hash_change_blocks_public_visibility_until_reverified tests\test_applications.py tests\test_command_centre.py tests\test_assistant.py tests\test_community.py tests\test_matching.py::test_matching_requires_profile tests\test_source_monitor.py tests\test_lifecycle_reconciliation.py tests\test_seed_opportunities.py`

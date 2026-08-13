@@ -41,6 +41,7 @@ from app.modules.assistant.schemas import (
     SaveAnswerResponse,
 )
 from app.modules.auth.models import User, utc_now
+from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.lifecycle import effective_application_window
 from app.modules.opportunities.models import (
     ApplicationWindowState,
@@ -48,8 +49,6 @@ from app.modules.opportunities.models import (
     OpportunityStatus,
     Source,
     SourceExcerpt,
-    SourceType,
-    VerificationStatus,
 )
 from app.modules.profiles.models import StudentProfile
 
@@ -479,20 +478,7 @@ class AssistantService:
         accepted: list[tuple[Opportunity, Source]] = []
         rejected = {"unverified": 0, "stale": 0, "conflicting_or_expired": 0}
         for opportunity in candidates:
-            official_sources = [
-                source
-                for source in opportunity.sources
-                if source.source_type is SourceType.OFFICIAL
-            ]
-            if any(
-                source.verification_status
-                in {
-                    VerificationStatus.CONFLICTING_INFORMATION,
-                    VerificationStatus.EXPIRED,
-                    VerificationStatus.ARCHIVED,
-                }
-                for source in official_sources
-            ):
+            if EvidencePolicy.has_disqualifying_official_source(opportunity.sources):
                 rejected["conflicting_or_expired"] += 1
                 continue
             source = self._approved_source(opportunity)
@@ -927,26 +913,15 @@ class AssistantService:
         )
 
     def _approved_source(self, opportunity: Opportunity) -> Source | None:
-        sources = [
-            source
-            for source in opportunity.sources
-            if source.source_type is SourceType.OFFICIAL
-            and source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
-        ]
-        return max(
-            sources,
-            key=lambda source: source.last_verified_at or source.date_collected,
-            default=None,
+        return EvidencePolicy.select_current_official_source(
+            opportunity.sources,
+            reject_conflicts=False,
         )
 
     def _is_fresh(self, source: Source) -> bool:
-        verified_at = source.last_verified_at
-        if verified_at and verified_at.tzinfo is None:
-            verified_at = verified_at.replace(tzinfo=UTC)
-        return bool(
-            verified_at
-            and verified_at
-            >= datetime.now(UTC) - timedelta(days=self.settings.assistant_source_freshness_days)
+        return EvidencePolicy.source_is_fresh(
+            source,
+            freshness_days=self.settings.assistant_source_freshness_days,
         )
 
     def _profile(self, user_id: uuid.UUID) -> StudentProfile | None:

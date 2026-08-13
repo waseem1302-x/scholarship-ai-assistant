@@ -28,6 +28,13 @@ DEFAULT_MONITOR_LIMIT = 20
 DEFAULT_MAX_BYTES = 1_000_000
 DEFAULT_TIMEOUT_SECONDS = 10
 USER_AGENT = "ScholarshipAI-SourceMonitor/0.1"
+SECTION_KEYWORDS = {
+    "Deadline": ("deadline", "closing date", "application closes", "apply by"),
+    "Eligibility": ("eligib", "nationality", "citizen", "academic requirement", "gpa"),
+    "Funding": ("funding", "tuition", "stipend", "allowance", "coverage", "benefit"),
+    "Documents": ("document", "transcript", "recommendation", "passport", "cv"),
+    "Application process": ("apply", "application portal", "application process", "submit"),
+}
 
 
 class SourceFetchError(Exception):
@@ -40,7 +47,23 @@ class FetchedSource:
     final_url: str
     content_hash: str
     excerpt_text: str | None
+    section_label: str | None
     bytes_read: int
+
+
+@dataclass(frozen=True)
+class SourceCrawlPolicy:
+    host: str
+    check_interval_days: int = DEFAULT_CHECK_INTERVAL_DAYS
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    max_bytes: int = DEFAULT_MAX_BYTES
+    user_agent: str = USER_AGENT
+
+
+@dataclass(frozen=True)
+class EvidenceSection:
+    label: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -78,32 +101,51 @@ class SafeSourceFetcher:
         *,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         max_bytes: int = DEFAULT_MAX_BYTES,
+        crawl_policies: dict[str, SourceCrawlPolicy] | None = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_bytes = max_bytes
+        self.crawl_policies = crawl_policies or {}
         self.opener = urllib.request.build_opener(SafeRedirectHandler)
 
     def fetch(self, url: str) -> FetchedSource:
         validate_monitor_url(url)
-        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        policy = self.policy_for(url)
+        request = urllib.request.Request(url, headers={"User-Agent": policy.user_agent})
         try:
-            with self.opener.open(request, timeout=self.timeout_seconds) as response:
+            with self.opener.open(request, timeout=policy.timeout_seconds) as response:
                 final_url = response.geturl()
                 validate_monitor_url(final_url)
-                payload = response.read(self.max_bytes + 1)
+                validate_response_peer(response)
+                payload = response.read(policy.max_bytes + 1)
         except (TimeoutError, OSError, urllib.error.URLError) as exc:
             raise SourceFetchError(f"source_fetch_failed: {exc}") from exc
 
-        if len(payload) > self.max_bytes:
-            raise SourceFetchError(f"source_too_large: exceeded {self.max_bytes} bytes")
+        if len(payload) > policy.max_bytes:
+            raise SourceFetchError(f"source_too_large: exceeded {policy.max_bytes} bytes")
 
-        content_hash = hashlib.sha256(payload).hexdigest()
+        evidence_text = normalize_evidence_text(payload)
+        section = extract_evidence_section(evidence_text)
+        hash_input = section.text if section else evidence_text
+        content_hash = hashlib.sha256(hash_input.encode()).hexdigest()
         return FetchedSource(
             url=url,
             final_url=final_url,
             content_hash=content_hash,
-            excerpt_text=extract_excerpt(payload),
+            excerpt_text=(section.text[:500] if section else extract_excerpt(payload)),
+            section_label=section.label if section else None,
             bytes_read=len(payload),
+        )
+
+    def policy_for(self, url: str) -> SourceCrawlPolicy:
+        host = (urllib.parse.urlparse(url).hostname or "").casefold()
+        return self.crawl_policies.get(
+            host,
+            SourceCrawlPolicy(
+                host=host,
+                timeout_seconds=self.timeout_seconds,
+                max_bytes=self.max_bytes,
+            ),
         )
 
 
@@ -216,22 +258,70 @@ def validate_monitor_url(url: str) -> None:
             raise SourceFetchError("unsafe_source_url: private or reserved network target")
 
 
-def extract_excerpt(payload: bytes, *, max_chars: int = 500) -> str | None:
+def validate_response_peer(response: object) -> None:
+    peer = response_peer_address(response)
+    if peer is None:
+        raise SourceFetchError("unsafe_source_url: peer address could not be verified")
+    address = ipaddress.ip_address(peer)
+    if (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    ):
+        raise SourceFetchError("unsafe_source_url: private or reserved network peer")
+
+
+def response_peer_address(response: object) -> str | None:
+    current = response
+    for attribute in ("fp", "raw", "_sock"):
+        current = getattr(current, attribute, None)
+        if current is None:
+            return None
+    getpeername = getattr(current, "getpeername", None)
+    if getpeername is None:
+        return None
+    peer = getpeername()
+    return peer[0] if peer else None
+
+
+def normalize_evidence_text(payload: bytes) -> str:
     text = payload.decode("utf-8", errors="ignore")
     text = re.sub(
-        r"<script\b[^>]*>.*?</script>",
+        r"<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>",
         " ",
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    text = re.sub(
-        r"<style\b[^>]*>.*?</style>",
-        " ",
-        text,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
+    text = re.sub(r"<(h[1-6]|p|li|dt|dd|section|article|div)\b[^>]*>", "\n", text)
     text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", " ", text)
+    text = re.sub(r"\b[a-f0-9]{12,}\b", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def extract_evidence_section(text: str, *, max_chars: int = 500) -> EvidenceSection | None:
+    if len(text) < 20:
+        return None
+    lowered = text.casefold()
+    best_label = None
+    best_position = len(text)
+    for label, keywords in SECTION_KEYWORDS.items():
+        positions = [lowered.find(keyword) for keyword in keywords if lowered.find(keyword) >= 0]
+        if positions and min(positions) < best_position:
+            best_label = label
+            best_position = min(positions)
+    if best_label is None:
+        return EvidenceSection("General scholarship evidence", text[:max_chars])
+    start = max(0, best_position - 120)
+    return EvidenceSection(best_label, text[start : start + max_chars].strip())
+
+
+def extract_excerpt(payload: bytes, *, max_chars: int = 500) -> str | None:
+    text = normalize_evidence_text(payload)
     if len(text) < 20:
         return None
     return text[:max_chars]
@@ -241,7 +331,7 @@ def _excerpt_payload(fetched: FetchedSource) -> SourceExcerptCreate | None:
     if fetched.excerpt_text is None:
         return None
     return SourceExcerptCreate(
-        section_label="Automated source monitor",
+        section_label=fetched.section_label or "Automated source monitor",
         locator=fetched.final_url,
         text=fetched.excerpt_text,
         content_hash=fetched.content_hash,

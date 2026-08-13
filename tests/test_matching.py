@@ -120,13 +120,18 @@ def create_verified_opportunity(
         headers=admin_headers,
     )
     assert created.status_code == 201
-    verified = client.patch(
-        f"/api/v1/admin/opportunities/{created.json()['id']}/verification",
-        json={"verification_status": "officially_verified"},
+    created_body = created.json()
+    published = client.post(
+        f"/api/v1/admin/opportunities/{created_body['id']}/review-actions",
+        json={
+            "action": "publish",
+            "source_id": created_body["sources"][0]["id"],
+            "notes": "Official source checked and record reviewed for publication.",
+        },
         headers=admin_headers,
     )
-    assert verified.status_code == 200
-    return verified.json()
+    assert published.status_code == 200
+    return published.json()
 
 
 def test_matching_requires_profile(client: TestClient, db_session: Session) -> None:

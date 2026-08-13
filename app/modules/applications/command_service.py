@@ -52,13 +52,12 @@ from app.modules.matching.models import (
     MatchEvaluationResult,
     MatchRuleOutcome,
 )
+from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.lifecycle import effective_application_window
 from app.modules.opportunities.models import (
     Opportunity,
     OpportunityStatus,
     Source,
-    SourceType,
-    VerificationStatus,
 )
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.service import OpportunityService
@@ -622,15 +621,7 @@ class ApplicationCommandService:
 
     @staticmethod
     def _official_source(opportunity: Opportunity) -> Source | None:
-        return next(
-            (
-                source
-                for source in opportunity.sources
-                if source.source_type is SourceType.OFFICIAL
-                and source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
-            ),
-            None,
-        )
+        return EvidencePolicy.select_current_official_source(opportunity.sources)
 
     def _generate_starter_tasks(
         self,

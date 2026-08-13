@@ -17,7 +17,8 @@ from app.modules.opportunities.models import (
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.schemas import (
     OpportunityCreate,
-    VerificationUpdate,
+    ReviewAction,
+    ReviewActionRequest,
 )
 from app.modules.opportunities.service import OpportunityService
 
@@ -106,14 +107,18 @@ def seed_verified_opportunities(
             raise SeedError("Create an admin user before loading verified seed opportunities")
 
         created = opportunity_service.create_opportunity(opportunity_payload, created_by=admin)
-        verified = opportunity_service.verify_source(
+        published = opportunity_service.apply_review_action(
             created.id,
-            VerificationUpdate(verification_status=VerificationStatus.OFFICIALLY_VERIFIED),
-            checked_by=admin,
+            ReviewActionRequest(
+                action=ReviewAction.PUBLISH,
+                source_id=created.sources[0].id,
+                notes="Verified seed dataset source and published curated seed record",
+            ),
+            reviewed_by=admin,
         )
-        opportunity = opportunity_repository.get_opportunity(verified.id)
+        opportunity = opportunity_repository.get_opportunity(published.id)
         if opportunity is None:
-            raise SeedError(f"Created opportunity {verified.id} could not be reloaded")
+            raise SeedError(f"Created opportunity {published.id} could not be reloaded")
 
         checked_at = datetime.now(UTC)
         for additional_source in additional_sources:
