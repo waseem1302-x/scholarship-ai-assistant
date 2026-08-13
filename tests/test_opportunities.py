@@ -207,6 +207,28 @@ def test_source_hashes_require_sha256_and_record_the_algorithm(
     assert valid.json()["sources"][0]["content_hash"] == "a" * 64
 
 
+def test_source_check_rejects_an_oversized_evidence_excerpt(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = create_opportunity(client, headers)
+    source_id = created["sources"][0]["id"]
+
+    response = client.post(
+        f"/api/v1/admin/sources/{source_id}/checks",
+        json={
+            "content_hash": "c" * 64,
+            "excerpt": {
+                "section_label": "Eligibility",
+                "text": "x" * 12_001,
+            },
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+
+
 def test_admin_bootstrap_promotes_existing_user(client: TestClient, db_session: Session) -> None:
     create_user(db_session, email=STUDENT_EMAIL, role=UserRole.STUDENT)
 

@@ -342,7 +342,7 @@ class SourceResponse(BaseModel):
 class SourceExcerptCreate(BaseModel):
     section_label: str | None = Field(default=None, max_length=255)
     locator: str | None = Field(default=None, max_length=255)
-    text: str = Field(min_length=20)
+    text: str = Field(min_length=20, max_length=12_000)
     hash_algorithm: Literal["sha256"] = "sha256"
     content_hash: str | None = None
 
