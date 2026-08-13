@@ -60,7 +60,8 @@ function CitationRefs({ ids, citations }: { ids: string[]; citations: Citation[]
   if (!ids.length) return null;
   return <span className="citation-refs">{ids.map((id) => {
     const index = citations.findIndex((citation) => citation.id === id);
-    return <a key={id} href={`#citation-${id}`}>[{index >= 0 ? index + 1 : "?"}]</a>;
+    const citation = citations[index];
+    return citation ? <a key={id} href={citation.source_url} target="_blank" rel="noreferrer">[{index + 1}]</a> : <span key={id}>[?]</span>;
   })}</span>;
 }
 

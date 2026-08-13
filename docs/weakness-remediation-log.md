@@ -112,7 +112,7 @@ Verification:
 | 75 | Confirmed true, not fully fixed | Unsupported-intent detection remains phrase-based. | Not changed in this checkpoint; requires a broader capability-routing design. |
 | 76 | Confirmed true, fixed | Frontend always sent `use_profile: true` for Assistant questions. | Added a visible `Use my profile for this question` checkbox and send profile data only when selected. |
 | 77 | Confirmed true, fixed | Assistant confidence existed in the backend response but was not shown in the answer header. | Assistant UI now displays evidence confidence beside the answer. |
-| 78 | Confirmed true, improved | Citations were grouped separately from claims. | Facts, possible-match reasons, and requirements now render inline citation anchors tied to official citation IDs. |
+| 78 | Confirmed true, improved | Citations were grouped separately from claims. | Facts, possible-match reasons, and requirements now render inline citation links resolved through official citation IDs to source records. |
 
 Verification:
 
