@@ -5,9 +5,11 @@ Production settings require Redis so independent API instances consume the same
 atomic counters.
 """
 
+import json
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from typing import Protocol
 
 from fastapi import Request
@@ -120,7 +122,7 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         *,
         settings: Settings,
         store: RateLimitStore | None = None,
-        max_attempts: int = 10,
+        max_attempts: int | None = None,
         window_seconds: int = 60,
     ) -> None:
         super().__init__(app)
@@ -133,56 +135,93 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         route_class = self._route_class(request)
         if route_class is None:
             return await call_next(request)
-        client = self._client_key(request)
-        if route_class == "auth":
-            if self.settings.env == "test":
-                # TestClient shares the application middleware instance across
-                # independent tests; production behavior is exercised with
-                # injected stores below without cross-test counter leakage.
-                return await call_next(request)
-            # Consume before authentication work. This prevents a shared-store
-            # outage from leaving successful login/registration requests open
-            # and applies one consistent IP limit to every attempt.
-            blocked = self._consume_request(
-                [f"auth:ip:{client}"], self.max_attempts, "auth_rate_limited"
-            )
-            return blocked if blocked is not None else await call_next(request)
-        keys = [f"{route_class}:ip:{client}"]
-        if route_class != "assistant":
-            keys.append(f"{route_class}:user:{self._user_key(request)}")
-        else:
-            keys.append(f"assistant:user:{self._user_key(request)}")
+        if route_class in {"auth_login", "auth_registration"} and self.settings.env == "test":
+            # TestClient shares the application middleware instance across
+            # independent tests; production behavior is exercised with
+            # injected stores below without cross-test counter leakage.
+            return await call_next(request)
+        keys = await self._keys_for(request, route_class)
         maximum, code, message = self._limit_for(route_class)
         blocked = self._consume_request(keys, maximum, code, message)
         return blocked if blocked is not None else await call_next(request)
 
     def _route_class(self, request: Request) -> str | None:
         path = request.url.path
-        if path in {"/api/v1/auth/login", "/api/v1/auth/register"}:
-            return "auth"
+        if request.method == "POST":
+            route_classes = {
+                "/api/v1/auth/login": "auth_login",
+                "/api/v1/auth/register": "auth_registration",
+                "/api/v1/auth/password-resets": "account_recovery",
+                "/api/v1/auth/password-resets/confirm": "account_recovery",
+                "/api/v1/auth/email-verifications": "account_verification",
+                "/api/v1/auth/email-verifications/confirm": "account_verification",
+                "/api/v1/auth/admin/step-up": "admin_reauthentication",
+                "/api/v1/auth/admin/passkeys/registration-options": "webauthn",
+                "/api/v1/auth/admin/passkeys": "webauthn",
+                "/api/v1/auth/admin/mfa/options": "webauthn",
+                "/api/v1/auth/admin/mfa/verify": "webauthn",
+            }
+            if route_class := route_classes.get(path):
+                return route_class
         if path == "/api/v1/assistant/answers":
             return "assistant"
         if request.method == "POST" and (
             path == "/api/v1/document-lab/assets"
             or (path.endswith("/versions") and path.startswith("/api/v1/document-lab/assets/"))
         ):
-            return "document"
+            return "document_upload"
         if (
             request.method in {"POST", "PATCH", "DELETE"}
             and path.startswith("/api/v1/community/")
             and "/admin/" not in path
         ):
-            return "community"
+            return "community_write"
         return None
 
     def _limit_for(self, route_class: str) -> tuple[int, str, str]:
+        if route_class == "auth_login":
+            return (
+                self.max_attempts or self.settings.auth_login_rate_limit_per_minute,
+                "auth_login_rate_limited",
+                "Too many login attempts. Try again shortly.",
+            )
+        if route_class == "auth_registration":
+            return (
+                self.max_attempts or self.settings.auth_registration_rate_limit_per_minute,
+                "auth_registration_rate_limited",
+                "Too many registration attempts. Try again shortly.",
+            )
+        if route_class == "account_recovery":
+            return (
+                self.settings.account_recovery_rate_limit_per_minute,
+                "account_recovery_rate_limited",
+                "Too many account recovery requests. Try again shortly.",
+            )
+        if route_class == "account_verification":
+            return (
+                self.settings.account_verification_rate_limit_per_minute,
+                "account_verification_rate_limited",
+                "Too many verification requests. Try again shortly.",
+            )
+        if route_class == "admin_reauthentication":
+            return (
+                self.settings.admin_reauthentication_rate_limit_per_minute,
+                "admin_reauthentication_rate_limited",
+                "Too many administrator reauthentication attempts. Try again shortly.",
+            )
+        if route_class == "webauthn":
+            return (
+                self.settings.webauthn_rate_limit_per_minute,
+                "webauthn_rate_limited",
+                "Too many passkey requests. Try again shortly.",
+            )
         if route_class == "assistant":
             return (
                 self.settings.assistant_rate_limit_per_minute,
                 "assistant_rate_limited",
                 "Too many assistant requests. Try again shortly.",
             )
-        if route_class == "document":
+        if route_class == "document_upload":
             return (
                 self.settings.document_lab_upload_rate_limit_per_minute,
                 "document_upload_rate_limited",
@@ -193,6 +232,38 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
             "community_rate_limited",
             "Too many community actions. Try again shortly.",
         )
+
+    async def _keys_for(self, request: Request, route_class: str) -> list[str]:
+        keys = [f"{route_class}:ip:{self._client_key(request)}"]
+        if route_class in {"auth_login", "auth_registration", "account_recovery"}:
+            field = (
+                "email"
+                if route_class in {"auth_login", "auth_registration"}
+                or request.url.path.endswith("password-resets")
+                else "token"
+            )
+            if identifier := await self._body_identifier(request, field):
+                keys.append(f"{route_class}:account:{identifier}")
+        elif route_class == "account_verification":
+            if request.url.path.endswith("confirm"):
+                if identifier := await self._body_identifier(request, "token"):
+                    keys.append(f"{route_class}:token:{identifier}")
+            else:
+                keys.append(f"{route_class}:user:{self._user_key(request)}")
+        else:
+            keys.append(f"{route_class}:user:{self._user_key(request)}")
+        return keys
+
+    @staticmethod
+    async def _body_identifier(request: Request, field: str) -> str | None:
+        try:
+            payload = json.loads((await request.body()).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        value = payload.get(field) if isinstance(payload, dict) else None
+        if not isinstance(value, str) or not (normalized := value.strip().casefold()):
+            return None
+        return sha256(normalized.encode("utf-8")).hexdigest()
 
     def _consume_request(
         self,
