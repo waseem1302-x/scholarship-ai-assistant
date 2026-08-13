@@ -10,13 +10,17 @@ from sqlalchemy.pool import StaticPool
 os.environ["APP_ENV"] = "test"
 os.environ["APP_DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 os.environ["APP_JWT_SECRET"] = "test-secret-that-is-at-least-32-characters-long"
-# Keep production-equivalent feature gates active. The shared application
-# explicitly enables the capabilities its integration tests exercise.
+# Keep production-equivalent gates and limiters active. The shared application
+# explicitly enables the capabilities its integration tests exercise and uses
+# high limits so independent tests sharing TestClient's IP do not interfere.
 TEST_APPLICATION_FEATURE_FLAGS = {
     "APP_ASSISTANT_ENABLED": "true",
     "APP_DOCUMENT_LAB_ENABLED": "true",
     "APP_COMMUNITY_ENABLED": "true",
     "APP_CATALOGUE_MAINTENANCE_MODE": "false",
+    "APP_AUTH_LOGIN_RATE_LIMIT_PER_MINUTE": "120",
+    "APP_AUTH_LOGIN_GLOBAL_RATE_LIMIT_PER_MINUTE": "10000",
+    "APP_AUTH_REGISTRATION_RATE_LIMIT_PER_MINUTE": "120",
 }
 os.environ.update(TEST_APPLICATION_FEATURE_FLAGS)
 # Request-limit behavior is covered with an injected small limit. The shared
@@ -61,6 +65,10 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest.fixture(autouse=True)
 def clean_database() -> Generator[None, None, None]:
+    # Rebuild middleware for each test so its in-memory request limiter cannot
+    # retain attempts from an unrelated TestClient. Rate limiting stays active
+    # within each test and production continues to use the shared Redis store.
+    app.middleware_stack = None
     Base.metadata.drop_all(test_engine)
     Base.metadata.create_all(test_engine)
     yield

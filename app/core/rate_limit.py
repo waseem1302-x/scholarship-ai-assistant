@@ -147,11 +147,6 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         route_class = self._route_class(request)
         if route_class is None:
             return await call_next(request)
-        if route_class in {"auth_login", "auth_registration"} and self.settings.env == "test":
-            # TestClient shares the application middleware instance across
-            # independent tests; production behavior is exercised with
-            # injected stores below without cross-test counter leakage.
-            return await call_next(request)
         if route_class == "auth_login":
             blocked = self._consume_request(
                 ["auth_login:global"],

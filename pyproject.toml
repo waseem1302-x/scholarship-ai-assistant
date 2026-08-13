@@ -42,6 +42,7 @@ addopts = "-q --strict-markers"
 testpaths = ["tests"]
 markers = [
   "e2e: runs against a live browser and application URL",
+  "redis: runs against a disposable Redis service supplied by TEST_REDIS_URL",
 ]
 
 [tool.ruff]

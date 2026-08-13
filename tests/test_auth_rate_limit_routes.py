@@ -185,3 +185,21 @@ def test_global_login_threshold_blocks_before_per_account_limits() -> None:
 
     assert response.status_code == 429
     assert response.json()["error"]["code"] == "auth_login_rate_limited"
+
+
+def test_login_limiter_remains_active_in_test_environment() -> None:
+    settings = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="auth-rate-limit-test-secret-at-least-32-characters",
+        auth_login_rate_limit_per_minute=1,
+        auth_login_global_rate_limit_per_minute=10,
+    )
+    client = protected_client(settings, RecordingStore())
+    payload = {"email": "student@example.test"}
+
+    assert client.post("/api/v1/auth/login", json=payload).status_code == 200
+    response = client.post("/api/v1/auth/login", json=payload)
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "auth_login_rate_limited"
