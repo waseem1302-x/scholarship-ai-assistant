@@ -13,6 +13,7 @@ __pycache__/
 htmlcov/
 dist/
 app/web/frontend-dist/
+infra/azure/*.json
 build/
 *.egg-info/
 *.db
