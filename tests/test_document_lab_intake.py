@@ -54,8 +54,69 @@ def user(db_session: Session, email: str) -> User:
     return result
 
 
-def pdf(text: str = "Private resume content") -> bytes:
-    return b"%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n" + f"({text}) Tj\n".encode() + b"%%EOF"
+def pdf(text: str = "Private resume content", *, pages: int = 1) -> bytes:
+    def escaped(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    objects: list[tuple[int, bytes]] = [
+        (1, b"<< /Type /Catalog /Pages 2 0 R >>"),
+        (
+            2,
+            (
+                b"<< /Type /Pages /Kids ["
+                + b" ".join(f"{4 + index * 2} 0 R".encode() for index in range(pages))
+                + f"] /Count {pages} >>".encode()
+            ),
+        ),
+        (3, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
+    ]
+    for index in range(pages):
+        page_id = 4 + index * 2
+        content_id = page_id + 1
+        page_text = escaped(text if pages == 1 else f"{text} page {index + 1}")
+        stream = f"BT /F1 12 Tf 72 720 Td ({page_text}) Tj ET".encode("latin-1")
+        objects.extend(
+            [
+                (
+                    page_id,
+                    (
+                        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                        b"/Resources << /Font << /F1 3 0 R >> >> "
+                        + f"/Contents {content_id} 0 R >>".encode()
+                    ),
+                ),
+                (
+                    content_id,
+                    f"<< /Length {len(stream)} >>\nstream\n".encode()
+                    + stream
+                    + b"\nendstream",
+                ),
+            ]
+        )
+    output = b"%PDF-1.4\n"
+    offsets = [0]
+    for object_id, body in sorted(objects):
+        offsets.append(len(output))
+        output += f"{object_id} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref_at = len(output)
+    output += f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode()
+    output += b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets[1:])
+    output += (
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
+        f"startxref\n{xref_at}\n%%EOF\n"
+    ).encode()
+    return output
+
+
+def encrypted_pdf() -> bytes:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt("private")
+    result = io.BytesIO()
+    writer.write(result)
+    return result.getvalue()
 
 
 def docx(*, macro: bool = False, text: str = "Private document content") -> bytes:
@@ -159,7 +220,7 @@ def test_document_lab_rejects_spoofed_malicious_and_unsupported_uploads(
         (
             "resume.pdf",
             PDF_CONTENT_TYPE,
-            b"%PDF-1.4\n/Encrypt\n%%EOF",
+            encrypted_pdf(),
             "password_protected_document",
         ),
         ("resume.pdf", PDF_CONTENT_TYPE, b"%PDF-1.4\n/Type /Page", "malformed_pdf"),
@@ -205,14 +266,13 @@ def test_document_lab_enforces_size_and_page_limits(db_session: Session, tmp_pat
         )
     assert oversized.value.code == "file_too_large"
     pages_service = service(db_session, tmp_path, document_lab_max_pages=1)
-    many_pages = b"%PDF-1.4\n" + b"/Type /Page\n" * 2 + b"%%EOF"
     with pytest.raises(AppError) as pages:
         pages_service.create_asset(
             user=owner,
             document_kind="cv_resume",
             filename="resume.pdf",
             declared_content_type=PDF_CONTENT_TYPE,
-            content=many_pages,
+            content=pdf(pages=2),
         )
     assert pages.value.code == "page_limit_exceeded"
 
@@ -694,3 +754,33 @@ def test_provider_timeout_is_persisted_as_safe_failure(db_session: Session, tmp_
     result = timed.get_analysis(queued.id, owner.id)
     assert result.status is AnalysisStatus.FAILED
     assert result.provider_status.value == "failed"
+
+
+def test_deadline_aware_provider_receives_client_timeout(
+    db_session: Session, tmp_path: Path
+) -> None:
+    class DeadlineProvider(GroundedProvider):
+        seen_timeout: int | None = None
+
+        def analyse_with_deadline(
+            self, text: str, analysis_type: str, *, timeout_seconds: int
+        ) -> ProviderAnalysisOutput:
+            self.seen_timeout = timeout_seconds
+            return super().analyse(text, analysis_type)
+
+    provider = DeadlineProvider()
+    deadline_service, owner, asset = ready_document_service(
+        db_session, tmp_path, provider, "provider-deadline@example.com"
+    )
+    deadline_service.settings.document_lab_provider_timeout_seconds = 7
+    queued = deadline_service.request_analysis(
+        version_id=asset.versions[0].id,
+        user=owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+
+    assert deadline_service.process_next_job()
+    assert provider.seen_timeout == 7
+    assert deadline_service.get_analysis(queued.id, owner.id).status is AnalysisStatus.COMPLETED

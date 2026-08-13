@@ -795,6 +795,13 @@ class DocumentLabService:
     def _analyse_with_timeout(
         self, text: str, analysis_type: DocumentKind
     ) -> ProviderAnalysisOutput:
+        deadline_analyser = getattr(self.provider, "analyse_with_deadline", None)
+        if callable(deadline_analyser):
+            return deadline_analyser(
+                text,
+                analysis_type,
+                timeout_seconds=self.settings.document_lab_provider_timeout_seconds,
+            )
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             future = executor.submit(self.provider.analyse, text, analysis_type)

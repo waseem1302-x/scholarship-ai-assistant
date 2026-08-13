@@ -1,7 +1,6 @@
 """Restricted pure-data text extraction for supported PDF and DOCX inputs."""
 
 import io
-import re
 import xml.etree.ElementTree as element_tree
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, TimeoutError
@@ -87,12 +86,16 @@ def _extract_docx(content: bytes) -> str:
 
 
 def _extract_pdf(content: bytes) -> str:
-    # This deliberately limited parser extracts literal text strings only. It
-    # rejects image-only and unsupported encoded PDFs rather than doing OCR.
-    strings = re.findall(rb"\((?:\\.|[^\\)])*\)", content)
-    text_parts = []
-    for raw in strings:
-        value = raw[1:-1]
-        value = re.sub(rb"\\([()\\])", rb"\1", value)
-        text_parts.append(value.decode("latin-1", errors="ignore"))
-    return "\n".join(text_parts)
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise AppError("pdf_parser_unavailable", "Document extraction failed.", 422) from exc
+    try:
+        reader = PdfReader(io.BytesIO(content), strict=True)
+        if reader.is_encrypted:
+            raise AppError("password_protected_document", "Document extraction failed.", 422)
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    except AppError:
+        raise
+    except Exception as exc:
+        raise AppError("malformed_pdf", "Document extraction failed.", 422) from exc

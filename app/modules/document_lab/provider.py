@@ -49,6 +49,14 @@ class DocumentProvider(Protocol):
 
     def analyse(self, text: str, analysis_type: DocumentKind) -> ProviderAnalysisOutput: ...
 
+    def analyse_with_deadline(
+        self,
+        text: str,
+        analysis_type: DocumentKind,
+        *,
+        timeout_seconds: int,
+    ) -> ProviderAnalysisOutput: ...
+
 
 class UnavailableDocumentProvider:
     def __init__(self, name: str, model_version: str) -> None:
@@ -58,6 +66,16 @@ class UnavailableDocumentProvider:
     def analyse(self, text: str, analysis_type: DocumentKind) -> ProviderAnalysisOutput:
         del text, analysis_type
         raise DocumentProviderUnavailable("No reviewed document provider is configured")
+
+    def analyse_with_deadline(
+        self,
+        text: str,
+        analysis_type: DocumentKind,
+        *,
+        timeout_seconds: int,
+    ) -> ProviderAnalysisOutput:
+        del timeout_seconds
+        return self.analyse(text, analysis_type)
 
 
 def get_provider(settings: Settings) -> DocumentProvider:

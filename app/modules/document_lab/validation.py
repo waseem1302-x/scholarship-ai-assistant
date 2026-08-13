@@ -1,8 +1,8 @@
 """Byte-level document validation. Never trust browser extensions or MIME."""
 
 import io
-import re
 import zipfile
+from concurrent.futures import ProcessPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from pathlib import PurePath
 
@@ -13,6 +13,7 @@ DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessin
 ALLOWED_CONTENT_TYPES = {PDF_CONTENT_TYPE, DOCX_CONTENT_TYPE}
 MAX_ZIP_ENTRIES = 1_000
 MAX_ZIP_EXPANSION_RATIO = 100
+PDF_VALIDATION_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -47,17 +48,45 @@ def validate_upload(
 def _validate_pdf(declared: str, content: bytes, max_pages: int) -> ValidatedDocument:
     if declared != PDF_CONTENT_TYPE or not content.startswith(b"%PDF-"):
         raise _rejected("mime_or_magic_mismatch")
-    # Password-protected PDFs must never reach a parser or provider.
-    if re.search(rb"/Encrypt\b", content):
-        raise _rejected("password_protected_document")
-    if b"%%EOF" not in content[-2_048:]:
-        raise _rejected("malformed_pdf")
-    page_count = len(re.findall(rb"/Type\s*/Page\b", content))
-    if page_count <= 0:
-        raise _rejected("image_only_or_malformed_pdf")
-    if page_count > max_pages:
-        raise _rejected("page_limit_exceeded")
+    page_count, failure_code = _validate_pdf_in_subprocess(content, max_pages)
+    if failure_code:
+        raise _rejected(failure_code)
+    assert page_count is not None
     return ValidatedDocument(detected_content_type=PDF_CONTENT_TYPE, page_count=page_count)
+
+
+def _validate_pdf_in_subprocess(
+    content: bytes, max_pages: int
+) -> tuple[int | None, str | None]:
+    with ProcessPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_validate_pdf_result, content, max_pages)
+        try:
+            return future.result(timeout=PDF_VALIDATION_TIMEOUT_SECONDS)
+        except TimeoutError:
+            future.cancel()
+            return None, "pdf_parser_timeout"
+        except Exception:
+            return None, "malformed_pdf"
+
+
+def _validate_pdf_result(content: bytes, max_pages: int) -> tuple[int | None, str | None]:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return None, "pdf_parser_unavailable"
+
+    try:
+        reader = PdfReader(io.BytesIO(content), strict=True)
+        if reader.is_encrypted:
+            return None, "password_protected_document"
+        page_count = len(reader.pages)
+    except Exception:
+        return None, "malformed_pdf"
+    if page_count <= 0:
+        return None, "image_only_or_malformed_pdf"
+    if page_count > max_pages:
+        return None, "page_limit_exceeded"
+    return page_count, None
 
 
 def _validate_docx(declared: str, content: bytes) -> ValidatedDocument:
