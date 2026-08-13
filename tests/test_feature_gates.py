@@ -24,6 +24,9 @@ def gated_client(**changes: object) -> TestClient:
     @app.get("/api/v1/community/export")
     @app.delete("/api/v1/community/data")
     @app.patch("/api/v1/profiles/me")
+    @app.post("/api/v1/saved-opportunities")
+    @app.delete("/api/v1/auth/account")
+    @app.get("/api/v1/saved-opportunities")
     def protected() -> dict[str, bool]:
         return {"reached": True}
 
@@ -52,10 +55,15 @@ def test_disabled_feature_gates_block_high_risk_routes_and_preserve_data_rights(
     assert client.delete("/api/v1/community/data").json() == {"reached": True}
 
 
-def test_maintenance_mode_blocks_workspace_writes() -> None:
+def test_maintenance_mode_blocks_all_mutating_routes_by_default() -> None:
     client = gated_client(catalogue_maintenance_mode=True)
 
-    response = client.patch("/api/v1/profiles/me")
+    responses = [
+        client.patch("/api/v1/profiles/me"),
+        client.post("/api/v1/saved-opportunities"),
+        client.delete("/api/v1/auth/account"),
+    ]
 
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "maintenance_mode"
+    assert all(response.status_code == 503 for response in responses)
+    assert all(response.json()["error"]["code"] == "maintenance_mode" for response in responses)
+    assert client.get("/api/v1/saved-opportunities").json() == {"reached": True}

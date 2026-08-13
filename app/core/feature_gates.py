@@ -6,6 +6,12 @@ from starlette.responses import JSONResponse, Response
 
 from app.core.config import Settings
 
+MAINTENANCE_WRITE_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
+# Maintenance mode is a global read-only control. Exceptions are deliberately
+# represented as exact method/path pairs so they cannot accidentally cover a
+# newly introduced mutating route. There are no approved exceptions today.
+MAINTENANCE_WRITE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset()
+
 
 class FeatureGateMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, *, settings: Settings) -> None:
@@ -37,16 +43,7 @@ class FeatureGateMiddleware(BaseHTTPMiddleware):
             # scoped by the service layer.
             if path not in {"/api/v1/community/export", "/api/v1/community/data"}:
                 code, message = "community_unavailable", "Community is temporarily unavailable."
-        elif (
-            self.settings.catalogue_maintenance_mode
-            and request.method in {"POST", "PATCH", "PUT", "DELETE"}
-            and (
-                path.startswith("/api/v1/admin/")
-                or path.startswith("/api/v1/applications/")
-                or path.startswith("/api/v1/profiles/")
-                or path.startswith("/api/v1/matches/")
-            )
-        ):
+        elif self._maintenance_blocks(request.method, path):
             code, message = "maintenance_mode", "This workspace is temporarily read-only."
         if code:
             return JSONResponse(
@@ -54,3 +51,10 @@ class FeatureGateMiddleware(BaseHTTPMiddleware):
                 content={"error": {"code": code, "message": message}},
             )
         return await call_next(request)
+
+    def _maintenance_blocks(self, method: str, path: str) -> bool:
+        return (
+            self.settings.catalogue_maintenance_mode
+            and method in MAINTENANCE_WRITE_METHODS
+            and (method, path) not in MAINTENANCE_WRITE_ALLOWLIST
+        )
