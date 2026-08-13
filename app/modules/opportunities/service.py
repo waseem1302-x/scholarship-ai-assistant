@@ -76,6 +76,18 @@ class OpportunityService:
     def create_opportunity(
         self, payload: OpportunityCreate, *, created_by: User
     ) -> AdminOpportunityResponse:
+        try:
+            return self._create_opportunity(payload, created_by=created_by, commit=True)
+        except IntegrityError as exc:
+            self.session.rollback()
+            raise ConflictError(
+                "duplicate_opportunity",
+                "An opportunity with the same provider, name, country, and intake already exists",
+            ) from exc
+
+    def _create_opportunity(
+        self, payload: OpportunityCreate, *, created_by: User, commit: bool
+    ) -> AdminOpportunityResponse:
         if self.repository.find_duplicate_opportunity(
             provider_name=payload.provider_name,
             name=payload.name,
@@ -205,16 +217,10 @@ class OpportunityService:
             )
         )
 
-        try:
+        if commit:
             self.session.commit()
-            self.session.refresh(opportunity)
-            return self.to_admin_response(opportunity)
-        except IntegrityError as exc:
-            self.session.rollback()
-            raise ConflictError(
-                "duplicate_opportunity",
-                "An opportunity with the same provider, name, country, and intake already exists",
-            ) from exc
+        self.session.refresh(opportunity)
+        return self.to_admin_response(opportunity)
 
     def import_opportunities(
         self, payload: OpportunityImportRequest, *, created_by: User
@@ -287,13 +293,22 @@ class OpportunityService:
                 continue
 
             try:
-                created = self.create_opportunity(opportunity_payload, created_by=created_by)
-            except AppError as exc:
+                # A row error rolls back only that row. All accepted rows share
+                # the outer transaction and are committed once after the batch.
+                with self.session.begin_nested():
+                    created = self._create_opportunity(
+                        opportunity_payload, created_by=created_by, commit=False
+                    )
+            except (AppError, IntegrityError) as exc:
                 results.append(
                     OpportunityImportRowResult(
                         row_number=row_number,
                         status=ImportRowStatus.FAILED_VALIDATION,
-                        errors=[exc.message],
+                        errors=[
+                            exc.message
+                            if isinstance(exc, AppError)
+                            else "Opportunity conflicts with an existing catalogue record"
+                        ],
                         warnings=warnings,
                     )
                 )
@@ -307,6 +322,11 @@ class OpportunityService:
                     warnings=warnings,
                 )
             )
+
+        if not payload.dry_run and any(
+            result.status is ImportRowStatus.IMPORTED for result in results
+        ):
+            self.session.commit()
 
         return OpportunityImportResponse(
             source_format=payload.source_format,

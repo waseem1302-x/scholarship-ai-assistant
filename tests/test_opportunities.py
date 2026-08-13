@@ -9,6 +9,8 @@ from app.cli.create_admin import upsert_admin
 from app.core.security import hash_password
 from app.modules.auth.models import AuditLog, User, UserRole
 from app.modules.opportunities.models import SourceExcerpt, VerificationRecord
+from app.modules.opportunities.schemas import OpportunityImportRequest
+from app.modules.opportunities.service import OpportunityService
 
 ADMIN_EMAIL = "admin@example.com"
 STUDENT_EMAIL = "student-catalog@example.com"
@@ -716,6 +718,52 @@ def test_import_detects_duplicate_rows_inside_same_batch(
     assert body["duplicate_count"] == 1
     assert body["results"][1]["status"] == "skipped_duplicate"
     assert "same import batch" in body["results"][1]["errors"][0]
+
+
+def test_import_commits_once_for_all_accepted_rows(db_session: Session, monkeypatch) -> None:
+    admin = User(
+        id=uuid.uuid4(),
+        email="batch-import-admin@example.com",
+        password_hash=hash_password(PASSWORD),
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    db_session.add(admin)
+    db_session.commit()
+    commits = 0
+    original_commit = db_session.commit
+
+    def count_commits() -> None:
+        nonlocal commits
+        commits += 1
+        original_commit()
+
+    monkeypatch.setattr(db_session, "commit", count_commits)
+    response = OpportunityService(db_session).import_opportunities(
+        OpportunityImportRequest(
+            source_format="json",
+            rows=[
+                opportunity_payload(
+                    name="First Batch Transaction Scholarship",
+                    source={
+                        **opportunity_payload()["source"],
+                        "url": "https://example.edu/batch-transaction-first",
+                    },
+                ),
+                opportunity_payload(
+                    name="Second Batch Transaction Scholarship",
+                    source={
+                        **opportunity_payload()["source"],
+                        "url": "https://example.edu/batch-transaction-second",
+                    },
+                ),
+            ],
+        ),
+        created_by=admin,
+    )
+
+    assert response.imported_count == 2
+    assert commits == 1
 
 
 def test_csv_import_parses_rows_as_drafts_requiring_review(
