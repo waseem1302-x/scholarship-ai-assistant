@@ -9,7 +9,8 @@ from app.db.base import Base
 
 config = context.config
 if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", get_settings().database_url)
+    settings = get_settings()
+    config.set_main_option("sqlalchemy.url", settings.database_url_for_migrations)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

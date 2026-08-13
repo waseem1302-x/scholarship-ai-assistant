@@ -16,6 +16,13 @@ def test_production_rejects_development_jwt_secret() -> None:
         Settings(env="production", jwt_secret="local-development-secret-change-me-now")
 
 
+def test_production_requires_separate_migration_credential() -> None:
+    with pytest.raises(ValueError, match="MIGRATION_DATABASE_URL"):
+        _ = Settings(
+            **_production_settings(migration_database_url=None)
+        ).database_url_for_migrations
+
+
 @pytest.mark.parametrize(
     ("changes", "message"),
     [
@@ -26,6 +33,10 @@ def test_production_rejects_development_jwt_secret() -> None:
         ({"trusted_proxy_ips": ""}, "explicit APP_TRUSTED_PROXY_IPS"),
         ({"trusted_proxy_ips": "*"}, "only explicit IP addresses or CIDR ranges"),
         ({"trusted_proxy_ips": "proxy.internal"}, "only explicit IP addresses or CIDR ranges"),
+        (
+            {"trusted_proxy_mode": "azure-container-apps", "trusted_proxy_ips": "10.0.0.10"},
+            "Azure Container Apps proxy mode",
+        ),
     ],
 )
 def test_production_rejects_insecure_http_controls(
@@ -44,6 +55,7 @@ def test_production_requires_phase_nine_shared_limiter_and_transactional_email()
         Settings(
             env="production",
             jwt_secret="production-secret-that-is-at-least-32-characters-long",
+            migration_database_url="postgresql+psycopg://migrator:secret@example.test/scholarship",
             cors_origins="https://beta.example.test",
             trusted_proxy_ips="10.0.0.10",
         )
@@ -54,6 +66,7 @@ def test_production_beta_requires_named_owners_and_passkey_relying_party() -> No
         Settings(
             env="production",
             jwt_secret="production-secret-that-is-at-least-32-characters-long",
+            migration_database_url="postgresql+psycopg://migrator:secret@example.test/scholarship",
             rate_limit_backend="redis",
             rate_limit_redis_url="redis://example.test:6379/0",
             email_provider="smtp",
@@ -108,6 +121,7 @@ def _production_settings(**changes: object) -> dict[str, object]:
     values: dict[str, object] = {
         "env": "production",
         "jwt_secret": "production-secret-that-is-at-least-32-characters-long",
+        "migration_database_url": "postgresql+psycopg://migrator:secret@example.test/scholarship",
         "rate_limit_backend": "redis",
         "rate_limit_redis_url": "redis://example.test:6379/0",
         "email_provider": "smtp",

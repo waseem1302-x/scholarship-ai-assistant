@@ -245,6 +245,8 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
 
     def _client_key(self, request: Request) -> str:
         direct_client = request.client.host if request.client else "unknown"
+        if self.settings.trusted_proxy_mode == "azure-container-apps":
+            return direct_client
         if direct_client not in self.settings.trusted_proxy_ip_list:
             return direct_client
         forwarded = request.headers.get("x-forwarded-for", "")

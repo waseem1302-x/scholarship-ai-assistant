@@ -1,0 +1,27 @@
+name: Azure infrastructure validation
+
+on:
+  pull_request:
+    paths:
+      - 'infra/azure/**'
+      - '.github/workflows/azure-infrastructure.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/azure/**'
+      - '.github/workflows/azure-infrastructure.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bicep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Azure foundation template
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: az bicep build --file infra/azure/foundation.bicep

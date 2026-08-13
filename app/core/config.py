@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     env: Literal["development", "test", "production"] = "development"
     debug: bool = False
     database_url: str = "postgresql+psycopg://scholarship:scholarship@localhost:5432/scholarship"
+    migration_database_url: SecretStr | None = Field(default=None, repr=False)
     jwt_secret: str = Field(
         default="local-development-secret-change-me-now",
         min_length=32,
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     cookie_secure: bool | None = None
     release_version: str = "development"
     trusted_proxy_ips: str = ""
+    trusted_proxy_mode: Literal["explicit", "azure-container-apps"] = "explicit"
     operational_job_stale_minutes: int = Field(default=15, ge=1, le=1440)
 
     # Phase 9 beta and capability controls. These remain server-side so that a
@@ -154,9 +156,9 @@ class Settings(BaseSettings):
             not origin.startswith("https://") for origin in self.cors_origin_list
         ):
             raise ValueError("Production CORS origins must use HTTPS")
-        if self.env == "production" and not self.trusted_proxy_ip_list:
-            raise ValueError("Production requires explicit APP_TRUSTED_PROXY_IPS")
-        if self.env == "production":
+        if self.env == "production" and self.trusted_proxy_mode == "explicit":
+            if not self.trusted_proxy_ip_list:
+                raise ValueError("Production requires explicit APP_TRUSTED_PROXY_IPS")
             try:
                 for address_or_network in self.trusted_proxy_ip_list:
                     ip_network(address_or_network, strict=False)
@@ -164,6 +166,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "APP_TRUSTED_PROXY_IPS must contain only explicit IP addresses or CIDR ranges"
                 ) from exc
+        if (
+            self.env == "production"
+            and self.trusted_proxy_mode == "azure-container-apps"
+            and self.trusted_proxy_ip_list
+        ):
+            raise ValueError("Azure Container Apps proxy mode must not set APP_TRUSTED_PROXY_IPS")
         if self.env == "production" and self.document_lab_enabled:
             if self.document_lab_encryption_key is None:
                 raise ValueError("APP_DOCUMENT_LAB_ENCRYPTION_KEY is required for Document Lab")
@@ -269,6 +277,17 @@ class Settings(BaseSettings):
     @property
     def trusted_proxy_ip_list(self) -> list[str]:
         return [item.strip() for item in self.trusted_proxy_ips.split(",") if item.strip()]
+
+    @property
+    def database_url_for_migrations(self) -> str:
+        """Return the migration-only credential without exposing it to API workers."""
+        if self.env == "production" and self.migration_database_url is None:
+            raise ValueError("Production migrations require APP_MIGRATION_DATABASE_URL")
+        return (
+            self.migration_database_url.get_secret_value()
+            if self.migration_database_url is not None
+            else self.database_url
+        )
 
     @property
     def refresh_cookie_secure(self) -> bool:

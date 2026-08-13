@@ -26,6 +26,7 @@ from app.core.observability import (
     OperationalMetrics,
     configure_observability,
 )
+from app.core.proxy_headers import AzureContainerAppsProxyHeadersMiddleware
 from app.core.rate_limit import AuthRateLimitMiddleware
 from app.db.session import get_db
 from app.modules.applications.models import ReminderWorkerHealth
@@ -88,7 +89,9 @@ def create_app() -> FastAPI:
             )
         return response
 
-    if settings.trusted_proxy_ip_list:
+    if settings.trusted_proxy_mode == "azure-container-apps":
+        application.add_middleware(AzureContainerAppsProxyHeadersMiddleware)
+    elif settings.trusted_proxy_ip_list:
         # Add last so it is the ASGI outer edge: all inner rate-limit,
         # observability, and application middleware see forwarded values only
         # when they came from the configured TLS proxy.
