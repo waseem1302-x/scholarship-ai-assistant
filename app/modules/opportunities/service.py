@@ -185,6 +185,7 @@ class OpportunityService:
             source_type=payload.source.source_type,
             title=payload.source.title.strip(),
             publication_date=payload.source.publication_date,
+            hash_algorithm=payload.source.hash_algorithm,
             content_hash=payload.source.content_hash,
             relevant_excerpt=payload.source.relevant_excerpt.strip(),
             verification_status=payload.source.verification_status,
@@ -215,6 +216,7 @@ class OpportunityService:
             excerpt = SourceExcerpt(
                 source_id=source.id,
                 text=source.relevant_excerpt,
+                hash_algorithm=source.hash_algorithm,
                 content_hash=source.content_hash,
                 captured_by_user_id=created_by.id,
             )
@@ -478,6 +480,7 @@ class OpportunityService:
             and payload.content_hash != previous_hash
         )
         if payload.content_hash is not None:
+            source.hash_algorithm = payload.hash_algorithm
             source.content_hash = payload.content_hash
         source.last_updated_at = payload.observed_at or datetime.now(UTC)
 
@@ -488,6 +491,11 @@ class OpportunityService:
                 section_label=payload.excerpt.section_label,
                 locator=payload.excerpt.locator,
                 text=payload.excerpt.text,
+                hash_algorithm=(
+                    payload.excerpt.hash_algorithm
+                    if payload.excerpt.content_hash is not None
+                    else payload.hash_algorithm
+                ),
                 content_hash=payload.excerpt.content_hash or payload.content_hash,
                 captured_by_user_id=checked_by.id if checked_by else None,
             )

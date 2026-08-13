@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
@@ -32,6 +33,16 @@ from app.modules.opportunities.models import (
 )
 
 EligibilityRuleValue = str | int | float | list[str | int | float]
+SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def validate_sha256_hash(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not SHA256_HEX_PATTERN.fullmatch(normalized):
+        raise ValueError("Content hash must be a lowercase SHA-256 hexadecimal digest")
+    return normalized
 
 
 class EligibilityRuleCreate(BaseModel):
@@ -115,9 +126,12 @@ class SourceCreate(BaseModel):
     source_type: SourceType = SourceType.OFFICIAL
     title: str = Field(min_length=3, max_length=255)
     publication_date: datetime | None = None
-    content_hash: str | None = Field(default=None, min_length=32, max_length=64)
+    hash_algorithm: Literal["sha256"] = "sha256"
+    content_hash: str | None = None
     relevant_excerpt: str = Field(min_length=20, max_length=12_000)
     verification_status: VerificationStatus = VerificationStatus.NEEDS_REVIEW
+
+    _validate_content_hash = field_validator("content_hash")(validate_sha256_hash)
 
 
 class OpportunityCreate(BaseModel):
@@ -319,6 +333,8 @@ class SourceResponse(BaseModel):
     source_type: SourceType
     title: str
     relevant_excerpt: str
+    hash_algorithm: str
+    content_hash: str | None
     verification_status: VerificationStatus
     last_verified_at: datetime | None
 
@@ -327,12 +343,15 @@ class SourceExcerptCreate(BaseModel):
     section_label: str | None = Field(default=None, max_length=255)
     locator: str | None = Field(default=None, max_length=255)
     text: str = Field(min_length=20)
-    content_hash: str | None = Field(default=None, min_length=32, max_length=64)
+    hash_algorithm: Literal["sha256"] = "sha256"
+    content_hash: str | None = None
 
     @field_validator("text", "section_label", "locator", mode="before")
     @classmethod
     def strip_excerpt_text(cls, value: str | None) -> str | None:
         return value.strip() if isinstance(value, str) else value
+
+    _validate_content_hash = field_validator("content_hash")(validate_sha256_hash)
 
 
 class SourceExcerptResponse(BaseModel):
@@ -343,15 +362,19 @@ class SourceExcerptResponse(BaseModel):
     section_label: str | None
     locator: str | None
     text: str
+    hash_algorithm: str
     content_hash: str | None
     captured_at: datetime
 
 
 class SourceCheckRequest(BaseModel):
-    content_hash: str | None = Field(default=None, min_length=32, max_length=64)
+    hash_algorithm: Literal["sha256"] = "sha256"
+    content_hash: str | None = None
     observed_at: datetime | None = None
     change_summary: str | None = Field(default=None, max_length=2000)
     excerpt: SourceExcerptCreate | None = None
+
+    _validate_content_hash = field_validator("content_hash")(validate_sha256_hash)
 
 
 class SourceCheckResponse(BaseModel):

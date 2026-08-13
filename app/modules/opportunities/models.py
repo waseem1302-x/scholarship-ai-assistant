@@ -517,6 +517,9 @@ class Source(Base):
     )
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    hash_algorithm: Mapped[str] = mapped_column(
+        String(16), default="sha256", server_default="sha256"
+    )
     content_hash: Mapped[str | None] = mapped_column(String(64))
     relevant_excerpt: Mapped[str] = mapped_column(Text)
     verified_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
@@ -600,6 +603,9 @@ class SourceExcerpt(Base):
     section_label: Mapped[str | None] = mapped_column(String(255))
     locator: Mapped[str | None] = mapped_column(String(255))
     text: Mapped[str] = mapped_column(Text)
+    hash_algorithm: Mapped[str] = mapped_column(
+        String(16), default="sha256", server_default="sha256"
+    )
     content_hash: Mapped[str | None] = mapped_column(String(64))
     captured_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")

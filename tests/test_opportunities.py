@@ -182,6 +182,31 @@ def test_opportunity_cycle_requires_an_iana_timezone(
     assert valid.status_code == 201
 
 
+def test_source_hashes_require_sha256_and_record_the_algorithm(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    invalid = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(
+            source={**opportunity_payload()["source"], "content_hash": "g" * 64}
+        ),
+        headers=headers,
+    )
+    valid = client.post(
+        "/api/v1/admin/opportunities",
+        json=opportunity_payload(
+            source={**opportunity_payload()["source"], "content_hash": "a" * 64}
+        ),
+        headers=headers,
+    )
+
+    assert invalid.status_code == 422
+    assert valid.status_code == 201
+    assert valid.json()["sources"][0]["hash_algorithm"] == "sha256"
+    assert valid.json()["sources"][0]["content_hash"] == "a" * 64
+
+
 def test_admin_bootstrap_promotes_existing_user(client: TestClient, db_session: Session) -> None:
     create_user(db_session, email=STUDENT_EMAIL, role=UserRole.STUDENT)
 
