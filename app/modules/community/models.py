@@ -63,7 +63,9 @@ class CommunityPreference(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
+    public_id: Mapped[uuid.UUID] = mapped_column(default=uuid.uuid4, unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    display_name_normalized: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     consented_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     suspended_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     suspension_reason: Mapped[str | None] = mapped_column(String(300))

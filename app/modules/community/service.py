@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.config import Settings
@@ -62,6 +62,18 @@ class CommunityService:
         r"\b(?:whatsapp|telegram)\b)",
         re.IGNORECASE,
     )
+    _OBFUSCATED_CONTACT = re.compile(
+        r"(?:\b[\w.+-]+\s*(?:@|\bat\b|\[at\]|\(at\))\s*[\w-]+"
+        r"\s*(?:\.|\bdot\b|\[dot\]|\(dot\))\s*[\w.-]+\b|"
+        r"\b(?:discord|instagram|insta|snapchat|telegram|whatsapp|wechat|line)\s*[:@]\s*\w+|"
+        r"\b(?:dm|direct message|message me|contact me)\b|"
+        r"\b(?:\+?\d[\d .()_-]{7,}\d)\b)",
+        re.IGNORECASE,
+    )
+    _LINK_OR_SHORTENER = re.compile(
+        r"(?:https?://|www\.|bit\.ly|tinyurl\.com|t\.me/|discord\.gg/)",
+        re.IGNORECASE,
+    )
 
     def __init__(self, session: Session, settings: Settings) -> None:
         self.session = session
@@ -82,9 +94,11 @@ class CommunityService:
                 user_id=user.id,
                 display_name=self._clean_display_name(payload.display_name, user.id),
             )
+            preference.display_name_normalized = preference.display_name.casefold()
             self.session.add(preference)
         elif payload.display_name is not None:
             preference.display_name = self._clean_display_name(payload.display_name, user.id)
+            preference.display_name_normalized = preference.display_name.casefold()
         if payload.consent is True:
             preference.consented_at = datetime.now(UTC)
         elif payload.consent is False:
@@ -103,18 +117,15 @@ class CommunityService:
         offset: int,
         bookmarked_only: bool = False,
     ) -> CommunityPostListResponse:
-        blocked = select(CommunityBlock.blocked_user_id).where(CommunityBlock.user_id == user.id)
+        blocked_ids = self._blocked_ids(user.id)
         statement = (
             select(CommunityPost)
             .where(
                 CommunityPost.status == CommunityContentStatus.VISIBLE,
-                CommunityPost.author_user_id.not_in(blocked),
-            )
-            .options(
-                joinedload(CommunityPost.opportunity),
-                selectinload(CommunityPost.replies),
             )
         )
+        if blocked_ids:
+            statement = statement.where(CommunityPost.author_user_id.not_in(blocked_ids))
         if query:
             term = f"%{query.strip().lower()}%"
             statement = statement.where(
@@ -131,17 +142,33 @@ class CommunityService:
             statement = statement.join(CommunityBookmark).where(
                 CommunityBookmark.user_id == user.id
             )
-        total = len(self.session.scalars(statement).all())
+        total = self.session.scalar(select(func.count()).select_from(statement.subquery())) or 0
         rows = (
             self.session.scalars(
-                statement.order_by(CommunityPost.created_at.desc()).offset(offset).limit(limit)
+                statement.options(
+                    joinedload(CommunityPost.opportunity),
+                    selectinload(CommunityPost.replies),
+                )
+                .order_by(CommunityPost.created_at.desc())
+                .offset(offset)
+                .limit(limit)
             )
             .unique()
             .all()
         )
         bookmarked = self._bookmarked_ids(user.id, [post.id for post in rows])
+        authors = self._authors_for(self._author_ids_for_posts(rows, blocked_ids))
         return CommunityPostListResponse(
-            posts=[self._post_summary(post, user.id, bookmarked) for post in rows],
+            posts=[
+                self._post_summary(
+                    post,
+                    user.id,
+                    bookmarked,
+                    blocked_ids=blocked_ids,
+                    authors=authors,
+                )
+                for post in rows
+            ],
             total=total,
             limit=limit,
             offset=offset,
@@ -151,8 +178,16 @@ class CommunityService:
     def get_post(self, post_id: uuid.UUID, user: User) -> CommunityPostDetailResponse:
         post = self._visible_post(post_id, user.id, with_replies=True)
         bookmarked = self._bookmarked_ids(user.id, [post.id])
+        blocked_ids = self._blocked_ids(user.id)
+        authors = self._authors_for(self._author_ids_for_posts([post], blocked_ids))
         return CommunityPostDetailResponse(
-            **self._post_summary(post, user.id, bookmarked).model_dump()
+            **self._post_summary(
+                post,
+                user.id,
+                bookmarked,
+                blocked_ids=blocked_ids,
+                authors=authors,
+            ).model_dump()
         )
 
     def create_post(self, payload: CommunityPostCreate, user: User) -> CommunityPostDetailResponse:
@@ -250,21 +285,21 @@ class CommunityService:
 
     def block(self, payload: CommunityBlockCreate, user: User) -> None:
         self._require_participation(user)
-        if payload.user_id == user.id:
+        target_user_id = self._community_user_id(payload.user_id)
+        if target_user_id == user.id:
             raise AppError("invalid_block", "You cannot block yourself")
-        if self.session.get(User, payload.user_id) is None:
-            raise AppError("community_member_not_found", "Community member not found", 404)
         exists = self.session.scalar(
             select(CommunityBlock).where(
                 CommunityBlock.user_id == user.id,
-                CommunityBlock.blocked_user_id == payload.user_id,
+                CommunityBlock.blocked_user_id == target_user_id,
             )
         )
         if exists is None:
-            self.session.add(CommunityBlock(user_id=user.id, blocked_user_id=payload.user_id))
+            self.session.add(CommunityBlock(user_id=user.id, blocked_user_id=target_user_id))
             self.session.commit()
 
-    def unblock(self, blocked_user_id: uuid.UUID, user: User) -> None:
+    def unblock(self, blocked_public_id: uuid.UUID, user: User) -> None:
+        blocked_user_id = self._community_user_id(blocked_public_id)
         block = self.session.scalar(
             select(CommunityBlock).where(
                 CommunityBlock.user_id == user.id,
@@ -318,7 +353,7 @@ class CommunityService:
         statement = select(CommunityReport).where(
             CommunityReport.status == CommunityReportStatus.OPEN
         )
-        total = len(self.session.scalars(statement).all())
+        total = self.session.scalar(select(func.count()).select_from(statement.subquery())) or 0
         reports = self.session.scalars(
             statement.order_by(CommunityReport.created_at.asc()).offset(offset).limit(limit)
         ).all()
@@ -464,11 +499,56 @@ class CommunityService:
                 )
             )
         )
-        self.session.execute(
-            delete(CommunityReport).where(CommunityReport.reporter_user_id == user.id)
+        reported_post_ids = select(CommunityReport.post_id).where(
+            CommunityReport.post_id.is_not(None)
         )
-        self.session.execute(delete(CommunityReply).where(CommunityReply.author_user_id == user.id))
-        self.session.execute(delete(CommunityPost).where(CommunityPost.author_user_id == user.id))
+        reported_reply_ids = select(CommunityReport.reply_id).where(
+            CommunityReport.reply_id.is_not(None)
+        )
+        posts_with_reported_replies = select(CommunityReply.post_id).where(
+            CommunityReply.id.in_(reported_reply_ids)
+        )
+        self.session.execute(
+            update(CommunityReport)
+            .where(CommunityReport.reporter_user_id == user.id)
+            .values(detail=None)
+        )
+        self.session.execute(
+            update(CommunityReply)
+            .where(
+                CommunityReply.author_user_id == user.id,
+                CommunityReply.id.in_(reported_reply_ids),
+            )
+            .values(body="[deleted by member]", status=CommunityContentStatus.HIDDEN)
+        )
+        self.session.execute(
+            delete(CommunityReply).where(
+                CommunityReply.author_user_id == user.id,
+                CommunityReply.id.not_in(reported_reply_ids),
+            )
+        )
+        self.session.execute(
+            update(CommunityPost)
+            .where(
+                CommunityPost.author_user_id == user.id,
+                or_(
+                    CommunityPost.id.in_(reported_post_ids),
+                    CommunityPost.id.in_(posts_with_reported_replies),
+                ),
+            )
+            .values(
+                title="[deleted by member]",
+                body="[deleted by member]",
+                status=CommunityContentStatus.HIDDEN,
+            )
+        )
+        self.session.execute(
+            delete(CommunityPost).where(
+                CommunityPost.author_user_id == user.id,
+                CommunityPost.id.not_in(reported_post_ids),
+                CommunityPost.id.not_in(posts_with_reported_replies),
+            )
+        )
         preference = self.session.get(CommunityPreference, user.id)
         if preference:
             self.session.delete(preference)
@@ -567,27 +647,34 @@ class CommunityService:
         post: CommunityPost,
         user_id: uuid.UUID,
         bookmarked: set[uuid.UUID],
+        *,
+        blocked_ids: set[uuid.UUID] | None = None,
+        authors: dict[uuid.UUID, CommunityAuthorResponse] | None = None,
     ) -> CommunityPostSummaryResponse:
+        blocked_ids = blocked_ids if blocked_ids is not None else self._blocked_ids(user_id)
+        authors = authors or self._authors_for(self._author_ids_for_posts([post], blocked_ids))
         replies = [
-            self._reply_response(reply, user_id)
+            self._reply_response(reply, user_id, authors)
             for reply in post.replies
             if reply.status is CommunityContentStatus.VISIBLE
-            and reply.author_user_id not in self._blocked_ids(user_id)
+            and reply.author_user_id not in blocked_ids
         ]
+        total_reply_count = sum(
+            reply.status is CommunityContentStatus.VISIBLE for reply in post.replies
+        )
         return CommunityPostSummaryResponse(
             id=post.id,
             topic=post.topic,
             title=post.title,
             body=post.body,
-            author=self._author(post.author_user_id),
+            author=authors[post.author_user_id],
             opportunity=CommunityOpportunityResponse(
                 id=post.opportunity.id, name=post.opportunity.name
             )
             if post.opportunity
             else None,
-            reply_count=sum(
-                reply.status is CommunityContentStatus.VISIBLE for reply in post.replies
-            ),
+            reply_count=total_reply_count,
+            visible_reply_count=len(replies),
             created_at=post.created_at,
             updated_at=post.updated_at,
             is_owner=post.author_user_id == user_id,
@@ -595,23 +682,59 @@ class CommunityService:
             replies=replies,
         )
 
-    def _reply_response(self, reply: CommunityReply, user_id: uuid.UUID) -> CommunityReplyResponse:
+    def _reply_response(
+        self,
+        reply: CommunityReply,
+        user_id: uuid.UUID,
+        authors: dict[uuid.UUID, CommunityAuthorResponse] | None = None,
+    ) -> CommunityReplyResponse:
+        authors = authors or self._authors_for({reply.author_user_id})
         return CommunityReplyResponse(
             id=reply.id,
             body=reply.body,
-            author=self._author(reply.author_user_id),
+            author=authors[reply.author_user_id],
             created_at=reply.created_at,
             updated_at=reply.updated_at,
             is_owner=reply.author_user_id == user_id,
         )
 
     def _author(self, user_id: uuid.UUID) -> CommunityAuthorResponse:
-        preference = self.session.get(CommunityPreference, user_id)
-        # The fallback protects legacy content if a preference was later deleted.
-        return CommunityAuthorResponse(
-            id=user_id,
-            display_name=preference.display_name if preference else "Community member",
-        )
+        return self._authors_for({user_id})[user_id]
+
+    def _authors_for(self, user_ids: set[uuid.UUID]) -> dict[uuid.UUID, CommunityAuthorResponse]:
+        if not user_ids:
+            return {}
+        preferences = {
+            preference.user_id: preference
+            for preference in self.session.scalars(
+                select(CommunityPreference).where(CommunityPreference.user_id.in_(user_ids))
+            ).all()
+        }
+        return {
+            user_id: CommunityAuthorResponse(
+                id=preferences[user_id].public_id
+                if user_id in preferences
+                else uuid.uuid5(uuid.NAMESPACE_URL, f"community:{user_id}"),
+                display_name=preferences[user_id].display_name
+                if user_id in preferences
+                else "Community member",
+            )
+            for user_id in user_ids
+        }
+
+    @staticmethod
+    def _author_ids_for_posts(
+        posts: list[CommunityPost], blocked_ids: set[uuid.UUID]
+    ) -> set[uuid.UUID]:
+        ids = {post.author_user_id for post in posts}
+        for post in posts:
+            ids.update(
+                reply.author_user_id
+                for reply in post.replies
+                if reply.status is CommunityContentStatus.VISIBLE
+                and reply.author_user_id not in blocked_ids
+            )
+        return ids
 
     def _preference_response(
         self, preference: CommunityPreference | None
@@ -636,11 +759,19 @@ class CommunityService:
         )
 
     def _blocked_ids(self, user_id: uuid.UUID) -> set[uuid.UUID]:
-        return set(
-            self.session.scalars(
-                select(CommunityBlock.blocked_user_id).where(CommunityBlock.user_id == user_id)
-            ).all()
+        outgoing = select(CommunityBlock.blocked_user_id).where(CommunityBlock.user_id == user_id)
+        incoming = select(CommunityBlock.user_id).where(CommunityBlock.blocked_user_id == user_id)
+        return set(self.session.scalars(outgoing).all()) | set(
+            self.session.scalars(incoming).all()
         )
+
+    def _community_user_id(self, public_id: uuid.UUID) -> uuid.UUID:
+        preference = self.session.scalar(
+            select(CommunityPreference).where(CommunityPreference.public_id == public_id)
+        )
+        if preference is None:
+            raise AppError("community_member_not_found", "Community member not found", 404)
+        return preference.user_id
 
     def _clean_display_name(self, value: str, user_id: uuid.UUID) -> str:
         value = self._clean_text(value)
@@ -651,7 +782,7 @@ class CommunityService:
             )
         duplicate = self.session.scalar(
             select(CommunityPreference).where(
-                func.lower(CommunityPreference.display_name) == value.lower()
+                CommunityPreference.display_name_normalized == value.casefold()
             )
         )
         if duplicate and duplicate.user_id != user_id:
@@ -663,7 +794,14 @@ class CommunityService:
 
     def _check_content(self, *values: str) -> None:
         text = " ".join(values)
+        score = 0
         if self._CONTACT_OR_CREDENTIAL.search(text):
+            score += 5
+        if self._OBFUSCATED_CONTACT.search(text):
+            score += 5
+        if self._LINK_OR_SHORTENER.search(text):
+            score += 2
+        if score >= 5:
             raise AppError(
                 "community_content_rejected",
                 "Do not share contact details or credentials in community content",

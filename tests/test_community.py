@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.modules.applications.models import Application
 from app.modules.auth.models import AuditLog, User, UserRole
-from app.modules.community.models import CommunityPost, CommunityPreference
+from app.modules.community.models import (
+    CommunityContentStatus,
+    CommunityPost,
+    CommunityPreference,
+    CommunityReport,
+)
 from tests.test_opportunities import (
     admin_headers,
     create_opportunity,
@@ -76,6 +81,9 @@ def test_community_is_pseudonymous_scholarship_linked_and_owner_scoped(
 
     assert post["author"]["display_name"] == "author-member"
     assert "email" not in post["author"]
+    author_user = db_session.scalar(select(User).where(User.email == "author.member@example.com"))
+    assert author_user is not None
+    assert post["author"]["id"] != str(author_user.id)
     assert post["opportunity"] == {
         "id": opportunity["id"],
         "name": opportunity["name"],
@@ -102,6 +110,8 @@ def test_community_is_pseudonymous_scholarship_linked_and_owner_scoped(
     detail = client.get(f"/api/v1/community/posts/{post['id']}", headers=author)
     assert detail.status_code == 200
     assert detail.json()["replies"][0]["author"]["display_name"] == "reader-member"
+    assert detail.json()["reply_count"] == 1
+    assert detail.json()["visible_reply_count"] == 1
 
 
 def test_community_enforces_consent_safe_content_and_verified_opportunities(
@@ -133,6 +143,16 @@ def test_community_enforces_consent_safe_content_and_verified_opportunities(
         headers=safe,
     )
     assert rejected.status_code == 400
+    obfuscated = client.post(
+        "/api/v1/community/posts",
+        json={
+            "topic": "question",
+            "title": "Discord group",
+            "body": "Please contact me at member at example dot com or discord: scholarshiptips.",
+        },
+        headers=safe,
+    )
+    assert obfuscated.status_code == 400
     unknown = client.post(
         "/api/v1/community/posts",
         json={
@@ -162,6 +182,12 @@ def test_block_report_and_moderation_hide_content_with_safe_audit(
     )
     assert client.get("/api/v1/community/posts", headers=reader).json()["posts"] == []
     assert client.get("/api/v1/community/posts", headers=author).json()["posts"]
+    reader_post = create_post(client, reader)
+    assert reader_post["author"]["display_name"] == "blocking-reader"
+    assert all(
+        item["id"] != reader_post["id"]
+        for item in client.get("/api/v1/community/posts", headers=author).json()["posts"]
+    )
     assert (
         client.delete(
             f"/api/v1/community/blocks/{post['author']['id']}", headers=reader
@@ -198,6 +224,35 @@ def test_block_report_and_moderation_hide_content_with_safe_audit(
     assert audit.metadata_json == {"phase": "community"}
 
 
+def test_reply_counts_follow_viewer_block_visibility(
+    client: TestClient, db_session: Session
+) -> None:
+    author = community_headers(client, db_session, "reply.count.author@example.com")
+    reader = community_headers(client, db_session, "reply.count.reader@example.com")
+    post = create_post(client, author)
+    reply = client.post(
+        f"/api/v1/community/posts/{post['id']}/replies",
+        json={"body": "Visible until either side blocks the other."},
+        headers=reader,
+    )
+    assert reply.status_code == 201
+    assert (
+        client.post(
+            "/api/v1/community/blocks",
+            json={"user_id": post["author"]["id"]},
+            headers=reader,
+        ).status_code
+        == 204
+    )
+
+    detail = client.get(f"/api/v1/community/posts/{post['id']}", headers=author)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["reply_count"] == 1
+    assert body["visible_reply_count"] == 0
+    assert body["replies"] == []
+
+
 def test_community_delete_is_strictly_scoped_to_community_data(
     client: TestClient, db_session: Session
 ) -> None:
@@ -221,3 +276,32 @@ def test_community_delete_is_strictly_scoped_to_community_data(
         is None
     )
     assert db_session.get(Application, application.id) is not None
+
+
+def test_community_delete_anonymizes_reported_content_for_safety_review(
+    client: TestClient, db_session: Session
+) -> None:
+    author = community_headers(client, db_session, "reported.delete@example.com")
+    reporter = community_headers(client, db_session, "reported.reader@example.com")
+    post = create_post(client, author)
+    report = client.post(
+        "/api/v1/community/reports",
+        json={
+            "post_id": post["id"],
+            "reason": "harassment",
+            "detail": "Keep evidence for moderator review.",
+        },
+        headers=reporter,
+    )
+    assert report.status_code == 201
+    user = db_session.scalar(select(User).where(User.email == "reported.delete@example.com"))
+    assert user is not None
+
+    assert client.delete("/api/v1/community/data", headers=author).status_code == 204
+
+    retained = db_session.get(CommunityPost, uuid.UUID(post["id"]))
+    assert retained is not None
+    assert retained.title == "[deleted by member]"
+    assert retained.body == "[deleted by member]"
+    assert retained.status is CommunityContentStatus.HIDDEN
+    assert db_session.scalar(select(CommunityReport).where(CommunityReport.post_id == retained.id))

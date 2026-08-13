@@ -81,6 +81,10 @@ def test_alembic_schema_accepts_orm_enums_and_portable_timestamp_defaults(
         "rubric_category",
         "confidence",
     } <= {column["name"] for column in inspector.get_columns("document_feedback_items")}
+    assert {
+        "public_id",
+        "display_name_normalized",
+    } <= {column["name"] for column in inspector.get_columns("community_preferences")}
     assert "eligibility_rule_values" in inspector.get_table_names()
     settings = Settings(
         env="test",

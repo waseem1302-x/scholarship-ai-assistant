@@ -39,6 +39,7 @@ class CommunityPostSummaryResponse(BaseModel):
     author: CommunityAuthorResponse
     opportunity: CommunityOpportunityResponse | None = None
     reply_count: int
+    visible_reply_count: int
     created_at: datetime
     updated_at: datetime
     is_owner: bool = False
