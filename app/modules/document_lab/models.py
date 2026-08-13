@@ -37,6 +37,11 @@ class DocumentVersionStatus(StrEnum):
     DELETED = "deleted"
 
 
+class DocumentDeletionStatus(StrEnum):
+    PENDING_DELETE = "pending_delete"
+    OBJECT_DELETED = "object_deleted"
+
+
 class ScanStatus(StrEnum):
     PENDING = "pending"
     CLEAN = "clean"
@@ -106,6 +111,8 @@ class DocumentAsset(Base):
     display_name_ciphertext: Mapped[str] = mapped_column(Text)
     retention_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_status: Mapped[str | None] = mapped_column(String(32), index=True)
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
@@ -139,6 +146,9 @@ class DocumentVersion(Base):
     )
     version_number: Mapped[int] = mapped_column(Integer)
     storage_key: Mapped[str] = mapped_column(String(512), unique=True)
+    encryption_key_version: Mapped[str] = mapped_column(
+        String(100), default="phase7.local-key.v1"
+    )
     content_sha256: Mapped[str] = mapped_column(String(64), index=True)
     declared_content_type: Mapped[str] = mapped_column(String(100))
     detected_content_type: Mapped[str] = mapped_column(String(100))
@@ -304,6 +314,8 @@ class DocumentFeedbackItem(Base):
     )
     text_ciphertext: Mapped[str] = mapped_column(Text)
     excerpt_ciphertext: Mapped[str | None] = mapped_column(Text)
+    rubric_category: Mapped[str] = mapped_column(String(100), default="general")
+    confidence: Mapped[str] = mapped_column(String(20), default="medium")
     is_general_suggestion: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(

@@ -15,6 +15,8 @@ from app.modules.document_lab.models import (
     AnalysisStatus,
     DocumentAnalysis,
     DocumentAnalysisJob,
+    DocumentAsset,
+    DocumentDeletionStatus,
     DocumentVersion,
     DocumentVersionStatus,
     ExtractionStatus,
@@ -101,6 +103,49 @@ def test_document_upload_is_quarantined_then_scanned_and_extracted(
     assert content == pdf()
     assert content_type == PDF_CONTENT_TYPE
     assert list((tmp_path / "private-store").rglob("*.bin"))
+    assert ready.encryption_key_version == "phase7.local-key.v1"
+
+
+def test_document_lab_claims_jobs_atomically(db_session: Session, tmp_path: Path) -> None:
+    owner = user(db_session, "document-claim@example.com")
+    document_service = service(db_session, tmp_path)
+    document_service.create_asset(
+        user=owner,
+        document_kind="cv_resume",
+        filename="claim.pdf",
+        declared_content_type=PDF_CONTENT_TYPE,
+        content=pdf(),
+    )
+
+    claimed = document_service._claim_next_job()
+    assert claimed is not None
+    assert claimed.status is AnalysisStatus.RUNNING
+    assert claimed.attempt_count == 1
+
+    second_worker = service(db_session, tmp_path)
+    assert second_worker._claim_next_job() is None
+
+
+def test_upload_compensates_storage_when_database_commit_fails(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = user(db_session, "document-orphan@example.com")
+    document_service = service(db_session, tmp_path)
+
+    def fail_commit() -> None:
+        raise RuntimeError("database commit failed")
+
+    monkeypatch.setattr(db_session, "commit", fail_commit)
+    with pytest.raises(RuntimeError, match="database commit failed"):
+        document_service.create_asset(
+            user=owner,
+            document_kind="cv_resume",
+            filename="orphan.pdf",
+            declared_content_type=PDF_CONTENT_TYPE,
+            content=pdf(),
+        )
+
+    assert not list((tmp_path / "private-store").rglob("*.bin"))
 
 
 def test_document_lab_rejects_spoofed_malicious_and_unsupported_uploads(
@@ -300,6 +345,71 @@ def test_document_delete_removes_encrypted_storage_and_records(
     assert not list((tmp_path / "private-store").rglob("*.bin"))
 
 
+def test_delete_records_object_deleted_state_if_metadata_commit_fails(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = user(db_session, "document-delete-state@example.com")
+    document_service = service(db_session, tmp_path)
+    asset = document_service.create_asset(
+        user=owner,
+        document_kind="motivation_letter",
+        filename="delete-state.docx",
+        declared_content_type=DOCX_CONTENT_TYPE,
+        content=docx(),
+    )
+    version_id = asset.versions[0].id
+    real_commit = db_session.commit
+    calls = 0
+
+    def flaky_commit() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise RuntimeError("metadata commit failed")
+        real_commit()
+
+    monkeypatch.setattr(db_session, "commit", flaky_commit)
+    with pytest.raises(RuntimeError, match="metadata commit failed"):
+        document_service.delete_asset(asset.id, owner.id)
+    db_session.rollback()
+
+    remaining_asset = db_session.get(DocumentAsset, asset.id)
+    remaining_version = db_session.get(DocumentVersion, version_id)
+    assert remaining_asset is not None
+    assert remaining_asset.deleted_at is not None
+    assert remaining_asset.deletion_status == DocumentDeletionStatus.OBJECT_DELETED.value
+    assert remaining_version is not None
+    assert remaining_version.status is DocumentVersionStatus.DELETED
+    assert not list((tmp_path / "private-store").rglob("*.bin"))
+    with pytest.raises(AppError):
+        document_service.get_asset(asset.id, owner.id)
+
+
+def test_new_version_extends_asset_retention(db_session: Session, tmp_path: Path) -> None:
+    owner = user(db_session, "document-version-retention@example.com")
+    document_service = service(db_session, tmp_path, document_lab_retention_days=10)
+    asset = document_service.create_asset(
+        user=owner,
+        document_kind="cv_resume",
+        filename="retention-refresh.pdf",
+        declared_content_type=PDF_CONTENT_TYPE,
+        content=pdf("Original version"),
+    )
+    record = document_service._owned_asset(asset.id, owner.id)
+    record.retention_expires_at = utc_now() + timedelta(days=1)
+    db_session.commit()
+
+    refreshed = document_service.add_version(
+        asset_id=asset.id,
+        user=owner,
+        filename="retention-refresh.pdf",
+        declared_content_type=PDF_CONTENT_TYPE,
+        content=pdf("Fresh version"),
+    )
+
+    assert refreshed.retention_expires_at > utc_now() + timedelta(days=9)
+
+
 def test_retention_expiry_removes_private_storage(db_session: Session, tmp_path: Path) -> None:
     owner = user(db_session, "document-retention@example.com")
     document_service = service(db_session, tmp_path)
@@ -404,6 +514,8 @@ def test_analysis_is_consent_gated_grounded_and_exportable(
     assert completed.status is AnalysisStatus.COMPLETED
     assert completed.provider_status.value == "completed"
     assert completed.feedback[0].excerpt == "I built a community "
+    assert completed.feedback[0].rubric_category == "strength"
+    assert completed.feedback[0].confidence == "medium"
     assert completed.feedback[1].is_general_suggestion is True
     exported = document_service.export_data(owner.id)
     assert exported.analyses[0].id == completed.id
@@ -412,6 +524,36 @@ def test_analysis_is_consent_gated_grounded_and_exportable(
     assert (
         document_service.list_version_analyses(asset.versions[0].id, owner.id)[0].id == completed.id
     )
+
+
+def test_analysis_retention_deletes_feedback_independently_of_documents(
+    db_session: Session, tmp_path: Path
+) -> None:
+    document_service, owner, asset = ready_document_service(
+        db_session, tmp_path, GroundedProvider(), "analysis-retention@example.com"
+    )
+    queued = document_service.request_analysis(
+        version_id=asset.versions[0].id,
+        user=owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    assert document_service.process_next_job()
+    analysis = db_session.get(DocumentAnalysis, queued.id)
+    assert analysis is not None
+    old = utc_now() - timedelta(days=2)
+    analysis.created_at = old
+    analysis.completed_at = old
+    asset_record = document_service._owned_asset(asset.id, owner.id)
+    asset_record.retention_expires_at = utc_now() + timedelta(days=30)
+    document_service.settings.document_lab_analysis_retention_days = 1
+    db_session.commit()
+
+    assert document_service.purge_expired() == 1
+    assert db_session.get(DocumentAnalysis, queued.id) is None
+    assert document_service.get_asset(asset.id, owner.id).id == asset.id
+    assert list((tmp_path / "private-store").rglob("*.bin"))
 
 
 def test_provider_outage_and_invalid_evidence_are_safe(db_session: Session, tmp_path: Path) -> None:

@@ -12,6 +12,8 @@ class ProviderFeedbackItem(BaseModel):
     category: FeedbackCategory
     text: str = Field(min_length=1, max_length=1_500)
     excerpt: str | None = Field(default=None, max_length=300)
+    rubric_category: str | None = Field(default=None, min_length=1, max_length=100)
+    confidence: str = Field(default="medium", pattern="^(low|medium|high)$")
     is_general_suggestion: bool = False
 
 

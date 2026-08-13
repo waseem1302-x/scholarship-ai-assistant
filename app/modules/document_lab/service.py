@@ -4,9 +4,10 @@ import hashlib
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from contextlib import suppress
 from datetime import timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -22,6 +23,7 @@ from app.modules.document_lab.models import (
     DocumentAnalysisJob,
     DocumentAsset,
     DocumentConsent,
+    DocumentDeletionStatus,
     DocumentExtraction,
     DocumentFeedbackItem,
     DocumentJobKind,
@@ -128,8 +130,10 @@ class DocumentLabService:
         )
         self.session.add(asset)
         self.session.flush()
-        self._create_version(asset, user.id, 1, declared_content_type, content, validated)
-        self.session.commit()
+        version = self._create_version(
+            asset, user.id, 1, declared_content_type, content, validated
+        )
+        self._commit_with_storage_compensation([version.storage_key])
         return self._asset_response(asset)
 
     def add_version(
@@ -162,7 +166,10 @@ class DocumentLabService:
             )
             or 0
         ) + 1
-        self._create_version(
+        asset.retention_expires_at = utc_now() + timedelta(
+            days=self.settings.document_lab_retention_days
+        )
+        version = self._create_version(
             asset,
             user.id,
             next_number,
@@ -170,7 +177,7 @@ class DocumentLabService:
             content,
             validated,
         )
-        self.session.commit()
+        self._commit_with_storage_compensation([version.storage_key])
         return self._asset_response(asset)
 
     def list_assets(self, user_id: uuid.UUID) -> list[DocumentAssetResponse]:
@@ -206,12 +213,7 @@ class DocumentLabService:
     def delete_asset(self, asset_id: uuid.UUID, user_id: uuid.UUID) -> None:
         self._require_enabled()
         asset = self._owned_asset(asset_id, user_id)
-        versions = self._versions_for_asset(asset.id)
-        for version in versions:
-            self.storage.delete(version.storage_key)
-        self._delete_analysis_records([version.id for version in versions])
-        self.session.delete(asset)
-        self.session.commit()
+        self._delete_asset_private_data(asset)
 
     def retry_preparation(
         self, version_id: uuid.UUID, user_id: uuid.UUID
@@ -360,12 +362,7 @@ class DocumentLabService:
         for asset in self.session.scalars(
             select(DocumentAsset).where(DocumentAsset.user_id == user_id)
         ).all():
-            versions = self._versions_for_asset(asset.id)
-            for version in versions:
-                self.storage.delete(version.storage_key)
-            self._delete_analysis_records([version.id for version in versions])
-            self.session.delete(asset)
-        self.session.commit()
+            self._delete_asset_private_data(asset)
 
     def link_application_document(
         self,
@@ -431,18 +428,9 @@ class DocumentLabService:
         It receives no user-selected content through command arguments and
         records only status codes on errors, never document-derived messages.
         """
-        job = self.session.scalar(
-            select(DocumentAnalysisJob)
-            .where(DocumentAnalysisJob.status == AnalysisStatus.QUEUED)
-            .order_by(DocumentAnalysisJob.created_at)
-            .limit(1)
-        )
+        job = self._claim_next_job()
         if job is None:
             return False
-        job.status = AnalysisStatus.RUNNING
-        job.started_at = utc_now()
-        job.attempt_count += 1
-        self.session.commit()
         if job.job_kind is DocumentJobKind.SCAN:
             self._process_scan(job)
         elif job.job_kind is DocumentJobKind.EXTRACT:
@@ -452,6 +440,34 @@ class DocumentLabService:
         else:
             self._fail_job(job, "analysis_worker_not_ready")
         return True
+
+    def _claim_next_job(self) -> DocumentAnalysisJob | None:
+        queued_job_id = (
+            select(DocumentAnalysisJob.id)
+            .where(DocumentAnalysisJob.status == AnalysisStatus.QUEUED)
+            .order_by(DocumentAnalysisJob.created_at, DocumentAnalysisJob.id)
+            .limit(1)
+            .scalar_subquery()
+        )
+        claimed_id = self.session.scalar(
+            update(DocumentAnalysisJob)
+            .where(
+                DocumentAnalysisJob.id == queued_job_id,
+                DocumentAnalysisJob.status == AnalysisStatus.QUEUED,
+            )
+            .values(
+                status=AnalysisStatus.RUNNING,
+                started_at=utc_now(),
+                attempt_count=DocumentAnalysisJob.attempt_count + 1,
+            )
+            .returning(DocumentAnalysisJob.id)
+            .execution_options(synchronize_session=False)
+        )
+        if claimed_id is None:
+            self.session.rollback()
+            return None
+        self.session.commit()
+        return self.session.get(DocumentAnalysisJob, claimed_id)
 
     def _create_version(
         self,
@@ -470,6 +486,7 @@ class DocumentLabService:
             user_id=user_id,
             version_number=number,
             storage_key=key,
+            encryption_key_version=self.settings.document_lab_encryption_key_version,
             content_sha256=hashlib.sha256(content).hexdigest(),
             declared_content_type=declared_content_type.split(";", maxsplit=1)[0].strip(),
             detected_content_type=validated.detected_content_type,
@@ -621,6 +638,8 @@ class DocumentLabService:
                     excerpt_ciphertext=self.cipher.encrypt_text(item.excerpt)
                     if item.excerpt
                     else None,
+                    rubric_category=item.rubric_category or item.category.value,
+                    confidence=item.confidence,
                     is_general_suggestion=item.is_general_suggestion,
                     position=position,
                 )
@@ -641,7 +660,14 @@ class DocumentLabService:
         items: list[ProviderFeedbackItem] = []
         for category, values in categories:
             for value in values:
-                items.append(value.model_copy(update={"category": category}))
+                items.append(
+                    value.model_copy(
+                        update={
+                            "category": category,
+                            "rubric_category": value.rubric_category or category.value,
+                        }
+                    )
+                )
         return items
 
     @staticmethod
@@ -662,6 +688,12 @@ class DocumentLabService:
                 422,
             )
         for item in DocumentLabService._provider_items(output):
+            if not item.rubric_category or item.confidence not in {"low", "medium", "high"}:
+                raise AppError(
+                    "invalid_provider_response",
+                    "Provider output was not structured.",
+                    422,
+                )
             if item.is_general_suggestion:
                 if item.excerpt:
                     raise AppError(
@@ -690,6 +722,8 @@ class DocumentLabService:
                 excerpt=self.cipher.decrypt_text(item.excerpt_ciphertext)
                 if item.excerpt_ciphertext
                 else None,
+                rubric_category=item.rubric_category,
+                confidence=item.confidence,
                 is_general_suggestion=item.is_general_suggestion,
                 position=item.position,
             )
@@ -726,9 +760,16 @@ class DocumentLabService:
     def _delete_analysis_records(self, version_ids: list[uuid.UUID]) -> None:
         if not version_ids:
             return
-        analysis_ids = self.session.scalars(
-            select(DocumentAnalysis.id).where(DocumentAnalysis.version_id.in_(version_ids))
+        analysis_rows = self.session.execute(
+            select(DocumentAnalysis.id, DocumentAnalysis.consent_id).where(
+                DocumentAnalysis.version_id.in_(version_ids)
+            )
         ).all()
+        analysis_ids = [row.id for row in analysis_rows]
+        consent_ids = [row.consent_id for row in analysis_rows]
+        self.session.execute(
+            delete(DocumentAnalysisJob).where(DocumentAnalysisJob.version_id.in_(version_ids))
+        )
         if analysis_ids:
             self.session.execute(
                 delete(DocumentFeedbackItem).where(
@@ -738,6 +779,8 @@ class DocumentLabService:
             self.session.execute(
                 delete(DocumentAnalysis).where(DocumentAnalysis.id.in_(analysis_ids))
             )
+        if consent_ids:
+            self.session.execute(delete(DocumentConsent).where(DocumentConsent.id.in_(consent_ids)))
         self.session.execute(
             delete(DocumentConsent).where(DocumentConsent.version_id.in_(version_ids))
         )
@@ -805,6 +848,7 @@ class DocumentLabService:
             version_number=version.version_number,
             declared_content_type=version.declared_content_type,
             detected_content_type=version.detected_content_type,
+            encryption_key_version=version.encryption_key_version,
             size_bytes=version.size_bytes,
             page_count=version.page_count,
             status=version.status,
@@ -882,6 +926,7 @@ class DocumentLabService:
         return self._purge_expired()
 
     def _purge_expired(self) -> int:
+        processed = self._purge_expired_analyses()
         expired = self.session.scalars(
             select(DocumentAsset).where(
                 DocumentAsset.deleted_at.is_(None),
@@ -889,14 +934,66 @@ class DocumentLabService:
             )
         ).all()
         for asset in expired:
-            versions = self._versions_for_asset(asset.id)
-            for version in versions:
-                self.storage.delete(version.storage_key)
-            self._delete_analysis_records([version.id for version in versions])
-            self.session.delete(asset)
-        if expired:
+            self._delete_asset_private_data(asset)
+        return processed + len(expired)
+
+    def _purge_expired_analyses(self) -> int:
+        cutoff = utc_now() - timedelta(days=self.settings.document_lab_analysis_retention_days)
+        rows = self.session.execute(
+            select(DocumentAnalysis.id, DocumentAnalysis.consent_id).where(
+                func.coalesce(DocumentAnalysis.completed_at, DocumentAnalysis.created_at)
+                <= cutoff
+            )
+        ).all()
+        if not rows:
+            return 0
+        analysis_ids = [row.id for row in rows]
+        consent_ids = [row.consent_id for row in rows]
+        self.session.execute(
+            delete(DocumentFeedbackItem).where(DocumentFeedbackItem.analysis_id.in_(analysis_ids))
+        )
+        self.session.execute(
+            delete(DocumentAnalysisJob).where(DocumentAnalysisJob.analysis_id.in_(analysis_ids))
+        )
+        self.session.execute(delete(DocumentAnalysis).where(DocumentAnalysis.id.in_(analysis_ids)))
+        self.session.execute(delete(DocumentConsent).where(DocumentConsent.id.in_(consent_ids)))
+        self.session.commit()
+        return len(analysis_ids)
+
+    def _delete_asset_private_data(self, asset: DocumentAsset) -> None:
+        versions = self._versions_for_asset(asset.id)
+        version_ids = [version.id for version in versions]
+        now = utc_now()
+        asset.deleted_at = asset.deleted_at or now
+        asset.deletion_requested_at = asset.deletion_requested_at or now
+        asset.deletion_status = DocumentDeletionStatus.PENDING_DELETE.value
+        self.session.commit()
+        for version in versions:
+            self.storage.delete(version.storage_key)
+        for version in versions:
+            version.status = DocumentVersionStatus.DELETED
+        asset.deletion_status = DocumentDeletionStatus.OBJECT_DELETED.value
+        self.session.commit()
+        self._delete_analysis_records(version_ids)
+        self.session.delete(asset)
+        try:
             self.session.commit()
-        return len(expired)
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def _commit_with_storage_compensation(self, storage_keys: list[str]) -> None:
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            self._delete_storage_keys(storage_keys)
+            raise
+
+    def _delete_storage_keys(self, storage_keys: list[str]) -> None:
+        for key in storage_keys:
+            with suppress(Exception):
+                self.storage.delete(key)
 
     def _require_enabled(self) -> None:
         if not self.settings.document_lab_enabled:

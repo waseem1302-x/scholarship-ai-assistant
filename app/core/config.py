@@ -135,6 +135,7 @@ class Settings(BaseSettings):
     document_lab_parser_isolation_enabled: bool = False
     document_lab_remote_analysis_approved: bool = False
     document_lab_encryption_key: SecretStr | None = Field(default=None, repr=False)
+    document_lab_encryption_key_version: str = "phase7.local-key.v1"
     document_lab_max_upload_bytes: int = Field(default=10_000_000, ge=1, le=25_000_000)
     document_lab_max_pages: int = Field(default=50, ge=1, le=200)
     document_lab_max_extracted_characters: int = Field(default=100_000, ge=1_000, le=500_000)

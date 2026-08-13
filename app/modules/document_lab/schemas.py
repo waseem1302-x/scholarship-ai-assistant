@@ -30,6 +30,8 @@ class DocumentFeedbackResponse(BaseModel):
     category: FeedbackCategory
     text: str
     excerpt: str | None
+    rubric_category: str
+    confidence: str
     is_general_suggestion: bool
     position: int
 
@@ -62,6 +64,7 @@ class DocumentVersionResponse(BaseModel):
     version_number: int
     declared_content_type: str
     detected_content_type: str
+    encryption_key_version: str
     size_bytes: int
     page_count: int | None
     status: DocumentVersionStatus
