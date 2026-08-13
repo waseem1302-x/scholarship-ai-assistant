@@ -129,7 +129,13 @@ def test_application_command_centre_migration_preserves_legacy_tracker_data(
             personal_deadline=deadline,
             submitted_at=deadline,
             outcome_notes="Awaiting decision.",
-            document_checklist=[{"name": "Transcript", "is_complete": True, "notes": "Uploaded"}],
+            document_checklist=[
+                {
+                    "name": "Transcript",
+                    "is_complete": True,
+                    "notes": "Uploaded",
+                }
+            ],
             recommendation_letters=[{"name": "Referee letter", "is_complete": False}],
             test_requirements=[{"name": "IELTS", "is_complete": True}],
         )
@@ -164,7 +170,9 @@ def test_application_command_centre_migration_preserves_legacy_tracker_data(
     engine.dispose()
 
 
-def test_assistant_safety_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
+def test_assistant_safety_migration_upgrades_and_downgrades(
+    tmp_path: Path,
+) -> None:
     database_path = tmp_path / "assistant-safety.db"
     database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
     repository_root = Path(__file__).parents[1]
@@ -191,7 +199,9 @@ def test_assistant_safety_migration_upgrades_and_downgrades(tmp_path: Path) -> N
     engine.dispose()
 
 
-def test_document_lab_foundation_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
+def test_document_lab_foundation_migration_upgrades_and_downgrades(
+    tmp_path: Path,
+) -> None:
     database_path = tmp_path / "document-lab.db"
     database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
     repository_root = Path(__file__).parents[1]
@@ -215,4 +225,63 @@ def test_document_lab_foundation_migration_upgrades_and_downgrades(tmp_path: Pat
     inspector = inspect(engine)
     assert "document_assets" not in inspector.get_table_names()
     assert "application_document_links" not in inspector.get_table_names()
+    engine.dispose()
+
+
+def test_community_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
+    database_path = tmp_path / "community.db"
+    database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(alembic_config, "20260813_0014")
+    engine = create_engine(database_url)
+    inspector = inspect(engine)
+    assert {
+        "community_preferences",
+        "community_posts",
+        "community_replies",
+        "community_bookmarks",
+        "community_blocks",
+        "community_reports",
+        "community_moderation_records",
+    }.issubset(inspector.get_table_names())
+    command.downgrade(alembic_config, "20260812_0013")
+    inspector = inspect(engine)
+    assert "community_posts" not in inspector.get_table_names()
+    assert "community_reports" not in inspector.get_table_names()
+    engine.dispose()
+
+
+def test_phase_nine_schema_upgrades_and_rolls_back_to_community(tmp_path: Path) -> None:
+    database_path = tmp_path / "phase-nine.db"
+    database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260813_0019")
+    engine = create_engine(database_url)
+    inspector = inspect(engine)
+    assert {
+        "beta_invitations",
+        "beta_legal_acceptances",
+        "webauthn_credentials",
+        "webauthn_challenges",
+        "operational_job_health",
+    }.issubset(inspector.get_table_names())
+    invitation_columns = {column["name"] for column in inspector.get_columns("beta_invitations")}
+    assert {"reserved_by_user_id", "reserved_at"}.issubset(invitation_columns)
+
+    command.downgrade(alembic_config, "20260813_0014")
+    inspector = inspect(engine)
+    assert not {
+        "beta_invitations",
+        "beta_legal_acceptances",
+        "webauthn_credentials",
+        "webauthn_challenges",
+        "operational_job_health",
+    }.intersection(inspector.get_table_names())
     engine.dispose()

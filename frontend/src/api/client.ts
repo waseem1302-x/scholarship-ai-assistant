@@ -20,6 +20,21 @@ interface AdminStepUpResponse {
   expires_at: string;
 }
 
+interface WebAuthnOptionsResponse {
+  options: PublicKeyCredentialCreationOptionsJSON | PublicKeyCredentialRequestOptionsJSON;
+}
+
+interface CredentialResponse {
+  credential_id?: string;
+  step_up_token?: string;
+  expires_at?: string;
+}
+
+export interface AdminMfaStepUp {
+  step_up_token: string;
+  expires_at: string;
+}
+
 export interface AccountTokenDelivery {
   accepted: boolean;
   expires_at: string | null;
@@ -60,6 +75,47 @@ function errorMessage(body: ApiErrorBody | null, status: number): string {
   return body?.error?.message ?? body?.message ?? `Request failed with ${status}.`;
 }
 
+export interface BetaInvitationDelivery {
+  id: string;
+  email: string;
+  expires_at: string;
+  invitation_code: string;
+}
+
+function fromBase64Url(value: string): Uint8Array {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+}
+
+function toBase64Url(value: ArrayBuffer | null): string | null {
+  if (!value) return null;
+  return btoa(String.fromCharCode(...new Uint8Array(value)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function passkeyRequestOptions(options: PublicKeyCredentialRequestOptionsJSON): PublicKeyCredentialRequestOptions {
+  return {
+    ...options,
+    challenge: fromBase64Url(options.challenge),
+    allowCredentials: options.allowCredentials?.map((item) => ({ ...item, id: fromBase64Url(item.id) })),
+  } as PublicKeyCredentialRequestOptions;
+}
+
+function passkeyAssertion(credential: PublicKeyCredential): Record<string, unknown> {
+  const response = credential.response as AuthenticatorAssertionResponse;
+  return {
+    id: credential.id,
+    rawId: toBase64Url(credential.rawId),
+    type: credential.type,
+    response: {
+      clientDataJSON: toBase64Url(response.clientDataJSON),
+      authenticatorData: toBase64Url(response.authenticatorData),
+      signature: toBase64Url(response.signature),
+      userHandle: toBase64Url(response.userHandle),
+    },
+  };
+}
+
 export class ApiClient {
   private accessToken: string | null = null;
   private refreshPromise: Promise<TokenResponse | null> | null = null;
@@ -68,10 +124,21 @@ export class ApiClient {
     this.accessToken = accessToken;
   }
 
-  async signIn(mode: "login" | "register", email: string, password: string): Promise<TokenResponse> {
+  async signIn(
+    mode: "login" | "register",
+    email: string,
+    password: string,
+    invitationCode?: string,
+    acceptBetaTerms = false,
+  ): Promise<TokenResponse> {
     const result = await this.request<TokenResponse>(`/auth/${mode}`, {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({
+        email,
+        password,
+        ...(mode === "register" && invitationCode ? { invitation_code: invitationCode } : {}),
+        ...(mode === "register" ? { accept_beta_terms: acceptBetaTerms } : {}),
+      }),
     });
     this.setAccessToken(result.access_token);
     return result;
@@ -98,10 +165,25 @@ export class ApiClient {
   }
 
   async adminStepUp(password: string): Promise<AdminStepUpResponse> {
-    return this.request<AdminStepUpResponse>("/auth/admin/step-up", {
-      method: "POST",
-      body: JSON.stringify({ password }),
-    });
+    try {
+      return await this.request<AdminStepUpResponse>("/auth/admin/step-up", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 403) throw error;
+      if (typeof window === "undefined" || !("PublicKeyCredential" in window)) {
+        throw new Error("Production administrator changes require a passkey-capable browser.");
+      }
+      const options = await this.mfaStepUpOptions(password);
+      const credential = await navigator.credentials.get({
+        publicKey: passkeyRequestOptions(options.options as PublicKeyCredentialRequestOptionsJSON),
+      });
+      if (!(credential instanceof PublicKeyCredential)) {
+        throw new Error("Passkey verification was cancelled.");
+      }
+      return this.completeMfaStepUp(passkeyAssertion(credential));
+    }
   }
 
   async requestEmailVerification(): Promise<AccountTokenDelivery> {
@@ -179,6 +261,47 @@ export class ApiClient {
       throw new ApiError(errorMessage(body as ApiErrorBody | null, response.status), response.status);
     }
     return body as T;
+  }
+
+  async passkeyRegistrationOptions(password: string): Promise<WebAuthnOptionsResponse> {
+    return this.request<WebAuthnOptionsResponse>("/auth/admin/passkeys/registration-options", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+  }
+
+  async registerPasskey(credential: Record<string, unknown>): Promise<CredentialResponse> {
+    return this.request<CredentialResponse>("/auth/admin/passkeys", {
+      method: "POST",
+      body: JSON.stringify({ credential }),
+    });
+  }
+
+  async mfaStepUpOptions(password: string): Promise<WebAuthnOptionsResponse> {
+    return this.request<WebAuthnOptionsResponse>("/auth/admin/mfa/options", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+  }
+
+  async completeMfaStepUp(credential: Record<string, unknown>): Promise<AdminMfaStepUp> {
+    return this.request<AdminMfaStepUp>("/auth/admin/mfa/verify", {
+      method: "POST",
+      body: JSON.stringify({ credential }),
+    });
+  }
+
+  async createBetaInvitation(
+    email: string,
+    expiresInDays: number,
+    password: string,
+  ): Promise<BetaInvitationDelivery> {
+    const stepUp = await this.adminStepUp(password);
+    return this.request<BetaInvitationDelivery>("/beta/admin/invitations", {
+      method: "POST",
+      headers: { "X-Admin-Step-Up": stepUp.step_up_token },
+      body: JSON.stringify({ email, expires_in_days: expiresInDays }),
+    });
   }
 
   async upload<T>(path: string, file: File): Promise<T> {

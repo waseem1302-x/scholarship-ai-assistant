@@ -1,7 +1,10 @@
 from app.modules.auth.models import User
 from app.modules.profiles.models import StudentProfile
 from app.modules.profiles.repository import StudentProfileRepository
-from app.modules.profiles.schemas import StudentProfileResponse, StudentProfileUpsert
+from app.modules.profiles.schemas import (
+    StudentProfileResponse,
+    StudentProfileUpsert,
+)
 
 RECOMMENDED_FIELDS = [
     "nationality",

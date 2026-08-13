@@ -22,10 +22,16 @@ class EffectiveApplicationWindow:
 
 
 def effective_application_window(
-    opportunity: Opportunity, source: Source | None, *, now: datetime | None = None
+    opportunity: Opportunity,
+    source: Source | None,
+    *,
+    now: datetime | None = None,
 ) -> EffectiveApplicationWindow:
     current_time = _as_utc(now or datetime.now(UTC))
-    if opportunity.status in {OpportunityStatus.EXPIRED, OpportunityStatus.ARCHIVED}:
+    if opportunity.status in {
+        OpportunityStatus.EXPIRED,
+        OpportunityStatus.ARCHIVED,
+    }:
         return EffectiveApplicationWindow(ApplicationWindowState.ARCHIVED, False, None)
 
     cycle = _current_cycle(opportunity, current_time)
@@ -54,7 +60,10 @@ def effective_application_window(
 
 
 def is_open_now(
-    opportunity: Opportunity, source: Source | None, *, now: datetime | None = None
+    opportunity: Opportunity,
+    source: Source | None,
+    *,
+    now: datetime | None = None,
 ) -> bool:
     window = effective_application_window(opportunity, source, now=now)
     return window.source_is_fresh and window.state in {

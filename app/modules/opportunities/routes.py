@@ -47,14 +47,19 @@ FORBIDDEN_RESPONSE = {
     "model": ErrorResponse,
     "description": "The authenticated user does not have administrator access.",
 }
-NOT_FOUND_RESPONSE = {"model": ErrorResponse, "description": "The opportunity was not found."}
+NOT_FOUND_RESPONSE = {
+    "model": ErrorResponse,
+    "description": "The opportunity was not found.",
+}
 CONFLICT_RESPONSE = {
     "model": ErrorResponse,
     "description": "A duplicate opportunity already exists.",
 }
 
 
-def get_opportunity_service(session: Annotated[Session, Depends(get_db)]) -> OpportunityService:
+def get_opportunity_service(
+    session: Annotated[Session, Depends(get_db)],
+) -> OpportunityService:
     return OpportunityService(session)
 
 

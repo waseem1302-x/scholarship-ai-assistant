@@ -7,7 +7,10 @@ import zipfile
 from concurrent.futures import ProcessPoolExecutor, TimeoutError
 
 from app.core.errors import AppError
-from app.modules.document_lab.validation import DOCX_CONTENT_TYPE, PDF_CONTENT_TYPE
+from app.modules.document_lab.validation import (
+    DOCX_CONTENT_TYPE,
+    PDF_CONTENT_TYPE,
+)
 
 
 def extract_restricted(
@@ -59,9 +62,17 @@ def _extract(content: bytes, content_type: str, max_characters: int) -> str:
         raise AppError("unsupported_format", "Document extraction is not supported.", 422)
     normalized = "\n".join(line.strip() for line in text.splitlines() if line.strip())
     if not normalized:
-        raise AppError("image_only_or_empty_document", "No extractable text was found.", 422)
+        raise AppError(
+            "image_only_or_empty_document",
+            "No extractable text was found.",
+            422,
+        )
     if len(normalized) > max_characters:
-        raise AppError("extracted_text_limit_exceeded", "Extracted text exceeds the limit.", 422)
+        raise AppError(
+            "extracted_text_limit_exceeded",
+            "Extracted text exceeds the limit.",
+            422,
+        )
     return normalized
 
 

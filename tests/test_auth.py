@@ -6,11 +6,13 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.config import Settings
+from app.core.errors import AppError, AuthenticationError
 from app.core.security import hash_password
 from app.main import app
 from app.modules.auth.dependencies import require_roles
 from app.modules.auth.models import RefreshToken, User, UserRole
+from app.modules.auth.webauthn_service import WebAuthnService
 
 EMAIL = "student@example.com"
 PASSWORD = "correct-horse-42"
@@ -183,9 +185,44 @@ def test_password_reset_revokes_refresh_sessions_and_accepts_new_password(
     )
     assert (
         client.post(
-            "/api/v1/auth/login", json={"email": EMAIL, "password": "updated-password-42"}
+            "/api/v1/auth/login",
+            json={"email": EMAIL, "password": "updated-password-42"},
         ).status_code
         == 200
+    )
+
+
+def test_student_account_export_and_closure_are_owner_scoped(
+    client: TestClient, db_session: Session
+) -> None:
+    tokens = register(client, email="close-account@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    profile = client.put(
+        "/api/v1/profiles/me",
+        json={"nationality": "Malaysia", "target_degree_level": "masters"},
+        headers=headers,
+    )
+    assert profile.status_code == 200
+
+    exported = client.get("/api/v1/auth/account/export", headers=headers)
+    assert exported.status_code == 200, exported.text
+    assert exported.json()["account"]["email"] == "close-account@example.com"
+    assert exported.json()["profile"]["nationality"] == "Malaysia"
+
+    closed = client.request(
+        "DELETE",
+        "/api/v1/auth/account",
+        json={"password": PASSWORD},
+        headers=headers,
+    )
+    assert closed.status_code == 204
+    assert db_session.scalar(select(User).where(User.email == "close-account@example.com")) is None
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "close-account@example.com", "password": PASSWORD},
+        ).status_code
+        == 401
     )
 
 
@@ -209,6 +246,37 @@ def test_admin_step_up_requires_an_administrator(client: TestClient, db_session:
     )
     assert response.status_code == 200
     assert response.json()["step_up_token"]
+
+
+def test_admin_passkey_options_require_password_and_record_a_single_use_challenge(
+    db_session: Session,
+) -> None:
+    administrator = User(
+        id=uuid.uuid4(),
+        email="passkey-admin@example.com",
+        password_hash=hash_password(PASSWORD),
+        role=UserRole.ADMIN,
+    )
+    db_session.add(administrator)
+    db_session.commit()
+    service = WebAuthnService(
+        db_session,
+        Settings(
+            env="test",
+            database_url="sqlite+pysqlite:///:memory:",
+            jwt_secret="passkey-test-secret-that-is-at-least-32-characters",
+            webauthn_rp_id="localhost",
+            webauthn_origins="http://localhost",
+        ),
+    )
+
+    options = service.registration_options(administrator, PASSWORD)
+    assert options["rp"]["id"] == "localhost"
+    with pytest.raises(AuthenticationError):
+        service.registration_options(administrator, "wrong-password")
+    with pytest.raises(AppError) as no_passkey:
+        service.step_up_options(administrator, PASSWORD)
+    assert no_passkey.value.code == "admin_passkey_required"
 
 
 def test_health_endpoints(client: TestClient) -> None:

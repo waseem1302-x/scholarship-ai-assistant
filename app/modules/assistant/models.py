@@ -2,7 +2,17 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Index, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -44,7 +54,10 @@ class AssistantConversation(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     user: Mapped[User] = relationship()
@@ -59,12 +72,17 @@ class AssistantConversation(Base):
 class AssistantMessage(Base):
     __tablename__ = "assistant_messages"
     __table_args__ = (
-        Index("ix_assistant_messages_conversation_created", "conversation_id", "created_at"),
+        Index(
+            "ix_assistant_messages_conversation_created",
+            "conversation_id",
+            "created_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("assistant_conversations.id", ondelete="CASCADE"), index=True
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
+        index=True,
     )
     role: Mapped[AssistantMessageRole] = mapped_column(
         Enum(
@@ -84,7 +102,13 @@ class AssistantMessage(Base):
 
 class AssistantEvidencePacket(Base):
     __tablename__ = "assistant_evidence_packets"
-    __table_args__ = (Index("ix_assistant_evidence_packets_user_created", "user_id", "created_at"),)
+    __table_args__ = (
+        Index(
+            "ix_assistant_evidence_packets_user_created",
+            "user_id",
+            "created_at",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -116,7 +140,8 @@ class AssistantAnswer(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("assistant_conversations.id", ondelete="CASCADE"), index=True
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
+        index=True,
     )
     evidence_packet_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("assistant_evidence_packets.id", ondelete="RESTRICT")
@@ -211,7 +236,10 @@ class AssistantPrivacyPreference(Base):
     history_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     user: Mapped[User] = relationship()

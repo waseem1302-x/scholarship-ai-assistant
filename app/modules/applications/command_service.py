@@ -47,7 +47,11 @@ from app.modules.applications.schemas import (
     ReminderWorkerHealthResponse,
 )
 from app.modules.auth.models import User, utc_now
-from app.modules.matching.models import MatchEvaluation, MatchEvaluationResult, MatchRuleOutcome
+from app.modules.matching.models import (
+    MatchEvaluation,
+    MatchEvaluationResult,
+    MatchRuleOutcome,
+)
 from app.modules.opportunities.lifecycle import effective_application_window
 from app.modules.opportunities.models import (
     Opportunity,
@@ -71,7 +75,8 @@ class ApplicationCommandService:
     def create(self, payload: ApplicationCreate, *, user: User) -> ApplicationResponse:
         if self.repository.get_by_opportunity(payload.opportunity_id, user.id):
             raise ConflictError(
-                "application_already_exists", "An application already exists for this opportunity"
+                "application_already_exists",
+                "An application already exists for this opportunity",
             )
         opportunity = self._verified_opportunity(payload.opportunity_id)
         saved = (
@@ -104,7 +109,10 @@ class ApplicationCommandService:
         self.session.add(application)
         self.session.flush()
         self.repository.add_event(
-            application.id, user.id, "application.created", {"opportunity_id": str(opportunity.id)}
+            application.id,
+            user.id,
+            "application.created",
+            {"opportunity_id": str(opportunity.id)},
         )
         self._generate_starter_tasks(application, opportunity, source)
         self.session.commit()
@@ -122,7 +130,11 @@ class ApplicationCommandService:
         return self.to_response(application)
 
     def update(
-        self, application_id: uuid.UUID, payload: ApplicationUpdate, *, user: User
+        self,
+        application_id: uuid.UUID,
+        payload: ApplicationUpdate,
+        *,
+        user: User,
     ) -> ApplicationResponse:
         application = self._application(application_id, user)
         values = payload.model_dump(exclude_unset=True)
@@ -150,7 +162,10 @@ class ApplicationCommandService:
                 setattr(application, field, value)
         application.version += 1
         self.repository.add_event(
-            application.id, user.id, "application.updated", {"fields": sorted(values)}
+            application.id,
+            user.id,
+            "application.updated",
+            {"fields": sorted(values)},
         )
         self.session.commit()
         self.session.refresh(application)
@@ -225,11 +240,17 @@ class ApplicationCommandService:
         )
 
     def create_task(
-        self, application_id: uuid.UUID, payload: ApplicationTaskCreate, *, user: User
+        self,
+        application_id: uuid.UUID,
+        payload: ApplicationTaskCreate,
+        *,
+        user: User,
     ) -> ApplicationTaskResponse:
         application = self._application(application_id, user)
         self._validate_evidence(
-            application.opportunity_id, payload.source_id, payload.source_excerpt_id
+            application.opportunity_id,
+            payload.source_id,
+            payload.source_excerpt_id,
         )
         task = ApplicationTask(application_id=application.id, **payload.model_dump())
         self.session.add(task)
@@ -303,7 +324,11 @@ class ApplicationCommandService:
         self.session.commit()
 
     def create_reminder(
-        self, application_id: uuid.UUID, payload: ApplicationReminderCreate, *, user: User
+        self,
+        application_id: uuid.UUID,
+        payload: ApplicationReminderCreate,
+        *,
+        user: User,
     ) -> ApplicationReminderResponse:
         application = self._application(application_id, user)
         if payload.task_id and not self.repository.get_task(
@@ -311,7 +336,10 @@ class ApplicationCommandService:
         ):
             raise self._not_found("task")
         key = payload.idempotency_key or self._reminder_key(
-            application_id, payload.task_id, payload.scheduled_at, payload.message
+            application_id,
+            payload.task_id,
+            payload.scheduled_at,
+            payload.message,
         )
         existing = (
             self.session.query(ApplicationReminder).filter_by(idempotency_key=key).one_or_none()
@@ -326,7 +354,10 @@ class ApplicationCommandService:
         self.session.add(reminder)
         self.session.flush()
         self.repository.add_event(
-            application.id, user.id, "reminder.created", {"reminder_id": str(reminder.id)}
+            application.id,
+            user.id,
+            "reminder.created",
+            {"reminder_id": str(reminder.id)},
         )
         try:
             self.session.commit()
@@ -368,7 +399,11 @@ class ApplicationCommandService:
         return ApplicationReminderResponse.model_validate(reminder)
 
     def create_document(
-        self, application_id: uuid.UUID, payload: ApplicationDocumentCreate, *, user: User
+        self,
+        application_id: uuid.UUID,
+        payload: ApplicationDocumentCreate,
+        *,
+        user: User,
     ) -> ApplicationDocumentResponse:
         application = self._application(application_id, user)
         if payload.task_id and not self.repository.get_task(
@@ -379,7 +414,10 @@ class ApplicationCommandService:
         self.session.add(document)
         self.session.flush()
         self.repository.add_event(
-            application.id, user.id, "document.created", {"document_id": str(document.id)}
+            application.id,
+            user.id,
+            "document.created",
+            {"document_id": str(document.id)},
         )
         self.session.commit()
         self.session.refresh(document)
@@ -419,7 +457,8 @@ class ApplicationCommandService:
         now = self._as_utc(self._current_time())
         soon = now + timedelta(days=14)
         tasks = self.repository.tasks_for_dashboard(
-            user.id, (TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED)
+            user.id,
+            (TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED),
         )
         urgent = [
             task
@@ -469,7 +508,11 @@ class ApplicationCommandService:
         now = self._as_utc(self._current_time())
         tasks = self.session.scalars(select(ApplicationTask)).all()
         reminders = self.session.scalars(select(ApplicationReminder)).all()
-        open_statuses = {TaskStatus.TODO, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED}
+        open_statuses = {
+            TaskStatus.TODO,
+            TaskStatus.IN_PROGRESS,
+            TaskStatus.BLOCKED,
+        }
         open_tasks = [task for task in tasks if task.status in open_statuses]
         overdue = [task for task in open_tasks if task.due_at and self._as_utc(task.due_at) < now]
         delivered = sum(reminder.status is ReminderStatus.DELIVERED for reminder in reminders)
@@ -514,7 +557,10 @@ class ApplicationCommandService:
                 for event in events
             ]
             result.append(value)
-        return {"exported_at": self._current_time().isoformat(), "applications": result}
+        return {
+            "exported_at": self._current_time().isoformat(),
+            "applications": result,
+        }
 
     def to_response(self, application: Application) -> ApplicationResponse:
         return ApplicationResponse(
@@ -587,7 +633,10 @@ class ApplicationCommandService:
         )
 
     def _generate_starter_tasks(
-        self, application: Application, opportunity: Opportunity, source: Source | None
+        self,
+        application: Application,
+        opportunity: Opportunity,
+        source: Source | None,
     ) -> None:
         generated: set[tuple[TaskCategory, str]] = set()
 
@@ -626,9 +675,17 @@ class ApplicationCommandService:
             )
             add_task(category, name, TaskPriority.NORMAL)
         if opportunity.english_language_requirement or opportunity.standardized_test_requirement:
-            add_task(TaskCategory.TEST, "Confirm test requirement", TaskPriority.HIGH)
+            add_task(
+                TaskCategory.TEST,
+                "Confirm test requirement",
+                TaskPriority.HIGH,
+            )
         if opportunity.application_fee_info:
-            add_task(TaskCategory.FUNDING, "Confirm application fee or waiver", TaskPriority.NORMAL)
+            add_task(
+                TaskCategory.FUNDING,
+                "Confirm application fee or waiver",
+                TaskPriority.NORMAL,
+            )
         if application.official_deadline_state is DeadlineState.UNCERTAIN:
             add_task(
                 TaskCategory.OFFICIAL_VERIFICATION,
@@ -763,7 +820,8 @@ class ApplicationCommandService:
         }
         if target not in allowed[current]:
             raise AppError(
-                "invalid_application_transition", f"Cannot move from {current} to {target}"
+                "invalid_application_transition",
+                f"Cannot move from {current} to {target}",
             )
 
     def _validate_evidence(
@@ -779,7 +837,9 @@ class ApplicationCommandService:
             .one_or_none()
         ):
             raise AppError(
-                "invalid_source_reference", "Source does not belong to this opportunity", 422
+                "invalid_source_reference",
+                "Source does not belong to this opportunity",
+                422,
             )
         if source_excerpt_id:
             from app.modules.opportunities.models import SourceExcerpt
@@ -794,7 +854,9 @@ class ApplicationCommandService:
                 .one_or_none()
             ):
                 raise AppError(
-                    "invalid_source_reference", "Excerpt does not belong to this opportunity", 422
+                    "invalid_source_reference",
+                    "Excerpt does not belong to this opportunity",
+                    422,
                 )
 
     @staticmethod

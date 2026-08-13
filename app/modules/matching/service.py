@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.core.errors import AppError
-from app.modules.matching.models import MatchEvaluation, MatchEvaluationResult, MatchRuleOutcome
+from app.modules.matching.models import (
+    MatchEvaluation,
+    MatchEvaluationResult,
+    MatchRuleOutcome,
+)
 from app.modules.matching.repository import MatchEvaluationRepository
 from app.modules.matching.schemas import (
     MatchExplanation,
@@ -209,7 +213,10 @@ class MatchingService:
                     outcome=_rule_outcome(rule),
                     reason_code=_rule_reason_code(rule),
                     profile_fields_json=_profile_fields_for_rule(rule.name),
-                    comparison_json={"weight": rule.weight, "awarded_score": rule.score},
+                    comparison_json={
+                        "weight": rule.weight,
+                        "awarded_score": rule.score,
+                    },
                     message=_rule_message(rule),
                     confidence=result.confidence,
                     next_actions_json=rule.next_steps,
@@ -226,13 +233,19 @@ class MatchingService:
         return stored
 
     def _hard_failures(
-        self, profile: StudentProfile, opportunity: Opportunity, rules: list[RuleResult]
+        self,
+        profile: StudentProfile,
+        opportunity: Opportunity,
+        rules: list[RuleResult],
     ) -> list[str]:
         failures: list[str] = []
         window = effective_application_window(
             opportunity, self.opportunity_service._official_source(opportunity)
         )
-        if window.state in {ApplicationWindowState.CLOSED, ApplicationWindowState.ARCHIVED}:
+        if window.state in {
+            ApplicationWindowState.CLOSED,
+            ApplicationWindowState.ARCHIVED,
+        }:
             failures.append("The application window is closed or archived.")
         if (
             profile.target_degree_level
@@ -247,7 +260,9 @@ class MatchingService:
 
     @staticmethod
     def _structured_rule(
-        profile: StudentProfile, opportunity: Opportunity, rule: EligibilityRule
+        profile: StudentProfile,
+        opportunity: Opportunity,
+        rule: EligibilityRule,
     ) -> RuleResult:
         label = rule.rule_type.value.replace("_", " ")
         actual = _profile_value(profile, rule.rule_type)
@@ -525,7 +540,10 @@ def _compare(actual, required, operator: EligibilityOperator) -> bool:
         if operator is EligibilityOperator.NOT_IN:
             return all(_compare(value, required, operator) for value in actual)
         return any(_compare(value, required, operator) for value in actual)
-    if actual == "any" and operator in {EligibilityOperator.EQUALS, EligibilityOperator.IN}:
+    if actual == "any" and operator in {
+        EligibilityOperator.EQUALS,
+        EligibilityOperator.IN,
+    }:
         return True
     if operator in {EligibilityOperator.IN, EligibilityOperator.NOT_IN}:
         candidates = {_normalize(str(item)) for item in required}
@@ -656,7 +674,12 @@ def _profile_fields_for_rule(rule_name: str) -> list[str]:
         "ielts": ["ielts_score", "english_test_status"],
         "toefl": ["toefl_score", "english_test_status"],
         "work experience months": ["work_experience_months"],
-        "language": ["english_test_status", "ielts_score", "toefl_score", "duolingo_score"],
+        "language": [
+            "english_test_status",
+            "ielts_score",
+            "toefl_score",
+            "duolingo_score",
+        ],
         "location": ["preferred_destination_countries"],
         "funding": ["financial_need"],
     }

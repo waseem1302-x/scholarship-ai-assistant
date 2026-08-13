@@ -23,7 +23,9 @@ PROFILE_REQUIRED_RESPONSE = {
 }
 
 
-def get_matching_service(session: Annotated[Session, Depends(get_db)]) -> MatchingService:
+def get_matching_service(
+    session: Annotated[Session, Depends(get_db)],
+) -> MatchingService:
     return MatchingService(
         StudentProfileRepository(session),
         OpportunityRepository(session),

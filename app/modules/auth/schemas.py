@@ -9,6 +9,8 @@ from app.modules.auth.models import UserRole
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=12, max_length=128)
+    invitation_code: str | None = Field(default=None, min_length=32, max_length=512)
+    accept_beta_terms: bool = False
 
     @field_validator("email")
     @classmethod
@@ -73,6 +75,26 @@ class AdminStepUpRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class AccountClosureRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
+class WebAuthnStartRequest(AdminStepUpRequest):
+    pass
+
+
+class WebAuthnCredentialRequest(BaseModel):
+    credential: dict
+
+
+class WebAuthnOptionsResponse(BaseModel):
+    options: dict
+
+
+class WebAuthnRegistrationResponse(BaseModel):
+    credential_id: str
+
+
 class AccountTokenDeliveryResponse(BaseModel):
     accepted: bool = True
     expires_at: datetime | None = None
@@ -83,6 +105,10 @@ class AccountTokenDeliveryResponse(BaseModel):
 class AdminStepUpResponse(BaseModel):
     step_up_token: str
     expires_at: datetime
+
+
+class WebAuthnStepUpResponse(AdminStepUpResponse):
+    pass
 
 
 class UserResponse(BaseModel):

@@ -2,7 +2,13 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.modules.profiles.models import (
     EducationLevel,
@@ -71,7 +77,12 @@ class StudentProfileUpsert(BaseModel):
         ):
             raise ValueError("cgpa cannot be greater than grading_scale")
         if self.english_test_status is not TestStatus.TAKEN and any(
-            score is not None for score in [self.ielts_score, self.toefl_score, self.duolingo_score]
+            score is not None
+            for score in [
+                self.ielts_score,
+                self.toefl_score,
+                self.duolingo_score,
+            ]
         ):
             raise ValueError("English test scores require english_test_status='taken'")
         if self.gre_score is not None and self.gre_status is not TestStatus.TAKEN:

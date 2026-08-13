@@ -36,7 +36,10 @@ class ApplicationRepository:
     def get(self, application_id: uuid.UUID, user_id: uuid.UUID) -> Application | None:
         return self.session.scalar(
             select(Application)
-            .where(Application.id == application_id, Application.user_id == user_id)
+            .where(
+                Application.id == application_id,
+                Application.user_id == user_id,
+            )
             .options(*self._detail_options())
         )
 
@@ -45,7 +48,10 @@ class ApplicationRepository:
     ) -> Application | None:
         return self.session.scalar(
             select(Application)
-            .where(Application.opportunity_id == opportunity_id, Application.user_id == user_id)
+            .where(
+                Application.opportunity_id == opportunity_id,
+                Application.user_id == user_id,
+            )
             .options(*self._detail_options())
         )
 
@@ -56,7 +62,8 @@ class ApplicationRepository:
             self.session.scalars(
                 base.options(*self._detail_options())
                 .order_by(
-                    Application.personal_deadline.asc().nulls_last(), Application.updated_at.desc()
+                    Application.personal_deadline.asc().nulls_last(),
+                    Application.updated_at.desc(),
                 )
                 .limit(limit)
                 .offset(offset)
@@ -72,8 +79,14 @@ class ApplicationRepository:
         return self.session.scalars(
             select(ApplicationTask)
             .join(Application)
-            .where(Application.user_id == user_id, ApplicationTask.status.in_(statuses))
-            .order_by(ApplicationTask.due_at.asc().nulls_last(), ApplicationTask.priority.desc())
+            .where(
+                Application.user_id == user_id,
+                ApplicationTask.status.in_(statuses),
+            )
+            .order_by(
+                ApplicationTask.due_at.asc().nulls_last(),
+                ApplicationTask.priority.desc(),
+            )
         ).all()
 
     def reminders_for_dashboard(self, user_id: uuid.UUID) -> list[ApplicationReminder]:
@@ -105,7 +118,12 @@ class ApplicationRepository:
         return event
 
     def events(
-        self, application_id: uuid.UUID, user_id: uuid.UUID, *, limit: int, offset: int
+        self,
+        application_id: uuid.UUID,
+        user_id: uuid.UUID,
+        *,
+        limit: int,
+        offset: int,
     ) -> tuple[list[ApplicationEvent], int]:
         owner = select(Application.id).where(
             Application.id == application_id, Application.user_id == user_id
@@ -130,7 +148,10 @@ class ApplicationRepository:
         )
 
     def get_reminder(
-        self, application_id: uuid.UUID, reminder_id: uuid.UUID, user_id: uuid.UUID
+        self,
+        application_id: uuid.UUID,
+        reminder_id: uuid.UUID,
+        user_id: uuid.UUID,
     ) -> ApplicationReminder | None:
         return self.session.scalar(
             select(ApplicationReminder)
@@ -143,7 +164,10 @@ class ApplicationRepository:
         )
 
     def get_document(
-        self, application_id: uuid.UUID, document_id: uuid.UUID, user_id: uuid.UUID
+        self,
+        application_id: uuid.UUID,
+        document_id: uuid.UUID,
+        user_id: uuid.UUID,
     ) -> ApplicationDocument | None:
         return self.session.scalar(
             select(ApplicationDocument)

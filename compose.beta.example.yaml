@@ -1,0 +1,99 @@
+# Phase 9 beta deployment overlay. Copy to a private deployment directory and
+# supply every secret through the platform secret manager or a protected env
+# file; do not commit a populated copy.
+#
+# Usage: docker compose -f compose.yaml -f compose.beta.example.yaml config
+# Then pin the built image digest in the deployment platform rather than
+# rebuilding on the production host.
+services:
+  # The base Compose database is development-only. Beta requires the managed
+  # DATABASE_URL below and must never start this credentialed local service.
+  db:
+    profiles: ["development-only"]
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set a secret}"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set a secret}
+    volumes:
+      - redis_data:/data
+
+  migrate:
+    environment: &beta_environment
+      APP_ENV: production
+      APP_RELEASE_VERSION: ${RELEASE_VERSION:?set an immutable release version}
+      APP_DATABASE_URL: ${DATABASE_URL:?managed production database URL}
+      APP_JWT_SECRET: ${JWT_SECRET:?managed secret}
+      APP_CORS_ORIGINS: ${CORS_ORIGINS:?https origin only}
+      APP_TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:?reviewed TLS edge IP}
+      APP_COOKIE_SECURE: "true"
+      APP_RATE_LIMIT_BACKEND: redis
+      APP_RATE_LIMIT_REDIS_URL: redis://:${REDIS_PASSWORD:?set a secret}@redis:6379/0
+      APP_EMAIL_PROVIDER: smtp
+      APP_EMAIL_FROM: ${EMAIL_FROM:?approved sender}
+      APP_EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:?approved SMTP host}
+      APP_EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-587}
+      APP_EMAIL_SMTP_USERNAME: ${EMAIL_SMTP_USERNAME:?managed secret}
+      APP_EMAIL_SMTP_PASSWORD: ${EMAIL_SMTP_PASSWORD:?managed secret}
+      APP_BETA_ENABLED: "true"
+      APP_BETA_REGISTRATION_OPEN: ${BETA_REGISTRATION_OPEN:-false}
+      APP_BETA_MAX_ACTIVE_STUDENTS: ${BETA_MAX_ACTIVE_STUDENTS:-25}
+      APP_BETA_PRODUCT_OWNER_CONTACT: ${BETA_PRODUCT_OWNER_CONTACT:?named owner}
+      APP_BETA_SUPPORT_CONTACT: ${BETA_SUPPORT_CONTACT:?named owner}
+      APP_BETA_MODERATION_CONTACT: ${BETA_MODERATION_CONTACT:?named owner}
+      APP_BETA_DATA_QUALITY_CONTACT: ${BETA_DATA_QUALITY_CONTACT:?named owner}
+      APP_BETA_INCIDENT_CONTACT: ${BETA_INCIDENT_CONTACT:?named owner}
+      APP_WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:?public hostname}
+      APP_WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:?https public origin}
+      # Enable only after the assistant's source-freshness/citation gate is
+      # evidenced for this release. The only production provider permitted by
+      # configuration is the deterministic evidence-template provider.
+      APP_ASSISTANT_ENABLED: "false"
+      APP_ASSISTANT_PROVIDER: evidence-template
+      APP_DOCUMENT_LAB_ENABLED: "false"
+      APP_COMMUNITY_ENABLED: "false"
+    depends_on: !override
+      redis:
+        condition: service_healthy
+
+  api:
+    environment: *beta_environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  source-monitor:
+    environment: *beta_environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  reminder-worker:
+    environment: *beta_environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  retention-worker:
+    environment: *beta_environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis_data:

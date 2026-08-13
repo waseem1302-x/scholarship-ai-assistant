@@ -91,7 +91,9 @@ class SavedOpportunity(Base):
     __tablename__ = "saved_opportunities"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "opportunity_id", name="uq_saved_opportunities_user_opportunity"
+            "user_id",
+            "opportunity_id",
+            name="uq_saved_opportunities_user_opportunity",
         ),
         Index("ix_saved_opportunities_user_status", "user_id", "status"),
     )
@@ -126,7 +128,10 @@ class SavedOpportunity(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     user: Mapped[User] = relationship()
@@ -138,7 +143,11 @@ class Application(Base):
 
     __tablename__ = "applications"
     __table_args__ = (
-        UniqueConstraint("user_id", "opportunity_id", name="uq_applications_user_opportunity"),
+        UniqueConstraint(
+            "user_id",
+            "opportunity_id",
+            name="uq_applications_user_opportunity",
+        ),
         UniqueConstraint("saved_opportunity_id", name="uq_applications_saved_opportunity"),
         Index("ix_applications_user_lifecycle", "user_id", "lifecycle"),
         Index("ix_applications_official_deadline", "official_deadline"),
@@ -152,7 +161,8 @@ class Application(Base):
         ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
     )
     saved_opportunity_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("saved_opportunities.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("saved_opportunities.id", ondelete="SET NULL"),
+        nullable=True,
     )
     lifecycle: Mapped[ApplicationLifecycle] = mapped_column(
         Enum(
@@ -195,7 +205,10 @@ class Application(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     user: Mapped[User] = relationship()
@@ -220,7 +233,12 @@ class ApplicationTask(Base):
             "title",
             name="uq_application_tasks_application_category_title",
         ),
-        Index("ix_application_tasks_application_status_due", "application_id", "status", "due_at"),
+        Index(
+            "ix_application_tasks_application_status_due",
+            "application_id",
+            "status",
+            "due_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -275,7 +293,10 @@ class ApplicationTask(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     application: Mapped[Application] = relationship(back_populates="tasks")
@@ -285,7 +306,11 @@ class ApplicationReminder(Base):
     __tablename__ = "application_reminders"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_application_reminders_idempotency"),
-        Index("ix_application_reminders_status_scheduled", "status", "scheduled_at"),
+        Index(
+            "ix_application_reminders_status_scheduled",
+            "status",
+            "scheduled_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -328,7 +353,10 @@ class ApplicationNotificationPreference(Base):
     )
     in_app_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     user: Mapped[User] = relationship()
@@ -348,7 +376,11 @@ class ReminderWorkerHealth(Base):
 class ApplicationEvent(Base):
     __tablename__ = "application_events"
     __table_args__ = (
-        Index("ix_application_events_application_created", "application_id", "created_at"),
+        Index(
+            "ix_application_events_application_created",
+            "application_id",
+            "created_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -389,7 +421,10 @@ class ApplicationDocument(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     application: Mapped[Application] = relationship(back_populates="documents")

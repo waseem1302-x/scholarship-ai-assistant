@@ -13,12 +13,15 @@ from app.modules.applications.schemas import (
     SavedOpportunityUpdate,
 )
 from app.modules.applications.service import SavedOpportunityService
-from app.modules.auth.dependencies import require_roles
+from app.modules.auth.dependencies import require_roles, require_verified_student
 from app.modules.auth.models import User, UserRole
 
 router = APIRouter(prefix="/saved-opportunities", tags=["saved opportunities"])
 
-AUTHENTICATION_RESPONSE = {"model": ErrorResponse, "description": "Authentication is required."}
+AUTHENTICATION_RESPONSE = {
+    "model": ErrorResponse,
+    "description": "Authentication is required.",
+}
 FORBIDDEN_RESPONSE = {
     "model": ErrorResponse,
     "description": "Only student users can manage saved opportunities.",
@@ -38,6 +41,7 @@ VALIDATION_RESPONSE = {
 
 
 StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
+VerifiedStudentUser = Annotated[User, Depends(require_verified_student)]
 
 
 def get_saved_opportunity_service(
@@ -60,7 +64,7 @@ def get_saved_opportunity_service(
 )
 def save_opportunity(
     payload: SavedOpportunityCreate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     service: Annotated[SavedOpportunityService, Depends(get_saved_opportunity_service)],
 ) -> SavedOpportunityResponse:
     return service.create(payload, user=user)
@@ -82,7 +86,11 @@ def list_saved_opportunities(
 @router.get(
     "/{saved_opportunity_id}",
     response_model=SavedOpportunityResponse,
-    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE, 404: NOT_FOUND_RESPONSE},
+    responses={
+        401: AUTHENTICATION_RESPONSE,
+        403: FORBIDDEN_RESPONSE,
+        404: NOT_FOUND_RESPONSE,
+    },
 )
 def get_saved_opportunity(
     saved_opportunity_id: uuid.UUID,
@@ -105,7 +113,7 @@ def get_saved_opportunity(
 def update_saved_opportunity(
     saved_opportunity_id: uuid.UUID,
     payload: SavedOpportunityUpdate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     service: Annotated[SavedOpportunityService, Depends(get_saved_opportunity_service)],
 ) -> SavedOpportunityResponse:
     return service.update(saved_opportunity_id, payload, user=user)
@@ -114,7 +122,11 @@ def update_saved_opportunity(
 @router.delete(
     "/{saved_opportunity_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE, 404: NOT_FOUND_RESPONSE},
+    responses={
+        401: AUTHENTICATION_RESPONSE,
+        403: FORBIDDEN_RESPONSE,
+        404: NOT_FOUND_RESPONSE,
+    },
 )
 def delete_saved_opportunity(
     saved_opportunity_id: uuid.UUID,

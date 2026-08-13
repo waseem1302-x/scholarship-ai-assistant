@@ -62,12 +62,19 @@ class MatchEvaluationResult(Base):
 
     __tablename__ = "match_evaluation_results"
     __table_args__ = (
-        CheckConstraint("match_score >= 0", name="ck_match_evaluation_results_score_non_negative"),
+        CheckConstraint(
+            "match_score >= 0",
+            name="ck_match_evaluation_results_score_non_negative",
+        ),
         CheckConstraint(
             "evidence_completeness BETWEEN 0 AND 100",
             name="ck_match_evaluation_results_completeness_range",
         ),
-        Index("ix_match_evaluation_results_evaluation_rank", "evaluation_id", "rank"),
+        Index(
+            "ix_match_evaluation_results_evaluation_rank",
+            "evaluation_id",
+            "rank",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -117,7 +124,8 @@ class MatchRuleOutcome(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     evaluation_result_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("match_evaluation_results.id", ondelete="CASCADE"), index=True
+        ForeignKey("match_evaluation_results.id", ondelete="CASCADE"),
+        index=True,
     )
     eligibility_rule_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("eligibility_rules.id", ondelete="SET NULL")

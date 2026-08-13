@@ -49,8 +49,22 @@ and production browser/authentication security, not a need for a rewrite.
 6. **Phase 5 — application command centre** — pending.
 7. **Phase 6 — citation-first AI assistant** — pending.
 8. **Phase 7 — AI document lab** — pending.
-9. **Phase 8 — scholarship-only community** — pending.
-10. **Phase 9 — production hardening and beta launch** — pending.
+9. **Phase 8 — scholarship-only community** — complete.
+   - consent-gated pseudonymous scholarship discussions;
+   - verified scholarship links, bounded plain-text content checks, write limits,
+     bookmarks, blocks, reports, and owner-scoped edits/deletes;
+   - administrator moderation queue, hide/restore, report resolution,
+     participation suspension, and safe audit records;
+   - community-only export/delete controls and React member/moderator workspace.
+10. **Phase 9 — production hardening and invite-only beta** — pending.
+    - isolated staging/production environments, immutable deployment artefacts,
+      managed secrets, TLS, least-privilege access, backups, and a restore drill;
+    - transactional email, verified beta invitations, administrator WebAuthn
+      MFA, and a shared, fail-closed rate-limit store;
+    - telemetry redaction, monitoring/alerts, operational runbooks, incident
+      and recovery exercises, and feature kill switches;
+    - production gates for Document Lab, assistant, community, and catalogue
+      freshness; followed by a controlled cohort rollout and beta exit review.
 
 ## Roadmap status correction (2026-08-13)
 
@@ -59,6 +73,12 @@ centre, and citation-first assistant work. Phase 4, Phase 5, and Phase 6 are
 implemented in the current codebase. Phase 7 is actively implementing the
 separate private Document Lab. The phase list will be normalized in the next
 roadmap editorial pass; this correction is authoritative in the interim.
+
+Phase 8 is now also delivered. Its requirements, safety boundaries, and
+acceptance criteria are defined in `docs/phase8-scholarship-community.md`.
+
+Phase 9 is defined in `docs/phase9-production-hardening-beta.md`. It is a
+controlled launch-readiness phase; it does not authorize a public launch.
 
 ## Phase 1 acceptance gates
 

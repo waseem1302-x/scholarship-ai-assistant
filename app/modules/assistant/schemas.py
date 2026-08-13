@@ -3,7 +3,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-from app.modules.assistant.models import AssistantAnswerStatus, AssistantFeedbackType
+from app.modules.assistant.models import (
+    AssistantAnswerStatus,
+    AssistantFeedbackType,
+)
 
 
 class CitationResponse(BaseModel):

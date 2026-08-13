@@ -29,15 +29,18 @@ from app.modules.applications.schemas import (
     CommandCentreResponse,
     ReminderWorkerHealthResponse,
 )
-from app.modules.auth.dependencies import require_roles
+from app.modules.auth.dependencies import require_roles, require_verified_student
 from app.modules.auth.models import User, UserRole
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
+VerifiedStudentUser = Annotated[User, Depends(require_verified_student)]
 AdminUser = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
 
 
-def service(session: Annotated[Session, Depends(get_db)]) -> ApplicationCommandService:
+def service(
+    session: Annotated[Session, Depends(get_db)],
+) -> ApplicationCommandService:
     return ApplicationCommandService(session)
 
 
@@ -86,14 +89,16 @@ def get_notification_preference(
 )
 def update_notification_preference(
     payload: ApplicationNotificationPreferenceUpdate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
 ) -> ApplicationNotificationPreferenceResponse:
     return application_service.update_notification_preference(payload, user=user)
 
 
 @router.get(
-    "/reminder-worker-health", response_model=ReminderWorkerHealthResponse, responses=Errors
+    "/reminder-worker-health",
+    response_model=ReminderWorkerHealthResponse,
+    responses=Errors,
 )
 def reminder_worker_health(
     user: StudentUser, application_service: CommandService
@@ -116,17 +121,22 @@ def delete_all_application_data(user: StudentUser, application_service: CommandS
 
 
 @router.post(
-    "", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED, responses=Errors
+    "",
+    response_model=ApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses=Errors,
 )
 def create_application(
-    payload: ApplicationCreate, user: StudentUser, application_service: CommandService
+    payload: ApplicationCreate,
+    user: VerifiedStudentUser,
+    application_service: CommandService,
 ) -> ApplicationResponse:
     return application_service.create(payload, user=user)
 
 
 @router.get("", response_model=ApplicationListResponse, responses=Errors)
 def list_applications(
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -147,7 +157,9 @@ def list_applications(
 
 @router.get("/{application_id}", response_model=ApplicationResponse, responses=Errors)
 def get_application(
-    application_id: uuid.UUID, user: StudentUser, application_service: CommandService
+    application_id: uuid.UUID,
+    user: StudentUser,
+    application_service: CommandService,
 ) -> ApplicationResponse:
     return application_service.get(application_id, user=user)
 
@@ -156,22 +168,30 @@ def get_application(
 def update_application(
     application_id: uuid.UUID,
     payload: ApplicationUpdate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
 ) -> ApplicationResponse:
     return application_service.update(application_id, payload, user=user)
 
 
-@router.delete("/{application_id}", status_code=status.HTTP_204_NO_CONTENT, responses=Errors)
+@router.delete(
+    "/{application_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=Errors,
+)
 def delete_application(
-    application_id: uuid.UUID, user: StudentUser, application_service: CommandService
+    application_id: uuid.UUID,
+    user: StudentUser,
+    application_service: CommandService,
 ) -> Response:
     application_service.delete(application_id, user=user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
-    "/{application_id}/events", response_model=list[ApplicationEventResponse], responses=Errors
+    "/{application_id}/events",
+    response_model=list[ApplicationEventResponse],
+    responses=Errors,
 )
 def list_events(
     application_id: uuid.UUID,
@@ -193,27 +213,31 @@ def list_events(
 def create_task(
     application_id: uuid.UUID,
     payload: ApplicationTaskCreate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
 ) -> ApplicationTaskResponse:
     return application_service.create_task(application_id, payload, user=user)
 
 
 @router.patch(
-    "/{application_id}/tasks/{task_id}", response_model=ApplicationTaskResponse, responses=Errors
+    "/{application_id}/tasks/{task_id}",
+    response_model=ApplicationTaskResponse,
+    responses=Errors,
 )
 def update_task(
     application_id: uuid.UUID,
     task_id: uuid.UUID,
     payload: ApplicationTaskUpdate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
 ) -> ApplicationTaskResponse:
     return application_service.update_task(application_id, task_id, payload, user=user)
 
 
 @router.delete(
-    "/{application_id}/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT, responses=Errors
+    "/{application_id}/tasks/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=Errors,
 )
 def delete_task(
     application_id: uuid.UUID,
@@ -234,7 +258,7 @@ def delete_task(
 def create_reminder(
     application_id: uuid.UUID,
     payload: ApplicationReminderCreate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
 ) -> ApplicationReminderResponse:
     return application_service.create_reminder(application_id, payload, user=user)
@@ -249,7 +273,7 @@ def update_reminder(
     application_id: uuid.UUID,
     reminder_id: uuid.UUID,
     payload: ApplicationReminderUpdate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
 ) -> ApplicationReminderResponse:
     return application_service.update_reminder(application_id, reminder_id, payload, user=user)
@@ -264,7 +288,7 @@ def update_reminder(
 def create_document(
     application_id: uuid.UUID,
     payload: ApplicationDocumentCreate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
 ) -> ApplicationDocumentResponse:
     return application_service.create_document(application_id, payload, user=user)
@@ -279,7 +303,7 @@ def update_document(
     application_id: uuid.UUID,
     document_id: uuid.UUID,
     payload: ApplicationDocumentUpdate,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     application_service: CommandService,
 ) -> ApplicationDocumentResponse:
     return application_service.update_document(application_id, document_id, payload, user=user)

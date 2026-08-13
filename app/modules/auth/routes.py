@@ -5,10 +5,13 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.core.email import get_account_email_sender
 from app.core.errors import ErrorResponse
 from app.db.session import get_db
-from app.modules.auth.dependencies import CurrentUser
+from app.modules.auth.dependencies import CurrentUser, require_roles
+from app.modules.auth.models import User, UserRole
 from app.modules.auth.schemas import (
+    AccountClosureRequest,
     AccountTokenDeliveryResponse,
     AdminStepUpRequest,
     AdminStepUpResponse,
@@ -21,10 +24,17 @@ from app.modules.auth.schemas import (
     TokenConfirmRequest,
     TokenResponse,
     UserResponse,
+    WebAuthnCredentialRequest,
+    WebAuthnOptionsResponse,
+    WebAuthnRegistrationResponse,
+    WebAuthnStartRequest,
+    WebAuthnStepUpResponse,
 )
 from app.modules.auth.service import AuthService, IssuedTokens
+from app.modules.auth.webauthn_service import WebAuthnService
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
 
 VALIDATION_RESPONSE = {
     "model": ErrorResponse,
@@ -68,7 +78,12 @@ def register(
     service: Annotated[AuthService, Depends(get_auth_service)],
     settings: Annotated[Settings, Depends(get_settings)],
 ):
-    result = service.register(str(payload.email), payload.password)
+    result = service.register(
+        str(payload.email),
+        payload.password,
+        payload.invitation_code,
+        payload.accept_beta_terms,
+    )
     _set_refresh_cookies(response, result.refresh_token, settings)
     return to_token_response(result, include_refresh_token=settings.env != "production")
 
@@ -134,6 +149,29 @@ def me(user: CurrentUser) -> UserResponse:
     return UserResponse.model_validate(user)
 
 
+@router.get("/account/export", responses={401: AUTHENTICATION_RESPONSE})
+def export_student_account(
+    user: StudentUser,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> dict[str, object]:
+    """Owner-only export; intentionally excludes operational/security logs."""
+    return service.export_student_account(user)
+
+
+@router.delete(
+    "/account",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={401: AUTHENTICATION_RESPONSE},
+)
+def close_student_account(
+    payload: AccountClosureRequest,
+    user: StudentUser,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> Response:
+    service.close_student_account(user, payload.password)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/email-verifications",
     response_model=AccountTokenDeliveryResponse,
@@ -145,6 +183,10 @@ def request_email_verification(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AccountTokenDeliveryResponse:
     issued = service.issue_email_verification(user)
+    if settings.env == "production":
+        get_account_email_sender(settings).send_verification(
+            recipient=user.email, token=issued.raw_token
+        )
     return AccountTokenDeliveryResponse(
         expires_at=issued.expires_at,
         debug_token=issued.raw_token if settings.env != "production" else None,
@@ -166,6 +208,10 @@ def request_password_reset(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AccountTokenDeliveryResponse:
     issued = service.request_password_reset(str(payload.email))
+    if issued and settings.env == "production":
+        get_account_email_sender(settings).send_password_reset(
+            recipient=str(payload.email), token=issued.raw_token
+        )
     # Do not reveal whether an account exists. A provider adapter sends the token in production.
     return AccountTokenDeliveryResponse(
         expires_at=issued.expires_at if issued else None,
@@ -192,8 +238,66 @@ def step_up_administrator(
     user: CurrentUser,
     service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> AdminStepUpResponse:
+    if service.settings.env == "production":
+        from app.core.errors import AppError
+
+        raise AppError(
+            "admin_mfa_required",
+            "Complete passkey verification for an administrator step-up.",
+            status.HTTP_403_FORBIDDEN,
+        )
     issued = service.step_up_admin(user, payload.password)
     return AdminStepUpResponse(step_up_token=issued.raw_token, expires_at=issued.expires_at)
+
+
+@router.post("/admin/passkeys/registration-options", response_model=WebAuthnOptionsResponse)
+def passkey_registration_options(
+    payload: WebAuthnStartRequest,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> WebAuthnOptionsResponse:
+    return WebAuthnOptionsResponse(
+        options=WebAuthnService(session, settings).registration_options(user, payload.password)
+    )
+
+
+@router.post("/admin/passkeys", response_model=WebAuthnRegistrationResponse)
+def register_passkey(
+    payload: WebAuthnCredentialRequest,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> WebAuthnRegistrationResponse:
+    credential_id = WebAuthnService(session, settings).complete_registration(
+        user, payload.credential
+    )
+    return WebAuthnRegistrationResponse(credential_id=credential_id)
+
+
+@router.post("/admin/mfa/options", response_model=WebAuthnOptionsResponse)
+def mfa_step_up_options(
+    payload: WebAuthnStartRequest,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> WebAuthnOptionsResponse:
+    return WebAuthnOptionsResponse(
+        options=WebAuthnService(session, settings).step_up_options(user, payload.password)
+    )
+
+
+@router.post("/admin/mfa/verify", response_model=WebAuthnStepUpResponse)
+def complete_mfa_step_up(
+    payload: WebAuthnCredentialRequest,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> WebAuthnStepUpResponse:
+    token, expires_at = WebAuthnService(session, settings).complete_step_up(
+        user, payload.credential
+    )
+    return WebAuthnStepUpResponse(step_up_token=token, expires_at=expires_at)
 
 
 def _set_refresh_cookies(response: Response, refresh_token: str, settings: Settings) -> None:

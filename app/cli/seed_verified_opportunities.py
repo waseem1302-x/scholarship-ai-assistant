@@ -9,9 +9,16 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.modules.auth.models import User, UserRole
 from app.modules.auth.repository import AuthRepository
-from app.modules.opportunities.models import Source, VerificationRecord, VerificationStatus
+from app.modules.opportunities.models import (
+    Source,
+    VerificationRecord,
+    VerificationStatus,
+)
 from app.modules.opportunities.repository import OpportunityRepository
-from app.modules.opportunities.schemas import OpportunityCreate, VerificationUpdate
+from app.modules.opportunities.schemas import (
+    OpportunityCreate,
+    VerificationUpdate,
+)
 from app.modules.opportunities.service import OpportunityService
 
 SEED_DIRECTORY = Path(__file__).resolve().parents[2] / "data" / "seed"
@@ -142,7 +149,11 @@ def main() -> None:
     configured_seed_path = os.getenv("APP_SEED_FILE")
     seed_path = Path(configured_seed_path) if configured_seed_path else None
     admin_email = os.getenv("APP_SEED_ADMIN_EMAIL")
-    dry_run = os.getenv("APP_SEED_DRY_RUN", "false").lower() in {"1", "true", "yes"}
+    dry_run = os.getenv("APP_SEED_DRY_RUN", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     with SessionLocal() as session:
         summary = seed_verified_opportunities(

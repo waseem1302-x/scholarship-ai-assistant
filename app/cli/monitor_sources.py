@@ -3,6 +3,7 @@
 import os
 
 from app.db.session import SessionLocal
+from app.modules.operations.service import OperationalJobService
 from app.modules.opportunities.source_monitor import (
     DEFAULT_CHECK_INTERVAL_DAYS,
     DEFAULT_MONITOR_LIMIT,
@@ -33,11 +34,18 @@ def main() -> None:
     )
 
     with SessionLocal() as session:
-        result = SourceMonitor(session).run(
-            dry_run=dry_run,
-            limit=limit,
-            check_interval_days=check_interval_days,
-        )
+        health = OperationalJobService(session)
+        health.started("source_monitor")
+        try:
+            result = SourceMonitor(session).run(
+                dry_run=dry_run,
+                limit=limit,
+                check_interval_days=check_interval_days,
+            )
+            health.completed("source_monitor", result.checked)
+        except Exception as exc:
+            health.failed("source_monitor", exc)
+            raise
 
     print(
         "Source monitor run: "
@@ -49,8 +57,13 @@ def main() -> None:
         f"{result.failed} failed, "
         f"dry_run={result.dry_run}"
     )
+    # Keep CLI telemetry free of source URLs and upstream response details;
+    # operators can inspect the protected source-monitor records when needed.
     for failure in result.failures:
-        print(f"Failed source {failure.source_id} {failure.url}: {failure.error}")
+        print(
+            "Source monitor failure "
+            f"source_id={failure.source_id} error_class={type(failure.error).__name__}"
+        )
 
 
 if __name__ == "__main__":

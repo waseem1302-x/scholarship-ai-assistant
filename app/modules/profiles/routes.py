@@ -5,9 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorResponse
 from app.db.session import get_db
-from app.modules.auth.dependencies import CurrentUser
+from app.modules.auth.dependencies import CurrentUser, require_verified_student
+from app.modules.auth.models import User
 from app.modules.profiles.repository import StudentProfileRepository
-from app.modules.profiles.schemas import StudentProfileResponse, StudentProfileUpsert
+from app.modules.profiles.schemas import (
+    StudentProfileResponse,
+    StudentProfileUpsert,
+)
 from app.modules.profiles.service import StudentProfileService
 
 router = APIRouter(prefix="/profiles", tags=["student profiles"])
@@ -22,7 +26,9 @@ AUTHENTICATION_RESPONSE = {
 }
 
 
-def get_profile_service(session: Annotated[Session, Depends(get_db)]) -> StudentProfileService:
+def get_profile_service(
+    session: Annotated[Session, Depends(get_db)],
+) -> StudentProfileService:
     return StudentProfileService(StudentProfileRepository(session))
 
 
@@ -48,7 +54,7 @@ def get_my_profile(
 )
 def upsert_my_profile(
     payload: StudentProfileUpsert,
-    user: CurrentUser,
+    user: Annotated[User, Depends(require_verified_student)],
     service: Annotated[StudentProfileService, Depends(get_profile_service)],
 ) -> StudentProfileResponse:
     return service.upsert_my_profile(user, payload)

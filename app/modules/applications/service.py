@@ -74,15 +74,27 @@ class SavedOpportunityService:
     def get(self, saved_opportunity_id: uuid.UUID, *, user: User) -> SavedOpportunityResponse:
         saved = self.repository.get_for_user(saved_opportunity_id, user.id)
         if saved is None:
-            raise AppError("saved_opportunity_not_found", "Saved opportunity was not found", 404)
+            raise AppError(
+                "saved_opportunity_not_found",
+                "Saved opportunity was not found",
+                404,
+            )
         return self.to_response(saved)
 
     def update(
-        self, saved_opportunity_id: uuid.UUID, payload: SavedOpportunityUpdate, *, user: User
+        self,
+        saved_opportunity_id: uuid.UUID,
+        payload: SavedOpportunityUpdate,
+        *,
+        user: User,
     ) -> SavedOpportunityResponse:
         saved = self.repository.get_for_user(saved_opportunity_id, user.id)
         if saved is None:
-            raise AppError("saved_opportunity_not_found", "Saved opportunity was not found", 404)
+            raise AppError(
+                "saved_opportunity_not_found",
+                "Saved opportunity was not found",
+                404,
+            )
 
         changes = payload.model_dump(exclude_unset=True)
         next_status = changes.get("status", saved.status)
@@ -94,7 +106,11 @@ class SavedOpportunityService:
             )
 
         for field, value in changes.items():
-            if field in {"document_checklist", "recommendation_letters", "test_requirements"}:
+            if field in {
+                "document_checklist",
+                "recommendation_letters",
+                "test_requirements",
+            }:
                 setattr(saved, field, self._checklist_to_json(value))
             else:
                 setattr(saved, field, value)
@@ -106,7 +122,11 @@ class SavedOpportunityService:
     def delete(self, saved_opportunity_id: uuid.UUID, *, user: User) -> None:
         saved = self.repository.get_for_user(saved_opportunity_id, user.id)
         if saved is None:
-            raise AppError("saved_opportunity_not_found", "Saved opportunity was not found", 404)
+            raise AppError(
+                "saved_opportunity_not_found",
+                "Saved opportunity was not found",
+                404,
+            )
         self.repository.delete(saved)
         self.session.commit()
 

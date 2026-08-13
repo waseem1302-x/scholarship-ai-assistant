@@ -324,7 +324,11 @@ class OpportunityService:
         )
 
     def verify_source(
-        self, opportunity_id: uuid.UUID, payload: VerificationUpdate, *, checked_by: User
+        self,
+        opportunity_id: uuid.UUID,
+        payload: VerificationUpdate,
+        *,
+        checked_by: User,
     ) -> AdminOpportunityResponse:
         opportunity = self.repository.get_opportunity(opportunity_id)
         if opportunity is None:
@@ -362,7 +366,11 @@ class OpportunityService:
         return self.to_admin_response(opportunity)
 
     def apply_review_action(
-        self, opportunity_id: uuid.UUID, payload: ReviewActionRequest, *, reviewed_by: User
+        self,
+        opportunity_id: uuid.UUID,
+        payload: ReviewActionRequest,
+        *,
+        reviewed_by: User,
     ) -> AdminOpportunityResponse:
         opportunity = self.repository.get_opportunity(opportunity_id)
         if opportunity is None:
@@ -405,7 +413,11 @@ class OpportunityService:
         return self.to_admin_response(opportunity)
 
     def record_source_check(
-        self, source_id: uuid.UUID, payload: SourceCheckRequest, *, checked_by: User | None
+        self,
+        source_id: uuid.UUID,
+        payload: SourceCheckRequest,
+        *,
+        checked_by: User | None,
     ) -> SourceCheckResponse:
         source = self.repository.get_source(source_id)
         if source is None:
@@ -459,7 +471,10 @@ class OpportunityService:
                 action="source_check_recorded",
                 entity_type="source",
                 entity_id=str(source.id),
-                metadata_json={"changed": changed, "opportunity_id": str(source.opportunity_id)},
+                metadata_json={
+                    "changed": changed,
+                    "opportunity_id": str(source.opportunity_id),
+                },
             )
         )
         self.session.commit()
@@ -602,7 +617,11 @@ class OpportunityService:
         }[window.state]
         cycle = window.cycle
         deadline = cycle.application_deadline if cycle else opportunity.application_deadline
-        return priority, deadline or datetime.max.replace(tzinfo=UTC), opportunity.name.casefold()
+        return (
+            priority,
+            deadline or datetime.max.replace(tzinfo=UTC),
+            opportunity.name.casefold(),
+        )
 
     def to_admin_response(self, opportunity: Opportunity) -> AdminOpportunityResponse:
         official_source = self._best_source(opportunity)
@@ -622,7 +641,10 @@ class OpportunityService:
     def to_summary_response(self, opportunity: Opportunity) -> OpportunitySummaryResponse:
         official_source = self._official_source(opportunity)
         if official_source is None:
-            raise AppError("source_not_verified", "Opportunity has no verified official source")
+            raise AppError(
+                "source_not_verified",
+                "Opportunity has no verified official source",
+            )
         return self._summary_response(opportunity, official_source)
 
     def to_private_application_summary_response(
@@ -637,7 +659,9 @@ class OpportunityService:
             source = next(iter(opportunity.sources), None)
         if source is None:
             raise AppError(
-                "application_source_missing", "Application source record was not found", 404
+                "application_source_missing",
+                "Application source record was not found",
+                404,
             )
         return self._summary_response(opportunity, source)
 
@@ -662,7 +686,11 @@ class OpportunityService:
         )
 
     def _response_base(
-        self, opportunity: Opportunity, source: Source, *, require_verified: bool
+        self,
+        opportunity: Opportunity,
+        source: Source,
+        *,
+        require_verified: bool,
     ) -> dict[str, object]:
         summary = (
             self.to_summary_response(opportunity)
@@ -713,7 +741,10 @@ class OpportunityService:
         if source_id is None:
             if len(opportunity.sources) == 1:
                 return opportunity.sources[0]
-            raise AppError("source_required", "source_id is required when multiple sources exist")
+            raise AppError(
+                "source_required",
+                "source_id is required when multiple sources exist",
+            )
 
         source = self.repository.get_source(source_id)
         if source is None or source.opportunity_id != opportunity.id:
@@ -854,10 +885,18 @@ class OpportunityService:
                 continue
             rows.append((csv_index, mapped, warnings))
             if len(rows) > 100:
-                raise AppError("csv_import_too_large", "CSV imports are limited to 100 rows", 422)
+                raise AppError(
+                    "csv_import_too_large",
+                    "CSV imports are limited to 100 rows",
+                    422,
+                )
 
         if not rows:
-            raise AppError("csv_import_invalid", "CSV must include at least one data row", 422)
+            raise AppError(
+                "csv_import_invalid",
+                "CSV must include at least one data row",
+                422,
+            )
         return rows
 
     @classmethod
@@ -908,7 +947,9 @@ class OpportunityService:
         return [item.strip() for item in value.split(";") if item.strip()]
 
     @staticmethod
-    def _prepare_import_row(raw_row: dict[str, object]) -> tuple[dict[str, object], list[str]]:
+    def _prepare_import_row(
+        raw_row: dict[str, object],
+    ) -> tuple[dict[str, object], list[str]]:
         prepared = dict(raw_row)
         warnings: list[str] = []
 
@@ -940,7 +981,9 @@ class OpportunityService:
         return messages
 
     @staticmethod
-    def _duplicate_key(payload: OpportunityCreate) -> tuple[str, str, str, int | None]:
+    def _duplicate_key(
+        payload: OpportunityCreate,
+    ) -> tuple[str, str, str, int | None]:
         return (
             payload.provider_name.lower(),
             payload.name.lower(),
@@ -1109,7 +1152,10 @@ class OpportunityService:
                 {"ielts", "toefl", "duolingo", "english_test_status"},
             ),
         }
-        for dependency, (text, required_types) in unstructured_dependencies.items():
+        for dependency, (
+            text,
+            required_types,
+        ) in unstructured_dependencies.items():
             has_structured_rule = any(
                 rule_type.value in required_types for rule_type in structured_types
             )
@@ -1199,7 +1245,11 @@ class OpportunityService:
         }
         return sorted(
             list(issues),
-            key=lambda issue: (severity_rank[issue.severity], issue.opportunity_name, issue.code),
+            key=lambda issue: (
+                severity_rank[issue.severity],
+                issue.opportunity_name,
+                issue.code,
+            ),
         )
 
     @staticmethod

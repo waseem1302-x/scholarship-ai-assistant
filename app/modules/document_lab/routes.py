@@ -1,13 +1,21 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError, ErrorResponse
 from app.db.session import get_db
-from app.modules.auth.dependencies import require_roles
+from app.modules.auth.dependencies import require_roles, require_verified_student
 from app.modules.auth.models import User, UserRole
 from app.modules.document_lab.models import DocumentKind
 from app.modules.document_lab.schemas import (
@@ -24,6 +32,7 @@ from app.modules.document_lab.service import DocumentLabService
 
 router = APIRouter(prefix="/document-lab", tags=["private document lab"])
 StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
+VerifiedStudentUser = Annotated[User, Depends(require_verified_student)]
 Errors = {
     401: {"model": ErrorResponse},
     403: {"model": ErrorResponse},
@@ -42,7 +51,9 @@ DocumentService = Annotated[DocumentLabService, Depends(get_document_lab_service
 
 
 @router.get(
-    "/policy", response_model=DocumentLabPolicyResponse, responses={401: {"model": ErrorResponse}}
+    "/policy",
+    response_model=DocumentLabPolicyResponse,
+    responses={401: {"model": ErrorResponse}},
 )
 def policy(
     _: StudentUser, settings: Annotated[Settings, Depends(get_settings)]
@@ -73,7 +84,7 @@ def policy(
 async def upload_asset(
     request: Request,
     document_kind: Annotated[DocumentKind, Query()],
-    user: StudentUser,
+    user: VerifiedStudentUser,
     service: DocumentService,
     filename: Annotated[str, Header(alias="X-Document-Filename")],
     declared_content_type: Annotated[str, Header(alias="Content-Type")],
@@ -96,7 +107,7 @@ async def upload_asset(
 async def upload_version(
     asset_id: uuid.UUID,
     request: Request,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     service: DocumentService,
     filename: Annotated[str, Header(alias="X-Document-Filename")],
     declared_content_type: Annotated[str, Header(alias="Content-Type")],
@@ -115,7 +126,11 @@ def list_assets(user: StudentUser, service: DocumentService) -> list[DocumentAss
     return service.list_assets(user.id)
 
 
-@router.get("/assets/{asset_id}", response_model=DocumentAssetResponse, responses=Errors)
+@router.get(
+    "/assets/{asset_id}",
+    response_model=DocumentAssetResponse,
+    responses=Errors,
+)
 def get_asset(
     asset_id: uuid.UUID, user: StudentUser, service: DocumentService
 ) -> DocumentAssetResponse:
@@ -135,15 +150,21 @@ def download_version(
 
 
 @router.post(
-    "/versions/{version_id}/retry", response_model=DocumentVersionResponse, responses=Errors
+    "/versions/{version_id}/retry",
+    response_model=DocumentVersionResponse,
+    responses=Errors,
 )
 def retry_version(
-    version_id: uuid.UUID, user: StudentUser, service: DocumentService
+    version_id: uuid.UUID, user: VerifiedStudentUser, service: DocumentService
 ) -> DocumentVersionResponse:
     return service.retry_preparation(version_id, user.id)
 
 
-@router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT, responses=Errors)
+@router.delete(
+    "/assets/{asset_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=Errors,
+)
 def delete_asset(asset_id: uuid.UUID, user: StudentUser, service: DocumentService) -> Response:
     service.delete_asset(asset_id, user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -158,7 +179,7 @@ def delete_asset(asset_id: uuid.UUID, user: StudentUser, service: DocumentServic
 def create_analysis(
     version_id: uuid.UUID,
     payload: AnalysisCreateRequest,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     service: DocumentService,
 ) -> DocumentAnalysisResponse:
     return service.request_analysis(
@@ -170,7 +191,11 @@ def create_analysis(
     )
 
 
-@router.get("/analyses/{analysis_id}", response_model=DocumentAnalysisResponse, responses=Errors)
+@router.get(
+    "/analyses/{analysis_id}",
+    response_model=DocumentAnalysisResponse,
+    responses=Errors,
+)
 def get_analysis(
     analysis_id: uuid.UUID, user: StudentUser, service: DocumentService
 ) -> DocumentAnalysisResponse:
@@ -207,7 +232,7 @@ def delete_data(user: StudentUser, service: DocumentService) -> Response:
 def link_application_document(
     application_document_id: uuid.UUID,
     payload: ApplicationDocumentLinkRequest,
-    user: StudentUser,
+    user: VerifiedStudentUser,
     service: DocumentService,
 ) -> ApplicationDocumentLinkResponse:
     return service.link_application_document(

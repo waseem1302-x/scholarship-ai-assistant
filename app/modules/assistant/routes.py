@@ -20,9 +20,11 @@ from app.modules.assistant.schemas import (
     SaveAnswerResponse,
 )
 from app.modules.assistant.service import AssistantService
-from app.modules.auth.dependencies import CurrentUser
+from app.modules.auth.dependencies import CurrentUser, require_verified_student
+from app.modules.auth.models import User
 
 router = APIRouter(prefix="/assistant", tags=["citation-first assistant"])
+VerifiedStudentUser = Annotated[User, Depends(require_verified_student)]
 AUTH = {"model": ErrorResponse, "description": "Authentication is required."}
 NOT_FOUND = {
     "model": ErrorResponse,
@@ -44,17 +46,20 @@ def get_assistant_service(
 )
 def create_answer(
     payload: AssistantAnswerRequest,
-    user: CurrentUser,
+    user: VerifiedStudentUser,
     service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> AssistantAnswerResponse:
     return service.answer(payload, user)
 
 
 @router.get(
-    "/conversations", response_model=list[ConversationSummaryResponse], responses={401: AUTH}
+    "/conversations",
+    response_model=list[ConversationSummaryResponse],
+    responses={401: AUTH},
 )
 def list_conversations(
-    user: CurrentUser, service: Annotated[AssistantService, Depends(get_assistant_service)]
+    user: CurrentUser,
+    service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> list[ConversationSummaryResponse]:
     return service.list_conversations(user.id)
 
@@ -86,17 +91,26 @@ def delete_conversation(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/preferences", response_model=AssistantPreferenceResponse, responses={401: AUTH})
+@router.get(
+    "/preferences",
+    response_model=AssistantPreferenceResponse,
+    responses={401: AUTH},
+)
 def get_preferences(
-    user: CurrentUser, service: Annotated[AssistantService, Depends(get_assistant_service)]
+    user: CurrentUser,
+    service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> AssistantPreferenceResponse:
     return service.get_preferences(user.id)
 
 
-@router.put("/preferences", response_model=AssistantPreferenceResponse, responses={401: AUTH})
+@router.put(
+    "/preferences",
+    response_model=AssistantPreferenceResponse,
+    responses={401: AUTH},
+)
 def update_preferences(
     payload: AssistantPreferenceUpdate,
-    user: CurrentUser,
+    user: VerifiedStudentUser,
     service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> AssistantPreferenceResponse:
     return service.update_preferences(user.id, payload)
@@ -109,7 +123,7 @@ def update_preferences(
 )
 def set_history_preference_legacy(
     payload: HistoryPreferenceRequest,
-    user: CurrentUser,
+    user: VerifiedStudentUser,
     service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> AssistantPreferenceResponse:
     return service.update_preferences(
@@ -124,7 +138,7 @@ def set_history_preference_legacy(
 )
 def save_answer(
     answer_id: uuid.UUID,
-    user: CurrentUser,
+    user: VerifiedStudentUser,
     service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> SaveAnswerResponse:
     return service.save_answer(answer_id, user.id)
@@ -138,7 +152,7 @@ def save_answer(
 def submit_feedback(
     answer_id: uuid.UUID,
     payload: FeedbackRequest,
-    user: CurrentUser,
+    user: VerifiedStudentUser,
     service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> Response:
     service.feedback(answer_id, payload, user.id)
@@ -147,14 +161,16 @@ def submit_feedback(
 
 @router.get("/export", response_model=AssistantExportResponse, responses={401: AUTH})
 def export_assistant_data(
-    user: CurrentUser, service: Annotated[AssistantService, Depends(get_assistant_service)]
+    user: CurrentUser,
+    service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> AssistantExportResponse:
     return AssistantExportResponse(conversations=service.export_data(user.id))
 
 
 @router.delete("/data", status_code=status.HTTP_204_NO_CONTENT, responses={401: AUTH})
 def delete_assistant_data(
-    user: CurrentUser, service: Annotated[AssistantService, Depends(get_assistant_service)]
+    user: CurrentUser,
+    service: Annotated[AssistantService, Depends(get_assistant_service)],
 ) -> Response:
     service.delete_all_data(user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

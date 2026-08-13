@@ -17,7 +17,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.opportunities.lifecycle import SOURCE_FRESHNESS_DAYS
 from app.modules.opportunities.repository import OpportunityRepository
-from app.modules.opportunities.schemas import SourceCheckRequest, SourceExcerptCreate
+from app.modules.opportunities.schemas import (
+    SourceCheckRequest,
+    SourceExcerptCreate,
+)
 from app.modules.opportunities.service import OpportunityService
 
 DEFAULT_CHECK_INTERVAL_DAYS = 7
@@ -215,8 +218,18 @@ def validate_monitor_url(url: str) -> None:
 
 def extract_excerpt(payload: bytes, *, max_chars: int = 500) -> str | None:
     text = payload.decode("utf-8", errors="ignore")
-    text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r"<script\b[^>]*>.*?</script>",
+        " ",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    text = re.sub(
+        r"<style\b[^>]*>.*?</style>",
+        " ",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) < 20:

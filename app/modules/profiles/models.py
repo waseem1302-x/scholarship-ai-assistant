@@ -57,7 +57,8 @@ class StudentProfile(Base):
     __table_args__ = (
         CheckConstraint("cgpa IS NULL OR cgpa >= 0", name="ck_profiles_cgpa_non_negative"),
         CheckConstraint(
-            "grading_scale IS NULL OR grading_scale > 0", name="ck_profiles_grading_scale_positive"
+            "grading_scale IS NULL OR grading_scale > 0",
+            name="ck_profiles_grading_scale_positive",
         ),
         CheckConstraint(
             "cgpa IS NULL OR grading_scale IS NULL OR cgpa <= grading_scale",
@@ -175,7 +176,10 @@ class StudentProfile(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     user: Mapped[User] = relationship()

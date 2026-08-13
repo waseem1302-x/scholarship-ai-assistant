@@ -40,7 +40,11 @@ from app.modules.document_lab.provider import (
     ProviderFeedbackItem,
     get_provider,
 )
-from app.modules.document_lab.scanner import MalwareScanner, ScannerUnavailable, get_scanner
+from app.modules.document_lab.scanner import (
+    MalwareScanner,
+    ScannerUnavailable,
+    get_scanner,
+)
 from app.modules.document_lab.schemas import (
     ApplicationDocumentLinkResponse,
     DocumentAnalysisResponse,
@@ -49,8 +53,15 @@ from app.modules.document_lab.schemas import (
     DocumentFeedbackResponse,
     DocumentVersionResponse,
 )
-from app.modules.document_lab.storage import LocalEncryptedDocumentStorage
-from app.modules.document_lab.validation import ValidatedDocument, validate_upload
+from app.modules.document_lab.storage import (
+    DocumentStorage,
+    LocalEncryptedDocumentStorage,
+    S3EncryptedDocumentStorage,
+)
+from app.modules.document_lab.validation import (
+    ValidatedDocument,
+    validate_upload,
+)
 
 Extractor = Callable[[bytes, str], str]
 
@@ -70,14 +81,29 @@ class DocumentLabService:
         self.session = session
         self.settings = settings
         self.cipher = DocumentCipher(settings)
-        self.storage = LocalEncryptedDocumentStorage(
+        self.storage: DocumentStorage = self._storage_for(settings)
+        self.scanner = scanner or get_scanner(settings)
+        self.extractor = extractor or self._restricted_extract
+        self.provider = provider or get_provider(settings)
+
+    def _storage_for(self, settings: Settings) -> DocumentStorage:
+        if settings.document_lab_storage_provider == "s3-compatible":
+            assert settings.document_lab_s3_bucket
+            assert settings.document_lab_s3_region
+            assert settings.document_lab_s3_kms_key_id
+            return S3EncryptedDocumentStorage(
+                cipher=self.cipher,
+                key_material=settings.jwt_secret,
+                bucket=settings.document_lab_s3_bucket,
+                region=settings.document_lab_s3_region,
+                kms_key_id=settings.document_lab_s3_kms_key_id,
+                endpoint_url=settings.document_lab_s3_endpoint_url,
+            )
+        return LocalEncryptedDocumentStorage(
             settings.document_lab_storage_root,
             self.cipher,
             settings.jwt_secret,
         )
-        self.scanner = scanner or get_scanner(settings)
-        self.extractor = extractor or self._restricted_extract
-        self.provider = provider or get_provider(settings)
 
     def create_asset(
         self,
@@ -136,16 +162,27 @@ class DocumentLabService:
             )
             or 0
         ) + 1
-        self._create_version(asset, user.id, next_number, declared_content_type, content, validated)
+        self._create_version(
+            asset,
+            user.id,
+            next_number,
+            declared_content_type,
+            content,
+            validated,
+        )
         self.session.commit()
         return self._asset_response(asset)
 
     def list_assets(self, user_id: uuid.UUID) -> list[DocumentAssetResponse]:
-        self._require_enabled()
+        # Listing is used by export/deletion rights and is safe while intake is
+        # disabled: it reads only the requesting owner's already-held records.
         self._purge_expired()
         assets = self.session.scalars(
             select(DocumentAsset)
-            .where(DocumentAsset.user_id == user_id, DocumentAsset.deleted_at.is_(None))
+            .where(
+                DocumentAsset.user_id == user_id,
+                DocumentAsset.deleted_at.is_(None),
+            )
             .order_by(DocumentAsset.updated_at.desc())
         ).all()
         return [self._asset_response(asset) for asset in assets]
@@ -224,12 +261,16 @@ class DocumentLabService:
         version = self._owned_version(version_id, user.id)
         if version.status is not DocumentVersionStatus.READY:
             raise AppError(
-                "document_not_ready_for_analysis", "Document extraction is not ready.", 409
+                "document_not_ready_for_analysis",
+                "Document extraction is not ready.",
+                409,
             )
         asset = self._owned_asset(version.asset_id, user.id)
         if asset.document_kind is not analysis_type:
             raise AppError(
-                "document_analysis_type_mismatch", "Analysis type must match the document.", 422
+                "document_analysis_type_mismatch",
+                "Analysis type must match the document.",
+                422,
             )
         if not consent or notice_version != self.settings.document_lab_notice_version:
             raise AppError(
@@ -276,7 +317,11 @@ class DocumentLabService:
         self._require_enabled()
         analysis = self.session.get(DocumentAnalysis, analysis_id)
         if analysis is None or analysis.user_id != user_id:
-            raise AppError("document_analysis_not_found", "Document analysis was not found.", 404)
+            raise AppError(
+                "document_analysis_not_found",
+                "Document analysis was not found.",
+                404,
+            )
         return self._analysis_response(analysis)
 
     def list_version_analyses(
@@ -286,13 +331,17 @@ class DocumentLabService:
         self._owned_version(version_id, user_id)
         analyses = self.session.scalars(
             select(DocumentAnalysis)
-            .where(DocumentAnalysis.version_id == version_id, DocumentAnalysis.user_id == user_id)
+            .where(
+                DocumentAnalysis.version_id == version_id,
+                DocumentAnalysis.user_id == user_id,
+            )
             .order_by(DocumentAnalysis.created_at.desc())
         ).all()
         return [self._analysis_response(item) for item in analyses]
 
     def export_data(self, user_id: uuid.UUID) -> DocumentExportResponse:
-        self._require_enabled()
+        # Privacy rights remain available while the feature is killed/switched
+        # off; this path performs no upload, analysis, or provider work.
         assets = self.list_assets(user_id)
         analyses = self.session.scalars(
             select(DocumentAnalysis)
@@ -306,7 +355,8 @@ class DocumentLabService:
         )
 
     def delete_all_data(self, user_id: uuid.UUID) -> None:
-        self._require_enabled()
+        # A kill switch must not strand private storage objects or prevent a
+        # student from exercising deletion rights.
         for asset in self.session.scalars(
             select(DocumentAsset).where(DocumentAsset.user_id == user_id)
         ).all():
@@ -327,20 +377,31 @@ class DocumentLabService:
     ) -> ApplicationDocumentLinkResponse:
         if not confirmed:
             raise AppError(
-                "document_link_confirmation_required", "Confirm before linking a document.", 422
+                "document_link_confirmation_required",
+                "Confirm before linking a document.",
+                422,
             )
-        from app.modules.applications.models import Application, ApplicationDocument
+        from app.modules.applications.models import (
+            Application,
+            ApplicationDocument,
+        )
 
         application_document = self.session.scalar(
             select(ApplicationDocument)
-            .join(Application, Application.id == ApplicationDocument.application_id)
+            .join(
+                Application,
+                Application.id == ApplicationDocument.application_id,
+            )
             .where(
-                ApplicationDocument.id == application_document_id, Application.user_id == user_id
+                ApplicationDocument.id == application_document_id,
+                Application.user_id == user_id,
             )
         )
         if application_document is None:
             raise AppError(
-                "application_document_not_found", "Application document was not found.", 404
+                "application_document_not_found",
+                "Application document was not found.",
+                404,
             )
         self._owned_version(version_id, user_id)
         link = self.session.scalar(
@@ -483,7 +544,8 @@ class DocumentLabService:
         version.status = DocumentVersionStatus.EXTRACTING
         try:
             text = self.extractor(
-                self.storage.read(version.storage_key), version.detected_content_type
+                self.storage.read(version.storage_key),
+                version.detected_content_type,
             )
         except AppError as exc:
             extraction.status = ExtractionStatus.REJECTED
@@ -567,7 +629,9 @@ class DocumentLabService:
         self._complete_job(job)
 
     @staticmethod
-    def _provider_items(output: ProviderAnalysisOutput) -> list[ProviderFeedbackItem]:
+    def _provider_items(
+        output: ProviderAnalysisOutput,
+    ) -> list[ProviderFeedbackItem]:
         categories = (
             (FeedbackCategory.STRENGTH, output.strengths),
             (FeedbackCategory.SUGGESTION, output.suggestions),
@@ -582,21 +646,34 @@ class DocumentLabService:
 
     @staticmethod
     def _validate_provider_output(output: ProviderAnalysisOutput, text: str) -> None:
-        prohibited = ("you are eligible", "will be accepted", "guarantee", "plagiarism")
+        prohibited = (
+            "you are eligible",
+            "will be accepted",
+            "guarantee",
+            "plagiarism",
+        )
         all_text = " ".join(
             [output.summary] + [item.text for item in DocumentLabService._provider_items(output)]
         ).casefold()
         if any(term in all_text for term in prohibited):
-            raise AppError("invalid_provider_response", "Provider output was not safe.", 422)
+            raise AppError(
+                "invalid_provider_response",
+                "Provider output was not safe.",
+                422,
+            )
         for item in DocumentLabService._provider_items(output):
             if item.is_general_suggestion:
                 if item.excerpt:
                     raise AppError(
-                        "invalid_provider_response", "Provider output was not safe.", 422
+                        "invalid_provider_response",
+                        "Provider output was not safe.",
+                        422,
                     )
             elif not item.excerpt or item.excerpt not in text:
                 raise AppError(
-                    "invalid_provider_response", "Provider output was not grounded.", 422
+                    "invalid_provider_response",
+                    "Provider output was not grounded.",
+                    422,
                 )
 
     def _analysis_response(self, analysis: DocumentAnalysis) -> DocumentAnalysisResponse:
@@ -747,13 +824,21 @@ class DocumentLabService:
     def _owned_asset(self, asset_id: uuid.UUID, user_id: uuid.UUID) -> DocumentAsset:
         asset = self.session.get(DocumentAsset, asset_id)
         if asset is None or asset.user_id != user_id or asset.deleted_at is not None:
-            raise AppError("document_asset_not_found", "Document asset was not found.", 404)
+            raise AppError(
+                "document_asset_not_found",
+                "Document asset was not found.",
+                404,
+            )
         return asset
 
     def _owned_version(self, version_id: uuid.UUID, user_id: uuid.UUID) -> DocumentVersion:
         version = self.session.get(DocumentVersion, version_id)
         if version is None or version.user_id != user_id:
-            raise AppError("document_version_not_found", "Document version was not found.", 404)
+            raise AppError(
+                "document_version_not_found",
+                "Document version was not found.",
+                404,
+            )
         return version
 
     def _enforce_daily_upload_limit(self, user_id: uuid.UUID) -> None:
@@ -761,30 +846,42 @@ class DocumentLabService:
         count = (
             self.session.scalar(
                 select(func.count(DocumentVersion.id)).where(
-                    DocumentVersion.user_id == user_id, DocumentVersion.created_at >= cutoff
+                    DocumentVersion.user_id == user_id,
+                    DocumentVersion.created_at >= cutoff,
                 )
             )
             or 0
         )
         if count >= self.settings.document_lab_daily_user_limit:
-            raise AppError("document_upload_quota_exceeded", "Document upload limit reached.", 429)
+            raise AppError(
+                "document_upload_quota_exceeded",
+                "Document upload limit reached.",
+                429,
+            )
 
     def _enforce_analysis_quota(self, user_id: uuid.UUID) -> None:
         cutoff = utc_now() - timedelta(days=1)
         count = (
             self.session.scalar(
                 select(func.count(DocumentAnalysis.id)).where(
-                    DocumentAnalysis.user_id == user_id, DocumentAnalysis.created_at >= cutoff
+                    DocumentAnalysis.user_id == user_id,
+                    DocumentAnalysis.created_at >= cutoff,
                 )
             )
             or 0
         )
         if count >= self.settings.document_lab_daily_analysis_limit:
             raise AppError(
-                "document_analysis_quota_exceeded", "Document analysis limit reached.", 429
+                "document_analysis_quota_exceeded",
+                "Document analysis limit reached.",
+                429,
             )
 
-    def _purge_expired(self) -> None:
+    def purge_expired(self) -> int:
+        """Delete expired private objects/records even when intake is disabled."""
+        return self._purge_expired()
+
+    def _purge_expired(self) -> int:
         expired = self.session.scalars(
             select(DocumentAsset).where(
                 DocumentAsset.deleted_at.is_(None),
@@ -799,6 +896,7 @@ class DocumentLabService:
             self.session.delete(asset)
         if expired:
             self.session.commit()
+        return len(expired)
 
     def _require_enabled(self) -> None:
         if not self.settings.document_lab_enabled:
@@ -812,5 +910,9 @@ class DocumentLabService:
     def _safe_filename(filename: str) -> str:
         name = filename.replace("\\", "/").rsplit("/", maxsplit=1)[-1].strip()
         if not name or name in {".", ".."}:
-            raise AppError("invalid_filename", "The uploaded file cannot be accepted.", 422)
+            raise AppError(
+                "invalid_filename",
+                "The uploaded file cannot be accepted.",
+                422,
+            )
         return name

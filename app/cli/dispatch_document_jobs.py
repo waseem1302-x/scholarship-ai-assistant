@@ -7,6 +7,7 @@ does not log file names, extracted text, or provider payloads.
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.modules.document_lab.service import DocumentLabService
+from app.modules.operations.service import OperationalJobService
 
 
 def main() -> None:
@@ -15,8 +16,16 @@ def main() -> None:
         return
     with SessionLocal() as session:
         service = DocumentLabService(session, settings)
-        while service.process_next_job():
-            pass
+        health = OperationalJobService(session)
+        health.started("document_jobs")
+        processed = 0
+        try:
+            while service.process_next_job():
+                processed += 1
+            health.completed("document_jobs", processed)
+        except Exception as exc:
+            health.failed("document_jobs", exc)
+            raise
 
 
 if __name__ == "__main__":

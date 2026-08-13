@@ -28,7 +28,11 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def create_access_token(
-    *, user_id: uuid.UUID, role: str, settings: Settings, now: datetime | None = None
+    *,
+    user_id: uuid.UUID,
+    role: str,
+    settings: Settings,
+    now: datetime | None = None,
 ) -> tuple[str, int]:
     issued_at = now or datetime.now(UTC)
     ttl = timedelta(minutes=settings.access_token_ttl_minutes)
@@ -56,7 +60,18 @@ def decode_access_token(token: str, settings: Settings) -> AccessTokenClaims:
             algorithms=["HS256"],
             audience=settings.jwt_audience,
             issuer=settings.jwt_issuer,
-            options={"require": ["sub", "role", "iss", "aud", "iat", "nbf", "exp", "jti"]},
+            options={
+                "require": [
+                    "sub",
+                    "role",
+                    "iss",
+                    "aud",
+                    "iat",
+                    "nbf",
+                    "exp",
+                    "jti",
+                ]
+            },
         )
         if payload.get("type") != "access":
             raise AuthenticationError()

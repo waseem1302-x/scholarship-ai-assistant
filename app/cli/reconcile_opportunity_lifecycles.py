@@ -34,7 +34,11 @@ def reconcile_opportunity_lifecycles(session: Session, *, dry_run: bool = False)
                 opportunity.status = OpportunityStatus.EXPIRED
     if not dry_run:
         session.commit()
-    return {"checked": len(opportunities), "expired": closed, "dry_run": int(dry_run)}
+    return {
+        "checked": len(opportunities),
+        "expired": closed,
+        "dry_run": int(dry_run),
+    }
 
 
 def main() -> None:

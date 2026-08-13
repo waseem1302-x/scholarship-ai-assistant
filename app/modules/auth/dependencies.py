@@ -46,6 +46,26 @@ def require_roles(*roles: UserRole) -> Callable[[CurrentUser], User]:
     return dependency
 
 
+def require_verified_student(
+    user: CurrentUser,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> User:
+    """Gate production personal-content creation on completed email verification."""
+    if user.role is not UserRole.STUDENT:
+        raise AppError(
+            "forbidden",
+            "Only student users can perform this action",
+            status.HTTP_403_FORBIDDEN,
+        )
+    if settings.env == "production" and user.email_verified_at is None:
+        raise AppError(
+            "email_verification_required",
+            "Verify your email before creating or changing private student content.",
+            status.HTTP_403_FORBIDDEN,
+        )
+    return user
+
+
 def require_admin_step_up(
     user: CurrentUser,
     session: Annotated[Session, Depends(get_db)],

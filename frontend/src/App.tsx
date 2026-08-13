@@ -7,6 +7,7 @@ import { EmailVerificationNotice, EmailVerificationPage, PasswordResetPage } fro
 import { CataloguePage } from "./features/catalogue/CataloguePage";
 import { OpportunityDetailPage } from "./features/catalogue/OpportunityDetailPage";
 import { AdminPage } from "./features/admin/AdminPage";
+import { AdminSecurityPage } from "./features/admin/AdminSecurityPage";
 import { MatchesPage } from "./features/workspace/MatchesPage";
 import { ProfilePage } from "./features/workspace/ProfilePage";
 import { TrackerPage } from "./features/workspace/TrackerPage";
@@ -14,6 +15,7 @@ import { CommandCentrePage } from "./features/workspace/CommandCentrePage";
 import { ApplicationDetailPage } from "./features/workspace/ApplicationDetailPage";
 import { AssistantPage } from "./features/assistant/AssistantPage";
 import { DocumentLabPage } from "./features/document-lab/DocumentLabPage";
+import { CommunityPage } from "./features/community/CommunityPage";
 
 function Brand() {
   return (
@@ -75,10 +77,18 @@ function Topbar() {
               <NavLink className="product-nav-link" to="/document-lab">
                 Document Lab
               </NavLink>
+              <NavLink className="product-nav-link" to="/community">
+                Community
+              </NavLink>
               {user.role === "admin" ? (
-                <NavLink className="product-nav-link" to="/admin">
-                  Admin
-                </NavLink>
+                <>
+                  <NavLink className="product-nav-link" to="/admin">
+                    Admin
+                  </NavLink>
+                  <NavLink className="product-nav-link" to="/admin/security">
+                    Security
+                  </NavLink>
+                </>
               ) : null}
             </>
           ) : null}
@@ -234,6 +244,11 @@ function Dashboard() {
           <h2>Private Document Lab</h2>
           <p>Get consent-gated editorial feedback on private drafts.</p>
         </NavLink>
+        <NavLink className="workspace-card" to="/community">
+          <span>Connect</span>
+          <h2>Scholarship community</h2>
+          <p>Share practical experience while keeping private work private.</p>
+        </NavLink>
         {user.role === "admin" ? (
           <NavLink className="workspace-card" to="/admin">
             <span>Curate</span>
@@ -265,7 +280,9 @@ function AppRoutes() {
         <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
         <Route path="/assistant" element={<AssistantPage />} />
         <Route path="/document-lab" element={<DocumentLabPage />} />
+        <Route path="/community" element={<CommunityPage />} />
         <Route path="/admin" element={<AdminPage />} />
+        <Route path="/admin/security" element={<AdminSecurityPage />} />
         <Route path="*" element={<Navigate replace to="/" />} />
       </Routes>
     </>

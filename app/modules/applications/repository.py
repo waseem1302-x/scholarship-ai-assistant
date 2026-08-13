@@ -19,7 +19,10 @@ class SavedOpportunityRepository:
     ) -> SavedOpportunity | None:
         return self.session.scalar(
             select(SavedOpportunity)
-            .where(SavedOpportunity.id == saved_opportunity_id, SavedOpportunity.user_id == user_id)
+            .where(
+                SavedOpportunity.id == saved_opportunity_id,
+                SavedOpportunity.user_id == user_id,
+            )
             .options(
                 joinedload(SavedOpportunity.opportunity).joinedload(Opportunity.provider),
                 joinedload(SavedOpportunity.opportunity).joinedload(Opportunity.university),

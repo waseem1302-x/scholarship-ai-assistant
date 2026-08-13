@@ -27,6 +27,18 @@ from app.modules.auth.models import (
     PasswordResetToken,
     RefreshToken,
     User,
+    WebAuthnChallenge,
+    WebAuthnCredential,
+)
+from app.modules.beta.models import BetaInvitation, BetaLegalAcceptance
+from app.modules.community.models import (
+    CommunityBlock,
+    CommunityBookmark,
+    CommunityModerationRecord,
+    CommunityPost,
+    CommunityPreference,
+    CommunityReply,
+    CommunityReport,
 )
 from app.modules.document_lab.models import (
     ApplicationDocumentLink,
@@ -38,7 +50,12 @@ from app.modules.document_lab.models import (
     DocumentFeedbackItem,
     DocumentVersion,
 )
-from app.modules.matching.models import MatchEvaluation, MatchEvaluationResult, MatchRuleOutcome
+from app.modules.matching.models import (
+    MatchEvaluation,
+    MatchEvaluationResult,
+    MatchRuleOutcome,
+)
+from app.modules.operations.models import OperationalJobHealth
 from app.modules.opportunities.models import (
     EligibilityRule,
     Opportunity,
@@ -69,6 +86,15 @@ __all__ = [
     "AssistantMessage",
     "AssistantPrivacyPreference",
     "AuditLog",
+    "BetaInvitation",
+    "BetaLegalAcceptance",
+    "CommunityBlock",
+    "CommunityBookmark",
+    "CommunityModerationRecord",
+    "CommunityPost",
+    "CommunityPreference",
+    "CommunityReply",
+    "CommunityReport",
     "DocumentAnalysis",
     "DocumentAnalysisJob",
     "DocumentAsset",
@@ -81,6 +107,7 @@ __all__ = [
     "MatchEvaluation",
     "MatchEvaluationResult",
     "MatchRuleOutcome",
+    "OperationalJobHealth",
     "Opportunity",
     "OpportunityCycle",
     "PasswordResetToken",
@@ -94,4 +121,6 @@ __all__ = [
     "University",
     "User",
     "VerificationRecord",
+    "WebAuthnChallenge",
+    "WebAuthnCredential",
 ]

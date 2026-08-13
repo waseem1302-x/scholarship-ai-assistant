@@ -6,7 +6,14 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
 
 from app.modules.opportunities.models import (
     ApplicationWindowState,

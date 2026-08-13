@@ -72,7 +72,10 @@ class AssistantService:
     )
 
     def __init__(
-        self, session: Session, settings: Settings, provider: EvidenceOnlyProvider | None = None
+        self,
+        session: Session,
+        settings: Settings,
+        provider: EvidenceOnlyProvider | None = None,
     ) -> None:
         self.session = session
         self.settings = settings
@@ -100,7 +103,10 @@ class AssistantService:
             source_snapshots=[
                 self._source_snapshot(item, source) for item, source in opportunities
             ],
-            freshness_status={"accepted": len(opportunities), "rejected": skipped},
+            freshness_status={
+                "accepted": len(opportunities),
+                "rejected": skipped,
+            },
             conflicts=[],
             retrieval_version=self.settings.assistant_retrieval_version,
             rule_version="official-source-freshness.v1",
@@ -117,7 +123,9 @@ class AssistantService:
             "private application progress summary",
         }:
             response, citation_specs = self._private_progress_response(
-                user.id, enabled=payload.use_application_data, answer_type=answer_type
+                user.id,
+                enabled=payload.use_application_data,
+                answer_type=answer_type,
             )
             status = AssistantAnswerStatus.COMPLETED
         elif answer_type == "what changed from source monitoring":
@@ -212,7 +220,12 @@ class AssistantService:
         self.session.commit()
         return SaveAnswerResponse(id=answer.id, saved_to_workspace=True, saved_at=answer.saved_at)
 
-    def feedback(self, answer_id: uuid.UUID, payload: FeedbackRequest, user_id: uuid.UUID) -> None:
+    def feedback(
+        self,
+        answer_id: uuid.UUID,
+        payload: FeedbackRequest,
+        user_id: uuid.UUID,
+    ) -> None:
         self._owned_answer(answer_id, user_id)
         self.session.add(
             AssistantFeedback(
@@ -325,7 +338,9 @@ class AssistantService:
             or monthly >= self.settings.assistant_monthly_user_limit
         ):
             raise AppError(
-                "assistant_quota_exceeded", "Assistant request limit reached. Try again later.", 429
+                "assistant_quota_exceeded",
+                "Assistant request limit reached. Try again later.",
+                429,
             )
 
     def _conversation_for_request(
@@ -354,14 +369,20 @@ class AssistantService:
         conversation = self.session.get(AssistantConversation, conversation_id)
         if conversation is None or conversation.user_id != user_id:
             raise AppError(
-                "assistant_conversation_not_found", "Assistant conversation was not found", 404
+                "assistant_conversation_not_found",
+                "Assistant conversation was not found",
+                404,
             )
         return conversation
 
     def _owned_answer(self, answer_id: uuid.UUID, user_id: uuid.UUID) -> AssistantAnswer:
         answer = self.session.get(AssistantAnswer, answer_id)
         if answer is None or answer.user_id != user_id:
-            raise AppError("assistant_answer_not_found", "Assistant answer was not found", 404)
+            raise AppError(
+                "assistant_answer_not_found",
+                "Assistant answer was not found",
+                404,
+            )
         return answer
 
     def _preference_for_user(
@@ -383,15 +404,22 @@ class AssistantService:
                 403,
             )
 
-    def _purge_expired_data(self) -> None:
+    def purge_expired_data(self) -> int:
+        """Run retention without reading/logging private content."""
+        return self._purge_expired_data()
+
+    def _purge_expired_data(self) -> int:
         """Enforce retention without logging chat contents or private profile data."""
         now = utc_now()
+        deleted_count = 0
         for feedback in self.session.scalars(
             select(AssistantFeedback).where(
-                AssistantFeedback.expires_at.is_not(None), AssistantFeedback.expires_at <= now
+                AssistantFeedback.expires_at.is_not(None),
+                AssistantFeedback.expires_at <= now,
             )
         ).all():
             self.session.delete(feedback)
+            deleted_count += 1
         for conversation in self.session.scalars(
             select(AssistantConversation).where(
                 AssistantConversation.expires_at.is_not(None),
@@ -403,15 +431,20 @@ class AssistantService:
             )
             conversation.history_enabled = False
             conversation.expires_at = None
+            deleted_count += 1
         audit_cutoff = now - timedelta(days=self.settings.assistant_audit_retention_days)
         packet_ids_in_use = select(AssistantAnswer.evidence_packet_id)
-        self.session.execute(
-            delete(AssistantEvidencePacket).where(
-                AssistantEvidencePacket.created_at < audit_cutoff,
-                AssistantEvidencePacket.id.not_in(packet_ids_in_use),
-            )
+        deleted_count += (
+            self.session.execute(
+                delete(AssistantEvidencePacket).where(
+                    AssistantEvidencePacket.created_at < audit_cutoff,
+                    AssistantEvidencePacket.id.not_in(packet_ids_in_use),
+                )
+            ).rowcount
+            or 0
         )
         self.session.commit()
+        return deleted_count
 
     def _retrieve(
         self, question: str, selected_opportunity_ids: list[uuid.UUID]
@@ -498,13 +531,24 @@ class AssistantService:
             if (
                 answer_type == "deadline/status explanation"
                 and opportunity.application_deadline
-                and window.state in {ApplicationWindowState.OPEN, ApplicationWindowState.UPCOMING}
+                and window.state
+                in {
+                    ApplicationWindowState.OPEN,
+                    ApplicationWindowState.UPCOMING,
+                }
             ):
                 deadline_claim = (
                     f"The recorded application deadline for {opportunity.name} is "
                     f"{opportunity.application_deadline.date().isoformat()}."
                 )
-                citations.append((opportunity, source, deadline_claim, "application_deadline"))
+                citations.append(
+                    (
+                        opportunity,
+                        source,
+                        deadline_claim,
+                        "application_deadline",
+                    )
+                )
                 facts.append(FactResponse(text=deadline_claim, citation_ids=[uuid.uuid4()]))
             if answer_type == "funding coverage explanation" and opportunity.tuition_coverage:
                 funding_claim = (
@@ -515,7 +559,11 @@ class AssistantService:
                 facts.append(FactResponse(text=funding_claim, citation_ids=[uuid.uuid4()]))
             if answer_type == "requirements checklist explanation":
                 for key, label, value in (
-                    ("field_eligibility", "field eligibility", opportunity.field_eligibility),
+                    (
+                        "field_eligibility",
+                        "field eligibility",
+                        opportunity.field_eligibility,
+                    ),
                     (
                         "nationality_eligibility",
                         "nationality eligibility",
@@ -531,7 +579,10 @@ class AssistantService:
                         requirement_claim = f"Listed {label} for {opportunity.name}: {value}"
                         citations.append((opportunity, source, requirement_claim, key))
                         facts.append(
-                            FactResponse(text=requirement_claim, citation_ids=[uuid.uuid4()])
+                            FactResponse(
+                                text=requirement_claim,
+                                citation_ids=[uuid.uuid4()],
+                            )
                         )
             reason, profile_warnings = self._profile_match_reason(opportunity, profile)
             warnings.extend(profile_warnings)
@@ -600,7 +651,10 @@ class AssistantService:
             )
         applications = self.session.scalars(
             select(Application)
-            .options(selectinload(Application.opportunity), selectinload(Application.tasks))
+            .options(
+                selectinload(Application.opportunity),
+                selectinload(Application.tasks),
+            )
             .where(Application.user_id == user_id)
             .order_by(Application.updated_at.desc())
         ).all()
@@ -732,7 +786,9 @@ class AssistantService:
         )
 
     @staticmethod
-    def _abstained_response(skipped: dict[str, int]) -> AssistantStructuredResponse:
+    def _abstained_response(
+        skipped: dict[str, int],
+    ) -> AssistantStructuredResponse:
         warning = "No current verified official-source evidence matched this question."
         if skipped.get("stale") or skipped.get("conflicting_or_expired"):
             warning = (
@@ -778,11 +834,17 @@ class AssistantService:
         )
 
     def _store_citations(
-        self, answer: AssistantAnswer, specs: list[tuple[Opportunity, Source, str, str]]
+        self,
+        answer: AssistantAnswer,
+        specs: list[tuple[Opportunity, Source, str, str]],
     ) -> list[AssistantCitation]:
         citations: list[AssistantCitation] = []
         for opportunity, source, claim, claim_key in specs:
-            excerpt = max(source.excerpts, key=lambda item: item.captured_at, default=None)
+            excerpt = max(
+                source.excerpts,
+                key=lambda item: item.captured_at,
+                default=None,
+            )
             citation = AssistantCitation(
                 answer_id=answer.id,
                 opportunity_id=opportunity.id,
@@ -797,7 +859,9 @@ class AssistantService:
         return citations
 
     def _attach_citations(
-        self, response: AssistantStructuredResponse, citations: list[AssistantCitation]
+        self,
+        response: AssistantStructuredResponse,
+        citations: list[AssistantCitation],
     ) -> AssistantStructuredResponse:
         citation_models = [self._citation_response(item) for item in citations]
         by_opportunity = {
@@ -844,7 +908,9 @@ class AssistantService:
         )
 
     def _answer_response(
-        self, answer: AssistantAnswer, response: AssistantStructuredResponse | None = None
+        self,
+        answer: AssistantAnswer,
+        response: AssistantStructuredResponse | None = None,
     ) -> AssistantAnswerResponse:
         return AssistantAnswerResponse(
             id=answer.id,

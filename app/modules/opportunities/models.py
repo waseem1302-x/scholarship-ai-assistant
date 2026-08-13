@@ -155,7 +155,10 @@ class Opportunity(Base):
             "monthly_stipend_amount IS NULL OR monthly_stipend_amount >= 0",
             name="ck_opportunities_non_negative_stipend",
         ),
-        CheckConstraint("intake_year IS NULL OR intake_year >= 2000", name="ck_intake_year_range"),
+        CheckConstraint(
+            "intake_year IS NULL OR intake_year >= 2000",
+            name="ck_intake_year_range",
+        ),
         UniqueConstraint(
             "provider_id",
             "name",
@@ -242,7 +245,10 @@ class Opportunity(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
     provider: Mapped[Provider] = relationship(back_populates="opportunities")

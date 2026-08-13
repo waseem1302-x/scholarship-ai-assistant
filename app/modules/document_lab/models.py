@@ -95,7 +95,12 @@ class DocumentAsset(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     document_kind: Mapped[DocumentKind] = mapped_column(
-        Enum(DocumentKind, name="document_kind", native_enum=False, values_callable=enum_values)
+        Enum(
+            DocumentKind,
+            name="document_kind",
+            native_enum=False,
+            values_callable=enum_values,
+        )
     )
     # Original names are encrypted before persistence; they are never safe log fields.
     display_name_ciphertext: Mapped[str] = mapped_column(Text)
@@ -105,14 +110,21 @@ class DocumentAsset(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
 
 
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
     __table_args__ = (
-        UniqueConstraint("asset_id", "version_number", name="uq_document_versions_asset_number"),
+        UniqueConstraint(
+            "asset_id",
+            "version_number",
+            name="uq_document_versions_asset_number",
+        ),
         Index("ix_document_versions_asset_created", "asset_id", "created_at"),
         Index("ix_document_versions_user_status", "user_id", "status"),
     )
@@ -144,7 +156,10 @@ class DocumentVersion(Base):
     )
     scan_status: Mapped[ScanStatus] = mapped_column(
         Enum(
-            ScanStatus, name="document_scan_status", native_enum=False, values_callable=enum_values
+            ScanStatus,
+            name="document_scan_status",
+            native_enum=False,
+            values_callable=enum_values,
         ),
         default=ScanStatus.PENDING,
     )
@@ -268,7 +283,11 @@ class DocumentAnalysis(Base):
 class DocumentFeedbackItem(Base):
     __tablename__ = "document_feedback_items"
     __table_args__ = (
-        Index("ix_document_feedback_items_analysis_position", "analysis_id", "position"),
+        Index(
+            "ix_document_feedback_items_analysis_position",
+            "analysis_id",
+            "position",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -341,7 +360,9 @@ class ApplicationDocumentLink(Base):
     __tablename__ = "application_document_links"
     __table_args__ = (
         UniqueConstraint(
-            "application_document_id", "version_id", name="uq_application_document_links_pair"
+            "application_document_id",
+            "version_id",
+            name="uq_application_document_links_pair",
         ),
         Index("ix_application_document_links_user", "user_id"),
     )

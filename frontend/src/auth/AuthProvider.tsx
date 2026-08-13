@@ -8,7 +8,13 @@ type AuthMode = "login" | "register";
 interface AuthContextValue {
   user: User | null;
   isRestoring: boolean;
-  signIn: (mode: AuthMode, email: string, password: string) => Promise<void>;
+  signIn: (
+    mode: AuthMode,
+    email: string,
+    password: string,
+    invitationCode?: string,
+    acceptBetaTerms?: boolean,
+  ) => Promise<void>;
   signOut: () => Promise<void>;
   updateUser: (user: User) => void;
 }
@@ -38,9 +44,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       isRestoring,
-      async signIn(mode, email, password) {
+      async signIn(mode, email, password, invitationCode, acceptBetaTerms) {
         sessionGeneration.current += 1;
-        const result = await apiClient.signIn(mode, email, password);
+        const result = await apiClient.signIn(
+          mode,
+          email,
+          password,
+          invitationCode,
+          acceptBetaTerms,
+        );
         setUser(result.user);
         setIsRestoring(false);
       },
@@ -80,7 +92,13 @@ export function AuthForm() {
     setError(null);
     setIsSubmitting(true);
     try {
-      await signIn(mode, String(data.get("email")), String(data.get("password")));
+      await signIn(
+        mode,
+        String(data.get("email")),
+        String(data.get("password")),
+        String(data.get("invitationCode") || "").trim() || undefined,
+        data.get("acceptBetaTerms") === "on",
+      );
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to continue.");
     } finally {
@@ -124,6 +142,24 @@ export function AuthForm() {
           required
         />
       </label>
+      {mode === "register" ? (
+        <>
+          <label>
+            Beta invitation code
+            <input
+              name="invitationCode"
+              autoComplete="one-time-code"
+              minLength={32}
+              placeholder="Required when beta invitations are enabled"
+            />
+            <small>Use the code sent to the email address you entered. Never share it.</small>
+          </label>
+          <label className="toggle-label">
+            <input name="acceptBetaTerms" type="checkbox" />
+            I accept the beta terms and privacy notice shown with my invitation.
+          </label>
+        </>
+      ) : null}
       {error ? (
         <p className="form-error" id="auth-error" role="alert">
           {error}

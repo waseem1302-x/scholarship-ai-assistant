@@ -14,6 +14,7 @@ from app.modules.applications.models import (
     ReminderStatus,
     ReminderWorkerHealth,
 )
+from app.modules.operations.service import OperationalJobService
 
 
 def dispatch_due_reminders(
@@ -29,6 +30,8 @@ def dispatch_due_reminders(
     """
     current_time = now or datetime.now(UTC)
     with session_factory() as session:
+        operational_health = OperationalJobService(session)
+        operational_health.started("reminder_dispatch")
         health = session.get(ReminderWorkerHealth, "default")
         if health is None:
             health = ReminderWorkerHealth(id="default")
@@ -63,6 +66,7 @@ def dispatch_due_reminders(
             health.processed_count += len(claimed)
             health.last_error = None
             session.commit()
+            operational_health.completed("reminder_dispatch", len(claimed))
             return len(claimed)
         except Exception as exc:
             session.rollback()
@@ -71,8 +75,9 @@ def dispatch_due_reminders(
                 health = ReminderWorkerHealth(id="default")
                 session.add(health)
             health.failed_count += 1
-            health.last_error = str(exc)[:500]
+            health.last_error = type(exc).__name__[:500]
             session.commit()
+            operational_health.failed("reminder_dispatch", exc)
             raise
 
 

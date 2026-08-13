@@ -2,7 +2,13 @@ import uuid
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.modules.applications.deadlines import DeadlineUrgency
 from app.modules.applications.models import (

@@ -197,6 +197,14 @@ export function OpportunityDetailPage() {
       ) : null}
       {!isLoading && !error && opportunity ? <OpportunityDetailContent opportunity={opportunity} /> : null}
       {!isLoading && !error && opportunity ? <SaveToTrackerButton opportunityId={opportunity.id} /> : null}
+      {!isLoading && !error && opportunity ? (
+        <section className="save-to-tracker">
+          <p>Have a practical application question? Community experiences are never official advice.</p>
+          <Link className="button button-quiet" to={`/community?opportunity=${opportunity.id}`}>
+            Discuss this scholarship
+          </Link>
+        </section>
+      ) : null}
     </main>
   );
 }

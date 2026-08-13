@@ -121,7 +121,10 @@ class OpportunityRepository:
                     Source.last_verified_at <= freshness_cutoff,
                 ),
             )
-            .order_by(Source.last_updated_at.asc().nulls_first(), Source.date_collected.asc())
+            .order_by(
+                Source.last_updated_at.asc().nulls_first(),
+                Source.date_collected.asc(),
+            )
             .limit(limit)
         )
         return list(self.session.scalars(statement))
@@ -283,7 +286,10 @@ class OpportunityRepository:
             application_fee=application_fee,
             english_requirement=english_requirement,
             verified_after=verified_after,
-        ).order_by(Opportunity.application_deadline.asc().nulls_last(), Opportunity.name)
+        ).order_by(
+            Opportunity.application_deadline.asc().nulls_last(),
+            Opportunity.name,
+        )
         if offset:
             statement = statement.offset(offset)
         if limit is not None:
@@ -398,7 +404,8 @@ class OpportunityRepository:
         if english_requirement is not None:
             statement = statement.where(
                 self._contains_case_insensitive(
-                    Opportunity.english_language_requirement, english_requirement
+                    Opportunity.english_language_requirement,
+                    english_requirement,
                 )
             )
         return statement

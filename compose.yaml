@@ -15,6 +15,19 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  migrate:
+    image: scholarship-ai-assistant:local
+    build: .
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
+      APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
   api:
     image: scholarship-ai-assistant:local
     build: .
@@ -28,8 +41,8 @@ services:
     volumes:
       - document_lab_data:/app/document-data
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8000/health/ready')"]
       interval: 5s
@@ -51,6 +64,8 @@ services:
       APP_SOURCE_MONITOR_LIMIT: ${APP_SOURCE_MONITOR_LIMIT:-20}
       APP_SOURCE_MONITOR_POLL_SECONDS: ${APP_SOURCE_MONITOR_POLL_SECONDS:-86400}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
     command: >
@@ -68,11 +83,32 @@ services:
       APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
       APP_REMINDER_WORKER_POLL_SECONDS: ${APP_REMINDER_WORKER_POLL_SECONDS:-60}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
     command: >
       sh -c 'while true; do python -m app.cli.dispatch_reminders;
       sleep "$${APP_REMINDER_WORKER_POLL_SECONDS}"; done'
+    restart: unless-stopped
+
+  retention-worker:
+    profiles: ["retention"]
+    image: scholarship-ai-assistant:local
+    build: .
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
+      APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
+      APP_RETENTION_WORKER_POLL_SECONDS: ${APP_RETENTION_WORKER_POLL_SECONDS:-86400}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    command: >
+      sh -c 'while true; do python -m app.cli.run_retention;
+      sleep "$${APP_RETENTION_WORKER_POLL_SECONDS}"; done'
     restart: unless-stopped
 
   document-worker:
@@ -91,6 +127,8 @@ services:
     volumes:
       - document_lab_data:/app/document-data
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
       clamav:
