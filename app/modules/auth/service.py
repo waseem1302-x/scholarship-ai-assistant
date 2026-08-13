@@ -21,6 +21,7 @@ from app.core.security import (
     verify_password_and_update,
 )
 from app.modules.auth.models import (
+    ADMIN_STEP_UP_SCOPE,
     AdminStepUpToken,
     AuditLog,
     EmailVerificationToken,
@@ -232,7 +233,10 @@ class AuthService:
         if self.settings.env == "production" and user.email_verified_at is None:
             raise AuthenticationError("Administrator email verification is required")
         issued = self._new_account_token(
-            AdminStepUpToken, user.id, self.settings.admin_step_up_ttl_minutes
+            AdminStepUpToken,
+            user.id,
+            self.settings.admin_step_up_ttl_minutes,
+            scope=ADMIN_STEP_UP_SCOPE,
         )
         self.repository.add(issued[0])
         self._audit(user.id, "admin_step_up_completed", "user", str(user.id))
@@ -349,15 +353,25 @@ class AuthService:
         )
         return record, raw_token
 
-    def _new_account_token(self, token_type, user_id: uuid.UUID, ttl_minutes: int):
+    def _new_account_token(
+        self,
+        token_type,
+        user_id: uuid.UUID,
+        ttl_minutes: int,
+        *,
+        scope: str | None = None,
+    ):
         now = datetime.now(UTC)
         raw_token = generate_refresh_token()
-        record = token_type(
-            id=uuid.uuid4(),
-            user_id=user_id,
-            token_hash=hash_refresh_token(raw_token),
-            expires_at=now + timedelta(minutes=ttl_minutes),
-        )
+        attributes = {
+            "id": uuid.uuid4(),
+            "user_id": user_id,
+            "token_hash": hash_refresh_token(raw_token),
+            "expires_at": now + timedelta(minutes=ttl_minutes),
+        }
+        if scope is not None:
+            attributes["scope"] = scope
+        record = token_type(**attributes)
         return record, raw_token
 
     def _consume_account_token(self, token, action: str) -> User:

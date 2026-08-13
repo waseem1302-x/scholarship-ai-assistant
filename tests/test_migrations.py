@@ -313,3 +313,23 @@ def test_token_version_migration_upgrades_and_rolls_back(tmp_path: Path) -> None
         column["name"] for column in inspect(engine).get_columns("users")
     }
     engine.dispose()
+
+
+def test_admin_step_up_scope_migration_upgrades_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'admin-step-up-scope.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260813_0021")
+    engine = create_engine(database_url)
+    assert "scope" in {
+        column["name"] for column in inspect(engine).get_columns("admin_step_up_tokens")
+    }
+
+    command.downgrade(alembic_config, "20260813_0020")
+    assert "scope" not in {
+        column["name"] for column in inspect(engine).get_columns("admin_step_up_tokens")
+    }
+    engine.dispose()

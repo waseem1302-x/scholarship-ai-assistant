@@ -12,11 +12,14 @@ from app.core.password_security import PasswordBreachCheckUnavailable, PwnedPass
 from app.core.security import (
     create_access_token,
     decode_access_token,
+    generate_refresh_token,
     hash_password,
     hash_refresh_token,
 )
 from app.db.base import Base
+from app.modules.auth.dependencies import require_admin_step_up
 from app.modules.auth.models import (
+    ADMIN_STEP_UP_SCOPE,
     AdminStepUpToken,
     EmailVerificationToken,
     PasswordResetToken,
@@ -44,6 +47,25 @@ def user() -> User:
         email="student@example.test",
         password_hash=hash_password("Secure passphrase 2026!"),
         role=UserRole.STUDENT,
+    )
+
+
+def production_settings() -> Settings:
+    return Settings(
+        env="production",
+        database_url="postgresql+psycopg://api:secret@example.test/scholarship",
+        migration_database_url="postgresql+psycopg://migrator:secret@example.test/scholarship",
+        jwt_secret="production-session-security-secret-at-least-32",
+        rate_limit_backend="redis",
+        rate_limit_redis_url="redis://example.test:6379/0",
+        email_provider="smtp",
+        email_from="Scholarship AI <support@example.test>",
+        email_smtp_host="smtp.example.test",
+        email_smtp_username="api-user",
+        email_smtp_password="smtp-password",
+        cors_origins="https://beta.example.test",
+        trusted_proxy_ips="10.0.0.1",
+        password_breach_check_enabled=True,
     )
 
 
@@ -95,6 +117,41 @@ def test_lost_refresh_rotation_race_revokes_the_whole_family(tmp_path) -> None:
             assert refreshed_user is not None and refreshed_user.token_version == 1
     finally:
         engine.dispose()
+
+
+def test_step_up_session_survives_a_later_failed_protected_operation(db_session) -> None:
+    administrator = User(
+        id=uuid.uuid4(),
+        email="step-up-session-admin@example.test",
+        password_hash=hash_password("Secure passphrase 2026!"),
+        role=UserRole.ADMIN,
+        email_verified_at=datetime.now(UTC),
+    )
+    raw_token = generate_refresh_token()
+    step_up = AdminStepUpToken(
+        user_id=administrator.id,
+        scope=ADMIN_STEP_UP_SCOPE,
+        token_hash=hash_refresh_token(raw_token),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    db_session.add_all((administrator, step_up))
+    db_session.commit()
+
+    assert (
+        require_admin_step_up(administrator, db_session, production_settings(), raw_token)
+        is administrator
+    )
+    # A later protected-operation error rolls the request back. The step-up
+    # session must remain valid rather than forcing a new MFA ceremony.
+    db_session.rollback()
+    db_session.expire_all()
+
+    persisted = db_session.get(AdminStepUpToken, step_up.id)
+    assert persisted is not None and persisted.consumed_at is None
+    assert (
+        require_admin_step_up(administrator, db_session, production_settings(), raw_token)
+        is administrator
+    )
 
 
 def test_logout_immediately_invalidates_existing_access_token(client, db_session) -> None:

@@ -10,7 +10,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import AppError, AuthenticationError
 from app.core.security import decode_access_token, hash_refresh_token
 from app.db.session import get_db
-from app.modules.auth.models import User, UserRole
+from app.modules.auth.models import ADMIN_STEP_UP_SCOPE, User, UserRole
 from app.modules.auth.repository import AuthRepository
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -102,14 +102,20 @@ def require_admin_step_up(
     if (
         token is None
         or token.user_id != user.id
+        or token.scope != ADMIN_STEP_UP_SCOPE
         or token.consumed_at is not None
-        or token.expires_at <= now
+        or _as_utc(token.expires_at) <= now
     ):
         raise AppError(
             "admin_step_up_required",
             "Administrator step-up token is invalid or expired",
             status.HTTP_403_FORBIDDEN,
         )
-    token.consumed_at = now
-    session.commit()
+    # This is a short-lived, scoped step-up session. Dependencies run before
+    # request-body and service validation, so consuming it here would burn MFA
+    # on a failed protected action.
     return user
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)

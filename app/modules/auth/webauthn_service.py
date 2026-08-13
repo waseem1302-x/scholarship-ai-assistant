@@ -31,6 +31,7 @@ from app.core.security import (
     verify_password,
 )
 from app.modules.auth.models import (
+    ADMIN_STEP_UP_SCOPE,
     AdminStepUpToken,
     AuditLog,
     User,
@@ -156,6 +157,7 @@ class WebAuthnService:
         self.session.add(
             AdminStepUpToken(
                 user_id=user.id,
+                scope=ADMIN_STEP_UP_SCOPE,
                 token_hash=hash_refresh_token(raw_token),
                 expires_at=expires_at,
             )

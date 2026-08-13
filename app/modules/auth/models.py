@@ -29,6 +29,9 @@ class WebAuthnChallengePurpose(StrEnum):
     STEP_UP = "step_up"
 
 
+ADMIN_STEP_UP_SCOPE = "admin_sensitive_operations"
+
+
 def enum_values(enum_class: type[StrEnum]) -> list[str]:
     return [member.value for member in enum_class]
 
@@ -138,6 +141,7 @@ class AdminStepUpToken(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    scope: Mapped[str] = mapped_column(String(64), server_default=ADMIN_STEP_UP_SCOPE)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
