@@ -3,11 +3,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session
-
 from app.db.session import bind_tenant_context
 from app.modules.applications.models import (
     Application,
@@ -37,6 +32,10 @@ from app.modules.document_lab.models import (
 from app.modules.matching.models import MatchEvaluation
 from app.modules.opportunities.models import DegreeLevel, Opportunity, Provider
 from app.modules.profiles.models import StudentProfile
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.postgres
 
@@ -103,9 +102,7 @@ def postgres_runtime_engine(postgres_admin_engine):
         )
         database_name = connection.scalar(text("SELECT current_database()"))
         quoted_database = connection.dialect.identifier_preparer.quote(database_name)
-        connection.exec_driver_sql(
-            f"GRANT CONNECT ON DATABASE {quoted_database} TO {quoted_role}"
-        )
+        connection.exec_driver_sql(f"GRANT CONNECT ON DATABASE {quoted_database} TO {quoted_role}")
         connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {quoted_role}")
         connection.exec_driver_sql(
             f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {quoted_role}"
@@ -126,10 +123,7 @@ def postgres_runtime_engine(postgres_admin_engine):
     )
     with runtime_engine.connect() as connection:
         properties = connection.execute(
-            text(
-                "SELECT rolsuper, rolbypassrls FROM pg_roles "
-                "WHERE rolname = current_user"
-            )
+            text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
         ).one()
         assert tuple(properties) == (False, False)
 
@@ -144,27 +138,30 @@ def postgres_runtime_engine(postgres_admin_engine):
 @pytest.fixture(scope="module")
 def tenant_records(postgres_admin_engine):
     now = datetime.now(UTC)
-    ids = {name: uuid.uuid4() for name in (
-        "user_a",
-        "user_b",
-        "provider",
-        "opportunity",
-        "saved",
-        "application",
-        "task",
-        "reminder",
-        "event",
-        "application_document",
-        "conversation",
-        "message",
-        "evidence",
-        "answer",
-        "asset",
-        "version",
-        "profile",
-        "evaluation",
-        "community_block",
-    )}
+    ids = {
+        name: uuid.uuid4()
+        for name in (
+            "user_a",
+            "user_b",
+            "provider",
+            "opportunity",
+            "saved",
+            "application",
+            "task",
+            "reminder",
+            "event",
+            "application_document",
+            "conversation",
+            "message",
+            "evidence",
+            "answer",
+            "asset",
+            "version",
+            "profile",
+            "evaluation",
+            "community_block",
+        )
+    }
 
     with Session(postgres_admin_engine) as session:
         session.add_all(
@@ -359,23 +356,38 @@ def test_user_b_cannot_read_update_or_delete_user_a_records(
 
     with Session(postgres_runtime_engine) as session:
         bind_tenant_context(session, tenant_records["user_b"])
-        assert all(_count(session, table, column, row_id) == 0 for table, (column, row_id) in records.items())
-        assert session.execute(
-            text("UPDATE applications SET notes = 'attacked' WHERE id = :id"),
-            {"id": tenant_records["application"]},
-        ).rowcount == 0
-        assert session.execute(
-            text("UPDATE application_tasks SET notes = 'attacked' WHERE id = :id"),
-            {"id": tenant_records["task"]},
-        ).rowcount == 0
-        assert session.execute(
-            text("UPDATE assistant_messages SET content = 'attacked' WHERE id = :id"),
-            {"id": tenant_records["message"]},
-        ).rowcount == 0
-        assert session.execute(
-            text("DELETE FROM document_versions WHERE id = :id"),
-            {"id": tenant_records["version"]},
-        ).rowcount == 0
+        assert all(
+            _count(session, table, column, row_id) == 0
+            for table, (column, row_id) in records.items()
+        )
+        assert (
+            session.execute(
+                text("UPDATE applications SET notes = 'attacked' WHERE id = :id"),
+                {"id": tenant_records["application"]},
+            ).rowcount
+            == 0
+        )
+        assert (
+            session.execute(
+                text("UPDATE application_tasks SET notes = 'attacked' WHERE id = :id"),
+                {"id": tenant_records["task"]},
+            ).rowcount
+            == 0
+        )
+        assert (
+            session.execute(
+                text("UPDATE assistant_messages SET content = 'attacked' WHERE id = :id"),
+                {"id": tenant_records["message"]},
+            ).rowcount
+            == 0
+        )
+        assert (
+            session.execute(
+                text("DELETE FROM document_versions WHERE id = :id"),
+                {"id": tenant_records["version"]},
+            ).rowcount
+            == 0
+        )
         session.commit()
 
 
@@ -468,10 +480,13 @@ def test_explicit_system_context_can_process_cross_tenant_rows(
         info={"tenant_bypass": True},
     ) as session:
         assert _count(session, "applications", "id", tenant_records["application"]) == 1
-        assert session.execute(
-            text("UPDATE application_reminders SET message = message WHERE id = :id"),
-            {"id": tenant_records["reminder"]},
-        ).rowcount == 1
+        assert (
+            session.execute(
+                text("UPDATE application_reminders SET message = message WHERE id = :id"),
+                {"id": tenant_records["reminder"]},
+            ).rowcount
+            == 1
+        )
         session.rollback()
 
 
