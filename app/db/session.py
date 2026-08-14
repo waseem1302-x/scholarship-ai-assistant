@@ -39,6 +39,7 @@ def _reject_privileged_production_runtime(
         role_properties = cursor.fetchone()
     finally:
         cursor.close()
+        dbapi_connection.rollback()
 
     if role_properties is None or any(role_properties):
         raise RuntimeError(
