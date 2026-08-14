@@ -18,7 +18,8 @@ from sqlalchemy import (
     func,
     select,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -34,6 +35,9 @@ class WebAuthnChallengePurpose(StrEnum):
 
 
 ADMIN_STEP_UP_SCOPE = "admin_sensitive_operations"
+# One transaction-scoped PostgreSQL advisory lock serializes audit-chain appends
+# across API replicas/workers without introducing a mutable coordination row.
+AUDIT_CHAIN_ADVISORY_LOCK_ID = 1_904_281_117
 
 
 def enum_values(enum_class: type[StrEnum]) -> list[str]:
@@ -204,12 +208,17 @@ class WebAuthnChallenge(Base):
 
 
 class AuditLog(Base):
+    """Append-only security history.
+
+    ``actor_user_id`` is intentionally an immutable UUID snapshot rather than a
+    foreign key. Deleting an account must never rewrite old security history.
+    PostgreSQL additionally blocks UPDATE/DELETE at the database layer.
+    """
+
     __tablename__ = "audit_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"), index=True
-    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     action: Mapped[str] = mapped_column(String(100), index=True)
     entity_type: Mapped[str] = mapped_column(String(100))
     entity_id: Mapped[str | None] = mapped_column(String(64))
@@ -220,7 +229,15 @@ class AuditLog(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
 
-    actor: Mapped[User | None] = relationship()
+
+def canonical_audit_timestamp(created_at: datetime) -> str:
+    """Normalize database timestamp representations before hashing."""
+
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    else:
+        created_at = created_at.astimezone(UTC)
+    return created_at.isoformat()
 
 
 def audit_integrity_hash(
@@ -242,32 +259,84 @@ def audit_integrity_hash(
         "entity_type": entity_type,
         "entity_id": entity_id,
         "metadata_json": metadata_json,
-        "created_at": created_at.isoformat(),
+        "created_at": canonical_audit_timestamp(created_at),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
     ).hexdigest()
 
 
-@event.listens_for(AuditLog, "before_insert")
-def set_audit_integrity_hash(_mapper, connection, target: AuditLog) -> None:
-    if target.id is None:
-        target.id = uuid.uuid4()
-    if target.created_at is None:
-        target.created_at = utc_now()
+def verify_audit_integrity_chain(session: Session) -> tuple[bool, uuid.UUID | None]:
+    """Recalculate the complete ordered chain and return the first bad row."""
+
+    previous_hash: str | None = None
+    rows = session.scalars(
+        select(AuditLog)
+        .execution_options(populate_existing=True)
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+    ).all()
+    for row in rows:
+        expected = audit_integrity_hash(
+            previous_hash=previous_hash,
+            audit_id=row.id,
+            actor_user_id=row.actor_user_id,
+            action=row.action,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            metadata_json=row.metadata_json or {},
+            created_at=row.created_at,
+        )
+        if row.previous_integrity_hash != previous_hash or row.integrity_hash != expected:
+            return False, row.id
+        previous_hash = row.integrity_hash
+    return True, None
+
+
+@event.listens_for(Session, "before_flush")
+def set_audit_integrity_hashes(
+    session: Session, _flush_context: object, _instances: object
+) -> None:
+    """Serialize and chain every new audit row in the current flush."""
+
+    targets = [target for target in session.new if isinstance(target, AuditLog)]
+    if not targets:
+        return
+
+    connection = session.connection()
+    # Concurrent Container Apps replicas must not create two children of the
+    # same previous hash. The xact lock releases automatically on commit/rollback.
+    if connection.dialect.name == "postgresql":
+        connection.exec_driver_sql(
+            "SELECT pg_advisory_xact_lock(%s)",
+            (AUDIT_CHAIN_ADVISORY_LOCK_ID,),
+        )
+
     previous_hash = connection.execute(
         select(AuditLog.integrity_hash)
         .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
         .limit(1)
     ).scalar_one_or_none()
-    target.previous_integrity_hash = previous_hash
-    target.integrity_hash = audit_integrity_hash(
-        previous_hash=previous_hash,
-        audit_id=target.id,
-        actor_user_id=target.actor_user_id,
-        action=target.action,
-        entity_type=target.entity_type,
-        entity_id=target.entity_id,
-        metadata_json=target.metadata_json or {},
-        created_at=target.created_at,
-    )
+    for target in targets:
+        if target.id is None:
+            target.id = uuid.uuid4()
+        # Audit ordering is server-canonical and assigned only after the
+        # transaction holds the chain lock, preventing timestamp/chain races.
+        target.created_at = utc_now()
+        target.previous_integrity_hash = previous_hash
+        target.integrity_hash = audit_integrity_hash(
+            previous_hash=previous_hash,
+            audit_id=target.id,
+            actor_user_id=target.actor_user_id,
+            action=target.action,
+            entity_type=target.entity_type,
+            entity_id=target.entity_id,
+            metadata_json=target.metadata_json or {},
+            created_at=target.created_at,
+        )
+        previous_hash = target.integrity_hash
+
+
+@event.listens_for(AuditLog, "before_update")
+@event.listens_for(AuditLog, "before_delete")
+def reject_audit_log_mutation(_mapper, _connection: Connection, _target: AuditLog) -> None:
+    raise RuntimeError("Audit logs are append-only")

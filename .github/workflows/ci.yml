@@ -24,8 +24,19 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@localhost:5432/scholarship_test
+      TEST_POSTGRES_URL: postgresql+psycopg://scholarship:scholarship@localhost:5432/scholarship_test
+      TEST_REDIS_URL: redis://localhost:6379/15
       APP_JWT_SECRET: ci-secret-that-is-at-least-32-characters-long
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +57,7 @@ jobs:
       - run: python -m alembic upgrade head
       - run: ruff check .
       - run: ruff format --check .
-      - run: pytest -m "not e2e" --cov=app --cov-report=term-missing
+      - run: pytest -ra -m "not e2e" --cov=app --cov-report=term-missing
 
   browser-e2e:
     runs-on: ubuntu-latest
