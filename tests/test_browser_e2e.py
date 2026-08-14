@@ -175,6 +175,10 @@ def test_phase_three_catalogue_and_source_detail_are_browsable(
         "official_source_url": "https://example.com/official-scholarship",
         "application_window_state": "open",
         "source_is_fresh": True,
+        "verification_freshness": "recent",
+        "funding_display_label": "All tracked funding components confirmed",
+        "catalogue_decision_tier": "informational_only",
+        "structured_eligibility_complete": False,
     }
     detail = {
         **summary,
@@ -274,6 +278,10 @@ def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: s
         "official_source_url": "https://example.com/official",
         "application_window_state": "open",
         "source_is_fresh": True,
+        "verification_freshness": "recent",
+        "funding_display_label": "All tracked funding components confirmed",
+        "catalogue_decision_tier": "informational_only",
+        "structured_eligibility_complete": False,
     }
     profile = {
         "id": "e7fa6b7e-d454-4383-a104-d5240b0a4dde",
@@ -347,6 +355,8 @@ def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: s
                         "opportunity": opportunity,
                         "match_score": 82,
                         "score_label": "strong_match",
+                        "fit_band": "high_alignment",
+                        "display_label": "High criteria alignment",
                         "eligibility_status": "potentially_eligible",
                         "fit_score": 82,
                         "preference_fit": 75,
@@ -382,6 +392,38 @@ def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: s
             route.fulfill(status=200, content_type="application/json", json=[tracker_item])
 
     page.route("**/api/v1/saved-opportunities**", tracker_route)
+    page.route(
+        "**/api/v1/applications/command-centre",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={
+                "urgent_tasks": [],
+                "blocked_tasks": [],
+                "blocked_applications": [],
+                "approaching_deadlines": [],
+                "submitted_applications": [],
+                "upcoming_reminders": [],
+                "recently_changed_opportunities": [],
+            },
+        ),
+    )
+    page.route(
+        "**/api/v1/applications",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={"items": [], "pagination": {"total": 0}},
+        ),
+    )
+    page.route(
+        "**/api/v1/applications/notification-preferences",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={"in_app_enabled": True},
+        ),
+    )
     page.goto(f"{live_base_url}/profile", wait_until="networkidle")
     expect(page.get_by_role("heading", name="Build a profile you can trust.")).to_be_visible()
     page.get_by_label("Nationality").fill("Pakistani")
@@ -394,11 +436,9 @@ def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: s
     expect(page.get_by_text("Information to add")).to_be_visible()
 
     page.goto(f"{live_base_url}/tracker", wait_until="networkidle")
-    expect(
-        page.get_by_role("heading", name="Turn research into a clear next step.")
-    ).to_be_visible()
-    page.get_by_role("button", name="Save update").click()
-    expect(page.get_by_role("heading", name="Student Workspace Test Scholarship")).to_be_visible()
+    expect(page).to_have_url(f"{live_base_url}/applications")
+    expect(page.get_by_role("heading", name="Know what needs your attention.")).to_be_visible()
+    expect(page.get_by_role("heading", name="No applications yet.")).to_be_visible()
 
 
 def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str) -> None:
@@ -436,6 +476,10 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
         "official_source_url": source["url"],
         "application_window_state": "open",
         "source_is_fresh": True,
+        "verification_freshness": "recent",
+        "funding_display_label": "All tracked funding components confirmed",
+        "catalogue_decision_tier": "informational_only",
+        "structured_eligibility_complete": False,
         "status": "draft",
         "data_confidence": "medium",
         "source": source,
@@ -553,6 +597,10 @@ def test_phase_five_application_command_centre_journey(page: Page, live_base_url
         "official_source_url": "https://example.com/official",
         "application_window_state": "open",
         "source_is_fresh": True,
+        "verification_freshness": "recent",
+        "funding_display_label": "All tracked funding components confirmed",
+        "catalogue_decision_tier": "informational_only",
+        "structured_eligibility_complete": False,
     }
     detail = {
         **opportunity,
