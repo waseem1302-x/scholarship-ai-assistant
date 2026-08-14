@@ -168,13 +168,13 @@ export function OpportunityDetailPage() {
 
   return (
     <main className="detail-page page-width" aria-live="polite" aria-busy={isLoading}>
-      <Link className="back-link" to="/catalogue">← Back to catalogue</Link>
+      <Link className="back-link" to="/catalogue">← Back to scholarships</Link>
       {isLoading ? <div className="catalogue-message">Loading official source evidence...</div> : null}
       {!isLoading && error ? (
         <div className="catalogue-message error-message" role="alert">
           <h1>{isNotFound(error) ? "This opportunity is no longer publicly available." : "We could not load this opportunity."}</h1>
           <p>{isNotFound(error) ? "It may have closed or returned to review after its source changed." : error instanceof Error ? error.message : "Please try again."}</p>
-          <Link className="button button-primary" to="/catalogue">Return to catalogue</Link>
+          <Link className="button button-primary" to="/catalogue">Return to scholarships</Link>
           {!isNotFound(error) ? <button className="button button-quiet" type="button" onClick={reload}>Try again</button> : null}
         </div>
       ) : null}

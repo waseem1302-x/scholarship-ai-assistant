@@ -1,9 +1,10 @@
 import { lazy, Suspense, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { BrowserRouter } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 
-import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
 import { EmailVerificationNotice } from "./auth/AccountLifecycle";
+import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
+import { HomePage } from "./features/home/HomePage";
 
 const EmailVerificationPage = lazy(() => import("./auth/AccountLifecycle").then((module) => ({ default: module.EmailVerificationPage })));
 const PasswordResetPage = lazy(() => import("./auth/AccountLifecycle").then((module) => ({ default: module.PasswordResetPage })));
@@ -60,7 +61,7 @@ function Topbar() {
         <Brand />
         <div className="product-nav" aria-label="Product navigation">
           <NavLink className="product-nav-link" to="/catalogue">
-            Catalogue
+            Scholarships
           </NavLink>
           {user ? (
             <>
@@ -75,35 +76,55 @@ function Topbar() {
               </NavLink>
               <details className="product-nav-more">
                 <summary>More</summary>
-                <div className="product-nav-menu">
-                  <NavLink className="product-nav-link" to="/profile">Profile</NavLink>
-                  <NavLink className="product-nav-link" to="/matches">Matches</NavLink>
-                  <NavLink className="product-nav-link" to="/document-lab">Document Lab</NavLink>
-                  <NavLink className="product-nav-link" to="/community">Community</NavLink>
-                  {user.role === "admin" ? <>
-                  <NavLink className="product-nav-link" to="/admin">
-                    Admin
-                  </NavLink>
-                  <NavLink className="product-nav-link" to="/admin/security">
-                    Security
-                  </NavLink>
-                  </> : null}
+                <div className="product-nav-menu workspace-menu">
+                  <div className="workspace-menu-section">
+                    <span>Plan</span>
+                    <NavLink className="workspace-menu-link" to="/profile">
+                      <strong>Profile</strong>
+                      <small>Student passport and preferences</small>
+                    </NavLink>
+                    <NavLink className="workspace-menu-link" to="/matches">
+                      <strong>Matches</strong>
+                      <small>Eligibility signals and fit checks</small>
+                    </NavLink>
+                  </div>
+                  <div className="workspace-menu-section">
+                    <span>Prepare</span>
+                    <NavLink className="workspace-menu-link" to="/document-lab">
+                      <strong>Documents</strong>
+                      <small>Draft review and application materials</small>
+                    </NavLink>
+                    <NavLink className="workspace-menu-link" to="/community">
+                      <strong>Community</strong>
+                      <small>Practical scholarship experience</small>
+                    </NavLink>
+                  </div>
+                  {user.role === "admin" ? (
+                    <div className="workspace-menu-section workspace-menu-admin">
+                      <span>Admin</span>
+                      <NavLink className="workspace-menu-link" to="/admin">
+                        <strong>Review workspace</strong>
+                        <small>Curate records and quality signals</small>
+                      </NavLink>
+                      <NavLink className="workspace-menu-link" to="/admin/security">
+                        <strong>Security</strong>
+                        <small>Audit and operational controls</small>
+                      </NavLink>
+                    </div>
+                  ) : null}
                 </div>
               </details>
             </>
           ) : null}
         </div>
         <div className="topbar-actions">
-          <a className="text-link" href="/docs" target="_blank" rel="noreferrer">
-            API documentation
-          </a>
           {user ? (
             <button className="button button-quiet" type="button" onClick={logout} disabled={isSigningOut}>
-              {isSigningOut ? "Signing out…" : "Sign out"}
+              {isSigningOut ? "Signing out..." : "Sign out"}
             </button>
           ) : (
             <NavLink className="button button-quiet" to="/auth">
-              {isRestoring ? "Preparing…" : "Sign in"}
+              {isRestoring ? "Preparing..." : "Sign in"}
             </NavLink>
           )}
         </div>
@@ -111,69 +132,6 @@ function Topbar() {
       {logoutError ? <p className="form-error page-width" role="alert">{logoutError}</p> : null}
       {sessionError ? <p className="form-error page-width" role="alert">{sessionError}</p> : null}
     </header>
-  );
-}
-
-function HomePage() {
-  const { user, isRestoring } = useAuth();
-
-  return (
-    <main>
-      <section className="hero page-width">
-        <div className="hero-copy">
-          <p className="eyebrow">Source-first scholarship intelligence</p>
-          <h1>Make your next scholarship decision with confidence.</h1>
-          <p className="lead">
-            Discover verified opportunities, understand the evidence behind them, and keep your
-            application work moving—without unsupported promises.
-          </p>
-          <div className="hero-actions">
-            <NavLink className="button button-primary" to="/catalogue">
-              Browse scholarships
-            </NavLink>
-            <NavLink className="button button-quiet" to={user ? "/dashboard" : "/auth"}>
-              {isRestoring ? "Preparing your workspace…" : user ? "Open workspace" : "Get started"}
-            </NavLink>
-            <a className="button button-quiet" href="#how-it-works">
-              How it works
-            </a>
-          </div>
-          <p className="disclaimer">
-            Decision support only. This platform does not guarantee admission, scholarship
-            selection, or visa approval.
-          </p>
-        </div>
-        <aside className="evidence-card" aria-label="Our evidence standard">
-          <span className="card-kicker">The evidence standard</span>
-          <h2>Useful only when it is traceable.</h2>
-          <ul>
-            <li>Official sources are shown alongside each opportunity.</li>
-            <li>Changed sources return to review before public visibility.</li>
-            <li>Eligibility signals explain what is known, missing, or uncertain.</li>
-          </ul>
-        </aside>
-      </section>
-
-      <section className="trust-strip" id="how-it-works">
-        <div className="page-width trust-grid">
-          <article>
-            <span>01</span>
-            <h2>Discover</h2>
-            <p>Explore opportunities from reviewed official sources.</p>
-          </article>
-          <article>
-            <span>02</span>
-            <h2>Understand</h2>
-            <p>See funding, requirements, deadlines, and source evidence in context.</p>
-          </article>
-          <article>
-            <span>03</span>
-            <h2>Act</h2>
-            <p>Build your profile, compare your fit, and track the application work ahead.</p>
-          </article>
-        </div>
-      </section>
-    </main>
   );
 }
 
@@ -187,7 +145,10 @@ function AuthPage() {
       <section>
         <p className="eyebrow">Your private workspace</p>
         <h1>Keep your opportunities, profile, and next steps in one place.</h1>
-        <p className="lead">Your session is protected with a short-lived in-memory access token and a secure refresh cookie.</p>
+        <p className="lead">
+          Your session is protected with a short-lived in-memory access token and a secure refresh
+          cookie.
+        </p>
       </section>
       <AuthForm />
     </main>
@@ -200,21 +161,28 @@ function Dashboard() {
     return <Navigate replace to="/auth" />;
   }
   if (!user) {
-    return <main className="page-width loading-page" aria-live="polite">Restoring your secure session…</main>;
+    return (
+      <main className="page-width loading-page" aria-live="polite">
+        Restoring your secure session...
+      </main>
+    );
   }
   return (
     <main className="workspace-page page-width">
       <section className="workspace-intro">
         <p className="eyebrow">Welcome back</p>
         <h1>Good to see you, {user.email.split("@")[0]}.</h1>
-          <p>Your secure workspace brings discovery, preparation, and careful source curation into one place.</p>
+        <p>
+          Your secure workspace brings discovery, preparation, and careful source curation into one
+          place.
+        </p>
       </section>
       <EmailVerificationNotice />
       <div className="workspace-grid">
         <NavLink className="workspace-card" to="/catalogue">
           <span>Explore</span>
-          <h2>Verified catalogue</h2>
-          <p>Search the reviewed, currently open catalogue.</p>
+          <h2>Verified scholarships</h2>
+          <p>Search reviewed, currently open scholarships.</p>
         </NavLink>
         <NavLink className="workspace-card" to="/profile">
           <span>Prepare</span>
@@ -233,12 +201,12 @@ function Dashboard() {
         </NavLink>
         <NavLink className="workspace-card" to="/assistant">
           <span>Research</span>
-          <h2>Citation-first assistant</h2>
+          <h2>Scholarship AI</h2>
           <p>Ask questions grounded in verified official sources.</p>
         </NavLink>
         <NavLink className="workspace-card" to="/document-lab">
           <span>Improve</span>
-          <h2>Private Document Lab</h2>
+          <h2>Documents</h2>
           <p>Get consent-gated editorial feedback on private drafts.</p>
         </NavLink>
         <NavLink className="workspace-card" to="/community">
@@ -262,26 +230,32 @@ function AppRoutes() {
   return (
     <>
       <Topbar />
-      <Suspense fallback={<main className="page-width loading-page" aria-live="polite">Loading this workspace…</main>}>
+      <Suspense
+        fallback={
+          <main className="page-width loading-page" aria-live="polite">
+            Loading this workspace...
+          </main>
+        }
+      >
         <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/auth" element={<AuthPage />} />
-        <Route path="/auth/password-reset" element={<PasswordResetPage />} />
-        <Route path="/verify-email" element={<EmailVerificationPage />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/catalogue" element={<CataloguePage />} />
-        <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
-        <Route path="/profile" element={<ProfilePage />} />
-        <Route path="/matches" element={<MatchesPage />} />
-        <Route path="/tracker" element={<Navigate replace to="/applications" />} />
-        <Route path="/applications" element={<CommandCentrePage />} />
-        <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
-        <Route path="/assistant" element={<AssistantPage />} />
-        <Route path="/document-lab" element={<DocumentLabPage />} />
-        <Route path="/community" element={<CommunityPage />} />
-        <Route path="/admin" element={<AdminPage />} />
-        <Route path="/admin/security" element={<AdminSecurityPage />} />
-        <Route path="*" element={<Navigate replace to="/" />} />
+          <Route path="/" element={<HomePage />} />
+          <Route path="/auth" element={<AuthPage />} />
+          <Route path="/auth/password-reset" element={<PasswordResetPage />} />
+          <Route path="/verify-email" element={<EmailVerificationPage />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/catalogue" element={<CataloguePage />} />
+          <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/matches" element={<MatchesPage />} />
+          <Route path="/tracker" element={<Navigate replace to="/applications" />} />
+          <Route path="/applications" element={<CommandCentrePage />} />
+          <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
+          <Route path="/assistant" element={<AssistantPage />} />
+          <Route path="/document-lab" element={<DocumentLabPage />} />
+          <Route path="/community" element={<CommunityPage />} />
+          <Route path="/admin" element={<AdminPage />} />
+          <Route path="/admin/security" element={<AdminSecurityPage />} />
+          <Route path="*" element={<Navigate replace to="/" />} />
         </Routes>
       </Suspense>
     </>

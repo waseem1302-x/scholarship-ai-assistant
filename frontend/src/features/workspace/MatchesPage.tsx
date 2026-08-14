@@ -48,7 +48,7 @@ export function MatchesPage() {
     {isLoading ? <div className="catalogue-message">Evaluating your profile against verified opportunities...</div> : null}
     {needsProfile ? <div className="catalogue-message"><h2>Build your profile first.</h2><p>Matching needs your study goals and background. Unknown details are welcome, but no profile means there is nothing to compare yet.</p><Link className="button button-primary" to="/profile">Build profile</Link></div> : null}
     {error ? <div className="catalogue-message error-message" role="alert"><h2>We could not load matches.</h2><p>{error}</p><button className="button button-quiet" type="button" onClick={reload}>Try again</button></div> : null}
-    {!isLoading && !needsProfile && !error && !matches.length ? <div className="catalogue-message"><h2>No matches are available yet.</h2><p>There may be no currently verified opportunities that can be compared with your profile.</p><Link className="button button-primary" to="/catalogue">Explore catalogue</Link></div> : null}
+    {!isLoading && !needsProfile && !error && !matches.length ? <div className="catalogue-message"><h2>No matches are available yet.</h2><p>There may be no currently verified opportunities that can be compared with your profile.</p><Link className="button button-primary" to="/catalogue">Explore scholarships</Link></div> : null}
     <div className="match-list">{matches.map((match) => <MatchCard key={match.opportunity.id} match={match} />)}</div>
   </main>;
 }

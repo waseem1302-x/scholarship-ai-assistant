@@ -118,6 +118,11 @@ export function AuthForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  function switchMode(nextMode: AuthMode) {
+    setMode(nextMode);
+    setError(null);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -146,7 +151,7 @@ export function AuthForm() {
           type="button"
           role="tab"
           aria-selected={mode === "login"}
-          onClick={() => setMode("login")}
+          onClick={() => switchMode("login")}
         >
           Sign in
         </button>
@@ -155,7 +160,7 @@ export function AuthForm() {
           type="button"
           role="tab"
           aria-selected={mode === "register"}
-          onClick={() => setMode("register")}
+          onClick={() => switchMode("register")}
         >
           Create account
         </button>
@@ -173,6 +178,7 @@ export function AuthForm() {
           minLength={12}
           required
         />
+        {mode === "register" ? <small>Use at least 12 characters.</small> : null}
       </label>
       {mode === "register" ? (
         <>
