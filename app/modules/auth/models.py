@@ -261,7 +261,9 @@ def verify_audit_integrity_chain(session: Session) -> tuple[bool, uuid.UUID | No
 
     previous_hash: str | None = None
     rows = session.scalars(
-        select(AuditLog).order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        select(AuditLog)
+        .execution_options(populate_existing=True)
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
     ).all()
     for row in rows:
         expected = audit_integrity_hash(
