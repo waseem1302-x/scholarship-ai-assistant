@@ -6,6 +6,13 @@ param resourcePrefix string
 @description('Immutable OCI image reference in digest form, for example registry.azurecr.io/repository@sha256:... .')
 param imageReference string
 
+@description('Reviewed command. The workflow runs release preflight before selecting Alembic upgrade.')
+param jobCommand array = [
+  'python'
+  '-m'
+  'app.cli.release_preflight'
+]
+
 var containerEnvironmentName = '${resourcePrefix}-apps'
 var registryName = replace('${resourcePrefix}acr', '-', '')
 var keyVaultName = '${resourcePrefix}-kv'
@@ -67,11 +74,7 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
         {
           name: 'migrate'
           image: imageReference
-          command: [
-            'alembic'
-            'upgrade'
-            'head'
-          ]
+          command: jobCommand
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'
@@ -88,6 +91,10 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'APP_MIGRATION_DATABASE_URL'
               secretRef: 'migration-database-url'
+            }
+            {
+              name: 'APP_RELEASE_VERSION'
+              value: imageReference
             }
           ]
         }

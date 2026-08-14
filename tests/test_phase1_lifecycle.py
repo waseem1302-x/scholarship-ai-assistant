@@ -68,6 +68,27 @@ def test_rolling_cycle_is_open_but_unknown_deadline_is_not() -> None:
     assert not is_open_now(unknown, unknown.sources[0], now=NOW)
 
 
+def test_effective_window_projects_the_selected_cycle_dates_and_timezone() -> None:
+    record = opportunity(
+        application_opening_date=NOW - timedelta(days=300),
+        application_deadline=NOW - timedelta(days=200),
+    )
+    record.cycles = [
+        OpportunityCycle(
+            application_opening_date=NOW - timedelta(days=1),
+            application_deadline=NOW + timedelta(days=30),
+            timezone="Asia/Kuala_Lumpur",
+        )
+    ]
+
+    window = effective_application_window(record, record.sources[0], now=NOW)
+
+    assert window.state is ApplicationWindowState.OPEN
+    assert window.application_opening_date == NOW - timedelta(days=1)
+    assert window.application_deadline == NOW + timedelta(days=30)
+    assert window.timezone == "Asia/Kuala_Lumpur"
+
+
 def test_open_now_requires_a_fresh_official_source() -> None:
     record = opportunity(application_deadline=NOW + timedelta(days=1))
     record.sources[0].last_verified_at = NOW - timedelta(days=91)

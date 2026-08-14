@@ -212,6 +212,8 @@ def test_student_account_export_and_closure_are_owner_scoped(
     assert exported.status_code == 200, exported.text
     assert exported.json()["account"]["email"] == "close-account@example.com"
     assert exported.json()["profile"]["nationality"] == "Malaysia"
+    assert exported.json()["matching"] == {"evaluations": []}
+    assert exported.json()["applications"]["legacy_saved_opportunities"] == []
 
     closed = client.request(
         "DELETE",
@@ -356,7 +358,7 @@ def test_root_serves_frontend(client: TestClient) -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Scholarship AI Assistant" in response.text
+    assert "Source-backed Scholarship Assistant" in response.text
     assert '<div id="root"></div>' in response.text
 
 

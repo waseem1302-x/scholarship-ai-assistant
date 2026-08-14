@@ -86,12 +86,12 @@ export function deadlineLabel(value: string | null): string {
   return `Deadline ${formatDate(value)}`;
 }
 
-export async function searchOpportunities(filters: CatalogueFilters, offset: number) {
-  return apiClient.request<OpportunitySearchResponse>(`/opportunities?${catalogueSearch(filters, offset)}`);
+export async function searchOpportunities(filters: CatalogueFilters, offset: number, signal?: AbortSignal) {
+  return apiClient.request<OpportunitySearchResponse>(`/opportunities?${catalogueSearch(filters, offset)}`, { signal });
 }
 
-export async function getOpportunity(id: string) {
-  return apiClient.request<OpportunityDetail>(`/opportunities/${id}`);
+export async function getOpportunity(id: string, signal?: AbortSignal) {
+  return apiClient.request<OpportunityDetail>(`/opportunities/${id}`, { signal });
 }
 
 export function isNotFound(error: unknown): boolean {

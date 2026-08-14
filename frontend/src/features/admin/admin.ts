@@ -84,10 +84,10 @@ export interface AdminWorkspacePage {
 export async function getAdminWorkspace({
   queueOffset = 0,
   issueOffset = 0,
-}: AdminWorkspacePage = {}): Promise<[ReviewQueueResponse, DataQualityResponse]> {
+}: AdminWorkspacePage = {}, signal?: AbortSignal): Promise<[ReviewQueueResponse, DataQualityResponse]> {
   return Promise.all([
-    apiClient.request<ReviewQueueResponse>(`/admin/review-queue?limit=20&offset=${queueOffset}`),
-    apiClient.request<DataQualityResponse>(`/admin/data-quality-issues?limit=20&offset=${issueOffset}`),
+    apiClient.request<ReviewQueueResponse>(`/admin/review-queue?limit=20&offset=${queueOffset}`, { signal }),
+    apiClient.request<DataQualityResponse>(`/admin/data-quality-issues?limit=20&offset=${issueOffset}`, { signal }),
   ]);
 }
 
@@ -99,8 +99,8 @@ export function adminOpportunitySearch(filters: AdminOpportunityFilters, offset 
   return params;
 }
 
-export async function getAdminOpportunities(filters: AdminOpportunityFilters, offset = 0): Promise<AdminOpportunitySearchResponse> {
-  return apiClient.request<AdminOpportunitySearchResponse>(`/admin/opportunities?${adminOpportunitySearch(filters, offset)}`);
+export async function getAdminOpportunities(filters: AdminOpportunityFilters, offset = 0, signal?: AbortSignal): Promise<AdminOpportunitySearchResponse> {
+  return apiClient.request<AdminOpportunitySearchResponse>(`/admin/opportunities?${adminOpportunitySearch(filters, offset)}`, { signal });
 }
 
 async function adminMutation<T>(

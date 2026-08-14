@@ -178,7 +178,7 @@ class MatchingService:
             eligibility_status = (
                 "potentially_eligible"
                 if not missing_information and opportunity.eligibility_rules
-                else "likely_eligible"
+                else "requires_verification"
             )
             if not opportunity.eligibility_rules:
                 eligibility_status = "unknown"
@@ -193,6 +193,8 @@ class MatchingService:
             opportunity=self.opportunity_service.to_summary_response(opportunity),
             match_score=score,
             score_label=score_label,
+            fit_band=self._fit_band(score_label),
+            display_label=self._fit_display_label(score_label),
             eligibility_status=eligibility_status,
             fit_score=fit_score,
             preference_fit=preference_fit,
@@ -585,6 +587,26 @@ class MatchingService:
         if score >= 40:
             return "weak_match"
         return "low_match"
+
+    @staticmethod
+    def _fit_band(score_label: str) -> str:
+        return {
+            "strong_match": "high_alignment",
+            "possible_match": "moderate_alignment",
+            "weak_match": "limited_alignment",
+            "low_match": "low_alignment",
+            "not_eligible": "known_eligibility_conflict",
+        }[score_label]
+
+    @staticmethod
+    def _fit_display_label(score_label: str) -> str:
+        return {
+            "strong_match": "High criteria alignment",
+            "possible_match": "Moderate criteria alignment",
+            "weak_match": "Limited criteria alignment",
+            "low_match": "Low criteria alignment",
+            "not_eligible": "Known eligibility conflict",
+        }[score_label]
 
 
 def _normalize(value: str | None) -> str:

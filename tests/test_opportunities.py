@@ -1466,6 +1466,37 @@ def test_full_funding_requires_every_component_and_a_documented_policy(
     assert accepted.json()["funding_classification"] == "fully_funded"
 
 
+def test_public_response_uses_effective_cycle_deadline_and_safe_funding_label(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    cycle_deadline = "2099-08-31T23:59:00Z"
+    created = create_opportunity(
+        client,
+        headers,
+        application_deadline="2026-05-30T23:59:59Z",
+        application_cycles=[
+            {
+                "application_opening_date": "2099-01-01T00:00:00Z",
+                "application_deadline": cycle_deadline,
+                "timezone": "Asia/Kuala_Lumpur",
+            }
+        ],
+    )
+    publish_opportunity(client, headers, created)
+
+    response = client.get(f"/api/v1/opportunities/{created['id']}")
+
+    assert response.status_code == 200
+    assert response.json()["application_deadline"].startswith("2099-08-31T23:59:00")
+    assert response.json()["application_timezone"] == "Asia/Kuala_Lumpur"
+    assert response.json()["effective_cycle_id"] is not None
+    assert response.json()["funding_display_label"] == ("All tracked funding components confirmed")
+    assert response.json()["verification_freshness"] == "recent"
+    assert response.json()["catalogue_decision_tier"] == "informational_only"
+    assert response.json()["structured_eligibility_complete"] is False
+
+
 def test_deadline_cannot_be_before_opening_date(client: TestClient, db_session: Session) -> None:
     headers = admin_headers(client, db_session)
 

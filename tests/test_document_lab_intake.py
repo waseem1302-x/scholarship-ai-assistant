@@ -30,6 +30,7 @@ from app.modules.document_lab.provider import (
 from app.modules.document_lab.scanner import SignatureTestScanner, UnavailableScanner
 from app.modules.document_lab.service import DocumentLabService
 from app.modules.document_lab.validation import DOCX_CONTENT_TYPE, PDF_CONTENT_TYPE
+from app.modules.operations.models import OperationalJobHealth
 from tests.test_opportunities import create_user
 
 
@@ -272,6 +273,47 @@ def test_document_lab_enforces_size_and_page_limits(db_session: Session, tmp_pat
             content=pdf(pages=2),
         )
     assert pages.value.code == "page_limit_exceeded"
+
+
+def test_production_intake_requires_scanner_and_recent_worker_health(
+    db_session: Session, tmp_path: Path
+) -> None:
+    owner = user(db_session, "document-readiness@example.com")
+    configuration = settings(tmp_path)
+    configuration.env = "production"
+    configuration.document_lab_scanner_provider = "clamav"
+    document_service = DocumentLabService(
+        db_session,
+        configuration,
+        scanner=SignatureTestScanner(),
+    )
+    upload = {
+        "user": owner,
+        "document_kind": "cv_resume",
+        "filename": "resume.pdf",
+        "declared_content_type": PDF_CONTENT_TYPE,
+        "content": pdf(),
+    }
+    with pytest.raises(AppError) as unavailable:
+        document_service.create_asset(**upload)
+    assert unavailable.value.code == "document_lab_intake_not_ready"
+    assert unavailable.value.status_code == 503
+
+    db_session.add(
+        OperationalJobHealth(
+            job_name="document_jobs",
+            last_started_at=utc_now(),
+            last_completed_at=utc_now(),
+            processed_count=1,
+            failed_count=0,
+            last_error_code=None,
+        )
+    )
+    db_session.commit()
+    assert (
+        document_service.create_asset(**upload).versions[0].status
+        is DocumentVersionStatus.QUARANTINED
+    )
 
 
 def test_malware_detection_and_scanner_unavailability_fail_closed(

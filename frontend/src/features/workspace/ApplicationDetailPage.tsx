@@ -47,17 +47,17 @@ export function ApplicationDetailPage() {
   const [documentName, setDocumentName] = useState("");
   const [documentRequired, setDocumentRequired] = useState(true);
 
-  const load = () => {
+  const load = (signal?: AbortSignal) => {
     if (!applicationId) return;
     setLoading(true); setError(null);
-    void Promise.all([getApplication(applicationId), getApplicationEvents(applicationId)])
+    void Promise.all([getApplication(applicationId, signal), getApplicationEvents(applicationId, signal)])
       .then(([current, history]) => {
         setApplication(current); setNotes(current.notes ?? ""); setPersonalDeadline(localDateTime(current.personal_deadline)); setEvents(history);
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load this application."))
-      .finally(() => setLoading(false));
+      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Unable to load this application."); })
+      .finally(() => { if (!signal?.aborted) setLoading(false); });
   };
-  useEffect(() => { if (user?.role === "student") load(); }, [applicationId, user]);
+  useEffect(() => { const controller = new AbortController(); if (user?.role === "student") load(controller.signal); return () => controller.abort(); }, [applicationId, user]);
 
   async function perform(action: () => Promise<void>) {
     setActionError(null);

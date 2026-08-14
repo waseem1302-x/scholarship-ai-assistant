@@ -93,8 +93,8 @@ function AdminCataloguePanel() {
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  function load(nextFilters = applied, nextOffset = offset) { setIsLoading(true); setError(null); void getAdminOpportunities(nextFilters, nextOffset).then((next) => { setResponse(next); setApplied(nextFilters); setOffset(nextOffset); }).catch((requestError: unknown) => setError(requestMessage(requestError, "Unable to load catalogue records."))).finally(() => setIsLoading(false)); }
-  useEffect(() => { load(defaultAdminOpportunityFilters, 0); }, []);
+  function load(nextFilters = applied, nextOffset = offset, signal?: AbortSignal) { setIsLoading(true); setError(null); void getAdminOpportunities(nextFilters, nextOffset, signal).then((next) => { setResponse(next); setApplied(nextFilters); setOffset(nextOffset); }).catch((requestError: unknown) => { if (!(requestError instanceof DOMException && requestError.name === "AbortError")) setError(requestMessage(requestError, "Unable to load catalogue records.")); }).finally(() => { if (!signal?.aborted) setIsLoading(false); }); }
+  useEffect(() => { const controller = new AbortController(); load(defaultAdminOpportunityFilters, 0, controller.signal); return () => controller.abort(); }, []);
   function update(key: keyof AdminOpportunityFilters, value: string) { setDraft((current) => ({ ...current, [key]: value })); }
   function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); load(draft, 0); }
   function clear() { setDraft(defaultAdminOpportunityFilters); load(defaultAdminOpportunityFilters, 0); }
@@ -125,8 +125,8 @@ export function AdminPage() {
   const [issueOffset, setIssueOffset] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  function load(nextQueueOffset = queueOffset, nextIssueOffset = issueOffset) { setIsLoading(true); setError(null); void getAdminWorkspace({ queueOffset: nextQueueOffset, issueOffset: nextIssueOffset }).then(([nextQueue, nextIssues]) => { setQueueResponse(nextQueue); setIssueResponse(nextIssues); setQueueOffset(nextQueueOffset); setIssueOffset(nextIssueOffset); }).catch((requestError: unknown) => setError(requestMessage(requestError, "Unable to load the administrator workspace."))).finally(() => setIsLoading(false)); }
-  useEffect(() => { if (user?.role === "admin") load(0, 0); }, [user]);
+  function load(nextQueueOffset = queueOffset, nextIssueOffset = issueOffset, signal?: AbortSignal) { setIsLoading(true); setError(null); void getAdminWorkspace({ queueOffset: nextQueueOffset, issueOffset: nextIssueOffset }, signal).then(([nextQueue, nextIssues]) => { setQueueResponse(nextQueue); setIssueResponse(nextIssues); setQueueOffset(nextQueueOffset); setIssueOffset(nextIssueOffset); }).catch((requestError: unknown) => { if (!(requestError instanceof DOMException && requestError.name === "AbortError")) setError(requestMessage(requestError, "Unable to load the administrator workspace.")); }).finally(() => { if (!signal?.aborted) setIsLoading(false); }); }
+  useEffect(() => { const controller = new AbortController(); if (user?.role === "admin") load(0, 0, controller.signal); return () => controller.abort(); }, [user]);
   if (isRestoring) return <main className="page-width loading-page" aria-live="polite">Restoring your secure session...</main>;
   if (!user) return <Navigate replace to="/auth" />;
   if (user.role !== "admin") return <Navigate replace to="/dashboard" />;

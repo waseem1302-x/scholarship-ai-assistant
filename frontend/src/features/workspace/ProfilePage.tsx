@@ -2,6 +2,7 @@ import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
+import { useServerQuery } from "../../hooks/useServerQuery";
 import { draftFromProfile, getProfile, humanize, saveProfile } from "./workspace";
 import { emptyProfileDraft, type ProfileDraft, type StudentProfile, type TestStatus } from "./types";
 
@@ -19,21 +20,26 @@ export function ProfilePage() {
   const { user, isRestoring } = useAuth();
   const [profile, setProfile] = useState<StudentProfile | null>(null);
   const [draft, setDraft] = useState<ProfileDraft>(emptyProfileDraft);
-  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const { data: loadedProfile, error: queryError, isLoading, reload } = useServerQuery<StudentProfile | null>(
+    user?.id ?? "anonymous",
+    (signal) => getProfile(signal),
+    user?.role === "student",
+  );
+
   useEffect(() => {
-    if (!user) return;
-    let active = true;
-    void getProfile().then((response) => {
-      if (active) { setProfile(response); setDraft(draftFromProfile(response)); }
-    }).catch((requestError: unknown) => {
-      if (active) setError(requestError instanceof Error ? requestError.message : "Unable to load your profile.");
-    }).finally(() => { if (active) setIsLoading(false); });
-    return () => { active = false; };
-  }, [user]);
+    if (loadedProfile) {
+      setProfile(loadedProfile);
+      setDraft(draftFromProfile(loadedProfile));
+    }
+  }, [loadedProfile]);
+
+  useEffect(() => {
+    if (queryError) setError(queryError instanceof Error ? queryError.message : "Unable to load your profile.");
+  }, [queryError]);
 
   if (isRestoring) return <main className="page-width loading-page" aria-live="polite">Restoring your secure session...</main>;
   if (!user) return <Navigate replace to="/auth" />;
@@ -51,6 +57,7 @@ export function ProfilePage() {
     <section className="tool-header"><div><p className="eyebrow">Student profile</p><h1>Build a profile you can trust.</h1><p className="lead">Only add information you are comfortable using for decision support. Missing information is kept as unknown, never guessed.</p></div>
       <aside className="completeness-card"><strong>{profile ? `${profile.profile_completeness}% complete` : "Not started"}</strong><p>{profile?.missing_recommended_fields.length ? `Still useful to add: ${profile.missing_recommended_fields.map(humanize).join(", ")}.` : "Add your study goals and evidence to receive clearer explanations."}</p></aside></section>
     {isLoading ? <div className="catalogue-message">Loading your profile...</div> : null}
+    {queryError ? <button className="button button-quiet" type="button" onClick={reload}>Try again</button> : null}
     {!isLoading ? <form className="profile-editor" onSubmit={submit}>
       <fieldset><legend>Background and goals</legend><div className="form-grid">
         <Field label="Nationality"><input value={draft.nationality} onChange={(e) => update("nationality", e.target.value)} placeholder="Pakistan" /></Field>

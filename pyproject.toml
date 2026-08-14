@@ -45,6 +45,7 @@ addopts = "-q --strict-markers"
 testpaths = ["tests"]
 markers = [
   "e2e: runs against a live browser and application URL",
+  "browser_compat: bounded critical journey that runs in Chromium, Firefox, and WebKit",
   "redis: runs against a disposable Redis service supplied by TEST_REDIS_URL",
   "postgres: runs security and concurrency tests against disposable PostgreSQL",
 ]

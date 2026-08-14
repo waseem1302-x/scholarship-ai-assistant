@@ -42,6 +42,21 @@ def admin(session: Session) -> User:
     return record
 
 
+def test_beta_policy_reports_truthful_provider_mode_and_global_caps(
+    db_session: Session,
+) -> None:
+    configuration = settings(
+        assistant_global_daily_limit=321,
+        document_lab_global_daily_upload_limit=123,
+    )
+
+    policy = BetaService(db_session, configuration).policy()
+
+    assert policy.assistant_mode == "source_backed_templates"
+    assert policy.assistant_global_daily_limit == 321
+    assert policy.document_lab_global_daily_upload_limit == 123
+
+
 def test_closed_beta_rejects_self_registration(db_session: Session) -> None:
     auth = AuthService(db_session, settings(beta_registration_open=False))
 

@@ -1,6 +1,6 @@
-# Scholarship AI Assistant
+# Source-backed Scholarship Assistant
 
-**Global Opportunity Intelligence Platform**
+**Source-first global opportunity intelligence platform**
 
 A source-first platform that helps students discover, understand, and track
 scholarships using structured eligibility data, explainable matching, and
@@ -18,13 +18,11 @@ backend engineering, responsible AI, and education access.
 
 ## Current status
 
-The repository has completed **Phase 1: correctness and security repairs**,
-**Phase 2: opportunity data-platform trust**, **Phase 3: frontend
-foundation**, **Phase 4: matching evaluation records**, and **Phase 5:
-Application Command Centre**. The React frontend is the canonical product at
-`/`.
-The product, architecture, database, API, matching, RAG, evaluation, security,
-and delivery plans are in [docs/blueprint.md](docs/blueprint.md).
+The authoritative implemented, experimental, disabled, deprecated, and
+environment-dependent capability inventory is
+[docs/current-product-state.md](docs/current-product-state.md). Historical phase plans and audits
+record intent at a point in time; they do not override that current-state document or executable
+configuration. The React frontend is one client of the versioned backend API and is served at `/`.
 
 Implemented so far:
 
@@ -47,9 +45,8 @@ Implemented so far:
   experience, target countries, and intake preferences
 - deterministic matching endpoint that ranks verified opportunities against the
   student's profile with satisfied, missing, and uncertain explanations
-- saved-opportunity tracker for student notes, application status, document
-  checklists, recommendation letters, test requirements, deadlines, submission
-  dates, and outcomes
+- canonical Application workspaces for student notes, lifecycle, source-linked tasks, documents,
+  reminders, deadlines, and outcomes; the older saved-opportunity tracker is deprecated
 - admin JSON batch import for opportunities with row-level validation,
   duplicate detection, data-quality warnings, dry-run support, and forced human
   review before public visibility
@@ -111,19 +108,17 @@ Implemented so far:
 
 1. Install Python 3.12+ and PostgreSQL 16, or use Docker.
 2. Copy `.env.example` to `.env` and replace every development secret.
-3. Create a virtual environment and install the project:
+3. Install `uv` and synchronize the reviewed lock (or use Docker):
 
    ```bash
-   python -m venv .venv
-   .venv\Scripts\activate
-   python -m pip install -e ".[dev]"
+   uv sync --frozen --extra dev
    ```
 
 4. Apply migrations and start the API:
 
    ```bash
-   python -m alembic upgrade head
-   python -m uvicorn app.main:app --reload
+   uv run alembic upgrade head
+   uv run uvicorn app.main:app --reload
    ```
 
 5. Open `http://localhost:8000`.
@@ -155,7 +150,6 @@ From `http://localhost:8000`, users can:
 - open opportunity details with official-source excerpts and verification dates
 - create or update a student profile
 - refresh explainable profile matches
-- save opportunities and update tracker status/notes
 - create an application workspace from a verified opportunity, manage tasks,
   personal deadlines, document metadata, reminders, and lifecycle milestones
 - export or permanently delete their private application data
@@ -180,9 +174,9 @@ second run, existing catalogue records are skipped rather than duplicated.
 ## Quality checks
 
 ```bash
-ruff check .
-ruff format --check .
-pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
 pnpm --dir frontend test
 pnpm --dir frontend build
 ```

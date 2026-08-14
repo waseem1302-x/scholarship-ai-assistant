@@ -19,6 +19,9 @@ export interface OpportunitySummary {
   country: string;
   degree_level: DegreeLevel;
   application_deadline: string | null;
+  application_opening_date: string | null;
+  application_timezone: string;
+  effective_cycle_id: string | null;
   funding_type: FundingType;
   funding_classification?: "fully_funded" | "partial" | "unknown";
   funding_summary: string;
@@ -27,6 +30,10 @@ export interface OpportunitySummary {
   official_source_url: string;
   application_window_state: "upcoming" | "open" | "closed" | "rolling" | "deadline_unknown";
   source_is_fresh: boolean;
+  verification_freshness: "recent" | "recheck_recommended" | "historical";
+  funding_display_label: string;
+  catalogue_decision_tier: "decision_ready" | "informational_only";
+  structured_eligibility_complete: boolean;
 }
 
 export interface OpportunityDetail extends OpportunitySummary {

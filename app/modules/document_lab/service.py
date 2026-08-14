@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import suppress
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
@@ -64,8 +64,35 @@ from app.modules.document_lab.validation import (
     ValidatedDocument,
     validate_upload,
 )
+from app.modules.operations.models import OperationalJobHealth
 
 Extractor = Callable[[bytes, str], str]
+
+
+def document_intake_readiness(session: Session, settings: Settings) -> tuple[bool, bool, bool]:
+    """Return scanner, worker, and effective intake readiness from one policy source."""
+    scanner_ready = settings.document_lab_scanner_provider == "clamav" or (
+        settings.env != "production" and settings.document_lab_scanner_provider == "test"
+    )
+    health = session.get(OperationalJobHealth, "document_jobs")
+    worker_ready = bool(
+        health
+        and health.last_completed_at
+        and (
+            datetime.now(UTC)
+            - (
+                health.last_completed_at.replace(tzinfo=UTC)
+                if health.last_completed_at.tzinfo is None
+                else health.last_completed_at.astimezone(UTC)
+            )
+        )
+        <= timedelta(minutes=settings.operational_job_stale_minutes)
+        and health.last_error_code is None
+    )
+    accepting_uploads = settings.document_lab_enabled and (
+        settings.env != "production" or (scanner_ready and worker_ready)
+    )
+    return scanner_ready, worker_ready, accepting_uploads
 
 
 class DocumentLabService:
@@ -117,6 +144,7 @@ class DocumentLabService:
         content: bytes,
     ) -> DocumentAssetResponse:
         self._require_enabled()
+        self._require_intake_ready()
         self._purge_expired()
         self._enforce_daily_upload_limit(user.id)
         safe_name = self._safe_filename(filename)
@@ -144,6 +172,7 @@ class DocumentLabService:
         content: bytes,
     ) -> DocumentAssetResponse:
         self._require_enabled()
+        self._require_intake_ready()
         self._purge_expired()
         self._enforce_daily_upload_limit(user.id)
         asset = self._owned_asset(asset_id, user.id)
@@ -1004,6 +1033,14 @@ class DocumentLabService:
             raise AppError(
                 "document_lab_unavailable",
                 "Document Lab is not enabled in this deployment.",
+                503,
+            )
+
+    def _require_intake_ready(self) -> None:
+        if not document_intake_readiness(self.session, self.settings)[2]:
+            raise AppError(
+                "document_lab_intake_not_ready",
+                "Document intake is paused until the scanner and preparation worker are healthy.",
                 503,
             )
 

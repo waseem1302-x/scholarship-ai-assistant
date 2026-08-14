@@ -620,9 +620,33 @@ class ApplicationCommandService:
                 for event in events
             ]
             result.append(value)
+        legacy_saved = self.session.scalars(
+            select(SavedOpportunity)
+            .where(SavedOpportunity.user_id == user.id)
+            .order_by(SavedOpportunity.created_at.asc())
+        ).all()
         return {
             "exported_at": self._current_time().isoformat(),
             "applications": result,
+            "legacy_saved_opportunities": [
+                {
+                    "id": str(saved.id),
+                    "opportunity_id": str(saved.opportunity_id),
+                    "status": saved.status.value,
+                    "personal_notes": saved.personal_notes,
+                    "personal_deadline": saved.personal_deadline.isoformat()
+                    if saved.personal_deadline
+                    else None,
+                    "document_checklist": saved.document_checklist,
+                    "recommendation_letters": saved.recommendation_letters,
+                    "test_requirements": saved.test_requirements,
+                    "submitted_at": saved.submitted_at.isoformat() if saved.submitted_at else None,
+                    "outcome_notes": saved.outcome_notes,
+                    "created_at": saved.created_at.isoformat(),
+                    "updated_at": saved.updated_at.isoformat(),
+                }
+                for saved in legacy_saved
+            ],
         }
 
     def to_response(self, application: Application) -> ApplicationResponse:

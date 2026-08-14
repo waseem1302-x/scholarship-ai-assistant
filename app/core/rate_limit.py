@@ -156,6 +156,21 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
             )
             if blocked is not None:
                 return blocked
+        if route_class in {"assistant", "document_upload"}:
+            global_limit = (
+                self.settings.assistant_global_daily_limit
+                if route_class == "assistant"
+                else self.settings.document_lab_global_daily_upload_limit
+            )
+            blocked = self._consume_request(
+                [f"{route_class}:global:daily"],
+                global_limit,
+                "global_high_cost_quota_exceeded",
+                "This capability has reached its protected daily capacity.",
+                window_seconds=86_400,
+            )
+            if blocked is not None:
+                return blocked
         keys = await self._keys_for(request, route_class)
         maximum, code, message = self._limit_for(route_class)
         blocked = self._consume_request(keys, maximum, code, message)
@@ -291,10 +306,15 @@ class AuthRateLimitMiddleware(BaseHTTPMiddleware):
         maximum: int,
         code: str,
         message: str = "Try again shortly",
+        window_seconds: int | None = None,
     ) -> JSONResponse | None:
         try:
             results = [
-                self.store.consume(key=key, limit=maximum, window_seconds=self.window_seconds)
+                self.store.consume(
+                    key=key,
+                    limit=maximum,
+                    window_seconds=window_seconds or self.window_seconds,
+                )
                 for key in keys
             ]
         except RateLimitStoreUnavailable:

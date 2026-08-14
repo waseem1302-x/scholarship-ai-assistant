@@ -61,8 +61,8 @@ export function profilePayload(draft: ProfileDraft) {
   };
 }
 
-export async function getProfile(): Promise<StudentProfile | null> {
-  return (await apiClient.request<StudentProfile | null>("/profiles/me")) ?? null;
+export async function getProfile(signal?: AbortSignal): Promise<StudentProfile | null> {
+  return (await apiClient.request<StudentProfile | null>("/profiles/me", { signal })) ?? null;
 }
 
 export async function saveProfile(draft: ProfileDraft, currentProfile?: StudentProfile | null): Promise<StudentProfile> {
@@ -70,8 +70,8 @@ export async function saveProfile(draft: ProfileDraft, currentProfile?: StudentP
   return apiClient.request<StudentProfile>("/profiles/me", { method: "PUT", body: JSON.stringify(payload) });
 }
 
-export async function getMatches(): Promise<OpportunityMatch[]> {
-  const response = await apiClient.request<{ results: OpportunityMatch[] }>("/matches/me");
+export async function getMatches(signal?: AbortSignal): Promise<OpportunityMatch[]> {
+  const response = await apiClient.request<{ results: OpportunityMatch[] }>("/matches/me", { signal });
   return response.results;
 }
 
@@ -99,20 +99,20 @@ export async function createApplication(opportunityId: string): Promise<Applicat
   return apiClient.request<Application>("/applications", { method: "POST", body: JSON.stringify({ opportunity_id: opportunityId }) });
 }
 
-export async function getApplications(): Promise<Application[]> {
-  return (await apiClient.request<{ items: Application[] }>("/applications")).items;
+export async function getApplications(signal?: AbortSignal): Promise<Application[]> {
+  return (await apiClient.request<{ items: Application[] }>("/applications", { signal })).items;
 }
 
-export async function getApplication(id: string): Promise<Application> {
-  return apiClient.request<Application>(`/applications/${id}`);
+export async function getApplication(id: string, signal?: AbortSignal): Promise<Application> {
+  return apiClient.request<Application>(`/applications/${id}`, { signal });
 }
 
-export async function getApplicationEvents(id: string): Promise<ApplicationEvent[]> {
-  return apiClient.request<ApplicationEvent[]>(`/applications/${id}/events`);
+export async function getApplicationEvents(id: string, signal?: AbortSignal): Promise<ApplicationEvent[]> {
+  return apiClient.request<ApplicationEvent[]>(`/applications/${id}/events`, { signal });
 }
 
-export async function getCommandCentre(): Promise<CommandCentre> {
-  return apiClient.request<CommandCentre>("/applications/command-centre");
+export async function getCommandCentre(signal?: AbortSignal): Promise<CommandCentre> {
+  return apiClient.request<CommandCentre>("/applications/command-centre", { signal });
 }
 
 export async function updateApplication(id: string, update: object): Promise<Application> {
@@ -140,8 +140,8 @@ export async function updateApplicationReminder(applicationId: string, reminderI
   return apiClient.request<ApplicationReminder>(`/applications/${applicationId}/reminders/${reminderId}`, { method: "PATCH", body: JSON.stringify(update) });
 }
 
-export async function getNotificationPreference(): Promise<{ in_app_enabled: boolean }> {
-  return apiClient.request<{ in_app_enabled: boolean }>("/applications/notification-preferences");
+export async function getNotificationPreference(signal?: AbortSignal): Promise<{ in_app_enabled: boolean }> {
+  return apiClient.request<{ in_app_enabled: boolean }>("/applications/notification-preferences", { signal });
 }
 
 export async function updateNotificationPreference(inAppEnabled: boolean): Promise<{ in_app_enabled: boolean }> {

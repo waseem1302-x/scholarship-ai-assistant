@@ -15,7 +15,7 @@ def test_react_frontend_is_served_at_the_canonical_root(client: TestClient) -> N
 
     assert response.status_code == 200
     assert '<div id="root"></div>' in response.text
-    assert "Scholarship AI Assistant" in response.text
+    assert "Source-backed Scholarship Assistant" in response.text
 
     bundle = client.get(frontend_asset_path(response.text, "js"))
     stylesheet = client.get(frontend_asset_path(response.text, "css"))
@@ -75,3 +75,18 @@ def test_react_client_keeps_tokens_out_of_browser_storage_and_untrusted_html() -
     assert "dangerouslySetInnerHTML" not in source
     assert 'credentials: "same-origin"' in source
     assert '"X-CSRF-Token"' in source
+
+
+def test_frontend_routes_are_lazy_and_server_reads_are_abortable() -> None:
+    app_source = Path("frontend/src/App.tsx").read_text(encoding="utf-8")
+    query_source = Path("frontend/src/hooks/useServerQuery.ts").read_text(encoding="utf-8")
+    detail_source = Path("frontend/src/features/catalogue/OpportunityDetailPage.tsx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "lazy(() => import(" in app_source
+    assert "<Suspense" in app_source
+    assert "new AbortController()" in query_source
+    assert "controller.abort()" in query_source
+    assert "saveOpportunity" not in detail_source
+    assert 'path="/tracker" element={<Navigate replace to="/applications" />}' in app_source

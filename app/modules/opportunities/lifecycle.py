@@ -19,6 +19,9 @@ class EffectiveApplicationWindow:
     state: ApplicationWindowState
     source_is_fresh: bool
     cycle: OpportunityCycle | None
+    application_opening_date: datetime | None = None
+    application_deadline: datetime | None = None
+    timezone: str = "UTC"
 
 
 def effective_application_window(
@@ -45,18 +48,32 @@ def effective_application_window(
     )
 
     if cycle and cycle.is_archived:
-        return EffectiveApplicationWindow(ApplicationWindowState.ARCHIVED, source_is_fresh, cycle)
-    if deadline and _as_utc(deadline) < current_time:
-        return EffectiveApplicationWindow(ApplicationWindowState.CLOSED, source_is_fresh, cycle)
-    if opening and _as_utc(opening) > current_time:
-        return EffectiveApplicationWindow(ApplicationWindowState.UPCOMING, source_is_fresh, cycle)
-    if rolling:
-        return EffectiveApplicationWindow(ApplicationWindowState.ROLLING, source_is_fresh, cycle)
-    if deadline is None:
         return EffectiveApplicationWindow(
-            ApplicationWindowState.DEADLINE_UNKNOWN, source_is_fresh, cycle
+            ApplicationWindowState.ARCHIVED,
+            source_is_fresh,
+            cycle,
+            opening,
+            deadline,
+            cycle.timezone if cycle else "UTC",
         )
-    return EffectiveApplicationWindow(ApplicationWindowState.OPEN, source_is_fresh, cycle)
+    if deadline and _as_utc(deadline) < current_time:
+        state = ApplicationWindowState.CLOSED
+    elif opening and _as_utc(opening) > current_time:
+        state = ApplicationWindowState.UPCOMING
+    elif rolling:
+        state = ApplicationWindowState.ROLLING
+    elif deadline is None:
+        state = ApplicationWindowState.DEADLINE_UNKNOWN
+    else:
+        state = ApplicationWindowState.OPEN
+    return EffectiveApplicationWindow(
+        state,
+        source_is_fresh,
+        cycle,
+        opening,
+        deadline,
+        cycle.timezone if cycle else "UTC",
+    )
 
 
 def is_open_now(

@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
+import { useServerQuery } from "../../hooks/useServerQuery";
 import { availabilityLabel, catalogueSearch, deadlineLabel, filtersFromSearch, formatDate, readableValue, searchOpportunities } from "./catalogue";
 import { defaultCatalogueFilters, type CatalogueAvailability, type CatalogueFilters, type OpportunitySearchResponse, type OpportunitySummary } from "./types";
 
@@ -8,9 +9,10 @@ function OpportunityCard({ opportunity }: { opportunity: OpportunitySummary }) {
   return (
     <article className="opportunity-card">
       <div className="card-topline">
-        <span className="verified-badge">Verified official source</span>
+        <span className="verified-badge">{opportunity.verification_freshness === "recent" ? "Recently verified official source" : opportunity.verification_freshness === "recheck_recommended" ? "Official source · recheck recommended" : "Historical official verification"}</span>
         <span className="deadline-label">{deadlineLabel(opportunity.application_deadline)}</span>
       </div>
+      <p className="evidence-caption">{opportunity.catalogue_decision_tier === "decision_ready" ? "Structured criteria available" : "Informational record · verify criteria manually"}</p>
       <h2>{opportunity.name}</h2>
       <p className="provider-name">
         {opportunity.provider_name}
@@ -19,7 +21,7 @@ function OpportunityCard({ opportunity }: { opportunity: OpportunitySummary }) {
       <div className="tag-list" aria-label="Opportunity summary">
         <span>{opportunity.country}</span>
         <span>{readableValue(opportunity.degree_level)}</span>
-        <span>{readableValue(opportunity.funding_classification ?? "unknown")}</span>
+        <span>{opportunity.funding_display_label}</span>
       </div>
       <p className="funding-summary">{opportunity.funding_summary}</p>
       <p className="evidence-caption">
@@ -122,28 +124,11 @@ export function CataloguePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(() => filtersFromSearch(searchParams), [searchParams]);
   const offset = Number(searchParams.get("offset") ?? "0") || 0;
-  const [results, setResults] = useState<OpportunitySearchResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    setIsLoading(true);
-    setError(null);
-    void searchOpportunities(filters, offset)
-      .then((response) => {
-        if (active) setResults(response);
-      })
-      .catch((requestError: unknown) => {
-        if (active) setError(requestError instanceof Error ? requestError.message : "Unable to load opportunities.");
-      })
-      .finally(() => {
-        if (active) setIsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [searchParams]);
+  const { data: results, error: requestError, isLoading, reload } = useServerQuery<OpportunitySearchResponse>(
+    searchParams.toString(),
+    (signal) => searchOpportunities(filters, offset, signal),
+  );
+  const error = requestError instanceof Error ? requestError.message : requestError ? "Unable to load opportunities." : null;
 
   function updateSearch(nextFilters: CatalogueFilters, nextOffset = 0) {
     setSearchParams(catalogueSearch(nextFilters, nextOffset));
@@ -197,7 +182,7 @@ export function CataloguePage() {
           <div className="catalogue-message error-message" role="alert">
             <h2>We could not load the catalogue.</h2>
             <p>{error}</p>
-            <button className="button button-quiet" type="button" onClick={() => updateSearch(filters, offset)}>Try again</button>
+            <button className="button button-quiet" type="button" onClick={reload}>Try again</button>
           </div>
         ) : null}
         {isLoading ? <div className="catalogue-message">Loading verified opportunities...</div> : null}

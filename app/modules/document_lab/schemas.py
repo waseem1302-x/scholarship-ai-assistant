@@ -16,6 +16,11 @@ from app.modules.document_lab.models import (
 
 class DocumentLabPolicyResponse(BaseModel):
     enabled: bool
+    feature_enabled: bool
+    accepting_uploads: bool
+    scanner_ready: bool
+    worker_ready: bool
+    analysis_provider_ready: bool
     supported_types: list[str]
     max_upload_bytes: int
     max_pages: int

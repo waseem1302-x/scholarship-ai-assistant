@@ -18,6 +18,8 @@ class OpportunityMatchResponse(BaseModel):
     # Retained for API compatibility. It is zero when hard eligibility failed.
     match_score: int
     score_label: str
+    fit_band: str
+    display_label: str
     eligibility_status: str
     fit_score: int | None
     preference_fit: int | None = None

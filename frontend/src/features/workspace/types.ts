@@ -87,6 +87,8 @@ export interface OpportunityMatch {
   opportunity: OpportunitySummary;
   match_score: number;
   score_label: string;
+  fit_band: string;
+  display_label: string;
   eligibility_status: string;
   fit_score: number | null;
   preference_fit: number | null;

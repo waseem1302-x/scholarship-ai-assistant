@@ -3,6 +3,12 @@ targetScope = 'subscription'
 @description('Billing-currency monthly limit. Set to 500 only after confirming this subscription bills in MYR.')
 param monthlyBudgetAmount int = 500
 
+@description('Explicit operator confirmation after the Azure billing-currency preflight.')
+@allowed([
+  'MYR'
+])
+param confirmedBillingCurrency string
+
 @description('Approved cost-alert recipients. This is not a secret.')
 @minLength(1)
 param alertEmailAddresses array
@@ -77,3 +83,5 @@ resource betaBudget 'Microsoft.Consumption/budgets@2024-08-01' = {
     }
   }
 }
+
+output confirmedBillingCurrency string = confirmedBillingCurrency

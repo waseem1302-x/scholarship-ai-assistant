@@ -32,17 +32,22 @@ export function CommunityPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const canParticipate = Boolean(preferences?.consented && !preferences.suspended);
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     try {
       const [nextPreferences, nextFeed] = await Promise.all([
-        apiClient.request<Preferences>("/community/preferences"),
-        apiClient.request<Feed>(`/community/posts${query ? `?q=${encodeURIComponent(query)}` : ""}`),
+        apiClient.request<Preferences>("/community/preferences", { signal }),
+        apiClient.request<Feed>(`/community/posts${query ? `?q=${encodeURIComponent(query)}` : ""}`, { signal }),
       ]);
       setPreferences(nextPreferences); setDisplayName(nextPreferences.display_name ?? ""); setFeed(nextFeed);
-      if (user?.role === "admin") setReports((await apiClient.request<ReportQueue>("/community/admin/reports")).reports);
-    } catch (requestError) { setError(failure(requestError)); }
+      if (user?.role === "admin") setReports((await apiClient.request<ReportQueue>("/community/admin/reports", { signal })).reports);
+    } catch (requestError) { if (!signal?.aborted) setError(failure(requestError)); }
   }
-  useEffect(() => { if (user) void load(); }, [user]);
+  useEffect(() => {
+    if (!user) return;
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [user]);
   if (!isRestoring && !user) return <Navigate replace to="/auth" />;
   if (!user) return <main className="page-width loading-page" aria-live="polite">Restoring your secure session…</main>;
 

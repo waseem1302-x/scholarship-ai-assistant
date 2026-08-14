@@ -43,3 +43,6 @@ class BetaPolicyResponse(BaseModel):
     assistant_enabled: bool
     document_lab_enabled: bool
     community_enabled: bool
+    assistant_mode: str
+    assistant_global_daily_limit: int
+    document_lab_global_daily_upload_limit: int
