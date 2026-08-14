@@ -101,7 +101,11 @@ def postgres_runtime_engine(postgres_admin_engine):
             f"CREATE ROLE {quoted_role} LOGIN PASSWORD '{password}' "
             "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
         )
-        connection.exec_driver_sql(f"GRANT CONNECT ON DATABASE current_database() TO {quoted_role}")
+        database_name = connection.scalar(text("SELECT current_database()"))
+        quoted_database = connection.dialect.identifier_preparer.quote(database_name)
+        connection.exec_driver_sql(
+            f"GRANT CONNECT ON DATABASE {quoted_database} TO {quoted_role}"
+        )
         connection.exec_driver_sql(f"GRANT USAGE ON SCHEMA public TO {quoted_role}")
         connection.exec_driver_sql(
             f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {quoted_role}"
@@ -127,7 +131,7 @@ def postgres_runtime_engine(postgres_admin_engine):
                 "WHERE rolname = current_user"
             )
         ).one()
-        assert properties == (False, False)
+        assert tuple(properties) == (False, False)
 
     yield runtime_engine
 
@@ -310,7 +314,9 @@ def test_all_private_tables_have_forced_rls_and_policy(postgres_admin_engine) ->
             text(
                 """
                 SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
-                       count(p.policyname) FILTER (WHERE p.policyname = 'tenant_isolation')
+                       count(p.policyname) FILTER (
+                           WHERE p.policyname = 'tenant_isolation'
+                       ) AS policy_count
                 FROM pg_class AS c
                 JOIN pg_namespace AS n ON n.oid = c.relnamespace
                 LEFT JOIN pg_policies AS p
@@ -324,7 +330,7 @@ def test_all_private_tables_have_forced_rls_and_policy(postgres_admin_engine) ->
 
     assert {row.relname for row in rows} == PROTECTED_TABLES
     assert all(row.relrowsecurity and row.relforcerowsecurity for row in rows)
-    assert all(row.count == 1 for row in rows)
+    assert all(row.policy_count == 1 for row in rows)
 
 
 def test_user_b_cannot_read_update_or_delete_user_a_records(
