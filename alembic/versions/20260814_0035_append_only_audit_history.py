@@ -41,10 +41,7 @@ def _audit_table() -> sa.TableClause:
 def _canonical_timestamp(value: Any) -> str:
     if not isinstance(value, datetime):
         return str(value)
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    else:
-        value = value.astimezone(UTC)
+    value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     return value.isoformat()
 
 
