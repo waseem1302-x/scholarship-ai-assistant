@@ -280,8 +280,17 @@ def verify_audit_integrity_chain(session: Session) -> tuple[bool, uuid.UUID | No
     return True, None
 
 
-@event.listens_for(AuditLog, "before_insert")
-def set_audit_integrity_hash(_mapper, connection: Connection, target: AuditLog) -> None:
+@event.listens_for(Session, "before_flush")
+def set_audit_integrity_hashes(
+    session: Session, _flush_context: object, _instances: object
+) -> None:
+    """Serialize and chain every new audit row in the current flush."""
+
+    targets = [target for target in session.new if isinstance(target, AuditLog)]
+    if not targets:
+        return
+
+    connection = session.connection()
     # Concurrent Container Apps replicas must not create two children of the
     # same previous hash. The xact lock releases automatically on commit/rollback.
     if connection.dialect.name == "postgresql":
@@ -289,26 +298,30 @@ def set_audit_integrity_hash(_mapper, connection: Connection, target: AuditLog) 
             "SELECT pg_advisory_xact_lock(%s)",
             (AUDIT_CHAIN_ADVISORY_LOCK_ID,),
         )
-    if target.id is None:
-        target.id = uuid.uuid4()
-    if target.created_at is None:
-        target.created_at = utc_now()
+
     previous_hash = connection.execute(
         select(AuditLog.integrity_hash)
         .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
         .limit(1)
     ).scalar_one_or_none()
-    target.previous_integrity_hash = previous_hash
-    target.integrity_hash = audit_integrity_hash(
-        previous_hash=previous_hash,
-        audit_id=target.id,
-        actor_user_id=target.actor_user_id,
-        action=target.action,
-        entity_type=target.entity_type,
-        entity_id=target.entity_id,
-        metadata_json=target.metadata_json or {},
-        created_at=target.created_at,
-    )
+    for target in targets:
+        if target.id is None:
+            target.id = uuid.uuid4()
+        # Audit ordering is server-canonical and assigned only after the
+        # transaction holds the chain lock, preventing timestamp/chain races.
+        target.created_at = utc_now()
+        target.previous_integrity_hash = previous_hash
+        target.integrity_hash = audit_integrity_hash(
+            previous_hash=previous_hash,
+            audit_id=target.id,
+            actor_user_id=target.actor_user_id,
+            action=target.action,
+            entity_type=target.entity_type,
+            entity_id=target.entity_id,
+            metadata_json=target.metadata_json or {},
+            created_at=target.created_at,
+        )
+        previous_hash = target.integrity_hash
 
 
 @event.listens_for(AuditLog, "before_update")
