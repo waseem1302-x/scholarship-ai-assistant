@@ -1,9 +1,6 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
-from sqlalchemy.orm import Session
-
 from app.core.config import Settings, get_settings
 from app.core.errors import ErrorResponse
 from app.db.session import get_db, get_system_db
@@ -32,6 +29,8 @@ from app.modules.community.schemas import (
     CommunityReportResponse,
 )
 from app.modules.community.service import CommunityService
+from fastapi import APIRouter, Depends, Query, Response, status
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/community", tags=["scholarship community"])
 AUTH = {"model": ErrorResponse, "description": "Authentication is required."}
