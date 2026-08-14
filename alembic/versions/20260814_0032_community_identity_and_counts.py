@@ -5,8 +5,8 @@ Revises: 20260814_0031
 Create Date: 2026-08-14
 """
 
-from collections.abc import Sequence
 import uuid
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 
