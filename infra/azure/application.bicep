@@ -42,6 +42,8 @@ var registryName = replace('${resourcePrefix}acr', '-', '')
 var keyVaultName = '${resourcePrefix}-kv'
 var runtimeIdentityName = '${resourcePrefix}-runtime-id'
 var appName = '${resourcePrefix}-api'
+var logWorkspaceName = '${resourcePrefix}-logs'
+var applicationInsightsName = '${resourcePrefix}-insights'
 var keyVaultSecretBaseUrl = 'https://${keyVaultName}.${az.environment().suffixes.keyvaultDns}/secrets'
 
 resource containerEnvironment 'Microsoft.App/managedEnvironments@2025-01-01' existing = {
@@ -54,6 +56,30 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing =
 
 resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: runtimeIdentityName
+}
+
+resource logWorkspace 'Microsoft.OperationalInsights/workspaces@2022-10-01' existing = {
+  name: logWorkspaceName
+}
+
+// A single workspace-backed Application Insights resource aggregates custom
+// OpenTelemetry metrics across every active Container Apps API replica.
+resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: applicationInsightsName
+  location: resourceGroup().location
+  kind: 'web'
+  tags: {
+    application: 'scholarship-ai-assistant'
+    environment: environment
+    managedBy: 'bicep'
+  }
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logWorkspace.id
+    IngestionMode: 'LogAnalytics'
+    publicNetworkAccessForIngestion: 'Enabled'
+    publicNetworkAccessForQuery: 'Enabled'
+  }
 }
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
@@ -172,6 +198,22 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'APP_RATE_LIMIT_BACKEND'
               value: 'redis'
+            }
+            {
+              name: 'APP_METRICS_BACKEND'
+              value: 'external'
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: applicationInsights.properties.ConnectionString
+            }
+            {
+              name: 'OTEL_SERVICE_NAME'
+              value: 'scholarship-api-${environment}'
+            }
+            {
+              name: 'OTEL_RESOURCE_ATTRIBUTES'
+              value: 'deployment.environment.name=${environment}'
             }
             {
               name: 'APP_EMAIL_PROVIDER'
@@ -317,3 +359,4 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 
 output appName string = app.name
 output appFqdn string = app.properties.configuration.ingress.fqdn
+output applicationInsightsName string = applicationInsights.name
