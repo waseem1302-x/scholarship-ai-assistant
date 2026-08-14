@@ -1,9 +1,6 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
-from sqlalchemy.orm import Session
-
 from app.core.errors import ErrorResponse
 from app.db.session import get_db, get_system_db
 from app.modules.applications.command_service import ApplicationCommandService
@@ -31,6 +28,8 @@ from app.modules.applications.schemas import (
 )
 from app.modules.auth.dependencies import require_roles, require_verified_student
 from app.modules.auth.models import User, UserRole
+from fastapi import APIRouter, Depends, Query, Response, status
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
