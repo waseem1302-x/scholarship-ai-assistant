@@ -18,9 +18,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
-from typing import Any, TypeVar
-
-T = TypeVar("T")
+from typing import Any
 
 
 class BoundedProcessTimeout(RuntimeError):
@@ -40,7 +38,7 @@ class ProcessLimits:
     output_file_bytes: int = 8 * 1024 * 1024
 
 
-def run_bounded_process(
+def run_bounded_process[T](
     function: Callable[..., T],
     args: tuple[Any, ...],
     *,
@@ -80,9 +78,8 @@ def run_bounded_process(
             raise BoundedProcessTimeout("Parser process exceeded its deadline")
 
         if not parent_connection.poll(0.25):
-            raise BoundedProcessFailed(
-                f"Parser process exited without a result (exitcode={process.exitcode})"
-            )
+            detail = f"Parser process exited without a result (exitcode={process.exitcode})"
+            raise BoundedProcessFailed(detail)
 
         status, payload = parent_connection.recv()
         if status == "ok":
@@ -107,7 +104,7 @@ def _stop_process(process: mp.Process) -> None:
         raise BoundedProcessFailed("Parser process could not be terminated")
 
 
-def _child_entry(
+def _child_entry[T](
     connection: Connection,
     function: Callable[..., T],
     args: tuple[Any, ...],
