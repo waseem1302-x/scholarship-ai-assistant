@@ -31,7 +31,7 @@ os.environ["APP_OPERATIONS_HEALTH_TOKEN"] = "test-operations-token"
 
 # Imports intentionally follow test environment setup so the shared app caches it.
 from app.db.base import Base  # noqa: E402
-from app.db.session import get_db  # noqa: E402
+from app.db.session import get_db, get_system_db  # noqa: E402
 from app.main import app  # noqa: E402
 
 # The shared application has cached its explicit test settings. Remove these
@@ -62,6 +62,7 @@ def override_get_db() -> Generator[Session, None, None]:
 
 
 app.dependency_overrides[get_db] = override_get_db
+app.dependency_overrides[get_system_db] = override_get_db
 
 
 @pytest.fixture(autouse=True)

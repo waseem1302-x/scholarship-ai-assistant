@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import exists, select, update
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.db.session import SystemSessionLocal
 from app.modules.applications.models import (
     Application,
     ApplicationNotificationPreference,
@@ -20,7 +20,7 @@ from app.modules.operations.service import OperationalJobService
 def dispatch_due_reminders(
     *,
     now: datetime | None = None,
-    session_factory: Callable[[], Session] = SessionLocal,
+    session_factory: Callable[[], Session] = SystemSessionLocal,
 ) -> int:
     """Atomically claim all currently due, opted-in reminders.
 
