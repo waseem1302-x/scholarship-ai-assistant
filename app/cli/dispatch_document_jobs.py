@@ -5,7 +5,7 @@ does not log file names, extracted text, or provider payloads.
 """
 
 from app.core.config import get_settings
-from app.db.session import SessionLocal
+from app.db.session import SystemSessionLocal
 from app.modules.document_lab.service import DocumentLabService
 from app.modules.operations.service import OperationalJobService
 
@@ -14,7 +14,7 @@ def main() -> None:
     settings = get_settings()
     if not settings.document_lab_enabled:
         return
-    with SessionLocal() as session:
+    with SystemSessionLocal() as session:
         service = DocumentLabService(session, settings)
         health = OperationalJobService(session)
         health.started("document_jobs")
