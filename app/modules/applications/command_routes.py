@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorResponse
-from app.db.session import get_db
+from app.db.session import get_db, get_system_db
 from app.modules.applications.command_service import ApplicationCommandService
 from app.modules.applications.schemas import (
     ApplicationCreate,
@@ -44,7 +44,14 @@ def service(
     return ApplicationCommandService(session)
 
 
+def privileged_service(
+    session: Annotated[Session, Depends(get_system_db)],
+) -> ApplicationCommandService:
+    return ApplicationCommandService(session)
+
+
 CommandService = Annotated[ApplicationCommandService, Depends(service)]
+PrivilegedCommandService = Annotated[ApplicationCommandService, Depends(privileged_service)]
 Errors = {
     401: {"model": ErrorResponse},
     403: {"model": ErrorResponse},
@@ -65,7 +72,7 @@ def command_centre(user: StudentUser, application_service: CommandService) -> Co
     responses=Errors,
 )
 def operational_report(
-    _: AdminUser, application_service: CommandService
+    _: AdminUser, application_service: PrivilegedCommandService
 ) -> ApplicationOperationalReportResponse:
     """Admin-only aggregate workflow health; no private application content is returned."""
     return application_service.operational_report()
