@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError, AuthenticationError
 from app.core.security import decode_access_token, hash_refresh_token
-from app.db.session import get_db
+from app.db.session import bind_tenant_context, get_db
 from app.modules.auth.models import ADMIN_STEP_UP_SCOPE, User, UserRole
 from app.modules.auth.repository import AuthRepository
 
@@ -32,6 +32,7 @@ def get_current_user(
         or user.token_version != claims.token_version
     ):
         raise AuthenticationError()
+    bind_tenant_context(session, user.id)
     return user
 
 
