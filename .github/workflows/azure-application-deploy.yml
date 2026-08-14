@@ -143,9 +143,10 @@ jobs:
           set -euo pipefail
           az deployment group create --resource-group "$RESOURCE_GROUP" --template-file infra/azure/migration-job.bicep --parameters resourcePrefix="$RESOURCE_PREFIX" imageReference="$IMAGE_REFERENCE"
           job_name="${RESOURCE_PREFIX}-migrate"
-          az containerapp job start --name "$job_name" --resource-group "$RESOURCE_GROUP"
+          execution_name="$(az containerapp job start --name "$job_name" --resource-group "$RESOURCE_GROUP" --query name --output tsv)"
+          test -n "$execution_name"
           for attempt in {1..45}; do
-            status="$(az containerapp job execution list --name "$job_name" --resource-group "$RESOURCE_GROUP" --query "sort_by([].properties, &startTime)[-1].status" --output tsv)"
+            status="$(az containerapp job execution show --name "$job_name" --resource-group "$RESOURCE_GROUP" --job-execution-name "$execution_name" --query properties.status --output tsv)"
             [ "$status" = Succeeded ] && exit 0
             [ "$status" = Failed ] && exit 1
             sleep 10
@@ -161,9 +162,10 @@ jobs:
           set -euo pipefail
           az deployment group create --resource-group "$RESOURCE_GROUP" --template-file infra/azure/migration-job.bicep --parameters resourcePrefix="$RESOURCE_PREFIX" imageReference="$IMAGE_REFERENCE" jobCommand='["alembic","upgrade","head"]'
           job_name="${RESOURCE_PREFIX}-migrate"
-          az containerapp job start --name "$job_name" --resource-group "$RESOURCE_GROUP"
+          execution_name="$(az containerapp job start --name "$job_name" --resource-group "$RESOURCE_GROUP" --query name --output tsv)"
+          test -n "$execution_name"
           for attempt in {1..45}; do
-            status="$(az containerapp job execution list --name "$job_name" --resource-group "$RESOURCE_GROUP" --query "sort_by([].properties, &startTime)[-1].status" --output tsv)"
+            status="$(az containerapp job execution show --name "$job_name" --resource-group "$RESOURCE_GROUP" --job-execution-name "$execution_name" --query properties.status --output tsv)"
             [ "$status" = Succeeded ] && exit 0
             if [ "$status" = Failed ]; then echo 'Migration failed; inspect protected logs.'; exit 1; fi
             sleep 10

@@ -38,6 +38,8 @@ def test_release_workflow_keeps_candidate_off_traffic_until_product_smoke() -> N
     assert "staging_run_id" in source
     assert "actions/download-artifact@" in source
     assert "@sha256:" in source
+    assert source.count('--job-execution-name "$execution_name"') == 2
+    assert "sort_by([].properties, &startTime)[-1].status" not in source
     dispatch_inputs = source.split("workflow_dispatch:", 1)[1].split("permissions:", 1)[0]
     assert "image_reference" not in dispatch_inputs
     assert "continue-on-error" not in source
