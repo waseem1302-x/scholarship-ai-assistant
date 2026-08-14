@@ -1,8 +1,9 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+import pytest
+from sqlalchemy import select, text
 
-from app.modules.auth.models import AuditLog
+from app.modules.auth.models import AuditLog, verify_audit_integrity_chain
 from app.modules.operations.models import OperationalJobHealth, OperationalJobRun
 from app.modules.operations.service import OperationalJobService
 
@@ -69,7 +70,7 @@ def test_metrics_snapshot_includes_latency_distribution(client) -> None:
     assert set(health_metrics["latency_buckets_ms"]) >= {"le_50", "gt_5000"}
 
 
-def test_audit_logs_have_tamper_evident_hash_chain(db_session) -> None:
+def _two_audit_rows(db_session) -> tuple[AuditLog, AuditLog]:
     first = AuditLog(
         actor_user_id=None,
         action="test.first",
@@ -88,8 +89,39 @@ def test_audit_logs_have_tamper_evident_hash_chain(db_session) -> None:
     )
     db_session.add(second)
     db_session.commit()
+    return first, second
+
+
+def test_audit_logs_have_tamper_evident_hash_chain(db_session) -> None:
+    first, second = _two_audit_rows(db_session)
 
     assert len(first.integrity_hash) == 64
     assert len(second.integrity_hash) == 64
     assert second.previous_integrity_hash == first.integrity_hash
     assert first.integrity_hash != second.integrity_hash
+    assert verify_audit_integrity_chain(db_session) == (True, None)
+
+
+def test_audit_logs_reject_orm_mutation(db_session) -> None:
+    first, _ = _two_audit_rows(db_session)
+    first.action = "tampered"
+
+    with pytest.raises(RuntimeError, match="append-only"):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_audit_chain_verifier_detects_storage_tampering(db_session) -> None:
+    first, _ = _two_audit_rows(db_session)
+
+    # SQLite integration tests do not install the PostgreSQL append-only trigger,
+    # so a raw mutation lets us prove the verifier detects storage-level damage.
+    db_session.execute(
+        text("UPDATE audit_logs SET action = :action WHERE id = :id"),
+        {"action": "tampered-outside-orm", "id": first.id.hex},
+    )
+    db_session.commit()
+    valid, bad_id = verify_audit_integrity_chain(db_session)
+
+    assert valid is False
+    assert bad_id == first.id
