@@ -27,8 +27,16 @@ param smtpHost string
 var containerEnvironmentName = '${resourcePrefix}-apps'
 var registryName = replace('${resourcePrefix}acr', '-', '')
 var keyVaultName = '${resourcePrefix}-kv'
-var runtimeIdentityName = '${resourcePrefix}-runtime-id'
+var workerIdentityName = '${resourcePrefix}-worker-id'
 var secretBaseUrl = 'https://${keyVaultName}.${az.environment().suffixes.keyvaultDns}/secrets'
+var acrPullRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+)
+var keyVaultSecretsUserRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '4633458b-17de-408a-b874-0445c86b69e6'
+)
 var scheduledWorkloads = [
   {
     name: '${resourcePrefix}-source-monitor'
@@ -61,31 +69,143 @@ var scheduledWorkloads = [
     timeout: 1800
   }
 ]
+
+resource containerEnvironment 'Microsoft.App/managedEnvironments@2025-01-01' existing = {
+  name: containerEnvironmentName
+}
+
+resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: registryName
+}
+
+resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+// Scheduled jobs intentionally do not carry the public API's database secret.
+// Their distinct DB login is the only application role allowed by RLS policies
+// to process cross-tenant rows such as reminders and retention batches.
+resource workerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: workerIdentityName
+  location: resourceGroup().location
+  tags: {
+    application: 'scholarship-ai-assistant'
+    environment: environment
+    workload: 'scheduled-worker'
+    managedBy: 'bicep'
+  }
+}
+
+resource workerAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(registry.id, workerIdentity.id, acrPullRoleDefinitionId)
+  scope: registry
+  properties: {
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalId: workerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workerDatabaseUrlSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: 'app-worker-database-url'
+}
+
+resource jwtSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: 'app-jwt-secret'
+}
+
+resource redisUrlSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: 'app-rate-limit-redis-url'
+}
+
+resource smtpUsernameSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: 'app-smtp-username'
+}
+
+resource smtpPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: 'app-smtp-password'
+}
+
+resource workerDatabaseSecretAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(workerDatabaseUrlSecret.id, workerIdentity.id, keyVaultSecretsUserRoleDefinitionId)
+  scope: workerDatabaseUrlSecret
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    principalId: workerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workerJwtSecretAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(jwtSecret.id, workerIdentity.id, keyVaultSecretsUserRoleDefinitionId)
+  scope: jwtSecret
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    principalId: workerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workerRedisSecretAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(redisUrlSecret.id, workerIdentity.id, keyVaultSecretsUserRoleDefinitionId)
+  scope: redisUrlSecret
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    principalId: workerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workerSmtpUsernameSecretAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(smtpUsernameSecret.id, workerIdentity.id, keyVaultSecretsUserRoleDefinitionId)
+  scope: smtpUsernameSecret
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    principalId: workerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workerSmtpPasswordSecretAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(smtpPasswordSecret.id, workerIdentity.id, keyVaultSecretsUserRoleDefinitionId)
+  scope: smtpPasswordSecret
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    principalId: workerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 var sharedSecrets = [
   {
     name: 'database-url'
-    keyVaultUrl: '${secretBaseUrl}/app-database-url'
-    identity: runtimeIdentity.id
+    keyVaultUrl: '${secretBaseUrl}/app-worker-database-url'
+    identity: workerIdentity.id
   }
   {
     name: 'jwt-secret'
     keyVaultUrl: '${secretBaseUrl}/app-jwt-secret'
-    identity: runtimeIdentity.id
+    identity: workerIdentity.id
   }
   {
     name: 'redis-url'
     keyVaultUrl: '${secretBaseUrl}/app-rate-limit-redis-url'
-    identity: runtimeIdentity.id
+    identity: workerIdentity.id
   }
   {
     name: 'smtp-username'
     keyVaultUrl: '${secretBaseUrl}/app-smtp-username'
-    identity: runtimeIdentity.id
+    identity: workerIdentity.id
   }
   {
     name: 'smtp-password'
     keyVaultUrl: '${secretBaseUrl}/app-smtp-password'
-    identity: runtimeIdentity.id
+    identity: workerIdentity.id
   }
 ]
 var commonEnvironment = [
@@ -171,18 +291,6 @@ var commonEnvironment = [
   }
 ]
 
-resource containerEnvironment 'Microsoft.App/managedEnvironments@2025-01-01' existing = {
-  name: containerEnvironmentName
-}
-
-resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: registryName
-}
-
-resource runtimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: runtimeIdentityName
-}
-
 resource scheduledJobs 'Microsoft.App/jobs@2024-03-01' = [
   for job in scheduledWorkloads: {
     name: job.name
@@ -196,7 +304,7 @@ resource scheduledJobs 'Microsoft.App/jobs@2024-03-01' = [
     identity: {
       type: 'UserAssigned'
       userAssignedIdentities: {
-        '${runtimeIdentity.id}': {}
+        '${workerIdentity.id}': {}
       }
     }
     properties: {
@@ -213,7 +321,7 @@ resource scheduledJobs 'Microsoft.App/jobs@2024-03-01' = [
         registries: [
           {
             server: registry.properties.loginServer
-            identity: runtimeIdentity.id
+            identity: workerIdentity.id
           }
         ]
         secrets: sharedSecrets
@@ -233,7 +341,16 @@ resource scheduledJobs 'Microsoft.App/jobs@2024-03-01' = [
         ]
       }
     }
+    dependsOn: [
+      workerAcrPull
+      workerDatabaseSecretAccess
+      workerJwtSecretAccess
+      workerRedisSecretAccess
+      workerSmtpUsernameSecretAccess
+      workerSmtpPasswordSecretAccess
+    ]
   }
 ]
 
 output scheduledJobNames array = [for job in scheduledWorkloads: job.name]
+output workerIdentityName string = workerIdentity.name
