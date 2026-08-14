@@ -178,6 +178,11 @@ def tenant_records(postgres_admin_engine):
                     password_hash="test-password-hash",
                 ),
                 Provider(id=ids["provider"], name=f"Tenant test {uuid.uuid4().hex}"),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
                 Opportunity(
                     id=ids["opportunity"],
                     provider_id=ids["provider"],
@@ -185,62 +190,52 @@ def tenant_records(postgres_admin_engine):
                     country="Italy",
                     degree_level=DegreeLevel.MASTERS,
                 ),
-                SavedOpportunity(
-                    id=ids["saved"],
-                    user_id=ids["user_a"],
-                    opportunity_id=ids["opportunity"],
-                    personal_notes="private saved record",
-                ),
-                Application(
-                    id=ids["application"],
-                    user_id=ids["user_a"],
-                    opportunity_id=ids["opportunity"],
-                    saved_opportunity_id=ids["saved"],
-                    notes="private application",
-                ),
-                ApplicationTask(
-                    id=ids["task"],
-                    application_id=ids["application"],
-                    category=TaskCategory.DOCUMENT,
-                    title="Private task",
-                ),
-                ApplicationReminder(
-                    id=ids["reminder"],
-                    application_id=ids["application"],
-                    task_id=ids["task"],
-                    scheduled_at=now + timedelta(days=1),
-                    idempotency_key=uuid.uuid4().hex,
-                    message="private reminder",
-                ),
                 ApplicationNotificationPreference(user_id=ids["user_a"]),
-                ApplicationEvent(
-                    id=ids["event"],
-                    application_id=ids["application"],
-                    actor_user_id=ids["user_a"],
-                    event_type="tenant.test",
-                ),
-                ApplicationDocument(
-                    id=ids["application_document"],
-                    application_id=ids["application"],
-                    task_id=ids["task"],
-                    name="Private transcript",
-                ),
                 AssistantConversation(
                     id=ids["conversation"],
                     user_id=ids["user_a"],
                     title="Private conversation",
-                ),
-                AssistantMessage(
-                    id=ids["message"],
-                    conversation_id=ids["conversation"],
-                    role=AssistantMessageRole.USER,
-                    content="private assistant message",
                 ),
                 AssistantEvidencePacket(
                     id=ids["evidence"],
                     user_id=ids["user_a"],
                     retrieval_version="tenant-test",
                     rule_version="tenant-test",
+                ),
+                DocumentAsset(
+                    id=ids["asset"],
+                    user_id=ids["user_a"],
+                    document_kind=DocumentKind.CV_RESUME,
+                    display_name_ciphertext="private-name",
+                    retention_expires_at=now + timedelta(days=30),
+                ),
+                StudentProfile(id=ids["profile"], user_id=ids["user_a"]),
+                CommunityPreference(
+                    user_id=ids["user_a"],
+                    display_name=f"tenant_{uuid.uuid4().hex[:12]}",
+                    display_name_normalized=f"tenant_{uuid.uuid4().hex[:12]}",
+                ),
+                CommunityBlock(
+                    id=ids["community_block"],
+                    user_id=ids["user_a"],
+                    blocked_user_id=ids["user_b"],
+                ),
+            ]
+        )
+        session.flush()
+        session.add_all(
+            [
+                SavedOpportunity(
+                    id=ids["saved"],
+                    user_id=ids["user_a"],
+                    opportunity_id=ids["opportunity"],
+                    personal_notes="private saved record",
+                ),
+                AssistantMessage(
+                    id=ids["message"],
+                    conversation_id=ids["conversation"],
+                    role=AssistantMessageRole.USER,
+                    content="private assistant message",
                 ),
                 AssistantAnswer(
                     id=ids["answer"],
@@ -253,13 +248,6 @@ def tenant_records(postgres_admin_engine):
                     prompt_template_version="test",
                     retrieval_version="test",
                 ),
-                DocumentAsset(
-                    id=ids["asset"],
-                    user_id=ids["user_a"],
-                    document_kind=DocumentKind.CV_RESUME,
-                    display_name_ciphertext="private-name",
-                    retention_expires_at=now + timedelta(days=30),
-                ),
                 DocumentVersion(
                     id=ids["version"],
                     asset_id=ids["asset"],
@@ -271,7 +259,6 @@ def tenant_records(postgres_admin_engine):
                     detected_content_type="application/pdf",
                     size_bytes=128,
                 ),
-                StudentProfile(id=ids["profile"], user_id=ids["user_a"]),
                 MatchEvaluation(
                     id=ids["evaluation"],
                     user_id=ids["user_a"],
@@ -282,17 +269,50 @@ def tenant_records(postgres_admin_engine):
                     profile_snapshot_json={},
                     profile_snapshot_hash="b" * 64,
                 ),
-                CommunityPreference(
-                    user_id=ids["user_a"],
-                    display_name=f"tenant_{uuid.uuid4().hex[:12]}",
-                    display_name_normalized=f"tenant_{uuid.uuid4().hex[:12]}",
+            ]
+        )
+        session.flush()
+        session.add(
+            Application(
+                id=ids["application"],
+                user_id=ids["user_a"],
+                opportunity_id=ids["opportunity"],
+                saved_opportunity_id=ids["saved"],
+                notes="private application",
+            )
+        )
+        session.flush()
+        session.add_all(
+            [
+                ApplicationTask(
+                    id=ids["task"],
+                    application_id=ids["application"],
+                    category=TaskCategory.DOCUMENT,
+                    title="Private task",
                 ),
-                CommunityBlock(
-                    id=ids["community_block"],
-                    user_id=ids["user_a"],
-                    blocked_user_id=ids["user_b"],
+                ApplicationEvent(
+                    id=ids["event"],
+                    application_id=ids["application"],
+                    actor_user_id=ids["user_a"],
+                    event_type="tenant.test",
+                ),
+                ApplicationDocument(
+                    id=ids["application_document"],
+                    application_id=ids["application"],
+                    name="Private transcript",
                 ),
             ]
+        )
+        session.flush()
+        session.add(
+            ApplicationReminder(
+                id=ids["reminder"],
+                application_id=ids["application"],
+                task_id=ids["task"],
+                scheduled_at=now + timedelta(days=1),
+                idempotency_key=uuid.uuid4().hex,
+                message="private reminder",
+            )
         )
         session.commit()
 
