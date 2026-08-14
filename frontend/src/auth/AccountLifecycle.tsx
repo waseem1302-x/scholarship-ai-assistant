@@ -123,7 +123,7 @@ export function EmailVerificationPage() {
 }
 
 export function PasswordResetPage() {
-  const { signOut } = useAuth();
+  const { clearRevokedSession } = useAuth();
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState("");
   const [token, setToken] = useState(searchParams.get("token") ?? "");
@@ -160,7 +160,10 @@ export function PasswordResetPage() {
     setIsConfirming(true);
     try {
       await apiClient.confirmPasswordReset(token.trim(), newPassword);
-      void signOut().catch(() => undefined);
+      // The successful reset endpoint is the server confirmation that prior
+      // refresh/access sessions were revoked; synchronize local state without
+      // issuing a second logout request against an already-revoked session.
+      clearRevokedSession();
       setCompleted(true);
     } catch (requestError) {
       setError(messageFor(requestError, "Unable to reset this password."));
