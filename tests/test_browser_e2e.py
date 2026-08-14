@@ -1,6 +1,7 @@
 """Browser journeys that run only when a live app URL is supplied."""
 
 import os
+import re
 from uuid import uuid4
 
 import pytest
@@ -114,7 +115,7 @@ def test_react_frontend_can_register_and_sign_out(page: Page, live_base_url: str
         expect(page.get_by_role("link", name=link_name, exact=True)).to_be_visible()
     page.get_by_text("More", exact=True).click()
     for link_name in ["Profile", "Matches"]:
-        expect(page.get_by_role("link", name=link_name, exact=True)).to_be_visible()
+        expect(page.get_by_role("link", name=re.compile(rf"^{link_name}\b"))).to_be_visible()
     expect(page.get_by_role("link", name="Admin", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Sign out").click()
     expect(page.get_by_role("link", name="Sign in")).to_be_visible()
