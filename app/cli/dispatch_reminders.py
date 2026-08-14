@@ -3,9 +3,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from sqlalchemy import exists, select, update
-from sqlalchemy.orm import Session
-
 from app.db.session import SystemSessionLocal
 from app.modules.applications.models import (
     Application,
@@ -15,6 +12,8 @@ from app.modules.applications.models import (
     ReminderWorkerHealth,
 )
 from app.modules.operations.service import OperationalJobService
+from sqlalchemy import exists, select, update
+from sqlalchemy.orm import Session
 
 
 def dispatch_due_reminders(
