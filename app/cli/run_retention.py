@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 from app.core.config import get_settings
-from app.db.session import SessionLocal
+from app.db.session import SystemSessionLocal
 from app.modules.assistant.service import AssistantService
 from app.modules.auth.service import AuthService
 from app.modules.document_lab.service import DocumentLabService
@@ -13,7 +13,7 @@ from app.modules.operations.service import OperationalJobService
 
 def main() -> None:
     settings = get_settings()
-    with SessionLocal() as session:
+    with SystemSessionLocal() as session:
         health = OperationalJobService(session)
         health.started("retention")
         try:
