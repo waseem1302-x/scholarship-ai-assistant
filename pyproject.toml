@@ -32,7 +32,8 @@ dev = [
   "pytest>=8.4,<10",
   "pytest-cov>=6.2,<8",
   "pytest-playwright>=0.7,<1",
-  "ruff>=0.12,<1",
+  # Keep formatter output reproducible across CI/local runs; upgrade deliberately.
+  "ruff==0.16.2",
 ]
 
 [tool.hatch.build.targets.wheel]
