@@ -126,6 +126,7 @@ def test_audit_chain_verifier_detects_storage_tampering(db_session) -> None:
     assert valid is False
     assert bad_id == first.id
 
+
 def test_multiple_audit_rows_in_one_flush_form_one_chain(db_session) -> None:
     first = AuditLog(
         actor_user_id=None,
