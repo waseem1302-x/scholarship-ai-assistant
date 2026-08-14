@@ -125,3 +125,24 @@ def test_audit_chain_verifier_detects_storage_tampering(db_session) -> None:
 
     assert valid is False
     assert bad_id == first.id
+
+def test_multiple_audit_rows_in_one_flush_form_one_chain(db_session) -> None:
+    first = AuditLog(
+        actor_user_id=None,
+        action="test.same_flush.first",
+        entity_type="test",
+        entity_id="same-flush-one",
+        metadata_json={"safe": True},
+    )
+    second = AuditLog(
+        actor_user_id=None,
+        action="test.same_flush.second",
+        entity_type="test",
+        entity_id="same-flush-two",
+        metadata_json={"safe": True},
+    )
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    assert second.previous_integrity_hash == first.integrity_hash
+    assert verify_audit_integrity_chain(db_session) == (True, None)
