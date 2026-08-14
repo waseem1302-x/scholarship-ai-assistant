@@ -157,7 +157,7 @@ export function CataloguePage() {
     <main className="catalogue-page page-width">
       <section className="catalogue-header">
         <div>
-          <p className="eyebrow">Verified opportunity catalogue</p>
+          <p className="eyebrow">Verified scholarships</p>
           <h1>Find the opportunities worth your attention.</h1>
           <p className="lead">Every result has an active, officially verified source. Open opportunities appear first, followed by upcoming and deadline-variable records; deadlines and eligibility still need your careful review.</p>
         </div>
@@ -180,7 +180,7 @@ export function CataloguePage() {
 
         {error ? (
           <div className="catalogue-message error-message" role="alert">
-            <h2>We could not load the catalogue.</h2>
+            <h2>We could not load scholarships.</h2>
             <p>{error}</p>
             <button className="button button-quiet" type="button" onClick={reload}>Try again</button>
           </div>
@@ -197,7 +197,7 @@ export function CataloguePage() {
       </section>
 
       {pagination ? (
-        <nav className="pagination" aria-label="Catalogue pagination">
+        <nav className="pagination" aria-label="Scholarship pagination">
           <button className="button button-quiet" type="button" disabled={!pagination.has_previous} onClick={() => updateSearch(filters, Math.max(0, offset - pagination.limit))}>Previous</button>
           <span>Page {Math.floor(offset / pagination.limit) + 1}</span>
           <button className="button button-quiet" type="button" disabled={!pagination.has_next} onClick={() => updateSearch(filters, offset + pagination.limit)}>Next</button>

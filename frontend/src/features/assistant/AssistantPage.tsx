@@ -194,12 +194,12 @@ export function AssistantPage() {
     <section className="assistant-intro">
       <p className="eyebrow">Private citation-first assistant</p>
       <h1>Research scholarships with evidence in view.</h1>
-      <p>Answers use the catalogue’s verified official sources. Always confirm requirements, deadlines, funding, and eligibility directly with the provider.</p>
+      <p>Answers use verified scholarship sources. Always confirm requirements, deadlines, funding, and eligibility directly with the provider.</p>
     </section>
     <section className="assistant-panel">
       {!preferences ? <p>Loading privacy settings…</p> : !preferences.consented ? <div className="assistant-warning" role="alert">
         <strong>Data-use notice</strong>
-        <p>The assistant uses your question and, only when selected, your profile or application workspace to search verified catalogue sources. Chat history is retained for {preferences.history_retention_days} days; feedback for {preferences.feedback_retention_days} days. It never reads documents, notes, or another student’s data.</p>
+        <p>The assistant uses your question and, only when selected, your profile or application workspace to search verified scholarship sources. Chat history is retained for {preferences.history_retention_days} days; feedback for {preferences.feedback_retention_days} days. It never reads documents, notes, or another student’s data.</p>
         <button className="button button-primary" type="button" onClick={consent}>I understand and agree</button>
       </div> : <div className="assistant-settings">
         <span>History: {preferences.history_enabled ? "enabled" : "disabled"}</span>

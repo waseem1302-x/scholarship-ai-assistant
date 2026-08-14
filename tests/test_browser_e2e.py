@@ -1,6 +1,7 @@
 """Browser journeys that run only when a live app URL is supplied."""
 
 import os
+import re
 from uuid import uuid4
 
 import pytest
@@ -21,9 +22,9 @@ def live_base_url() -> str:
 def test_auth_form_is_keyboard_reachable(page: Page, live_base_url: str) -> None:
     page.goto(live_base_url, wait_until="networkidle")
 
-    expect(page.get_by_role("link", name="Catalogue", exact=True)).to_be_visible()
+    expect(page.get_by_role("link", name="Scholarships", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Dashboard", exact=True)).to_have_count(0)
-    page.get_by_role("link", name="Get started").click()
+    page.get_by_role("link", name="Sign in").click()
     email = page.get_by_label("Email address", exact=True)
     password = page.get_by_label("Password")
     email.focus()
@@ -73,7 +74,7 @@ def test_public_home_can_browse_scholarships_without_an_account(
 ) -> None:
     page.goto(live_base_url, wait_until="networkidle")
 
-    page.get_by_role("link", name="Browse scholarships").click()
+    page.get_by_role("link", name="Scholarships", exact=True).click()
 
     expect(page).to_have_url(f"{live_base_url}/catalogue")
     expect(
@@ -97,10 +98,10 @@ def test_react_frontend_can_register_and_sign_out(page: Page, live_base_url: str
 
     page.goto(live_base_url, wait_until="networkidle")
     expect(
-        page.get_by_role("heading", name="Make your next scholarship decision with confidence.")
+        page.get_by_role("heading", name="Find scholarships you can actually act on.")
     ).to_be_visible()
 
-    page.get_by_role("link", name="Get started").click()
+    page.get_by_role("link", name="Sign in").click()
     page.get_by_role("tab", name="Create account").click()
     page.get_by_label("Email address", exact=True).fill(email)
     page.get_by_label("Password").fill("PhaseThree!2026")
@@ -110,11 +111,11 @@ def test_react_frontend_can_register_and_sign_out(page: Page, live_base_url: str
     expect(
         page.get_by_role("heading", name=f"Good to see you, {email.split('@')[0]}.")
     ).to_be_visible()
-    for link_name in ["Catalogue", "Dashboard", "Applications", "Assistant"]:
+    for link_name in ["Scholarships", "Dashboard", "Applications", "Assistant"]:
         expect(page.get_by_role("link", name=link_name, exact=True)).to_be_visible()
     page.get_by_text("More", exact=True).click()
     for link_name in ["Profile", "Matches"]:
-        expect(page.get_by_role("link", name=link_name, exact=True)).to_be_visible()
+        expect(page.get_by_role("link", name=re.compile(rf"^{link_name}\b"))).to_be_visible()
     expect(page.get_by_role("link", name="Admin", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Sign out").click()
     expect(page.get_by_role("link", name="Sign in")).to_be_visible()
@@ -125,7 +126,7 @@ def test_react_email_verification_and_password_reset(page: Page, live_base_url: 
     new_password = "UpdatedPassword2026"
 
     page.goto(live_base_url, wait_until="networkidle")
-    page.get_by_role("link", name="Get started").click()
+    page.get_by_role("link", name="Sign in").click()
     page.get_by_role("tab", name="Create account").click()
     page.get_by_label("Email address", exact=True).fill(email)
     page.get_by_label("Password").fill("LifecyclePassword2026")
@@ -543,7 +544,7 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
 
     page.goto(f"{live_base_url}/admin", wait_until="networkidle")
 
-    expect(page.get_by_role("heading", name="Keep the catalogue trustworthy.")).to_be_visible()
+    expect(page.get_by_role("heading", name="Keep scholarships trustworthy.")).to_be_visible()
     expect(page.get_by_role("heading", name="Admin Review Test Scholarship")).to_be_visible()
     expect(page.get_by_text("source requires review").first).to_be_visible()
     assert page.get_by_label("Administrator password").count() == 2
