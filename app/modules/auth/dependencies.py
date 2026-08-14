@@ -2,16 +2,15 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import Depends, Header, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
-
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError, AuthenticationError
 from app.core.security import decode_access_token, hash_refresh_token
 from app.db.session import bind_tenant_context, get_db
 from app.modules.auth.models import ADMIN_STEP_UP_SCOPE, User, UserRole
 from app.modules.auth.repository import AuthRepository
+from fastapi import Depends, Header, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
