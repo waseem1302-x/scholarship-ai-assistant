@@ -25,7 +25,9 @@ def configure_http_middleware(application: FastAPI, settings: Settings) -> None:
     and CORS so error responses receive the same browser protections.
     """
     configure_observability(settings)
-    application.state.metrics = OperationalMetrics()
+    application.state.metrics = OperationalMetrics(
+        external_enabled=settings.metrics_backend == "external"
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

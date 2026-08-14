@@ -426,7 +426,7 @@ class OpportunityService:
                 action="source_verification_updated",
                 entity_type="opportunity",
                 entity_id=str(opportunity.id),
-            metadata_json={"verification_status": payload.verification_status.value},
+                metadata_json={"verification_status": payload.verification_status.value},
             )
         )
         self.session.commit()
@@ -932,8 +932,7 @@ class OpportunityService:
             {
                 OpportunityRepository.structured_value_key(value)
                 for value in values
-                if isinstance(value, str)
-                and OpportunityRepository.structured_value_key(value)
+                if isinstance(value, str) and OpportunityRepository.structured_value_key(value)
             }
         )
 

@@ -3,9 +3,13 @@
 import io
 import xml.etree.ElementTree as element_tree
 import zipfile
-from concurrent.futures import ProcessPoolExecutor, TimeoutError
 
 from app.core.errors import AppError
+from app.modules.document_lab.process_sandbox import (
+    BoundedProcessFailed,
+    BoundedProcessTimeout,
+    run_bounded_process,
+)
 from app.modules.document_lab.validation import (
     DOCX_CONTENT_TYPE,
     PDF_CONTENT_TYPE,
@@ -19,33 +23,40 @@ def extract_restricted(
     max_characters: int,
     timeout_seconds: int = 10,
 ) -> str:
-    """Extract in a short-lived subprocess.
+    """Extract in a fresh parser process with a hard parent-owned deadline.
 
-    The subprocess receives only bytes and cannot execute document code. Linux
-    production containers additionally run it with a no-network namespace; the
-    Python boundary remains deterministic for local Windows development.
+    The child receives only document bytes and deterministic configuration. If
+    it exceeds the wall-clock deadline, the parent terminates/kills the concrete
+    process before returning. POSIX children also receive CPU, memory, file-
+    descriptor, output-size, and core-dump limits.
+
+    Production keeps Document Lab disabled unless deployment-level parser
+    isolation (including no-network and restricted filesystem controls) has
+    separately been approved and enabled.
     """
-    with ProcessPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_extract_result, content, content_type, max_characters)
-        try:
-            text, failure_code = future.result(timeout=timeout_seconds)
-            if failure_code:
-                raise AppError(failure_code, "Document extraction failed.", 422)
-            assert text is not None
-            return text
-        except TimeoutError as exc:
-            future.cancel()
-            raise AppError("extraction_timeout", "Document extraction timed out.", 422) from exc
-        except AppError:
-            raise
-        except Exception as exc:
-            raise AppError("extraction_failed", "Document extraction failed.", 422) from exc
+
+    try:
+        text, failure_code = run_bounded_process(
+            _extract_result,
+            (content, content_type, max_characters),
+            timeout_seconds=timeout_seconds,
+        )
+    except BoundedProcessTimeout as exc:
+        raise AppError("extraction_timeout", "Document extraction timed out.", 422) from exc
+    except BoundedProcessFailed as exc:
+        raise AppError("extraction_failed", "Document extraction failed.", 422) from exc
+
+    if failure_code:
+        raise AppError(failure_code, "Document extraction failed.", 422)
+    assert text is not None
+    return text
 
 
 def _extract_result(
     content: bytes, content_type: str, max_characters: int
 ) -> tuple[str | None, str | None]:
-    """Return serializable worker results; `AppError` itself cannot be pickled."""
+    """Return serializable worker results; `AppError` itself is not transported."""
+
     try:
         return _extract(content, content_type, max_characters), None
     except AppError as exc:

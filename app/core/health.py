@@ -81,9 +81,7 @@ def register_health_routes(application: FastAPI, settings: Settings) -> None:
                     {
                         "run_id": str(run.id),
                         "started_at": run.started_at.isoformat(),
-                        "completed_at": run.completed_at.isoformat()
-                        if run.completed_at
-                        else None,
+                        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
                         "duration_ms": run.duration_ms,
                         "processed": run.processed_count,
                         "failed": run.failed_count,

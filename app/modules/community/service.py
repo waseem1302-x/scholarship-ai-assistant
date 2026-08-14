@@ -118,11 +118,8 @@ class CommunityService:
         bookmarked_only: bool = False,
     ) -> CommunityPostListResponse:
         blocked_ids = self._blocked_ids(user.id)
-        statement = (
-            select(CommunityPost)
-            .where(
-                CommunityPost.status == CommunityContentStatus.VISIBLE,
-            )
+        statement = select(CommunityPost).where(
+            CommunityPost.status == CommunityContentStatus.VISIBLE,
         )
         if blocked_ids:
             statement = statement.where(CommunityPost.author_user_id.not_in(blocked_ids))
@@ -761,9 +758,7 @@ class CommunityService:
     def _blocked_ids(self, user_id: uuid.UUID) -> set[uuid.UUID]:
         outgoing = select(CommunityBlock.blocked_user_id).where(CommunityBlock.user_id == user_id)
         incoming = select(CommunityBlock.user_id).where(CommunityBlock.blocked_user_id == user_id)
-        return set(self.session.scalars(outgoing).all()) | set(
-            self.session.scalars(incoming).all()
-        )
+        return set(self.session.scalars(outgoing).all()) | set(self.session.scalars(incoming).all())
 
     def _community_user_id(self, public_id: uuid.UUID) -> uuid.UUID:
         preference = self.session.scalar(

@@ -130,9 +130,7 @@ class DocumentLabService:
         )
         self.session.add(asset)
         self.session.flush()
-        version = self._create_version(
-            asset, user.id, 1, declared_content_type, content, validated
-        )
+        version = self._create_version(asset, user.id, 1, declared_content_type, content, validated)
         self._commit_with_storage_compensation([version.storage_key])
         return self._asset_response(asset)
 
@@ -948,8 +946,7 @@ class DocumentLabService:
         cutoff = utc_now() - timedelta(days=self.settings.document_lab_analysis_retention_days)
         rows = self.session.execute(
             select(DocumentAnalysis.id, DocumentAnalysis.consent_id).where(
-                func.coalesce(DocumentAnalysis.completed_at, DocumentAnalysis.created_at)
-                <= cutoff
+                func.coalesce(DocumentAnalysis.completed_at, DocumentAnalysis.created_at) <= cutoff
             )
         ).all()
         if not rows:

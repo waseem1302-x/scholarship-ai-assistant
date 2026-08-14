@@ -10,6 +10,7 @@ const apiMocks = vi.hoisted(() => {
   return {
     restoreSession: vi.fn(),
     signOut: vi.fn(),
+    setAccessToken: vi.fn(),
     ApiError,
   };
 });
@@ -31,13 +32,16 @@ const user = {
 };
 
 function SessionProbe() {
-  const { user: currentUser, sessionError, signOut } = useAuth();
+  const { user: currentUser, sessionError, signOut, clearRevokedSession } = useAuth();
   return (
     <>
       <p>{currentUser?.email ?? "signed out"}</p>
       {sessionError ? <p role="alert">{sessionError}</p> : null}
       <button type="button" onClick={() => void signOut().catch(() => undefined)}>
         Sign out
+      </button>
+      <button type="button" onClick={clearRevokedSession}>
+        Confirm revoked session
       </button>
     </>
   );
@@ -78,6 +82,22 @@ describe("AuthProvider logout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await screen.findByText("signed out");
+  });
+
+  it("clears local state without another logout after server-confirmed revocation", async () => {
+    apiMocks.restoreSession.mockResolvedValue(user);
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>,
+    );
+
+    await screen.findByText(user.email);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm revoked session" }));
+
+    await screen.findByText("signed out");
+    expect(apiMocks.signOut).not.toHaveBeenCalled();
+    expect(apiMocks.setAccessToken).toHaveBeenCalledWith(null);
   });
 });
 

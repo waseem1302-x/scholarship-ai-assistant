@@ -65,6 +65,7 @@ describe("logout", () => {
     await expect(client.signOut()).rejects.toMatchObject({ status: 503 });
     await client.currentUser();
 
+    expect(fetchMock.mock.calls[0][1].body).toBe(JSON.stringify({}));
     expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBe("Bearer access-token");
   });
 
@@ -79,6 +80,7 @@ describe("logout", () => {
     await client.signOut();
     await client.currentUser();
 
+    expect(fetchMock.mock.calls[0][1].body).toBe(JSON.stringify({}));
     expect(fetchMock.mock.calls[1][1].headers.get("Authorization")).toBeNull();
   });
 });

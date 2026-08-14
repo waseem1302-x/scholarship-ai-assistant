@@ -87,9 +87,7 @@ def pdf(text: str = "Private resume content", *, pages: int = 1) -> bytes:
                 ),
                 (
                     content_id,
-                    f"<< /Length {len(stream)} >>\nstream\n".encode()
-                    + stream
-                    + b"\nendstream",
+                    f"<< /Length {len(stream)} >>\nstream\n".encode() + stream + b"\nendstream",
                 ),
             ]
         )
@@ -102,8 +100,7 @@ def pdf(text: str = "Private resume content", *, pages: int = 1) -> bytes:
     output += f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode()
     output += b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets[1:])
     output += (
-        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
-        f"startxref\n{xref_at}\n%%EOF\n"
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n"
     ).encode()
     return output
 

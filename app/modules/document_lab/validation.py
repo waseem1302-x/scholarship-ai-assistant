@@ -2,11 +2,15 @@
 
 import io
 import zipfile
-from concurrent.futures import ProcessPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from pathlib import PurePath
 
 from app.core.errors import AppError
+from app.modules.document_lab.process_sandbox import (
+    BoundedProcessFailed,
+    BoundedProcessTimeout,
+    run_bounded_process,
+)
 
 PDF_CONTENT_TYPE = "application/pdf"
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -55,18 +59,17 @@ def _validate_pdf(declared: str, content: bytes, max_pages: int) -> ValidatedDoc
     return ValidatedDocument(detected_content_type=PDF_CONTENT_TYPE, page_count=page_count)
 
 
-def _validate_pdf_in_subprocess(
-    content: bytes, max_pages: int
-) -> tuple[int | None, str | None]:
-    with ProcessPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_validate_pdf_result, content, max_pages)
-        try:
-            return future.result(timeout=PDF_VALIDATION_TIMEOUT_SECONDS)
-        except TimeoutError:
-            future.cancel()
-            return None, "pdf_parser_timeout"
-        except Exception:
-            return None, "malformed_pdf"
+def _validate_pdf_in_subprocess(content: bytes, max_pages: int) -> tuple[int | None, str | None]:
+    try:
+        return run_bounded_process(
+            _validate_pdf_result,
+            (content, max_pages),
+            timeout_seconds=PDF_VALIDATION_TIMEOUT_SECONDS,
+        )
+    except BoundedProcessTimeout:
+        return None, "pdf_parser_timeout"
+    except BoundedProcessFailed:
+        return None, "malformed_pdf"
 
 
 def _validate_pdf_result(content: bytes, max_pages: int) -> tuple[int | None, str | None]:

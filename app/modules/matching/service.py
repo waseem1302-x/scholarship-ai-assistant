@@ -153,12 +153,8 @@ class MatchingService:
         eligibility_rules = [rule for rule in rules if rule.category == "eligibility"]
         preference_rules = [rule for rule in rules if rule.category == "preference"]
         missing_information = [item for rule in rules for item in rule.uncertain]
-        eligibility_failures = [
-            item for rule in eligibility_rules for item in rule.missing
-        ]
-        preference_mismatches = [
-            item for rule in preference_rules for item in rule.missing
-        ]
+        eligibility_failures = [item for rule in eligibility_rules for item in rule.missing]
+        preference_mismatches = [item for rule in preference_rules for item in rule.missing]
         answered = sum(bool(rule.satisfied or rule.missing) for rule in rules)
         completeness = round((answered / len(rules)) * 100) if rules else 0
         profile_completeness = _matching_profile_completeness(profile)

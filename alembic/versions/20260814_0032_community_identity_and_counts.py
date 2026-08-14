@@ -5,8 +5,8 @@ Revises: 20260814_0031
 Create Date: 2026-08-14
 """
 
-from collections.abc import Sequence
 import uuid
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 
@@ -46,16 +46,12 @@ def upgrade() -> None:
         batch_op.alter_column(
             "display_name_normalized", existing_type=sa.String(40), nullable=False
         )
-        batch_op.create_unique_constraint(
-            "uq_community_preferences_public_id", ["public_id"]
-        )
+        batch_op.create_unique_constraint("uq_community_preferences_public_id", ["public_id"])
         batch_op.create_unique_constraint(
             "uq_community_preferences_display_name_normalized",
             ["display_name_normalized"],
         )
-    op.create_index(
-        "ix_community_preferences_public_id", "community_preferences", ["public_id"]
-    )
+    op.create_index("ix_community_preferences_public_id", "community_preferences", ["public_id"])
     op.create_index(
         "ix_community_preferences_display_name_normalized",
         "community_preferences",
@@ -67,9 +63,7 @@ def downgrade() -> None:
     op.drop_index("ix_community_preferences_display_name_normalized", "community_preferences")
     op.drop_index("ix_community_preferences_public_id", "community_preferences")
     with op.batch_alter_table("community_preferences") as batch_op:
-        batch_op.drop_constraint(
-            "uq_community_preferences_display_name_normalized", type_="unique"
-        )
+        batch_op.drop_constraint("uq_community_preferences_display_name_normalized", type_="unique")
         batch_op.drop_constraint("uq_community_preferences_public_id", type_="unique")
         batch_op.drop_column("display_name_normalized")
         batch_op.drop_column("public_id")
