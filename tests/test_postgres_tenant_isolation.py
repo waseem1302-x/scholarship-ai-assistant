@@ -3,6 +3,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
+
 from app.db.session import bind_tenant_context
 from app.modules.applications.models import (
     Application,
@@ -32,10 +37,6 @@ from app.modules.document_lab.models import (
 from app.modules.matching.models import MatchEvaluation
 from app.modules.opportunities.models import DegreeLevel, Opportunity, Provider
 from app.modules.profiles.models import StudentProfile
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.postgres
 
