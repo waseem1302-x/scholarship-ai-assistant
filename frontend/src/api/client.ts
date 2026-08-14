@@ -162,7 +162,10 @@ export class ApiClient {
   }
 
   async signOut(): Promise<void> {
-    await this.request<void>("/auth/logout", { method: "POST" });
+    await this.request<void>("/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
     this.setAccessToken(null);
   }
 
