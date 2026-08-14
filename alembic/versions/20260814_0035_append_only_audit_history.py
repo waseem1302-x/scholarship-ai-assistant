@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import sqlalchemy as sa
@@ -38,9 +38,18 @@ def _audit_table() -> sa.TableClause:
     )
 
 
+def _canonical_timestamp(value: Any) -> str:
+    if not isinstance(value, datetime):
+        return str(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    else:
+        value = value.astimezone(UTC)
+    return value.isoformat()
+
+
 def _hash_row(row: Any, previous_hash: str | None) -> str:
-    created_at = row.created_at
-    created_value = created_at.isoformat() if isinstance(created_at, datetime) else str(created_at)
+    created_value = _canonical_timestamp(row.created_at)
     payload = {
         "previous_hash": previous_hash,
         "id": str(row.id),
