@@ -16,6 +16,7 @@ import math
 import multiprocessing as mp
 import os
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Any
@@ -116,10 +117,8 @@ def _child_entry[T](
         result = function(*args)
         connection.send(("ok", result))
     except BaseException as exc:  # child boundary converts failures to safe categories
-        try:
+        with suppress(BaseException):
             connection.send(("error", type(exc).__name__))
-        except BaseException:
-            pass
     finally:
         connection.close()
 
