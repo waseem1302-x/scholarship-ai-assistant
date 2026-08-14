@@ -17,6 +17,7 @@ interface AuthContextValue {
     acceptBetaTerms?: boolean,
   ) => Promise<void>;
   signOut: () => Promise<void>;
+  clearRevokedSession: () => void;
   updateUser: (user: User) => void;
 }
 
@@ -79,6 +80,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async signOut() {
         await apiClient.signOut();
         sessionGeneration.current += 1;
+        setUser(null);
+        setSessionError(null);
+        setIsRestoring(false);
+      },
+      clearRevokedSession() {
+        // Use only after a server operation (for example password reset) has
+        // already confirmed that all prior sessions were revoked. This does
+        // not weaken normal logout, which still waits for server confirmation.
+        sessionGeneration.current += 1;
+        apiClient.setAccessToken(null);
         setUser(null);
         setSessionError(null);
         setIsRestoring(false);
