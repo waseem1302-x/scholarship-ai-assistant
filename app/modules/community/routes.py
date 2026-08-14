@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.errors import ErrorResponse
-from app.db.session import get_db
+from app.db.session import get_db, get_system_db
 from app.modules.auth.dependencies import (
     CurrentUser,
     require_admin_step_up,
@@ -43,6 +43,13 @@ NOT_FOUND = {
 
 def get_community_service(
     session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> CommunityService:
+    return CommunityService(session, settings)
+
+
+def get_privileged_community_service(
+    session: Annotated[Session, Depends(get_system_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> CommunityService:
     return CommunityService(session, settings)
@@ -287,7 +294,7 @@ def delete_data(
     responses={401: AUTH, 403: {"model": ErrorResponse}},
 )
 def moderation_queue(
-    service: Annotated[CommunityService, Depends(get_community_service)],
+    service: Annotated[CommunityService, Depends(get_privileged_community_service)],
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
 ):
@@ -303,7 +310,7 @@ def moderation_queue(
 def moderate(
     payload: CommunityModerationActionRequest,
     user: CurrentUser,
-    service: Annotated[CommunityService, Depends(get_community_service)],
+    service: Annotated[CommunityService, Depends(get_privileged_community_service)],
 ) -> Response:
     service.moderate(payload, user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
