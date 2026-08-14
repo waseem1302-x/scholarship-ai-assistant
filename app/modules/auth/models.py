@@ -230,6 +230,16 @@ class AuditLog(Base):
     )
 
 
+def canonical_audit_timestamp(created_at: datetime) -> str:
+    """Normalize database timestamp representations before hashing."""
+
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    else:
+        created_at = created_at.astimezone(UTC)
+    return created_at.isoformat()
+
+
 def audit_integrity_hash(
     *,
     previous_hash: str | None,
@@ -249,7 +259,7 @@ def audit_integrity_hash(
         "entity_type": entity_type,
         "entity_id": entity_id,
         "metadata_json": metadata_json,
-        "created_at": created_at.isoformat(),
+        "created_at": canonical_audit_timestamp(created_at),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
