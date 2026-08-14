@@ -1,12 +1,11 @@
-from collections.abc import Generator
 import uuid
+from collections.abc import Generator
 
+from app.core.config import get_settings
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.session import SessionTransaction
-
-from app.core.config import get_settings
 
 _TENANT_ID_KEY = "tenant_id"
 _TENANT_BYPASS_KEY = "tenant_bypass"
@@ -33,18 +32,14 @@ def _reject_privileged_production_runtime(
 
     cursor = dbapi_connection.cursor()
     try:
-        cursor.execute(
-            "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user"
-        )
+        cursor.execute("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
         role_properties = cursor.fetchone()
     finally:
         cursor.close()
         dbapi_connection.rollback()
 
     if role_properties is None or any(role_properties):
-        raise RuntimeError(
-            "Production APP_DATABASE_URL must use a NOSUPERUSER NOBYPASSRLS role"
-        )
+        raise RuntimeError("Production APP_DATABASE_URL must use a NOSUPERUSER NOBYPASSRLS role")
 
 
 def _apply_postgres_context(session: Session, connection: Connection) -> None:
