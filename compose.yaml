@@ -36,7 +36,9 @@ services:
       APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
       APP_JWT_SECRET: local-compose-secret-change-before-any-shared-deployment
       APP_CORS_ORIGINS: http://localhost:3000
-      APP_DOCUMENT_LAB_ENABLED: "true"
+      # The default stack must not advertise intake without its scanner/worker. Operators enabling
+      # the documents profile must also explicitly set APP_DOCUMENT_LAB_ENABLED=true.
+      APP_DOCUMENT_LAB_ENABLED: ${APP_DOCUMENT_LAB_ENABLED:-false}
       APP_DOCUMENT_LAB_STORAGE_ROOT: /app/document-data
     volumes:
       - document_lab_data:/app/document-data
@@ -149,8 +151,7 @@ services:
 
 volumes:
   postgres_data:
-    # Preserve the existing development database when moving from Compose's
-    # former default project name to the explicit project name above.
-    external: true
-    name: scholarshipaiassistant_postgres_data
+    # Compose manages a fresh default volume. Existing developers can opt into
+    # a legacy volume with POSTGRES_DATA_VOLUME=scholarshipaiassistant_postgres_data.
+    name: ${POSTGRES_DATA_VOLUME:-scholarship-ai-assistant-postgres-data}
   document_lab_data:

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    name: str = "Scholarship AI Assistant API"
+    name: str = "Source-backed Scholarship Assistant API"
     env: Literal["development", "test", "production"] = "development"
     debug: bool = False
     database_url: str = "postgresql+psycopg://scholarship:scholarship@localhost:5432/scholarship"
@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     # WebAuthn is administrator-only. The RP values deliberately cannot be
     # inferred from a request Host header in production.
     webauthn_rp_id: str | None = None
-    webauthn_rp_name: str = "Scholarship AI Assistant"
+    webauthn_rp_name: str = "Source-backed Scholarship Assistant"
     webauthn_origins: str = ""
     webauthn_challenge_ttl_minutes: int = Field(default=5, ge=1, le=15)
     reminder_worker_poll_seconds: int = Field(default=60, ge=10, le=3600)
@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     assistant_daily_user_limit: int = Field(default=30, ge=1, le=500)
     assistant_monthly_user_limit: int = Field(default=300, ge=1, le=5000)
     assistant_rate_limit_per_minute: int = Field(default=12, ge=1, le=120)
+    assistant_global_daily_limit: int = Field(default=1_000, ge=1, le=1_000_000)
     assistant_history_retention_days: int = Field(default=30, ge=1, le=365)
     assistant_feedback_retention_days: int = Field(default=365, ge=30, le=1825)
     assistant_audit_retention_days: int = Field(default=365, ge=30, le=1825)
@@ -144,6 +145,7 @@ class Settings(BaseSettings):
     document_lab_upload_rate_limit_per_minute: int = Field(default=6, ge=1, le=60)
     document_lab_daily_user_limit: int = Field(default=20, ge=1, le=200)
     document_lab_daily_analysis_limit: int = Field(default=10, ge=1, le=100)
+    document_lab_global_daily_upload_limit: int = Field(default=500, ge=1, le=100_000)
     document_lab_retention_days: int = Field(default=30, ge=1, le=365)
     document_lab_analysis_retention_days: int = Field(default=30, ge=1, le=365)
     document_lab_provider: str = "unavailable"

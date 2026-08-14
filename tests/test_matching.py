@@ -489,7 +489,9 @@ def test_missing_or_waived_structured_test_evidence_stays_unknown(
 
     result = client.get("/api/v1/matches/me", headers=student_headers).json()["results"][0]
 
-    assert result["eligibility_status"] == "likely_eligible"
+    assert result["eligibility_status"] == "requires_verification"
+    assert result["display_label"] == "Low criteria alignment"
+    assert result["fit_band"] == "low_alignment"
     assert result["fit_score"] == 0
     assert result["failed_criteria"] == []
     assert result["eligibility_failures"] == []

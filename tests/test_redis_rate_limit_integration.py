@@ -1,4 +1,6 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 from fastapi import FastAPI
@@ -8,6 +10,29 @@ from app.core.config import Settings
 from app.core.rate_limit import AuthRateLimitMiddleware, RedisRateLimitStore
 
 pytestmark = pytest.mark.redis
+
+
+def test_redis_quota_consumption_is_atomic_under_concurrency() -> None:
+    redis_url = os.environ.get("TEST_REDIS_URL")
+    if redis_url is None:
+        pytest.skip("TEST_REDIS_URL is required for the disposable Redis integration test")
+    store = RedisRateLimitStore(redis_url, timeout_seconds=2)
+    logical_key = "concurrency:single-winner"
+    redis_key = f"phase9:rate-limit:{logical_key}"
+    store._client.delete(redis_key)
+    barrier = Barrier(12)
+
+    def compete() -> bool:
+        barrier.wait()
+        return store.consume(key=logical_key, limit=1, window_seconds=60).allowed
+
+    try:
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            results = list(executor.map(lambda _: compete(), range(12)))
+        assert results.count(True) == 1
+        assert results.count(False) == 11
+    finally:
+        store._client.delete(redis_key)
 
 
 def test_production_login_limiting_uses_disposable_redis() -> None:

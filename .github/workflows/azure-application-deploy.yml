@@ -4,12 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Target must be staging first. Beta requires a separately approved, immutable staging image.'
+        description: 'Staging builds a candidate. Beta imports only a successful staging provenance artifact.'
         required: true
         type: choice
-        options:
-          - staging
-          - beta
+        options: [staging, beta]
       resource_prefix:
         description: 'Existing foundation prefix for the selected isolated resource group.'
         required: true
@@ -19,23 +17,24 @@ on:
         required: true
         type: string
       app_origin:
-        description: 'Exact HTTPS origin. Use https://bootstrap.invalid only for the initial non-beta staging smoke release.'
+        description: 'Exact HTTPS origin. bootstrap.invalid is allowed only for initial staging.'
         required: true
         type: string
       webauthn_rp_id:
-        description: 'WebAuthn RP ID matching the exact origin (bootstrap.invalid is permitted only while beta is off).'
+        description: 'WebAuthn RP ID matching the exact origin.'
         required: true
         type: string
-      image_reference:
-        description: 'Optional previously verified ACR digest reference for beta promotion. Leave blank only to build the current commit for staging.'
+      staging_run_id:
+        description: 'Required for beta: successful staging run containing release-provenance.'
         required: false
         type: string
       deployment_confirmation:
-        description: 'Enter DEPLOY_STAGING or PROMOTE_BETA after reviewing the target and cost status.'
+        description: 'Enter DEPLOY_STAGING or PROMOTE_BETA after reviewing target, CI, and cost.'
         required: true
         type: string
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -45,82 +44,133 @@ concurrency:
 
 jobs:
   deploy:
-    # Each GitHub Environment must require the appropriate human approval.
+    # Repository setup must create both environments with required reviewers and exact OIDC subjects.
     environment: azure-${{ inputs.environment }}
     runs-on: ubuntu-latest
     if: >-
       (inputs.environment == 'staging' && inputs.deployment_confirmation == 'DEPLOY_STAGING') ||
-      (inputs.environment == 'beta' && inputs.deployment_confirmation == 'PROMOTE_BETA')
+      (inputs.environment == 'beta' && inputs.deployment_confirmation == 'PROMOTE_BETA' && inputs.staging_run_id != '')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # These identifiers are GitHub Environment variables, never client secrets.
-      # The federated credential is constrained in Entra ID to this repository and
-      # environment. See infra/azure/README.md before enabling this workflow.
+      - name: Download immutable staging provenance for beta
+        if: inputs.environment == 'beta'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-provenance
+          path: release-provenance
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.staging_run_id }}
+
+      - name: Validate staging provenance
+        if: inputs.environment == 'beta'
+        id: provenance
+        env:
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_RUN_ID: ${{ inputs.staging_run_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('release-provenance/release-provenance.json')
+          record = json.loads(path.read_text(encoding='utf-8'))
+          required = {'repository', 'commit_sha', 'image_reference', 'staging_run_id', 'environment', 'candidate_smoke'}
+          if required - record.keys(): raise SystemExit('Staging provenance is incomplete')
+          if record['repository'] != os.environ['EXPECTED_REPOSITORY']: raise SystemExit('Repository mismatch')
+          if str(record['staging_run_id']) != os.environ['EXPECTED_RUN_ID']: raise SystemExit('Run mismatch')
+          if record['environment'] != 'staging' or record['candidate_smoke'] != 'passed': raise SystemExit('Smoke gate absent')
+          if '@sha256:' not in record['image_reference'] or len(record['commit_sha']) != 40: raise SystemExit('Provenance is mutable')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+              output.write(f"source_reference={record['image_reference']}\n")
+              output.write(f"staging_sha={record['commit_sha']}\n")
+          PY
+
       - name: Sign in to Azure with GitHub OIDC
-        uses: azure/login@v2
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and push immutable candidate image
+      - name: Build or import immutable candidate image
         id: image
-        shell: bash
         env:
           ACR_NAME: ${{ inputs.resource_prefix }}acr
-          REQUESTED_REFERENCE: ${{ inputs.image_reference }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          STAGING_REFERENCE: ${{ steps.provenance.outputs.source_reference }}
+          STAGING_SHA: ${{ steps.provenance.outputs.staging_sha }}
         run: |
           set -euo pipefail
           az acr login --name "$ACR_NAME"
           login_server="$(az acr show --name "$ACR_NAME" --query loginServer --output tsv)"
-          if [ -n "$REQUESTED_REFERENCE" ]; then
-            case "$REQUESTED_REFERENCE" in
-              "$login_server"/scholarship-ai-assistant@sha256:*) ;;
-              *) echo "The supplied image must be this registry's scholarship-ai-assistant digest."; exit 1 ;;
-            esac
-            echo "reference=$REQUESTED_REFERENCE" >> "$GITHUB_OUTPUT"
-          else
-            if [ "${{ inputs.environment }}" != "staging" ]; then
-              echo "Beta accepts only a previously verified immutable staging image reference."
-              exit 1
-            fi
-            image_tag="${GITHUB_SHA}"
+          if [ "$ENVIRONMENT" = staging ]; then
+            image_tag="$GITHUB_SHA"
             docker build --tag "$login_server/scholarship-ai-assistant:$image_tag" .
             docker push "$login_server/scholarship-ai-assistant:$image_tag"
-            digest="$(az acr repository show --name "$ACR_NAME" --image "scholarship-ai-assistant:$image_tag" --query digest --output tsv)"
-            test -n "$digest"
-            echo "reference=$login_server/scholarship-ai-assistant@$digest" >> "$GITHUB_OUTPUT"
+          else
+            test -n "$STAGING_REFERENCE"
+            image_tag="promoted-$STAGING_SHA"
+            az acr import --name "$ACR_NAME" --source "$STAGING_REFERENCE" --image "scholarship-ai-assistant:$image_tag" --force
           fi
+          digest="$(az acr repository show --name "$ACR_NAME" --image "scholarship-ai-assistant:$image_tag" --query digest --output tsv)"
+          case "$digest" in sha256:*) ;; *) echo 'ACR did not return an immutable digest.'; exit 1 ;; esac
+          echo "reference=$login_server/scholarship-ai-assistant@$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy and run migration job
-        shell: bash
+      - name: Capture stable revision and candidate name
+        id: revisions
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+        run: |
+          set -euo pipefail
+          app_name="${RESOURCE_PREFIX}-api"
+          stable_revision=''
+          if az containerapp show --name "$app_name" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+            stable_revision="$(az containerapp revision list --name "$app_name" --resource-group "$RESOURCE_GROUP" --query "[?properties.trafficWeight > \`0\`].name | [0]" --output tsv)"
+          fi
+          suffix="${GITHUB_SHA:0:12}"
+          echo "stable=$stable_revision" >> "$GITHUB_OUTPUT"
+          echo "suffix=$suffix" >> "$GITHUB_OUTPUT"
+          echo "candidate=${app_name}--${suffix}" >> "$GITHUB_OUTPUT"
+
+      - name: Run candidate binary and migration-policy preflight
         env:
           RESOURCE_GROUP: ${{ inputs.resource_group }}
           RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
         run: |
           set -euo pipefail
-          az deployment group create \
-            --resource-group "$RESOURCE_GROUP" \
-            --template-file infra/azure/migration-job.bicep \
-            --parameters resourcePrefix="$RESOURCE_PREFIX" imageReference="$IMAGE_REFERENCE"
+          az deployment group create --resource-group "$RESOURCE_GROUP" --template-file infra/azure/migration-job.bicep --parameters resourcePrefix="$RESOURCE_PREFIX" imageReference="$IMAGE_REFERENCE"
           job_name="${RESOURCE_PREFIX}-migrate"
           az containerapp job start --name "$job_name" --resource-group "$RESOURCE_GROUP"
           for attempt in {1..45}; do
             status="$(az containerapp job execution list --name "$job_name" --resource-group "$RESOURCE_GROUP" --query "sort_by([].properties, &startTime)[-1].status" --output tsv)"
-            if [ "$status" = "Succeeded" ]; then exit 0; fi
-            if [ "$status" = "Failed" ]; then
-              echo "Migration job failed. Inspect the protected Container Apps job logs; do not paste them into issues or chat."
-              exit 1
-            fi
+            [ "$status" = Succeeded ] && exit 0
+            [ "$status" = Failed ] && exit 1
             sleep 10
           done
-          echo "Migration job did not complete before the 7.5-minute safety timeout."
-          exit 1
+          echo 'Release preflight timed out.'; exit 1
 
-      - name: Deploy candidate API revision
-        shell: bash
+      - name: Apply rolling-safe expand migration
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          az deployment group create --resource-group "$RESOURCE_GROUP" --template-file infra/azure/migration-job.bicep --parameters resourcePrefix="$RESOURCE_PREFIX" imageReference="$IMAGE_REFERENCE" jobCommand='["alembic","upgrade","head"]'
+          job_name="${RESOURCE_PREFIX}-migrate"
+          az containerapp job start --name "$job_name" --resource-group "$RESOURCE_GROUP"
+          for attempt in {1..45}; do
+            status="$(az containerapp job execution list --name "$job_name" --resource-group "$RESOURCE_GROUP" --query "sort_by([].properties, &startTime)[-1].status" --output tsv)"
+            [ "$status" = Succeeded ] && exit 0
+            if [ "$status" = Failed ]; then echo 'Migration failed; inspect protected logs.'; exit 1; fi
+            sleep 10
+          done
+          echo 'Migration timed out.'; exit 1
+
+      - name: Deploy candidate while stable revision retains traffic
         env:
           RESOURCE_GROUP: ${{ inputs.resource_group }}
           RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
@@ -128,30 +178,43 @@ jobs:
           APP_ORIGIN: ${{ inputs.app_origin }}
           WEBAUTHN_RP_ID: ${{ inputs.webauthn_rp_id }}
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          STABLE_REVISION: ${{ steps.revisions.outputs.stable }}
+          CANDIDATE_SUFFIX: ${{ steps.revisions.outputs.suffix }}
         run: |
           set -euo pipefail
-          az deployment group create \
-            --resource-group "$RESOURCE_GROUP" \
-            --template-file infra/azure/application.bicep \
-            --parameters resourcePrefix="$RESOURCE_PREFIX" environment="$ENVIRONMENT" imageReference="$IMAGE_REFERENCE" appOrigin="$APP_ORIGIN" webauthnRpId="$WEBAUTHN_RP_ID" smtpFrom='${{ vars.APP_SMTP_FROM }}' smtpHost='${{ vars.APP_SMTP_HOST }}' betaProductOwnerContact='${{ vars.APP_BETA_PRODUCT_OWNER_CONTACT }}' betaSupportContact='${{ vars.APP_BETA_SUPPORT_CONTACT }}' betaModerationContact='${{ vars.APP_BETA_MODERATION_CONTACT }}' betaDataQualityContact='${{ vars.APP_BETA_DATA_QUALITY_CONTACT }}' betaIncidentContact='${{ vars.APP_BETA_INCIDENT_CONTACT }}' betaEnabled=${{ inputs.environment == 'beta' }} initialTrafficToLatest=true
+          az deployment group create --resource-group "$RESOURCE_GROUP" --template-file infra/azure/application.bicep --parameters \
+            resourcePrefix="$RESOURCE_PREFIX" environment="$ENVIRONMENT" imageReference="$IMAGE_REFERENCE" appOrigin="$APP_ORIGIN" \
+            webauthnRpId="$WEBAUTHN_RP_ID" smtpFrom='${{ vars.APP_SMTP_FROM }}' smtpHost='${{ vars.APP_SMTP_HOST }}' \
+            betaProductOwnerContact='${{ vars.APP_BETA_PRODUCT_OWNER_CONTACT }}' betaSupportContact='${{ vars.APP_BETA_SUPPORT_CONTACT }}' \
+            betaModerationContact='${{ vars.APP_BETA_MODERATION_CONTACT }}' betaDataQualityContact='${{ vars.APP_BETA_DATA_QUALITY_CONTACT }}' \
+            betaIncidentContact='${{ vars.APP_BETA_INCIDENT_CONTACT }}' betaEnabled=${{ inputs.environment == 'beta' }} \
+            stableRevisionName="$STABLE_REVISION" candidateRevisionSuffix="$CANDIDATE_SUFFIX"
 
-      - name: Verify API readiness without logging secrets
-        shell: bash
+      - name: Resolve candidate-only FQDN
+        id: candidate
         env:
           RESOURCE_GROUP: ${{ inputs.resource_group }}
           RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          CANDIDATE_REVISION: ${{ steps.revisions.outputs.candidate }}
         run: |
           set -euo pipefail
-          fqdn="$(az containerapp show --name "${RESOURCE_PREFIX}-api" --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn --output tsv)"
+          app_name="${RESOURCE_PREFIX}-api"
           for attempt in {1..30}; do
-            curl --fail --silent --show-error "https://$fqdn/health/ready" && exit 0
+            fqdn="$(az containerapp revision show --name "$app_name" --revision "$CANDIDATE_REVISION" --resource-group "$RESOURCE_GROUP" --query properties.fqdn --output tsv 2>/dev/null || true)"
+            if [ -n "$fqdn" ]; then echo "base_url=https://$fqdn" >> "$GITHUB_OUTPUT"; exit 0; fi
             sleep 5
           done
-          echo "Candidate did not become ready. The prior active revision remains available for rollback."
-          exit 1
+          echo 'Candidate revision did not expose its isolated FQDN.'; exit 1
 
-      - name: Deploy scheduled jobs only after API readiness
-        shell: bash
+      - name: Run product and tenant-isolation smoke against candidate
+        env:
+          SMOKE_USER_A_EMAIL: ${{ vars.SMOKE_USER_A_EMAIL }}
+          SMOKE_USER_A_PASSWORD: ${{ secrets.SMOKE_USER_A_PASSWORD }}
+          SMOKE_USER_B_EMAIL: ${{ vars.SMOKE_USER_B_EMAIL }}
+          SMOKE_USER_B_PASSWORD: ${{ secrets.SMOKE_USER_B_PASSWORD }}
+        run: python scripts/staging_smoke.py --base-url '${{ steps.candidate.outputs.base_url }}'
+
+      - name: Deploy scheduled jobs only after candidate smoke
         env:
           RESOURCE_GROUP: ${{ inputs.resource_group }}
           RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
@@ -161,10 +224,77 @@ jobs:
           IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
         run: |
           set -euo pipefail
-          az deployment group create \
-            --resource-group "$RESOURCE_GROUP" \
-            --template-file infra/azure/scheduled-jobs.bicep \
-            --parameters resourcePrefix="$RESOURCE_PREFIX" environment="$ENVIRONMENT" imageReference="$IMAGE_REFERENCE" appOrigin="$APP_ORIGIN" webauthnRpId="$WEBAUTHN_RP_ID" smtpFrom='${{ vars.APP_SMTP_FROM }}' smtpHost='${{ vars.APP_SMTP_HOST }}'
+          az deployment group create --resource-group "$RESOURCE_GROUP" --template-file infra/azure/scheduled-jobs.bicep --parameters \
+            resourcePrefix="$RESOURCE_PREFIX" environment="$ENVIRONMENT" imageReference="$IMAGE_REFERENCE" appOrigin="$APP_ORIGIN" \
+            webauthnRpId="$WEBAUTHN_RP_ID" smtpFrom='${{ vars.APP_SMTP_FROM }}' smtpHost='${{ vars.APP_SMTP_HOST }}'
+
+      - name: Promote candidate traffic atomically
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          CANDIDATE_REVISION: ${{ steps.revisions.outputs.candidate }}
+          STABLE_REVISION: ${{ steps.revisions.outputs.stable }}
+        run: |
+          set -euo pipefail
+          app_name="${RESOURCE_PREFIX}-api"
+          if [ -n "$STABLE_REVISION" ]; then
+            az containerapp ingress traffic set --name "$app_name" --resource-group "$RESOURCE_GROUP" --revision-weight "$CANDIDATE_REVISION=100" "$STABLE_REVISION=0"
+          else
+            az containerapp ingress traffic set --name "$app_name" --resource-group "$RESOURCE_GROUP" --revision-weight "$CANDIDATE_REVISION=100"
+          fi
+          promoted="$(az containerapp revision list --name "$app_name" --resource-group "$RESOURCE_GROUP" --query "[?name=='$CANDIDATE_REVISION'].properties.trafficWeight | [0]" --output tsv)"
+          test "$promoted" = 100
+
+      - name: Verify promoted endpoint or restore stable traffic
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          CANDIDATE_REVISION: ${{ steps.revisions.outputs.candidate }}
+          STABLE_REVISION: ${{ steps.revisions.outputs.stable }}
+        run: |
+          set -euo pipefail
+          app_name="${RESOURCE_PREFIX}-api"
+          fqdn="$(az containerapp show --name "$app_name" --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn --output tsv)"
+          healthy=false
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --max-time 15 "https://${fqdn}/health/ready" | grep --quiet '"status":"ready"'; then
+              healthy=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$healthy" = true ]; then exit 0; fi
+          if [ -n "$STABLE_REVISION" ]; then
+            az containerapp ingress traffic set --name "$app_name" --resource-group "$RESOURCE_GROUP" --revision-weight "$STABLE_REVISION=100" "$CANDIDATE_REVISION=0"
+            echo 'Promoted readiness failed; stable revision traffic was restored.'
+          else
+            echo 'Initial deployment readiness failed; no prior revision exists for rollback.'
+          fi
+          exit 1
+
+      - name: Create immutable staging promotion manifest
+        if: inputs.environment == 'staging'
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-provenance
+          python - <<'PY'
+          import json, os
+          from datetime import UTC, datetime
+          from pathlib import Path
+          record = {'schema_version': 1, 'repository': os.environ['GITHUB_REPOSITORY'], 'commit_sha': os.environ['GITHUB_SHA'], 'image_reference': os.environ['IMAGE_REFERENCE'], 'staging_run_id': int(os.environ['GITHUB_RUN_ID']), 'environment': 'staging', 'candidate_smoke': 'passed', 'created_at': datetime.now(UTC).isoformat()}
+          Path('release-provenance/release-provenance.json').write_text(json.dumps(record, sort_keys=True, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Upload staging promotion manifest
+        if: inputs.environment == 'staging'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-provenance
+          path: release-provenance/release-provenance.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Record immutable release reference
-        run: echo "Deployed and health-checked ${{ steps.image.outputs.reference }}"
+        run: echo 'Promoted verified immutable release ${{ steps.image.outputs.reference }}'

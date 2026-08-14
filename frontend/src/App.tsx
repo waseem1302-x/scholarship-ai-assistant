@@ -1,31 +1,33 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { BrowserRouter } from "react-router-dom";
 
 import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
-import { EmailVerificationNotice, EmailVerificationPage, PasswordResetPage } from "./auth/AccountLifecycle";
-import { CataloguePage } from "./features/catalogue/CataloguePage";
-import { OpportunityDetailPage } from "./features/catalogue/OpportunityDetailPage";
-import { AdminPage } from "./features/admin/AdminPage";
-import { AdminSecurityPage } from "./features/admin/AdminSecurityPage";
-import { MatchesPage } from "./features/workspace/MatchesPage";
-import { ProfilePage } from "./features/workspace/ProfilePage";
-import { TrackerPage } from "./features/workspace/TrackerPage";
-import { CommandCentrePage } from "./features/workspace/CommandCentrePage";
-import { ApplicationDetailPage } from "./features/workspace/ApplicationDetailPage";
-import { AssistantPage } from "./features/assistant/AssistantPage";
-import { DocumentLabPage } from "./features/document-lab/DocumentLabPage";
-import { CommunityPage } from "./features/community/CommunityPage";
+import { EmailVerificationNotice } from "./auth/AccountLifecycle";
+
+const EmailVerificationPage = lazy(() => import("./auth/AccountLifecycle").then((module) => ({ default: module.EmailVerificationPage })));
+const PasswordResetPage = lazy(() => import("./auth/AccountLifecycle").then((module) => ({ default: module.PasswordResetPage })));
+const CataloguePage = lazy(() => import("./features/catalogue/CataloguePage").then((module) => ({ default: module.CataloguePage })));
+const OpportunityDetailPage = lazy(() => import("./features/catalogue/OpportunityDetailPage").then((module) => ({ default: module.OpportunityDetailPage })));
+const AdminPage = lazy(() => import("./features/admin/AdminPage").then((module) => ({ default: module.AdminPage })));
+const AdminSecurityPage = lazy(() => import("./features/admin/AdminSecurityPage").then((module) => ({ default: module.AdminSecurityPage })));
+const MatchesPage = lazy(() => import("./features/workspace/MatchesPage").then((module) => ({ default: module.MatchesPage })));
+const ProfilePage = lazy(() => import("./features/workspace/ProfilePage").then((module) => ({ default: module.ProfilePage })));
+const CommandCentrePage = lazy(() => import("./features/workspace/CommandCentrePage").then((module) => ({ default: module.CommandCentrePage })));
+const ApplicationDetailPage = lazy(() => import("./features/workspace/ApplicationDetailPage").then((module) => ({ default: module.ApplicationDetailPage })));
+const AssistantPage = lazy(() => import("./features/assistant/AssistantPage").then((module) => ({ default: module.AssistantPage })));
+const DocumentLabPage = lazy(() => import("./features/document-lab/DocumentLabPage").then((module) => ({ default: module.DocumentLabPage })));
+const CommunityPage = lazy(() => import("./features/community/CommunityPage").then((module) => ({ default: module.CommunityPage })));
 
 function Brand() {
   return (
-    <NavLink className="brand" to="/" aria-label="Scholarship AI Assistant home">
+    <NavLink className="brand" to="/" aria-label="Source-backed Scholarship Assistant home">
       <span aria-hidden="true" className="brand-mark">
         S/
       </span>
       <span>
-        <strong>Scholarship AI</strong>
-        <small>Opportunity intelligence</small>
+        <strong>Scholarship Assistant</strong>
+        <small>Source-backed guidance</small>
       </span>
     </NavLink>
   );
@@ -65,37 +67,29 @@ function Topbar() {
               <NavLink className="product-nav-link" to="/dashboard">
                 Dashboard
               </NavLink>
-              <NavLink className="product-nav-link" to="/profile">
-                Profile
-              </NavLink>
-              <NavLink className="product-nav-link" to="/matches">
-                Matches
-              </NavLink>
-              <NavLink className="product-nav-link" to="/tracker">
-                Tracker
-              </NavLink>
               <NavLink className="product-nav-link" to="/applications">
                 Applications
               </NavLink>
               <NavLink className="product-nav-link" to="/assistant">
                 Assistant
               </NavLink>
-              <NavLink className="product-nav-link" to="/document-lab">
-                Document Lab
-              </NavLink>
-              <NavLink className="product-nav-link" to="/community">
-                Community
-              </NavLink>
-              {user.role === "admin" ? (
-                <>
+              <details className="product-nav-more">
+                <summary>More</summary>
+                <div className="product-nav-menu">
+                  <NavLink className="product-nav-link" to="/profile">Profile</NavLink>
+                  <NavLink className="product-nav-link" to="/matches">Matches</NavLink>
+                  <NavLink className="product-nav-link" to="/document-lab">Document Lab</NavLink>
+                  <NavLink className="product-nav-link" to="/community">Community</NavLink>
+                  {user.role === "admin" ? <>
                   <NavLink className="product-nav-link" to="/admin">
                     Admin
                   </NavLink>
                   <NavLink className="product-nav-link" to="/admin/security">
                     Security
                   </NavLink>
-                </>
-              ) : null}
+                  </> : null}
+                </div>
+              </details>
             </>
           ) : null}
         </div>
@@ -232,13 +226,8 @@ function Dashboard() {
           <h2>Explainable matches</h2>
           <p>See the evidence behind every fit signal.</p>
         </NavLink>
-        <NavLink className="workspace-card" to="/tracker">
-          <span>Act</span>
-          <h2>Application tracker</h2>
-          <p>Keep status, personal deadlines, and notes in one place.</p>
-        </NavLink>
         <NavLink className="workspace-card" to="/applications">
-          <span>Organize</span>
+          <span>Act</span>
           <h2>Application command centre</h2>
           <p>Manage source-linked tasks, reminders, and application milestones.</p>
         </NavLink>
@@ -273,7 +262,8 @@ function AppRoutes() {
   return (
     <>
       <Topbar />
-      <Routes>
+      <Suspense fallback={<main className="page-width loading-page" aria-live="polite">Loading this workspace…</main>}>
+        <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/auth/password-reset" element={<PasswordResetPage />} />
@@ -283,7 +273,7 @@ function AppRoutes() {
         <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/matches" element={<MatchesPage />} />
-        <Route path="/tracker" element={<TrackerPage />} />
+        <Route path="/tracker" element={<Navigate replace to="/applications" />} />
         <Route path="/applications" element={<CommandCentrePage />} />
         <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
         <Route path="/assistant" element={<AssistantPage />} />
@@ -292,7 +282,8 @@ function AppRoutes() {
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/admin/security" element={<AdminSecurityPage />} />
         <Route path="*" element={<Navigate replace to="/" />} />
-      </Routes>
+        </Routes>
+      </Suspense>
     </>
   );
 }

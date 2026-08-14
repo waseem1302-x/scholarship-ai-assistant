@@ -97,16 +97,19 @@ approval from staging.
 
 `azure-application-deploy.yml` requires an explicit typed confirmation and:
 
-1. builds a staging candidate or accepts a previously recorded ACR digest;
-2. deploys and waits for the one-off migration job;
-3. deploys the API and verifies `/health/ready`;
-4. deploys scheduled jobs only after that check; and
-5. records the immutable image digest used.
+1. builds a staging digest, or for beta downloads a successful staging provenance artifact and
+   imports that exact digest into the isolated beta registry;
+2. runs candidate-binary and migration-policy preflight before the rolling-safe expand migration;
+3. deploys a deterministic candidate revision while the prior revision retains 100% traffic;
+4. exercises readiness, authentication/Redis, catalogue, Applications, and User-B read/update/delete
+   tenant attacks against the candidate-only FQDN;
+5. deploys compatible jobs, shifts traffic only after smoke succeeds, and uploads immutable staging
+   provenance for a separately approved beta promotion.
 
-Beta never builds from a branch: it accepts only an exact ACR digest that passed
-staging. A failed migration stops before an API change. A failed readiness check
-exits without deleting the prior revision; use Container Apps revision traffic
-controls to send traffic back to the prior healthy revision.
+Beta never builds from a branch or accepts an operator-supplied image string: it consumes a
+repository/run-bound staging artifact and imports that exact digest. Pre-promotion failure leaves
+the stable revision at 100% and the candidate at zero. PostgreSQL changes must be additive and
+prior-release compatible; destructive contract migrations use a separate later release.
 
 Set these additional non-secret values as protected GitHub Environment variables
 for both environments: `APP_SMTP_FROM`, `APP_SMTP_HOST`,
@@ -116,12 +119,19 @@ for both environments: `APP_SMTP_FROM`, `APP_SMTP_HOST`,
 beta environment enables invitations only after its approval; staging keeps
 invitation beta disabled for smoke tests.
 
+Also provision two dedicated, non-privileged staging smoke students as protected Environment
+values `SMOKE_USER_A_EMAIL`, `SMOKE_USER_B_EMAIL` and secrets `SMOKE_USER_A_PASSWORD`,
+`SMOKE_USER_B_PASSWORD`. They must contain no real applicant data. The release fails closed when
+these values, GitHub Environments, required reviewers, or OIDC bindings are absent.
+
 ## Cost guardrail before provisioning
 
 Deploy `cost-guardrails.bicep` at the **Student Ambassadors Visual Studio
 Enterprise subscription** scope before any foundation resource. Confirm in the
 portal that its budget currency is MYR first: budgets use billing currency and
-the template cannot safely convert currencies. With a MYR 500 monthly budget,
+the template cannot safely convert currencies. Feed the Azure-reported value to
+`python scripts/validate_budget_currency.py --expected MYR --observed <AZURE_VALUE> --amount 500`
+and pass `confirmedBillingCurrency=MYR` to Bicep only when it succeeds. With a MYR 500 monthly budget,
 the template alerts at MYR 100 (warning), MYR 300 (review), MYR 500 (urgent),
 and forecasted MYR 500. Budgets are alerts, not spend caps, so urgent must
 trigger a human review/pause procedure.

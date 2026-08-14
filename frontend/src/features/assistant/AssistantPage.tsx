@@ -78,19 +78,21 @@ export function AssistantPage() {
 
   useEffect(() => {
     if (user) {
-      void loadPreferences();
-      void loadConversations();
+      const controller = new AbortController();
+      void loadPreferences(controller.signal);
+      void loadConversations(controller.signal);
+      return () => controller.abort();
     }
   }, [user]);
 
   if (!isRestoring && !user) return <Navigate replace to="/auth" />;
   if (!user) return <main className="page-width loading-page" aria-live="polite">Restoring your secure session…</main>;
 
-  async function loadPreferences() {
-    setPreferences(await apiClient.request<Preferences>("/assistant/preferences"));
+  async function loadPreferences(signal?: AbortSignal) {
+    setPreferences(await apiClient.request<Preferences>("/assistant/preferences", { signal }));
   }
-  async function loadConversations() {
-    setConversations(await apiClient.request<Conversation[]>("/assistant/conversations"));
+  async function loadConversations(signal?: AbortSignal) {
+    setConversations(await apiClient.request<Conversation[]>("/assistant/conversations", { signal }));
   }
   async function consent() {
     const value = await apiClient.request<Preferences>("/assistant/preferences", {

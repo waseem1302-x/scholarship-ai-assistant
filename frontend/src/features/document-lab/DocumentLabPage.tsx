@@ -7,7 +7,7 @@ import { useAuth } from "../../auth/AuthProvider";
 type DocumentKind = "cv_resume" | "statement_of_purpose" | "personal_statement" | "motivation_letter";
 type Version = { id: string; version_number: number; status: string; scan_status: string; extraction_status: string | null; rejection_code: string | null; encryption_key_version: string; size_bytes: number; page_count: number | null };
 type Asset = { id: string; document_kind: DocumentKind; display_name: string; retention_expires_at: string; versions: Version[] };
-type Policy = { enabled: boolean; max_upload_bytes: number; max_pages: number; max_extracted_characters: number; retention_days: number; notice_version: string; data_use_notice: string };
+type Policy = { enabled: boolean; feature_enabled: boolean; accepting_uploads: boolean; scanner_ready: boolean; worker_ready: boolean; analysis_provider_ready: boolean; max_upload_bytes: number; max_pages: number; max_extracted_characters: number; retention_days: number; notice_version: string; data_use_notice: string };
 type Feedback = { id: string; category: string; text: string; excerpt: string | null; rubric_category: string; confidence: string; is_general_suggestion: boolean };
 type Analysis = { id: string; version_id: string; status: string; provider_status: string; summary: string | null; confidence: string | null; abstained_reason: string | null; rubric_version: string; feedback: Feedback[] };
 type ApplicationDocument = { id: string; name: string };
@@ -34,18 +34,23 @@ export function DocumentLabPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     try {
       const [nextPolicy, nextAssets, applications] = await Promise.all([
-        apiClient.request<Policy>("/document-lab/policy"), apiClient.request<Asset[]>("/document-lab/assets"), apiClient.request<ApplicationList>("/applications"),
+        apiClient.request<Policy>("/document-lab/policy", { signal }), apiClient.request<Asset[]>("/document-lab/assets", { signal }), apiClient.request<ApplicationList>("/applications", { signal }),
       ]);
       setPolicy(nextPolicy); setAssets(nextAssets);
       setApplicationDocuments(applications.items.flatMap((item) => item.documents));
-      const histories = await Promise.all(nextAssets.flatMap((asset) => asset.versions.map(async (version) => [version.id, await apiClient.request<Analysis[]>(`/document-lab/versions/${version.id}/analyses`)] as const)));
+      const histories = await Promise.all(nextAssets.flatMap((asset) => asset.versions.map(async (version) => [version.id, await apiClient.request<Analysis[]>(`/document-lab/versions/${version.id}/analyses`, { signal })] as const)));
       setAnalyses(Object.fromEntries(histories));
-    } catch (error) { setNotice(errorText(error)); }
+    } catch (error) { if (!signal?.aborted) setNotice(errorText(error)); }
   }
-  useEffect(() => { if (user) void load(); }, [user]);
+  useEffect(() => {
+    if (!user) return;
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [user]);
   if (!isRestoring && !user) return <Navigate replace to="/auth" />;
   if (!user) return <main className="page-width loading-page" aria-live="polite">Restoring your secure session…</main>;
 

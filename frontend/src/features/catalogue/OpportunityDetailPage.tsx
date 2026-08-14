@@ -1,8 +1,9 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
-import { createApplication, saveOpportunity } from "../workspace/workspace";
+import { useServerQuery } from "../../hooks/useServerQuery";
+import { createApplication } from "../workspace/workspace";
 import { deadlineLabel, formatDate, getOpportunity, isNotFound, readableValue } from "./catalogue";
 import type { OpportunityDetail } from "./types";
 
@@ -46,7 +47,7 @@ function OpportunityDetailContent({ opportunity }: { opportunity: OpportunityDet
         <div className="tag-list detail-tags" aria-label="Opportunity snapshot">
           <span>{opportunity.country}</span>
           <span>{readableValue(opportunity.degree_level)}</span>
-          <span>{readableValue(opportunity.funding_classification ?? "unknown")}</span>
+          <span>{opportunity.funding_display_label}</span>
           <span>{deadlineLabel(opportunity.application_deadline)}</span>
         </div>
       </section>
@@ -58,7 +59,7 @@ function OpportunityDetailContent({ opportunity }: { opportunity: OpportunityDet
         </div>
         <div>
           <span className="card-kicker">Source confidence</span>
-          <p>{readableValue(opportunity.data_confidence)} confidence · verified {formatDate(opportunity.last_verified_at)}</p>
+          <p>{readableValue(opportunity.data_confidence)} confidence · {readableValue(opportunity.verification_freshness)} · checked {formatDate(opportunity.last_verified_at)}</p>
         </div>
       </section>
 
@@ -145,7 +146,6 @@ function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
     setIsSaving(true);
     setMessage(null);
     try {
-      try { await saveOpportunity(opportunityId); } catch (error) { if (!(error instanceof Error) || !error.message.includes("already saved")) throw error; }
       await createApplication(opportunityId);
       setMessage("Application workspace created. Your source-linked tasks are ready.");
     } catch (error) {
@@ -160,29 +160,11 @@ function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
 
 export function OpportunityDetailPage() {
   const { opportunityId } = useParams();
-  const [opportunity, setOpportunity] = useState<OpportunityDetail | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    if (!opportunityId) return;
-    let active = true;
-    setIsLoading(true);
-    setError(null);
-    void getOpportunity(opportunityId)
-      .then((response) => {
-        if (active) setOpportunity(response);
-      })
-      .catch((requestError: unknown) => {
-        if (active) setError(requestError);
-      })
-      .finally(() => {
-        if (active) setIsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [opportunityId]);
+  const { data: opportunity, error, isLoading, reload } = useServerQuery<OpportunityDetail>(
+    opportunityId ?? "missing-opportunity",
+    (signal) => getOpportunity(opportunityId!, signal),
+    Boolean(opportunityId),
+  );
 
   return (
     <main className="detail-page page-width" aria-live="polite" aria-busy={isLoading}>
@@ -193,6 +175,7 @@ export function OpportunityDetailPage() {
           <h1>{isNotFound(error) ? "This opportunity is no longer publicly available." : "We could not load this opportunity."}</h1>
           <p>{isNotFound(error) ? "It may have closed or returned to review after its source changed." : error instanceof Error ? error.message : "Please try again."}</p>
           <Link className="button button-primary" to="/catalogue">Return to catalogue</Link>
+          {!isNotFound(error) ? <button className="button button-quiet" type="button" onClick={reload}>Try again</button> : null}
         </div>
       ) : null}
       {!isLoading && !error && opportunity ? <OpportunityDetailContent opportunity={opportunity} /> : null}

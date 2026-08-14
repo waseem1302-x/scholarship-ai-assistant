@@ -17,6 +17,7 @@ from app.modules.auth.dependencies import require_roles, require_verified_studen
 from app.modules.auth.models import User, UserRole
 
 router = APIRouter(prefix="/saved-opportunities", tags=["saved opportunities"])
+LEGACY_SUNSET = "Mon, 01 Feb 2027 00:00:00 GMT"
 
 AUTHENTICATION_RESPONSE = {
     "model": ErrorResponse,
@@ -50,6 +51,14 @@ def get_saved_opportunity_service(
     return SavedOpportunityService(session)
 
 
+def mark_legacy_tracker_response(response: Response) -> None:
+    """Expose an explicit, machine-readable compatibility window to old clients."""
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = LEGACY_SUNSET
+    response.headers["Link"] = '</api/v1/applications>; rel="successor-version"'
+    response.headers["Warning"] = '299 - "Saved opportunities are deprecated; use Applications"'
+
+
 @router.post(
     "",
     response_model=SavedOpportunityResponse,
@@ -64,9 +73,11 @@ def get_saved_opportunity_service(
 )
 def save_opportunity(
     payload: SavedOpportunityCreate,
+    response: Response,
     user: VerifiedStudentUser,
     service: Annotated[SavedOpportunityService, Depends(get_saved_opportunity_service)],
 ) -> SavedOpportunityResponse:
+    mark_legacy_tracker_response(response)
     return service.create(payload, user=user)
 
 
@@ -76,10 +87,12 @@ def save_opportunity(
     responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
 )
 def list_saved_opportunities(
+    response: Response,
     user: StudentUser,
     service: Annotated[SavedOpportunityService, Depends(get_saved_opportunity_service)],
     status_filter: ApplicationStatus | None = None,
 ) -> list[SavedOpportunityResponse]:
+    mark_legacy_tracker_response(response)
     return service.list_for_user(user, status_filter=status_filter)
 
 
@@ -94,9 +107,11 @@ def list_saved_opportunities(
 )
 def get_saved_opportunity(
     saved_opportunity_id: uuid.UUID,
+    response: Response,
     user: StudentUser,
     service: Annotated[SavedOpportunityService, Depends(get_saved_opportunity_service)],
 ) -> SavedOpportunityResponse:
+    mark_legacy_tracker_response(response)
     return service.get(saved_opportunity_id, user=user)
 
 
@@ -113,9 +128,11 @@ def get_saved_opportunity(
 def update_saved_opportunity(
     saved_opportunity_id: uuid.UUID,
     payload: SavedOpportunityUpdate,
+    response: Response,
     user: VerifiedStudentUser,
     service: Annotated[SavedOpportunityService, Depends(get_saved_opportunity_service)],
 ) -> SavedOpportunityResponse:
+    mark_legacy_tracker_response(response)
     return service.update(saved_opportunity_id, payload, user=user)
 
 
@@ -134,4 +151,6 @@ def delete_saved_opportunity(
     service: Annotated[SavedOpportunityService, Depends(get_saved_opportunity_service)],
 ) -> Response:
     service.delete(saved_opportunity_id, user=user)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    mark_legacy_tracker_response(response)
+    return response

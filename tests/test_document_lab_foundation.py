@@ -28,6 +28,12 @@ def test_document_lab_policy_is_authenticated_and_declares_safe_limits(
     )
     assert response.status_code == 200
     body = response.json()
+    assert body["feature_enabled"] is True
+    assert body["accepting_uploads"] is True
+    assert body["enabled"] == body["accepting_uploads"]
+    assert body["scanner_ready"] is False
+    assert body["worker_ready"] is False
+    assert body["analysis_provider_ready"] is False
     assert body["supported_types"] == [
         "cv_resume",
         "statement_of_purpose",

@@ -38,6 +38,7 @@ from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
     AdminOpportunitySearchResponse,
+    CatalogueDecisionTier,
     DataQualityIssueResponse,
     DataQualityIssueSearchResponse,
     DataQualitySeverity,
@@ -62,6 +63,7 @@ from app.modules.opportunities.schemas import (
     SourceCheckResponse,
     SourceExcerptResponse,
     SourceResponse,
+    VerificationFreshness,
     VerificationUpdate,
 )
 
@@ -708,6 +710,8 @@ class OpportunityService:
     def _summary_response(
         self, opportunity: Opportunity, source: Source
     ) -> OpportunitySummaryResponse:
+        window = effective_application_window(opportunity, source)
+        structured_eligibility_complete = self._structured_eligibility_complete(opportunity)
         return OpportunitySummaryResponse(
             id=opportunity.id,
             name=opportunity.name,
@@ -715,16 +719,75 @@ class OpportunityService:
             university_name=opportunity.university.name if opportunity.university else None,
             country=opportunity.country,
             degree_level=opportunity.degree_level,
-            application_deadline=opportunity.application_deadline,
+            application_deadline=window.application_deadline,
+            application_opening_date=window.application_opening_date,
+            application_timezone=window.timezone,
+            effective_cycle_id=window.cycle.id if window.cycle else None,
             funding_type=opportunity.funding_type,
             funding_classification=opportunity.funding_classification,
             funding_summary=self._funding_summary(opportunity),
             verification_status=source.verification_status,
             last_verified_at=source.last_verified_at,
             official_source_url=source.url,
-            application_window_state=effective_application_window(opportunity, source).state,
-            source_is_fresh=effective_application_window(opportunity, source).source_is_fresh,
+            application_window_state=window.state,
+            source_is_fresh=window.source_is_fresh,
+            verification_freshness=self._verification_freshness(source),
+            funding_display_label=self._funding_display_label(opportunity),
+            catalogue_decision_tier=(
+                CatalogueDecisionTier.DECISION_READY
+                if structured_eligibility_complete
+                else CatalogueDecisionTier.INFORMATIONAL_ONLY
+            ),
+            structured_eligibility_complete=structured_eligibility_complete,
         )
+
+    @staticmethod
+    def _structured_eligibility_complete(opportunity: Opportunity) -> bool:
+        structured_types = {rule.rule_type for rule in opportunity.eligibility_rules}
+        if not structured_types:
+            return False
+        dependencies: list[tuple[str | None, set[EligibilityRuleType]]] = [
+            (opportunity.field_eligibility, {EligibilityRuleType.FIELD}),
+            (opportunity.nationality_eligibility, {EligibilityRuleType.NATIONALITY}),
+            (
+                opportunity.minimum_academic_requirement,
+                {EligibilityRuleType.CGPA, EligibilityRuleType.PERCENTAGE},
+            ),
+            (
+                opportunity.english_language_requirement,
+                {
+                    EligibilityRuleType.ENGLISH_TEST_STATUS,
+                    EligibilityRuleType.IELTS,
+                    EligibilityRuleType.TOEFL,
+                    EligibilityRuleType.DUOLINGO,
+                },
+            ),
+            (opportunity.standardized_test_requirement, {EligibilityRuleType.GRE}),
+        ]
+        return all(not text or bool(structured_types & required) for text, required in dependencies)
+
+    @staticmethod
+    def _verification_freshness(source: Source) -> VerificationFreshness:
+        if source.last_verified_at is None:
+            return VerificationFreshness.HISTORICAL
+        age = datetime.now(UTC) - (
+            source.last_verified_at.replace(tzinfo=UTC)
+            if source.last_verified_at.tzinfo is None
+            else source.last_verified_at.astimezone(UTC)
+        )
+        if age <= timedelta(days=SOURCE_FRESHNESS_DAYS):
+            return VerificationFreshness.RECENT
+        if age <= timedelta(days=SOURCE_FRESHNESS_DAYS * 2):
+            return VerificationFreshness.RECHECK_RECOMMENDED
+        return VerificationFreshness.HISTORICAL
+
+    @staticmethod
+    def _funding_display_label(opportunity: Opportunity) -> str:
+        if opportunity.funding_classification is FundingClassification.FULLY_FUNDED:
+            return "All tracked funding components confirmed"
+        if opportunity.funding_classification is FundingClassification.PARTIAL:
+            return "Some funding components confirmed"
+        return "Funding coverage requires verification"
 
     def _response_base(
         self,

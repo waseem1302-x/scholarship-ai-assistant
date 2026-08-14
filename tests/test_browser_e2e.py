@@ -17,6 +17,7 @@ def live_base_url() -> str:
     return base_url.rstrip("/")
 
 
+@pytest.mark.browser_compat
 def test_auth_form_is_keyboard_reachable(page: Page, live_base_url: str) -> None:
     page.goto(live_base_url, wait_until="networkidle")
 
@@ -29,6 +30,42 @@ def test_auth_form_is_keyboard_reachable(page: Page, live_base_url: str) -> None
     expect(email).to_be_focused()
     page.keyboard.press("Tab")
     expect(password).to_be_focused()
+
+
+@pytest.mark.browser_compat
+def test_public_shell_has_critical_accessibility_semantics(page: Page, live_base_url: str) -> None:
+    page.goto(live_base_url, wait_until="networkidle")
+
+    violations = page.locator("body").evaluate(
+        """
+        () => {
+          const failures = [];
+          const ids = [...document.querySelectorAll('[id]')].map((node) => node.id);
+          if (new Set(ids).size !== ids.length) failures.push('duplicate_ids');
+          if (!document.querySelector('main')) failures.push('missing_main');
+          if (!document.querySelector('h1')) failures.push('missing_h1');
+          for (const image of document.querySelectorAll('img')) {
+            if (!image.hasAttribute('alt')) failures.push('image_without_alt');
+          }
+          const controls = document.querySelectorAll(
+            'button, input:not([type=hidden]), select, textarea'
+          );
+          for (const control of controls) {
+            const named = control.getAttribute('aria-label') ||
+              control.getAttribute('aria-labelledby') || control.labels?.length ||
+              (control.tagName === 'BUTTON' && control.textContent?.trim());
+            if (!named) failures.push(`unnamed_${control.tagName.toLowerCase()}`);
+          }
+          for (const link of document.querySelectorAll('a[href]')) {
+            if (!(link.getAttribute('aria-label') || link.textContent?.trim())) {
+              failures.push('unnamed_link');
+            }
+          }
+          return failures;
+        }
+        """
+    )
+    assert violations == []
 
 
 def test_public_home_can_browse_scholarships_without_an_account(
@@ -73,7 +110,10 @@ def test_react_frontend_can_register_and_sign_out(page: Page, live_base_url: str
     expect(
         page.get_by_role("heading", name=f"Good to see you, {email.split('@')[0]}.")
     ).to_be_visible()
-    for link_name in ["Catalogue", "Dashboard", "Profile", "Matches", "Tracker"]:
+    for link_name in ["Catalogue", "Dashboard", "Applications", "Assistant"]:
+        expect(page.get_by_role("link", name=link_name, exact=True)).to_be_visible()
+    page.get_by_text("More", exact=True).click()
+    for link_name in ["Profile", "Matches"]:
         expect(page.get_by_role("link", name=link_name, exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Admin", exact=True)).to_have_count(0)
     page.get_by_role("button", name="Sign out").click()
@@ -197,7 +237,7 @@ def test_phase_three_catalogue_and_source_detail_are_browsable(
         page.get_by_role("heading", name="Find the opportunities worth your attention.")
     ).to_be_visible()
     expect(page.get_by_role("heading", name="Phase Three Test Scholarship")).to_be_visible()
-    expect(page.get_by_text("Verified official source")).to_be_visible()
+    expect(page.get_by_text("Recently verified official source")).to_be_visible()
     page.get_by_role("link", name="View opportunity").click()
 
     expect(page).to_have_url(f"{live_base_url}/catalogue/{opportunity_id}")

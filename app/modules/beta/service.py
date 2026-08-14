@@ -35,6 +35,15 @@ class BetaService:
             assistant_enabled=self.settings.assistant_enabled,
             document_lab_enabled=self.settings.document_lab_enabled,
             community_enabled=self.settings.community_enabled,
+            assistant_mode=(
+                "source_backed_templates"
+                if self.settings.assistant_provider == "evidence-template"
+                else "configured_inference"
+            ),
+            assistant_global_daily_limit=self.settings.assistant_global_daily_limit,
+            document_lab_global_daily_upload_limit=(
+                self.settings.document_lab_global_daily_upload_limit
+            ),
         )
 
     def create_invitation(

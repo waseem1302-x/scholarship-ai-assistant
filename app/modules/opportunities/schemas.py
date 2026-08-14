@@ -403,6 +403,17 @@ class DataQualitySeverity(StrEnum):
     HIGH = "high"
 
 
+class VerificationFreshness(StrEnum):
+    RECENT = "recent"
+    RECHECK_RECOMMENDED = "recheck_recommended"
+    HISTORICAL = "historical"
+
+
+class CatalogueDecisionTier(StrEnum):
+    DECISION_READY = "decision_ready"
+    INFORMATIONAL_ONLY = "informational_only"
+
+
 class DataQualityIssueResponse(BaseModel):
     code: str
     severity: DataQualitySeverity
@@ -425,6 +436,9 @@ class OpportunitySummaryResponse(BaseModel):
     country: str
     degree_level: DegreeLevel
     application_deadline: datetime | None
+    application_opening_date: datetime | None = None
+    application_timezone: str = "UTC"
+    effective_cycle_id: uuid.UUID | None = None
     funding_type: FundingType
     funding_classification: FundingClassification
     funding_summary: str
@@ -433,6 +447,10 @@ class OpportunitySummaryResponse(BaseModel):
     official_source_url: str
     application_window_state: ApplicationWindowState
     source_is_fresh: bool
+    verification_freshness: VerificationFreshness
+    funding_display_label: str
+    catalogue_decision_tier: CatalogueDecisionTier
+    structured_eligibility_complete: bool
 
 
 class OpportunitySearchResponse(BaseModel):

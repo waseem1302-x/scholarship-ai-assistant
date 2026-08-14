@@ -21,13 +21,15 @@ jobs:
   bicep:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Compile Azure deployment templates
-        uses: azure/cli@v2
+        uses: azure/cli@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2
         with:
-          azcliversion: latest
+          azcliversion: 2.76.0
           inlineScript: |
-            set -e
+            set -euo pipefail
+            az bicep install --version v0.37.4
+            test "$(az bicep version | sed -n 's/.*Bicep CLI version \([^ ]*\).*/\1/p')" = "0.37.4"
             for template in infra/azure/*.bicep; do
               az bicep build --file "$template"
             done

@@ -116,3 +116,28 @@ def test_redis_sliding_window_returns_atomic_retry_after() -> None:
 
     assert result.allowed is False
     assert result.retry_after_seconds == 17
+
+
+def test_global_high_cost_daily_quota_is_shared_across_users_and_fails_closed() -> None:
+    settings = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="phase-nine-rate-limit-test-secret-at-least-32",
+        assistant_rate_limit_per_minute=10,
+        assistant_global_daily_limit=1,
+    )
+    application = FastAPI()
+    application.add_middleware(AuthRateLimitMiddleware, settings=settings)
+
+    @application.post("/api/v1/assistant/answers")
+    def answer() -> dict[str, bool]:
+        return {"reached": True}
+
+    client = TestClient(application)
+    assert client.post("/api/v1/assistant/answers").status_code == 200
+
+    blocked = client.post("/api/v1/assistant/answers")
+
+    assert blocked.status_code == 429
+    assert blocked.json()["error"]["code"] == "global_high_cost_quota_exceeded"
+    assert int(blocked.headers["retry-after"]) > 0

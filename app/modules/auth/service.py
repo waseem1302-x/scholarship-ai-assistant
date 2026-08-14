@@ -272,6 +272,7 @@ class AuthService:
             },
             "profile": profile.model_dump(mode="json") if profile else None,
             "applications": ApplicationCommandService(self.session).export(user),
+            "matching": self._export_match_history(user.id),
             "assistant": AssistantService(self.session, self.settings).export_data(user.id),
             "community": community_export.model_dump(mode="json"),
             "document_lab": document_export.model_dump(mode="json"),
@@ -283,6 +284,65 @@ class AuthService:
                 }
                 for acceptance in legal_acceptances
             ],
+        }
+
+    def _export_match_history(self, user_id: uuid.UUID) -> dict[str, object]:
+        """Export every retained owner-scoped matching record without operational data."""
+        from app.modules.matching.models import MatchEvaluation
+
+        evaluations = self.session.scalars(
+            select(MatchEvaluation)
+            .where(MatchEvaluation.user_id == user_id)
+            .order_by(MatchEvaluation.evaluated_at.asc(), MatchEvaluation.id.asc())
+        ).all()
+        return {
+            "evaluations": [
+                {
+                    "id": str(evaluation.id),
+                    "profile_id": str(evaluation.profile_id) if evaluation.profile_id else None,
+                    "supersedes_evaluation_id": str(evaluation.supersedes_evaluation_id)
+                    if evaluation.supersedes_evaluation_id
+                    else None,
+                    "matcher_version": evaluation.matcher_version,
+                    "evaluated_at": evaluation.evaluated_at.isoformat(),
+                    "expires_at": evaluation.expires_at.isoformat(),
+                    "profile_snapshot": evaluation.profile_snapshot_json,
+                    "profile_snapshot_hash": evaluation.profile_snapshot_hash,
+                    "results": [
+                        {
+                            "id": str(result.id),
+                            "opportunity_id": str(result.opportunity_id)
+                            if result.opportunity_id
+                            else None,
+                            "rank": result.rank,
+                            "match_score": result.match_score,
+                            "fit_score": result.fit_score,
+                            "score_label": result.score_label,
+                            "eligibility_status": result.eligibility_status,
+                            "confidence": result.confidence,
+                            "evidence_completeness": result.evidence_completeness,
+                            "warnings": result.warnings_json,
+                            "opportunity_snapshot": result.opportunity_snapshot_json,
+                            "source_snapshot": result.source_snapshot_json,
+                            "rule_outcomes": [
+                                {
+                                    "rule_name": outcome.rule_name,
+                                    "outcome": outcome.outcome,
+                                    "reason_code": outcome.reason_code,
+                                    "profile_fields": outcome.profile_fields_json,
+                                    "comparison": outcome.comparison_json,
+                                    "message": outcome.message,
+                                    "confidence": outcome.confidence,
+                                    "next_actions": outcome.next_actions_json,
+                                }
+                                for outcome in result.rule_outcomes
+                            ],
+                        }
+                        for result in evaluation.results
+                    ],
+                }
+                for evaluation in evaluations
+            ]
         }
 
     def close_student_account(self, user: User, password: str) -> None:

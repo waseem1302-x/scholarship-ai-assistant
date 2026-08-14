@@ -113,6 +113,9 @@ def test_student_can_save_verified_opportunity_and_track_documents(
     )
 
     assert response.status_code == 201
+    assert response.headers["deprecation"] == "true"
+    assert response.headers["sunset"] == "Mon, 01 Feb 2027 00:00:00 GMT"
+    assert 'rel="successor-version"' in response.headers["link"]
     body = response.json()
     assert body["status"] == "interested"
     assert body["opportunity"]["id"] == opportunity["id"]

@@ -34,8 +34,13 @@ param betaIncidentContact string
 @description('Enables invitation-only beta after the staging release gates have passed. Defaults to false.')
 param betaEnabled bool = false
 
-@description('Only true for first creation. Existing apps are updated by the deployment workflow with zero-traffic promotion.')
-param initialTrafficToLatest bool = true
+@description('Existing stable revision that must retain traffic while the candidate is verified.')
+param stableRevisionName string = ''
+
+@description('Deterministic candidate revision suffix derived from the immutable release commit.')
+@minLength(6)
+@maxLength(20)
+param candidateRevisionSuffix string
 
 var containerEnvironmentName = '${resourcePrefix}-apps'
 var registryName = replace('${resourcePrefix}acr', '-', '')
@@ -137,15 +142,16 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         external: true
         targetPort: 8000
         transport: 'auto'
-        traffic: initialTrafficToLatest ? [
+        traffic: empty(stableRevisionName) ? [] : [
           {
-            latestRevision: true
+            revisionName: stableRevisionName
             weight: 100
           }
-        ] : []
+        ]
       }
     }
     template: {
+      revisionSuffix: candidateRevisionSuffix
       containers: [
         {
           name: 'api'
@@ -290,8 +296,16 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               value: '12'
             }
             {
+              name: 'APP_ASSISTANT_GLOBAL_DAILY_LIMIT'
+              value: '1000'
+            }
+            {
               name: 'APP_DOCUMENT_LAB_ENABLED'
               value: 'false'
+            }
+            {
+              name: 'APP_DOCUMENT_LAB_GLOBAL_DAILY_UPLOAD_LIMIT'
+              value: '500'
             }
             {
               name: 'APP_COMMUNITY_ENABLED'

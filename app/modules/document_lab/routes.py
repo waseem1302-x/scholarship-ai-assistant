@@ -28,7 +28,7 @@ from app.modules.document_lab.schemas import (
     DocumentLabPolicyResponse,
     DocumentVersionResponse,
 )
-from app.modules.document_lab.service import DocumentLabService
+from app.modules.document_lab.service import DocumentLabService, document_intake_readiness
 
 router = APIRouter(prefix="/document-lab", tags=["private document lab"])
 StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
@@ -56,10 +56,18 @@ DocumentService = Annotated[DocumentLabService, Depends(get_document_lab_service
     responses={401: {"model": ErrorResponse}},
 )
 def policy(
-    _: StudentUser, settings: Annotated[Settings, Depends(get_settings)]
+    _: StudentUser,
+    settings: Annotated[Settings, Depends(get_settings)],
+    session: Annotated[Session, Depends(get_db)],
 ) -> DocumentLabPolicyResponse:
+    scanner_ready, worker_ready, accepting_uploads = document_intake_readiness(session, settings)
     return DocumentLabPolicyResponse(
-        enabled=settings.document_lab_enabled,
+        enabled=accepting_uploads,
+        feature_enabled=settings.document_lab_enabled,
+        accepting_uploads=accepting_uploads,
+        scanner_ready=scanner_ready,
+        worker_ready=worker_ready,
+        analysis_provider_ready=settings.document_lab_provider != "unavailable",
         supported_types=[item.value for item in DocumentKind],
         max_upload_bytes=settings.document_lab_max_upload_bytes,
         max_pages=settings.document_lab_max_pages,
