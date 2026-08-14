@@ -27,7 +27,9 @@ def main() -> None:
         _cleanup_roles(connection)
         connection.execute(text(f"CREATE ROLE {TEST_API_ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS"))
         connection.execute(text(f"CREATE ROLE {TEST_WORKER_ROLE} NOLOGIN NOSUPERUSER NOBYPASSRLS"))
-        connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {TEST_API_ROLE}, {TEST_WORKER_ROLE}"))
+        connection.execute(
+            text(f"GRANT USAGE ON SCHEMA public TO {TEST_API_ROLE}, {TEST_WORKER_ROLE}")
+        )
         connection.execute(
             text(
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON student_profiles "
@@ -48,8 +50,12 @@ def main() -> None:
             )
         connection.execute(
             text(
-                "INSERT INTO student_profiles (id, user_id, version) "
-                "VALUES (:id_a, :user_a, 1), (:id_b, :user_b, 1)"
+                "INSERT INTO student_profiles "
+                "(id, user_id, english_test_status, gre_status, publications, "
+                "preferred_destination_countries, preferred_destination_country_codes, version) "
+                "VALUES "
+                "(:id_a, :user_a, 'unknown', 'unknown', '[]'::json, '[]'::json, '[]'::json, 1), "
+                "(:id_b, :user_b, 'unknown', 'unknown', '[]'::json, '[]'::json, '[]'::json, 1)"
             ),
             {
                 "id_a": uuid.uuid4(),
@@ -78,7 +84,12 @@ def main() -> None:
     print("PostgreSQL RLS smoke test passed")
 
 
-def _assert_api_role_is_isolated(connection, user_a: uuid.UUID, user_b: uuid.UUID, user_c: uuid.UUID) -> None:
+def _assert_api_role_is_isolated(
+    connection,
+    user_a: uuid.UUID,
+    user_b: uuid.UUID,
+    user_c: uuid.UUID,
+) -> None:
     connection.exec_driver_sql(f"SET ROLE {TEST_API_ROLE}")
     connection.execute(
         text("SELECT set_config('app.current_user_id', :user_id, true)"),
@@ -101,8 +112,10 @@ def _assert_api_role_is_isolated(connection, user_a: uuid.UUID, user_b: uuid.UUI
     try:
         connection.execute(
             text(
-                "INSERT INTO student_profiles (id, user_id, version) "
-                "VALUES (:id, :other, 1)"
+                "INSERT INTO student_profiles "
+                "(id, user_id, english_test_status, gre_status, publications, "
+                "preferred_destination_countries, preferred_destination_country_codes, version) "
+                "VALUES (:id, :other, 'unknown', 'unknown', '[]'::json, '[]'::json, '[]'::json, 1)"
             ),
             {"id": uuid.uuid4(), "other": user_c},
         )
@@ -132,10 +145,14 @@ def _assert_worker_role_can_process_cross_tenant_rows(connection) -> None:
 
 def _cleanup_roles(connection) -> None:
     connection.exec_driver_sql("RESET ROLE")
-    # Test roles own no objects. Drop grants/memberships from previous failed CI
-    # attempts before recreating them deterministically.
     for role in (TEST_API_ROLE, TEST_WORKER_ROLE):
-        connection.execute(text(f"DROP ROLE IF EXISTS {role}"))
+        connection.exec_driver_sql(
+            "DO $$ BEGIN "
+            f"IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN "
+            f"EXECUTE 'DROP OWNED BY {role}'; "
+            f"EXECUTE 'DROP ROLE {role}'; "
+            "END IF; END $$;"
+        )
 
 
 if __name__ == "__main__":
