@@ -1,11 +1,12 @@
 import uuid
 from collections.abc import Generator
 
-from app.core.config import get_settings
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.session import SessionTransaction
+
+from app.core.config import get_settings
 
 _TENANT_ID_KEY = "tenant_id"
 _TENANT_BYPASS_KEY = "tenant_bypass"
