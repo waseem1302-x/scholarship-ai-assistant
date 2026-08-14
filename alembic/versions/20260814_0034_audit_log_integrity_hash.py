@@ -28,7 +28,11 @@ def upgrade() -> None:
             server_default="legacy-unhashed-audit-record-000000000000000000000000000000",
         ),
     )
-    op.create_index("ix_audit_logs_previous_integrity_hash", "audit_logs", ["previous_integrity_hash"])
+    op.create_index(
+        "ix_audit_logs_previous_integrity_hash",
+        "audit_logs",
+        ["previous_integrity_hash"],
+    )
     op.create_index("ix_audit_logs_integrity_hash", "audit_logs", ["integrity_hash"])
 
 
