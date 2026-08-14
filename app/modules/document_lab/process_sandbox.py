@@ -44,7 +44,7 @@ def run_bounded_process(
     function: Callable[..., T],
     args: tuple[Any, ...],
     *,
-    timeout_seconds: int,
+    timeout_seconds: float,
     limits: ProcessLimits | None = None,
 ) -> T:
     """Run ``function`` in a fresh process with a hard parent-owned deadline.
@@ -111,7 +111,7 @@ def _child_entry(
     connection: Connection,
     function: Callable[..., T],
     args: tuple[Any, ...],
-    timeout_seconds: int,
+    timeout_seconds: float,
     limits: ProcessLimits,
 ) -> None:
     try:
@@ -127,7 +127,7 @@ def _child_entry(
         connection.close()
 
 
-def _apply_posix_limits(timeout_seconds: int, limits: ProcessLimits) -> None:
+def _apply_posix_limits(timeout_seconds: float, limits: ProcessLimits) -> None:
     """Apply hard CPU/memory/fd/output limits where the OS supports them."""
 
     if os.name != "posix":
