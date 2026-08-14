@@ -44,6 +44,8 @@ jobs:
       - run: pnpm --dir frontend build
       - run: python -m pip install -e ".[dev]"
       - run: python -m alembic upgrade head
+      - name: Verify PostgreSQL row-level tenant isolation
+        run: python tests/postgres_rls_smoke.py
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest -m "not e2e" --cov=app --cov-report=term-missing
