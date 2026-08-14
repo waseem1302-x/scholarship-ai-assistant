@@ -1,13 +1,15 @@
-"""Privacy-safe request correlation and in-process operational metrics."""
+"""Privacy-safe request correlation and cross-replica operational telemetry."""
 
 import json
 import logging
+import os
 import re
 import time
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from threading import Lock
+from typing import Any
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -17,6 +19,7 @@ from app.core.config import Settings
 
 LOGGER = logging.getLogger("scholarship.operations")
 TRACE_ID = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
+_AZURE_MONITOR_CONFIGURED = False
 
 
 class SafeJsonFormatter(logging.Formatter):
@@ -38,21 +41,54 @@ class SafeJsonFormatter(logging.Formatter):
 
 
 def configure_observability(settings: Settings) -> None:
-    if any(isinstance(handler.formatter, SafeJsonFormatter) for handler in LOGGER.handlers):
-        return
-    handler = logging.StreamHandler()
-    handler.setFormatter(SafeJsonFormatter())
-    LOGGER.addHandler(handler)
-    LOGGER.setLevel(logging.INFO)
-    LOGGER.propagate = False
+    """Configure structured logs and the production OpenTelemetry exporter.
+
+    In-memory counters remain available for local/test diagnostics only. A
+    production deployment uses Azure Monitor OpenTelemetry so metrics from all
+    Container Apps replicas are aggregated in the same backend.
+    """
+
+    if not any(isinstance(handler.formatter, SafeJsonFormatter) for handler in LOGGER.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(SafeJsonFormatter())
+        LOGGER.addHandler(handler)
+        LOGGER.setLevel(logging.INFO)
+        LOGGER.propagate = False
+
+    if settings.metrics_backend == "external":
+        _configure_azure_monitor(settings)
+
     LOGGER.info(
         "observability_configured",
         extra={"event": "observability_configured", "release_version": settings.release_version},
     )
 
 
+def _configure_azure_monitor(settings: Settings) -> None:
+    global _AZURE_MONITOR_CONFIGURED
+    if _AZURE_MONITOR_CONFIGURED:
+        return
+    if not os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "").strip():
+        raise RuntimeError(
+            "APPLICATIONINSIGHTS_CONNECTION_STRING is required when APP_METRICS_BACKEND=external"
+        )
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+    except ImportError as exc:  # fail closed rather than silently falling back per replica
+        raise RuntimeError("Azure Monitor OpenTelemetry dependency is unavailable") from exc
+
+    configure_azure_monitor(
+        logger_name=LOGGER.name,
+        enable_trace_based_sampling_for_logs=True,
+    )
+    _AZURE_MONITOR_CONFIGURED = True
+
+
 @dataclass
 class OperationalMetrics:
+    """Bounded local diagnostics plus low-cardinality OpenTelemetry metrics."""
+
+    external_enabled: bool = False
     LATENCY_BUCKETS_MS = (50, 100, 250, 500, 1000, 2500, 5000)
 
     _lock: Lock = field(default_factory=Lock)
@@ -60,6 +96,33 @@ class OperationalMetrics:
     errors: Counter[str] = field(default_factory=Counter)
     latency_total_ms: Counter[str] = field(default_factory=Counter)
     latency_buckets: Counter[tuple[str, str]] = field(default_factory=Counter)
+    _request_counter: Any = field(init=False, default=None, repr=False)
+    _error_counter: Any = field(init=False, default=None, repr=False)
+    _latency_histogram: Any = field(init=False, default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.external_enabled:
+            return
+        try:
+            from opentelemetry import metrics
+        except ImportError as exc:
+            raise RuntimeError("OpenTelemetry metrics API is unavailable") from exc
+        meter = metrics.get_meter("scholarship.platform.http", "1.0")
+        self._request_counter = meter.create_counter(
+            "scholarship.http.requests",
+            unit="{request}",
+            description="HTTP requests handled by the scholarship platform",
+        )
+        self._error_counter = meter.create_counter(
+            "scholarship.http.server_errors",
+            unit="{error}",
+            description="HTTP 5xx responses handled by the scholarship platform",
+        )
+        self._latency_histogram = meter.create_histogram(
+            "scholarship.http.server_latency",
+            unit="ms",
+            description="Server-side request latency in milliseconds",
+        )
 
     def record(self, route_class: str, status_code: int, latency_ms: int) -> None:
         with self._lock:
@@ -70,7 +133,19 @@ class OperationalMetrics:
             if status_code >= 500:
                 self.errors[route_class] += 1
 
+        if self.external_enabled:
+            attributes = {
+                "route.class": route_class,
+                "http.status_family": f"{status_code // 100}xx",
+            }
+            self._request_counter.add(1, attributes)
+            self._latency_histogram.record(latency_ms, attributes)
+            if status_code >= 500:
+                self._error_counter.add(1, attributes)
+
     def snapshot(self) -> dict[str, dict[str, int | dict[str, int]]]:
+        """Return local per-process diagnostics; never use this as fleet totals."""
+
         with self._lock:
             return {
                 route: {
