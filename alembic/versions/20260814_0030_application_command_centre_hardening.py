@@ -24,9 +24,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     with op.batch_alter_table("application_reminders") as batch_op:
-        batch_op.drop_constraint(
-            "uq_application_reminders_application_idempotency", type_="unique"
-        )
+        batch_op.drop_constraint("uq_application_reminders_application_idempotency", type_="unique")
         batch_op.create_unique_constraint(
             "uq_application_reminders_idempotency", ["idempotency_key"]
         )

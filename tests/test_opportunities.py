@@ -289,9 +289,10 @@ def test_source_verification_does_not_publish_record_without_review_action(
     published = publish_opportunity(client, headers, created)
     assert published["status"] == "active"
     public_after_publish = client.get("/api/v1/opportunities")
-    assert response_items(public_after_publish)[0]["official_source_url"] == created[
-        "official_source_url"
-    ]
+    assert (
+        response_items(public_after_publish)[0]["official_source_url"]
+        == created["official_source_url"]
+    )
 
 
 def test_admin_create_cannot_publish_record_without_review_action(

@@ -998,9 +998,7 @@ class OpportunityRepository:
         has_including_rule = Opportunity.eligibility_rules.any(
             and_(
                 EligibilityRule.rule_type == rule_type,
-                EligibilityRule.operator.in_(
-                    [EligibilityOperator.EQUALS, EligibilityOperator.IN]
-                ),
+                EligibilityRule.operator.in_([EligibilityOperator.EQUALS, EligibilityOperator.IN]),
                 EligibilityRule.value_keys.any(EligibilityRuleValue.value_key.in_(include_keys)),
             )
         )

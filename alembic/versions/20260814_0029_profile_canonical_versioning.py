@@ -35,9 +35,7 @@ def upgrade() -> None:
                 server_default="[]",
             )
         )
-        batch_op.add_column(
-            sa.Column("version", sa.Integer(), nullable=False, server_default="1")
-        )
+        batch_op.add_column(sa.Column("version", sa.Integer(), nullable=False, server_default="1"))
         batch_op.create_index("ix_student_profiles_nationality_code", ["nationality_code"])
         batch_op.create_index(
             "ix_student_profiles_country_of_residence_code", ["country_of_residence_code"]

@@ -20,9 +20,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column("document_assets", sa.Column("deletion_status", sa.String(32)))
     op.add_column("document_assets", sa.Column("deletion_requested_at", sa.DateTime(timezone=True)))
-    op.create_index(
-        "ix_document_assets_deletion_status", "document_assets", ["deletion_status"]
-    )
+    op.create_index("ix_document_assets_deletion_status", "document_assets", ["deletion_status"])
     op.add_column(
         "document_versions",
         sa.Column(

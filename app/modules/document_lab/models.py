@@ -146,9 +146,7 @@ class DocumentVersion(Base):
     )
     version_number: Mapped[int] = mapped_column(Integer)
     storage_key: Mapped[str] = mapped_column(String(512), unique=True)
-    encryption_key_version: Mapped[str] = mapped_column(
-        String(100), default="phase7.local-key.v1"
-    )
+    encryption_key_version: Mapped[str] = mapped_column(String(100), default="phase7.local-key.v1")
     content_sha256: Mapped[str] = mapped_column(String(64), index=True)
     declared_content_type: Mapped[str] = mapped_column(String(100))
     detected_content_type: Mapped[str] = mapped_column(String(100))

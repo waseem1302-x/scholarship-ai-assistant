@@ -570,15 +570,18 @@ class ApplicationCommandService:
         attempted = delivered + failed
         health = self.session.get(ReminderWorkerHealth, "default")
         open_tasks = sum(task_counts.get(status, 0) for status in open_statuses)
-        overdue = self.session.scalar(
-            select(func.count())
-            .select_from(ApplicationTask)
-            .where(
-                ApplicationTask.status.in_(open_statuses),
-                ApplicationTask.due_at.is_not(None),
-                ApplicationTask.due_at < now,
+        overdue = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(ApplicationTask)
+                .where(
+                    ApplicationTask.status.in_(open_statuses),
+                    ApplicationTask.due_at.is_not(None),
+                    ApplicationTask.due_at < now,
+                )
             )
-        ) or 0
+            or 0
+        )
         return ApplicationOperationalReportResponse(
             generated_at=now,
             reminder_delivery_rate=round(delivered / attempted, 4) if attempted else None,
@@ -682,10 +685,9 @@ class ApplicationCommandService:
         )
         if not official_deadline or not source:
             return official_deadline, official_timezone, DeadlineState.UNCERTAIN, source
-        if (
+        if application.official_deadline and self._as_utc(
             application.official_deadline
-            and self._as_utc(application.official_deadline) != self._as_utc(official_deadline)
-        ):
+        ) != self._as_utc(official_deadline):
             return official_deadline, official_timezone, DeadlineState.CHANGED, source
         return official_deadline, official_timezone, DeadlineState.KNOWN, source
 

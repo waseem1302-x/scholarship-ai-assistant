@@ -48,9 +48,7 @@ class StudentProfileService:
         self.repository.session.refresh(profile)
         return self.to_response(profile)
 
-    def patch_my_profile(
-        self, user: User, payload: StudentProfilePatch
-    ) -> StudentProfileResponse:
+    def patch_my_profile(self, user: User, payload: StudentProfilePatch) -> StudentProfileResponse:
         profile = self.repository.get_by_user_id(user.id)
         if profile is None:
             values = payload.update_values()

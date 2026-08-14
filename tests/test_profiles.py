@@ -178,9 +178,7 @@ def test_patch_preserves_omitted_profile_fields_and_uses_version(
     assert cleared.json()["preferred_destination_country_codes"] == []
 
 
-def test_profile_update_requires_current_version(
-    client: TestClient, db_session: Session
-) -> None:
+def test_profile_update_requires_current_version(client: TestClient, db_session: Session) -> None:
     email = "versioned-profile@example.com"
     create_student(db_session, email)
     token = login(client, email)

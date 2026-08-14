@@ -25,9 +25,7 @@ def upgrade() -> None:
                 server_default="unknown",
             )
         )
-        batch_op.create_index(
-            "ix_opportunities_application_fee_status", ["application_fee_status"]
-        )
+        batch_op.create_index("ix_opportunities_application_fee_status", ["application_fee_status"])
 
     op.create_table(
         "eligibility_rule_values",

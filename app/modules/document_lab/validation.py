@@ -59,9 +59,7 @@ def _validate_pdf(declared: str, content: bytes, max_pages: int) -> ValidatedDoc
     return ValidatedDocument(detected_content_type=PDF_CONTENT_TYPE, page_count=page_count)
 
 
-def _validate_pdf_in_subprocess(
-    content: bytes, max_pages: int
-) -> tuple[int | None, str | None]:
+def _validate_pdf_in_subprocess(content: bytes, max_pages: int) -> tuple[int | None, str | None]:
     try:
         return run_bounded_process(
             _validate_pdf_result,

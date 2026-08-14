@@ -32,9 +32,7 @@ class OperationalJobHealth(Base):
 
 class OperationalJobRun(Base):
     __tablename__ = "operational_job_runs"
-    __table_args__ = (
-        Index("ix_operational_job_runs_job_started", "job_name", "started_at"),
-    )
+    __table_args__ = (Index("ix_operational_job_runs_job_started", "job_name", "started_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     job_name: Mapped[str] = mapped_column(
