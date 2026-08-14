@@ -105,9 +105,7 @@ def test_postgres_concurrent_appends_form_one_chain(postgres_engine) -> None:
         audit_ids = list(executor.map(append, range(worker_count)))
 
     with Session(postgres_engine) as session:
-        rows = session.scalars(
-            select(AuditLog).where(AuditLog.id.in_(audit_ids))
-        ).all()
+        rows = session.scalars(select(AuditLog).where(AuditLog.id.in_(audit_ids))).all()
         assert len(rows) == worker_count
         assert len({row.integrity_hash for row in rows}) == worker_count
         assert verify_audit_integrity_chain(session) == (True, None)
