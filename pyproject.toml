@@ -46,6 +46,7 @@ testpaths = ["tests"]
 markers = [
   "e2e: runs against a live browser and application URL",
   "redis: runs against a disposable Redis service supplied by TEST_REDIS_URL",
+  "postgres: runs security and concurrency tests against disposable PostgreSQL",
 ]
 
 [tool.ruff]
