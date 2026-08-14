@@ -89,10 +89,7 @@ def upgrade() -> None:
     # with ON DELETE SET NULL would necessarily mutate the audit row when an
     # account is erased, so production audit history intentionally stores the
     # actor identifier as a snapshot instead.
-    op.execute(
-        "ALTER TABLE audit_logs "
-        "DROP CONSTRAINT IF EXISTS audit_logs_actor_user_id_fkey"
-    )
+    op.execute("ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_actor_user_id_fkey")
     op.execute(
         """
         CREATE OR REPLACE FUNCTION reject_audit_log_mutation()
