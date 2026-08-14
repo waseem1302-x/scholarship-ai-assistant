@@ -22,6 +22,30 @@ SystemSessionLocal = sessionmaker(
 )
 
 
+@event.listens_for(engine, "connect")
+def _reject_privileged_production_runtime(
+    dbapi_connection: object,
+    _connection_record: object,
+) -> None:
+    """Fail closed if the production API credential can bypass PostgreSQL RLS."""
+    if settings.env != "production" or settings.migration_only:
+        return
+
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute(
+            "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user"
+        )
+        role_properties = cursor.fetchone()
+    finally:
+        cursor.close()
+
+    if role_properties is None or any(role_properties):
+        raise RuntimeError(
+            "Production APP_DATABASE_URL must use a NOSUPERUSER NOBYPASSRLS role"
+        )
+
+
 def _apply_postgres_context(session: Session, connection: Connection) -> None:
     if connection.dialect.name != "postgresql":
         return
