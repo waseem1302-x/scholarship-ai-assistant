@@ -222,6 +222,100 @@ def test_monitor_normalizes_dynamic_html_before_section_hashing() -> None:
     )
 
 
+def test_safe_fetcher_rejects_authentication_destination(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://idp.example.edu/idp/profile/SAML2/Redirect/SSO?execution=e1s1"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return b"<html><main>Central Login stale request page.</main></html>"
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    with pytest.raises(
+        SourceFetchError,
+        match=r"source_authentication_required",
+    ):
+        fetcher.fetch("https://example.edu/scholarship")
+
+
+def test_safe_fetcher_allows_ordinary_public_redirect(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://www.example.edu/scholarships/programme"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return (
+                b"<html><main>Official public scholarship eligibility "
+                b"and funding information.</main></html>"
+            )
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    result = fetcher.fetch("https://example.edu/scholarship")
+
+    assert result.final_url == ("https://www.example.edu/scholarships/programme")
+    assert "Official public scholarship" in (result.normalized_text or "")
+
+
 def test_safe_fetcher_preserves_target_http_failure_code(monkeypatch) -> None:
     class Opener:
         def __init__(self) -> None:

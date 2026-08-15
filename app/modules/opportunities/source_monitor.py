@@ -103,6 +103,53 @@ class SourceFetcher(Protocol):
     def fetch(self, url: str) -> FetchedSource: ...
 
 
+AUTHENTICATION_HOST_LABELS = frozenset(
+    {
+        "accounts",
+        "auth",
+        "idp",
+        "login",
+        "signin",
+        "sso",
+    }
+)
+
+AUTHENTICATION_PATH_SEGMENTS = frozenset(
+    {
+        "auth",
+        "authenticate",
+        "authentication",
+        "authorize",
+        "idp",
+        "login",
+        "oauth",
+        "oauth2",
+        "saml",
+        "saml2",
+        "sign-in",
+        "signin",
+        "sso",
+    }
+)
+
+
+def is_authentication_destination(url: str) -> bool:
+    """Return True for explicit login/identity-provider destinations."""
+
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").casefold()
+
+    first_host_label = host.split(".", 1)[0] if host else ""
+
+    path_segments = {
+        urllib.parse.unquote(segment).casefold() for segment in parsed.path.split("/") if segment
+    }
+
+    return first_host_label in AUTHENTICATION_HOST_LABELS or bool(
+        path_segments & AUTHENTICATION_PATH_SEGMENTS
+    )
+
+
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         validate_monitor_url(newurl)
@@ -133,6 +180,8 @@ class SafeSourceFetcher:
                 final_url = response.geturl()
                 validate_monitor_url(final_url)
                 validate_response_peer(response)
+                if is_authentication_destination(final_url):
+                    raise SourceFetchError("source_authentication_required")
                 content_type = response.headers.get_content_type().casefold()
                 if content_type not in ACCEPTED_CONTENT_TYPES:
                     raise SourceFetchError(f"unsupported_source_content_type: {content_type[:100]}")
