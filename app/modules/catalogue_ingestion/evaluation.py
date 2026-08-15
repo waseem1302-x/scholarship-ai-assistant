@@ -387,6 +387,9 @@ def values_equal(path: str, actual: Any, expected: Any) -> bool:
         except InvalidOperation:
             return False
 
+    if path == "identity.name" and isinstance(actual, str) and isinstance(expected, str):
+        return _normalize_identity_name(actual) == _normalize_identity_name(expected)
+
     if isinstance(actual, str) and isinstance(expected, str):
         return _normalize_text(actual) == _normalize_text(expected)
 
@@ -399,6 +402,35 @@ def is_unknown_value(path: str, value: Any) -> bool:
     if isinstance(value, str) and _normalize_text(value) == "unknown":
         return True
     return path in {"application.required_documents", "eligibility.rules"} and value == []
+
+
+def _normalize_identity_name(value: str) -> str:
+    """Normalize narrow, non-semantic official-page title decoration."""
+
+    normalized = _normalize_text(value)
+
+    # Audience decoration used by official opportunity pages.
+    normalized = re.sub(
+        r"\s+\((?:student|students)\)$",
+        "",
+        normalized,
+    )
+
+    # Some official pages append an organisation acronym to the
+    # programme title, e.g. "... (EPOS) - DAAD". Strip only an
+    # uppercase acronym-shaped suffix from the original value.
+    acronym_suffix = re.search(
+        r"\s+-\s+([A-Z][A-Z0-9.&]{1,15})\s*$",
+        value.strip(),
+    )
+
+    if acronym_suffix is not None:
+        suffix = _normalize_text(acronym_suffix.group(0))
+
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)].rstrip()
+
+    return normalized
 
 
 def _normalize_text(value: str) -> str:

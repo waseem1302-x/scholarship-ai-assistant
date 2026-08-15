@@ -884,3 +884,43 @@ def test_gold_set_requires_explicit_unknown_coverage() -> None:
 
     with pytest.raises(ValueError, match="expected_unknown"):
         evaluate(FakeExtractionProvider(extraction_output()), gold)
+
+
+def test_gold_evaluator_identity_name_allows_student_audience_suffix() -> None:
+    from app.modules.catalogue_ingestion.evaluation import values_equal
+
+    assert values_equal(
+        "identity.name",
+        "Erasmus Mundus Joint Masters (students)",
+        "Erasmus Mundus Joint Masters",
+    )
+
+
+def test_gold_evaluator_identity_name_allows_uppercase_brand_suffix() -> None:
+    from app.modules.catalogue_ingestion.evaluation import values_equal
+
+    assert values_equal(
+        "identity.name",
+        "Development-Related Postgraduate Courses (EPOS) - DAAD",
+        "Development-Related Postgraduate Courses (EPOS)",
+    )
+
+
+def test_gold_evaluator_identity_name_keeps_material_suffix_strict() -> None:
+    from app.modules.catalogue_ingestion.evaluation import values_equal
+
+    assert not values_equal(
+        "identity.name",
+        "Global Scholars Programme - International Track",
+        "Global Scholars Programme",
+    )
+
+
+def test_gold_evaluator_non_identity_text_remains_strict() -> None:
+    from app.modules.catalogue_ingestion.evaluation import values_equal
+
+    assert not values_equal(
+        "identity.provider_name",
+        "Example Foundation (students)",
+        "Example Foundation",
+    )
