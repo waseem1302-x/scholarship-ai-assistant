@@ -6,7 +6,6 @@ import hashlib
 import json
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from decimal import Decimal
@@ -116,6 +115,7 @@ class AzureOpenAIExtractionProvider:
     def extract(self, *, source_url: str, source_text: str) -> ExtractionResult:
         bounded_text = source_text[: self.settings.catalogue_ai_max_input_characters]
         body = {
+            "model": self.model,
             "messages": [
                 {"role": "system", "content": SYSTEM_INSTRUCTION},
                 {
@@ -123,8 +123,8 @@ class AzureOpenAIExtractionProvider:
                     "content": f"OFFICIAL SOURCE URL: {source_url}\n\nSOURCE TEXT:\n{bounded_text}",
                 },
             ],
-            "temperature": 0,
-            "max_tokens": self.settings.catalogue_ai_max_output_tokens,
+            "max_completion_tokens": self.settings.catalogue_ai_max_output_tokens,
+            "reasoning_effort": "minimal",
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
@@ -136,9 +136,7 @@ class AzureOpenAIExtractionProvider:
         }
         payload = json.dumps(body, separators=(",", ":")).encode()
         endpoint = self.settings.catalogue_ai_endpoint.rstrip("/")
-        deployment = urllib.parse.quote(self.model, safe="")
-        version = urllib.parse.quote(self.settings.catalogue_ai_api_version, safe="")
-        url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={version}"
+        url = f"{endpoint}/openai/v1/chat/completions"
         started = time.perf_counter()
         last_error: BaseException | None = None
         for attempt in range(self.settings.catalogue_ai_max_retries + 1):

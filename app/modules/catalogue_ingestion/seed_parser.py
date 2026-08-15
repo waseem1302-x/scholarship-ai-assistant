@@ -54,12 +54,22 @@ class SeedSourceLoader:
         self.credential = credential
 
     def load(self, source: str) -> LoadedSeed:
-        parsed = urllib.parse.urlparse(source)
-        if parsed.scheme in {"http", "https"}:
-            return self._load_https(source)
-        if parsed.scheme and parsed.scheme != "file":
-            raise SeedParseError("unsupported_seed_source")
-        path = Path(urllib.request.url2pathname(parsed.path) if parsed.scheme == "file" else source)
+        # urllib.parse.urlparse() interprets a Windows drive letter such as
+        # C:\ as a URI scheme ("c"). Treat absolute Windows drive paths as
+        # local files before applying URI validation.
+        if re.match(r"^[A-Za-z]:[\\/]", source):
+            path = Path(source)
+        else:
+            parsed = urllib.parse.urlparse(source)
+            if parsed.scheme in {"http", "https"}:
+                return self._load_https(source)
+            if parsed.scheme and parsed.scheme != "file":
+                raise SeedParseError("unsupported_seed_source")
+            path = Path(
+                urllib.request.url2pathname(parsed.path)
+                if parsed.scheme == "file"
+                else source
+            )
         if not path.is_file():
             raise SeedParseError("seed_file_not_found")
         if path.stat().st_size > MAX_SEED_BYTES:
