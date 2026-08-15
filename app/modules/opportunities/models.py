@@ -529,6 +529,12 @@ class Source(Base):
             "last_verified_at",
             "opportunity_id",
         ),
+        Index(
+            "ix_sources_monitor_claim",
+            "monitor_next_check_at",
+            "monitor_claimed_until",
+            "verification_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -555,6 +561,11 @@ class Source(Base):
     )
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    monitor_next_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    monitor_claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    monitor_failure_count: Mapped[int] = mapped_column(default=0)
     hash_algorithm: Mapped[str] = mapped_column(
         String(16), default="sha256", server_default="sha256"
     )

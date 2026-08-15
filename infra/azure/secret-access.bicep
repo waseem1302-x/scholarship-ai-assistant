@@ -54,6 +54,11 @@ resource smtpPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' exist
   name: 'app-smtp-password'
 }
 
+resource operationsHealthTokenSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: vault
+  name: 'app-operations-health-token'
+}
+
 resource migrationDatabaseUrlSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
   parent: vault
   name: 'app-migration-database-url'
@@ -102,6 +107,20 @@ resource runtimeSmtpUsernameSecretAccess 'Microsoft.Authorization/roleAssignment
 resource runtimeSmtpPasswordSecretAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(smtpPasswordSecret.id, runtimeIdentity.id, keyVaultSecretsUserRoleDefinitionId)
   scope: smtpPasswordSecret
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    principalId: runtimeIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource runtimeOperationsHealthTokenAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(
+    operationsHealthTokenSecret.id,
+    runtimeIdentity.id,
+    keyVaultSecretsUserRoleDefinitionId
+  )
+  scope: operationsHealthTokenSecret
   properties: {
     roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
     principalId: runtimeIdentity.properties.principalId

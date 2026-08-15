@@ -429,3 +429,39 @@ def test_passkey_lifecycle_migration_upgrades_and_rolls_back(tmp_path: Path) -> 
     }
     assert not {"display_name", "revoked_at"}.intersection(credential_columns)
     engine.dispose()
+
+
+def test_catalogue_ingestion_migration_is_additive_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'catalogue-ingestion.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260815_0037")
+    engine = create_engine(database_url)
+    inspector = inspect(engine)
+    assert {
+        "catalogue_ingestion_runs",
+        "catalogue_candidates",
+        "catalogue_candidate_sources",
+        "catalogue_extraction_attempts",
+    }.issubset(inspector.get_table_names())
+    assert {
+        "monitor_next_check_at",
+        "monitor_claimed_until",
+        "monitor_failure_count",
+    }.issubset({column["name"] for column in inspector.get_columns("sources")})
+    assert "ix_catalogue_candidates_claim" in {
+        index["name"] for index in inspector.get_indexes("catalogue_candidates")
+    }
+
+    command.downgrade(alembic_config, "20260814_0036")
+    inspector = inspect(engine)
+    assert "catalogue_ingestion_runs" not in inspector.get_table_names()
+    assert not {
+        "monitor_next_check_at",
+        "monitor_claimed_until",
+        "monitor_failure_count",
+    }.intersection({column["name"] for column in inspector.get_columns("sources")})
+    engine.dispose()

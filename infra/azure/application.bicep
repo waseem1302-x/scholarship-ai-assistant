@@ -137,6 +137,11 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           keyVaultUrl: '${keyVaultSecretBaseUrl}/app-smtp-password'
           identity: runtimeIdentity.id
         }
+        {
+          name: 'operations-health-token'
+          keyVaultUrl: '${keyVaultSecretBaseUrl}/app-operations-health-token'
+          identity: runtimeIdentity.id
+        }
       ]
       ingress: {
         external: true
@@ -190,6 +195,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               secretRef: 'smtp-password'
             }
             {
+              name: 'APP_OPERATIONS_HEALTH_TOKEN'
+              secretRef: 'operations-health-token'
+            }
+            {
               name: 'APP_CORS_ORIGINS'
               value: appOrigin
             }
@@ -208,6 +217,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'APP_METRICS_BACKEND'
               value: 'external'
+            }
+            {
+              name: 'APP_PASSWORD_BREACH_CHECK_ENABLED'
+              value: 'true'
             }
             {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'

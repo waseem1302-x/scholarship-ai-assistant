@@ -16,6 +16,7 @@ from app.modules.opportunities.models import (
 )
 from app.modules.opportunities.source_monitor import (
     FetchedSource,
+    SafeSourceFetcher,
     SourceFetchError,
     SourceMonitor,
     extract_evidence_section,
@@ -211,6 +212,54 @@ def test_monitor_normalizes_dynamic_html_before_section_hashing() -> None:
     assert second_section is not None
     assert first_section.label == "Eligibility"
     assert first_section.text == second_section.text
+    assert (
+        "navigation noise"
+        not in normalize_evidence_text(
+            b"<nav>Navigation noise</nav><main>Official scholarship evidence remains.</main>"
+        ).casefold()
+    )
+
+
+def test_safe_fetcher_respects_robots_disallow(monkeypatch) -> None:
+    class RobotsResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/robots.txt"
+
+        def read(self, limit: int) -> bytes:
+            assert limit > 0
+            return b"User-agent: *\nDisallow: /private\n"
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return RobotsResponse()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+
+    try:
+        fetcher._assert_robots_allowed(
+            "https://example.edu/private/scholarship",
+            fetcher.policy_for("https://example.edu/private/scholarship"),
+        )
+    except SourceFetchError as exc:
+        assert str(exc) == "robots_disallowed"
+        return
+    raise AssertionError("robots.txt disallow rule was ignored")
 
 
 class PeerSocket:
@@ -236,3 +285,73 @@ def test_response_peer_validation_rejects_private_addresses() -> None:
     except SourceFetchError:
         return
     raise AssertionError("Private response peer address was accepted")
+
+
+def test_source_monitor_claim_completion_schedules_next_check(db_session) -> None:
+    source = add_active_verified_source(
+        db_session,
+        url="https://example.edu/scheduled",
+        content_hash=_hash(b"stable source content"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+    fetcher = FakeFetcher({source.url: b"stable source content"})
+
+    first = SourceMonitor(db_session, fetcher=fetcher).run(now=NOW, limit=10)
+    db_session.refresh(source)
+    second = SourceMonitor(db_session, fetcher=fetcher).run(now=NOW, limit=10)
+
+    assert first.checked == 1
+    assert second.candidates == 0
+    assert source.monitor_claimed_until is None
+    assert source.monitor_next_check_at.replace(tzinfo=UTC) == NOW + timedelta(days=7)
+    assert source.monitor_failure_count == 0
+
+
+def test_source_monitor_failure_releases_claim_with_exponential_backoff(db_session) -> None:
+    source = add_active_verified_source(
+        db_session,
+        url="https://example.edu/failing",
+        content_hash=_hash(b"old content"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+
+    class FailingFetcher:
+        def fetch(self, url: str) -> FetchedSource:
+            del url
+            raise SourceFetchError("source_fetch_failed: blocked")
+
+    result = SourceMonitor(db_session, fetcher=FailingFetcher()).run(now=NOW, limit=10)
+    db_session.refresh(source)
+
+    assert result.failed == 1
+    assert source.monitor_claimed_until is None
+    assert source.monitor_failure_count == 1
+    assert source.monitor_next_check_at.replace(tzinfo=UTC) == NOW + timedelta(hours=2)
+
+
+def test_source_monitor_enforces_per_host_interval(db_session) -> None:
+    first = add_active_verified_source(
+        db_session,
+        url="https://example.edu/one",
+        content_hash=_hash(b"same content one"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+    second = add_active_verified_source(
+        db_session,
+        url="https://example.edu/two",
+        content_hash=_hash(b"same content two"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+    waits: list[float] = []
+    fetcher = FakeFetcher({first.url: b"same content one", second.url: b"same content two"})
+
+    result = SourceMonitor(
+        db_session,
+        fetcher=fetcher,
+        per_host_interval_seconds=1,
+        sleeper=waits.append,
+    ).run(now=NOW, limit=10)
+
+    assert result.checked == 2
+    assert len(waits) == 1
+    assert 0 < waits[0] <= 1

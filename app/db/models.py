@@ -31,6 +31,12 @@ from app.modules.auth.models import (
     WebAuthnCredential,
 )
 from app.modules.beta.models import BetaInvitation, BetaLegalAcceptance
+from app.modules.catalogue_ingestion.models import (
+    CatalogueCandidate,
+    CatalogueCandidateSource,
+    CatalogueExtractionAttempt,
+    CatalogueIngestionRun,
+)
 from app.modules.community.models import (
     CommunityBlock,
     CommunityBookmark,
@@ -88,6 +94,10 @@ __all__ = [
     "AuditLog",
     "BetaInvitation",
     "BetaLegalAcceptance",
+    "CatalogueCandidate",
+    "CatalogueCandidateSource",
+    "CatalogueExtractionAttempt",
+    "CatalogueIngestionRun",
     "CommunityBlock",
     "CommunityBookmark",
     "CommunityModerationRecord",

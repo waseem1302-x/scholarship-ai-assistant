@@ -1768,6 +1768,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "azure-identity" },
     { name = "azure-monitor-opentelemetry" },
     { name = "boto3" },
     { name = "cryptography" },
@@ -1797,6 +1798,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
+    { name = "azure-identity", specifier = ">=1.25,<2" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.8.9,<2" },
     { name = "boto3", specifier = ">=1.43,<2" },
     { name = "cryptography", specifier = ">=50,<51" },

@@ -1,0 +1,137 @@
+name: Catalogue AI evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: 'Existing isolated staging resource group.'
+        required: true
+        type: string
+      resource_prefix:
+        description: 'Existing staging foundation prefix.'
+        required: true
+        type: string
+      storage_account:
+        description: 'Private staging storage account containing the gold JSONL.'
+        required: true
+        type: string
+      gold_container:
+        description: 'Private Blob container; source text is never uploaded as an artifact.'
+        required: true
+        type: string
+      gold_blob:
+        description: 'Blob path to the reviewed 30-50 item JSONL gold set.'
+        required: true
+        type: string
+      seed_blob_uri:
+        description: 'Optional query-free private Blob URI for a bounded candidate-only job smoke.'
+        required: false
+        type: string
+      confirmation:
+        description: 'Enter RUN_CATALOGUE_GOLD after reviewing the deployment and cost ceiling.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: catalogue-ai-staging-evaluation
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    if: inputs.confirmation == 'RUN_CATALOGUE_GOLD'
+    environment: azure-staging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Sign in to staging with GitHub OIDC
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Download private gold set with Entra authorization
+        env:
+          STORAGE_ACCOUNT: ${{ inputs.storage_account }}
+          GOLD_CONTAINER: ${{ inputs.gold_container }}
+          GOLD_BLOB: ${{ inputs.gold_blob }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/catalogue-evaluation"
+          az storage blob download \
+            --auth-mode login \
+            --account-name "$STORAGE_ACCOUNT" \
+            --container-name "$GOLD_CONTAINER" \
+            --name "$GOLD_BLOB" \
+            --file "$RUNNER_TEMP/catalogue-evaluation/gold.jsonl" \
+            --no-progress
+
+      - name: Run optional private Blob and Container Apps Job smoke
+        if: inputs.seed_blob_uri != ''
+        env:
+          RESOURCE_GROUP: ${{ inputs.resource_group }}
+          RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
+          SEED_BLOB_URI: ${{ inputs.seed_blob_uri }}
+        run: |
+          set -euo pipefail
+          case "$SEED_BLOB_URI" in
+            https://*.blob.core.windows.net/*) ;;
+            *) echo 'Seed URI must be an HTTPS Azure Blob URI.'; exit 1 ;;
+          esac
+          case "$SEED_BLOB_URI" in *\?*) echo 'Use managed identity, not a SAS query.'; exit 1 ;; esac
+          job_name="${RESOURCE_PREFIX}-catalogue-ingestion"
+          execution_name="$(az containerapp job start \
+            --name "$job_name" \
+            --resource-group "$RESOURCE_GROUP" \
+            --container-name job \
+            --command python -m app.cli.ingest_catalogue_seeds \
+            --args --source "$SEED_BLOB_URI" --dry-run --mode candidate_only --max-candidates 100 \
+            --query name --output tsv)"
+          test -n "$execution_name"
+          for attempt in {1..60}; do
+            status="$(az containerapp job execution show \
+              --name "$job_name" \
+              --resource-group "$RESOURCE_GROUP" \
+              --job-execution-name "$execution_name" \
+              --query properties.status --output tsv)"
+            [ "$status" = Succeeded ] && exit 0
+            [ "$status" = Failed ] && exit 1
+            sleep 10
+          done
+          echo 'Catalogue candidate-only job smoke timed out.'
+          exit 1
+
+      - name: Run real strict-output extraction evaluation
+        env:
+          APP_ENV: test
+          APP_DATABASE_URL: 'sqlite+pysqlite:///:memory:'
+          APP_JWT_SECRET: catalogue-evaluation-only-not-a-runtime-secret
+          APP_CATALOGUE_AI_INGESTION_ENABLED: 'true'
+          APP_CATALOGUE_AI_PROVIDER: azure_openai
+          APP_CATALOGUE_AI_ENDPOINT: ${{ vars.CATALOGUE_AI_ENDPOINT }}
+          APP_CATALOGUE_AI_MODEL: ${{ vars.CATALOGUE_AI_MODEL }}
+          APP_CATALOGUE_AI_INPUT_COST_PER_MILLION: ${{ vars.CATALOGUE_AI_INPUT_COST_PER_MILLION }}
+          APP_CATALOGUE_AI_OUTPUT_COST_PER_MILLION: ${{ vars.CATALOGUE_AI_OUTPUT_COST_PER_MILLION }}
+          APP_CATALOGUE_AI_MAX_CALLS_PER_RUN: '50'
+          APP_CATALOGUE_AI_MAX_ESTIMATED_COST_PER_RUN: '5.00'
+        run: |
+          set -euo pipefail
+          python -m pip install 'uv==0.11.33'
+          uv sync --frozen
+          uv run python -m app.cli.evaluate_catalogue_extraction \
+            --gold "$RUNNER_TEMP/catalogue-evaluation/gold.jsonl" \
+            > "$RUNNER_TEMP/catalogue-evaluation/report.json"
+          python -m json.tool "$RUNNER_TEMP/catalogue-evaluation/report.json"
+
+      - name: Retain aggregate report only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: catalogue-gold-evaluation-${{ github.run_id }}
+          path: ${{ runner.temp }}/catalogue-evaluation/report.json
+          retention-days: 30
+          if-no-files-found: error

@@ -39,6 +39,7 @@ placed in GitHub repository secrets.
 | `APP_JWT_SECRET` | Key Vault (**secret**) | Newly generated, 32+ random characters. |
 | `APP_RATE_LIMIT_REDIS_URL` | Key Vault (**secret**) | TLS `rediss://` URL only. |
 | SMTP username/password | Key Vault (**secret**) | Approved transactional sender, verification tested. |
+| `APP_OPERATIONS_HEALTH_TOKEN` | Key Vault (**secret**) | Random token protecting aggregate worker-health reads. |
 | `APP_CORS_ORIGINS` | deployment config | Exact HTTPS beta origin only. |
 | `APP_TRUSTED_PROXY_MODE` | deployment config | `azure-container-apps`; do not set trusted proxy IPs. |
 | WebAuthn RP/origin | deployment config | Exact beta domain and HTTPS origin. |
@@ -58,7 +59,7 @@ staging proof, and product-owner approval.
 | `secret-access.bicep` | Per-secret Key Vault RBAC after bootstrap | Runtime gets API/Redis/JWT/SMTP; migration gets only migration URL. |
 | `migration-job.bicep` | One-off Alembic job | Separate identity/database role; 30-minute timeout; no retry. |
 | `application.bicep` | API revisions, ACR pull, Key Vault references, probes | Runtime identity only; previous revision remains a rollback path. |
-| `scheduled-jobs.bicep` | UTC source monitor, reminder dispatch, retention | Created only after API readiness. |
+| `scheduled-jobs.bicep` | UTC source monitor, reminder dispatch, retention, manual catalogue ingestion | Runtime identity; scoped AI and optional seed Blob reader roles only on named existing accounts. |
 | `cost-guardrails.bicep` | Subscription monthly cost budget | Tags scope staging and beta together. |
 
 Do not place runtime secret values in Bicep parameter files, GitHub secrets,
@@ -78,6 +79,7 @@ limited PostgreSQL roles and Redis connection are tested:
   hostname.
 - `app-smtp-username`
 - `app-smtp-password`
+- `app-operations-health-token`
 
 Run `secret-access.bicep` only after those secrets exist. It grants access at
 individual-secret scope rather than blanket vault read access.

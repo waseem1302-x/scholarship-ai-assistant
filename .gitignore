@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .document-lab-storage/
+.catalogue-seeds/
 .pytest-tmp/
 /.w*-migration*/
 /.pytest-*/
