@@ -356,6 +356,7 @@ class CatalogueIngestionService:
             return
 
         payload = validated.payload
+        payload.name = _canonical_identity_name(candidate.seed_name, payload.name)
         candidate.proposed_payload = payload.model_dump(mode="json")
         duplicates = self.opportunities.find_opportunities_by_canonical_url(source.canonical_url)
         if duplicates:
@@ -570,9 +571,30 @@ def _identity_resolution_errors(
     return errors
 
 
+def _canonical_identity_name(expected: str, actual: str) -> str:
+    """Remove an official page-title wrapper without changing programme identity."""
+
+    segments = [
+        segment.strip()
+        for segment in re.split(r"\s+(?:-|\u2013|\u2014|\|)\s+", actual)
+        if segment.strip()
+    ]
+    if len(segments) > 1:
+        matching_segments = [
+            segment
+            for segment in segments
+            if _identity_name_matches(expected, segment)
+        ]
+        if len(matching_segments) == 1:
+            return matching_segments[0]
+
+    return actual
+
+
 def _identity_name_matches(expected: str, actual: str | None) -> bool:
     if not actual:
         return False
+
     ignored = {
         "award",
         "awards",
@@ -586,15 +608,46 @@ def _identity_name_matches(expected: str, actual: str | None) -> bool:
         "scholarships",
         "the",
     }
-    expected_tokens = set(re.findall(r"[a-z0-9]+", expected.casefold())) - ignored
-    actual_tokens = set(re.findall(r"[a-z0-9]+", actual.casefold())) - ignored
+
+    def identity_tokens(value: str) -> set[str]:
+        return set(re.findall(r"[a-z0-9]+", value.casefold())) - ignored
+
+    def token_sets_match(expected_tokens: set[str], actual_tokens: set[str]) -> bool:
+        if not expected_tokens or not actual_tokens:
+            return False
+
+        if expected_tokens == actual_tokens:
+            return True
+
+        if min(len(expected_tokens), len(actual_tokens)) >= 2 and (
+            expected_tokens <= actual_tokens or actual_tokens <= expected_tokens
+        ):
+            return True
+
+        overlap = expected_tokens & actual_tokens
+        return len(overlap) / len(expected_tokens | actual_tokens) >= 0.6
+
+    expected_tokens = identity_tokens(expected)
+    actual_tokens = identity_tokens(actual)
+
+    if token_sets_match(expected_tokens, actual_tokens):
+        return True
+
+    # Official sites commonly wrap the programme name in a page title such as:
+    # "About us - Chevening Scholarship Programme - GOV.UK".
+    # Compare separator-delimited title segments rather than globally ignoring
+    # wrapper words, which would make unrelated programme names easier to match.
+    title_segments = [
+        segment.strip()
+        for segment in re.split(r"\s+(?:-|\u2013|\u2014|\|)\s+", actual)
+        if segment.strip()
+    ]
+    if len(title_segments) > 1:
+        for segment in title_segments:
+            if token_sets_match(expected_tokens, identity_tokens(segment)):
+                return True
+
     if not expected_tokens or not actual_tokens:
         return expected.strip().casefold() == actual.strip().casefold()
-    overlap = expected_tokens & actual_tokens
-    if expected_tokens == actual_tokens:
-        return True
-    if min(len(expected_tokens), len(actual_tokens)) >= 2 and (
-        expected_tokens <= actual_tokens or actual_tokens <= expected_tokens
-    ):
-        return True
-    return len(overlap) / len(expected_tokens | actual_tokens) >= 0.6
+
+    return False

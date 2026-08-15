@@ -229,6 +229,12 @@ def _normalize(value: str) -> str:
     """Canonicalize harmless text-encoding differences for evidence comparison only."""
 
     normalized = unicodedata.normalize("NFKC", value)
+
+    # Azure has been observed returning an apostrophe as the exact two-character
+    # sequence U+0003 followed by "9". Normalize only that specific corruption;
+    # do not treat arbitrary control characters as punctuation.
+    normalized = normalized.replace("\x039", "'")
+
     normalized = normalized.translate(
         str.maketrans(
             {

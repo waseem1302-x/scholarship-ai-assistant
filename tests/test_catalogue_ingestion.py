@@ -33,6 +33,7 @@ from app.modules.catalogue_ingestion.seed_parser import (
 )
 from app.modules.catalogue_ingestion.service import (
     CatalogueIngestionService,
+    _canonical_identity_name,
     _identity_name_matches,
 )
 from app.modules.catalogue_ingestion.sources import OfficialSourceClassifier
@@ -733,4 +734,51 @@ def test_identity_name_match_tolerates_programme_label_variants() -> None:
     assert not _identity_name_matches(
         "Chevening Scholarships",
         "Commonwealth Scholarship Programme",
+    )
+
+def test_identity_name_match_tolerates_official_page_title_wrapper() -> None:
+    assert _identity_name_matches(
+        "Chevening Scholarship Programme",
+        "About us - Chevening Scholarship Programme - GOV.UK",
+    )
+    assert not _identity_name_matches(
+        "Chevening Scholarship Programme",
+        "About us - Commonwealth Scholarship Programme - GOV.UK",
+    )
+
+
+def test_evidence_normalizer_tolerates_observed_azure_apostrophe_corruption() -> None:
+    from app.modules.catalogue_ingestion.validation import _normalize
+
+    corrupted_masters = "Masters" + chr(0x0003) + "9 degrees"
+    corrupted_government = "government" + chr(0x0003) + "9s"
+
+    assert _normalize(corrupted_masters) == _normalize(
+        "Masters" + chr(0x2019) + " degrees"
+    )
+    assert _normalize(corrupted_government) == _normalize(
+        "government" + chr(0x2019) + "s"
+    )
+
+def test_canonical_identity_name_strips_official_page_title_wrapper() -> None:
+    assert (
+        _canonical_identity_name(
+            "Chevening Scholarship Programme",
+            "About us - Chevening Scholarship Programme - GOV.UK",
+        )
+        == "Chevening Scholarship Programme"
+    )
+    assert (
+        _canonical_identity_name(
+            "Chevening Scholarships",
+            "About us - Chevening Scholarship Programme - GOV.UK",
+        )
+        == "Chevening Scholarship Programme"
+    )
+    assert (
+        _canonical_identity_name(
+            "Chevening Scholarship Programme",
+            "Commonwealth Scholarship Programme",
+        )
+        == "Commonwealth Scholarship Programme"
     )
