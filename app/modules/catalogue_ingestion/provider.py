@@ -271,8 +271,7 @@ def azure_structured_output_schema() -> dict[str, Any]:
                 # named "format", "pattern", etc.
                 if key in {"properties", "$defs"} and isinstance(item, dict):
                     cleaned[key] = {
-                        name: normalize(child_schema)
-                        for name, child_schema in item.items()
+                        name: normalize(child_schema) for name, child_schema in item.items()
                     }
                 else:
                     cleaned[key] = normalize(item)

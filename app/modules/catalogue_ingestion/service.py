@@ -581,9 +581,7 @@ def _canonical_identity_name(expected: str, actual: str) -> str:
     ]
     if len(segments) > 1:
         matching_segments = [
-            segment
-            for segment in segments
-            if _identity_name_matches(expected, segment)
+            segment for segment in segments if _identity_name_matches(expected, segment)
         ]
         if len(matching_segments) == 1:
             return matching_segments[0]

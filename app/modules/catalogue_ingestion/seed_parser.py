@@ -66,9 +66,7 @@ class SeedSourceLoader:
             if parsed.scheme and parsed.scheme != "file":
                 raise SeedParseError("unsupported_seed_source")
             path = Path(
-                urllib.request.url2pathname(parsed.path)
-                if parsed.scheme == "file"
-                else source
+                urllib.request.url2pathname(parsed.path) if parsed.scheme == "file" else source
             )
         if not path.is_file():
             raise SeedParseError("seed_file_not_found")

@@ -673,6 +673,7 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
     assert result.output.identity.name == "Example Scholarship"
     assert result.usage.estimated_cost == Decimal("0.000200")
 
+
 def test_validation_accepts_equivalent_apostrophe_encoding_in_evidence() -> None:
     raw = extraction_output().model_dump(mode="json")
     raw["evidence"][0]["excerpt"] = "Example Scholar\x19s Award"
@@ -721,10 +722,10 @@ def test_non_mandatory_ai_rule_is_not_added_to_structured_matching() -> None:
     assert validated.payload is not None
     assert validated.payload.eligibility_rules == []
     assert any(
-        "Non-mandatory AI-extracted eligibility rules were omitted"
-        in warning
+        "Non-mandatory AI-extracted eligibility rules were omitted" in warning
         for warning in validated.payload.eligibility_warnings
     )
+
 
 def test_identity_name_match_tolerates_programme_label_variants() -> None:
     assert _identity_name_matches(
@@ -735,6 +736,7 @@ def test_identity_name_match_tolerates_programme_label_variants() -> None:
         "Chevening Scholarships",
         "Commonwealth Scholarship Programme",
     )
+
 
 def test_identity_name_match_tolerates_official_page_title_wrapper() -> None:
     assert _identity_name_matches(
@@ -753,12 +755,9 @@ def test_evidence_normalizer_tolerates_observed_azure_apostrophe_corruption() ->
     corrupted_masters = "Masters" + chr(0x0003) + "9 degrees"
     corrupted_government = "government" + chr(0x0003) + "9s"
 
-    assert _normalize(corrupted_masters) == _normalize(
-        "Masters" + chr(0x2019) + " degrees"
-    )
-    assert _normalize(corrupted_government) == _normalize(
-        "government" + chr(0x2019) + "s"
-    )
+    assert _normalize(corrupted_masters) == _normalize("Masters" + chr(0x2019) + " degrees")
+    assert _normalize(corrupted_government) == _normalize("government" + chr(0x2019) + "s")
+
 
 def test_canonical_identity_name_strips_official_page_title_wrapper() -> None:
     assert (
