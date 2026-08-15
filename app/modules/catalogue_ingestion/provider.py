@@ -22,6 +22,36 @@ SYSTEM_INSTRUCTION = """You extract scholarship facts only from the supplied off
 Return null/unknown when the text does not explicitly support a value. Never use general knowledge.
 Every non-null decision-critical value must have field-level evidence whose excerpt appears verbatim
 in the supplied text. Normalization may standardize an explicit value but must be marked normalized.
+
+For identity.provider_name, inspect explicit official page titles, organisation headings, programme
+headings, and other authoritative identity text in the supplied source. When an administering
+organisation or programme name is explicitly stated, populate provider_name and provide exact
+field-level evidence. Do not leave provider_name null merely because the provider name appears in a
+page title or heading rather than in a descriptive sentence.
+
+Create eligibility.rules only for explicit applicant eligibility requirements or mandatory
+conditions stated by the official source. Do not convert descriptive programme characteristics,
+typical or majority patterns, preferences, benefits, target audiences, or qualified wording such as
+"mostly", "typically", "usually", or "preferred" into eligibility rules. Such information may be
+represented in the appropriate descriptive field or warning when supported, but must not become a
+structured eligibility rule unless the source clearly states it as an eligibility requirement.
+
+For these decision-critical fields:
+- identity.name
+- identity.provider_name
+- identity.country
+- study.degree_level
+
+a non-null value MUST have at least one matching evidence item whose field_path is exactly the same
+field name and whose excerpt is a verbatim substring of the supplied source text. If the value is a
+normalization of explicit source wording, cite the original wording verbatim and set basis to
+"normalized". Examples include "UK" normalized to "United Kingdom" and "Masters degrees" normalized
+to the masters degree enum. If no valid source excerpt can support one of these fields, return the
+field as null rather than emitting an unsupported value.
+
+Do not assume that populating the factual field itself is sufficient; the matching FieldEvidence
+entry is mandatory for every populated decision-critical field listed above.
+
 Report conflicts and warnings; do not resolve conflicting official statements silently."""
 
 
@@ -202,24 +232,61 @@ class AzureOpenAIExtractionProvider:
 
 
 def azure_structured_output_schema() -> dict[str, Any]:
-    """Return the Pydantic contract with Azure's strict required-property convention."""
+    """Return the Pydantic contract normalized to Azure's supported strict JSON Schema subset."""
 
     schema = CatalogueExtractionOutput.model_json_schema()
 
+    unsupported_keywords = {
+        "minLength",
+        "maxLength",
+        "pattern",
+        "format",
+        "minimum",
+        "maximum",
+        "multipleOf",
+        "patternProperties",
+        "unevaluatedProperties",
+        "propertyNames",
+        "minProperties",
+        "maxProperties",
+        "unevaluatedItems",
+        "contains",
+        "minContains",
+        "maxContains",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+    }
+
     def normalize(value: Any) -> Any:
         if isinstance(value, dict):
-            cleaned = {
-                key: normalize(item)
-                for key, item in value.items()
-                if key not in {"title", "default"}
-            }
+            cleaned: dict[str, Any] = {}
+
+            for key, item in value.items():
+                if key in {"title", "default"} or key in unsupported_keywords:
+                    continue
+
+                # Property/definition names are user-domain names, not JSON Schema
+                # keywords, so preserve them even if a future field happens to be
+                # named "format", "pattern", etc.
+                if key in {"properties", "$defs"} and isinstance(item, dict):
+                    cleaned[key] = {
+                        name: normalize(child_schema)
+                        for name, child_schema in item.items()
+                    }
+                else:
+                    cleaned[key] = normalize(item)
+
             if cleaned.get("type") == "object" or "properties" in cleaned:
                 properties = cleaned.get("properties", {})
                 cleaned["additionalProperties"] = False
                 cleaned["required"] = list(properties)
+
             return cleaned
+
         if isinstance(value, list):
             return [normalize(item) for item in value]
+
         return value
 
     return normalize(schema)

@@ -305,6 +305,43 @@ def test_extraction_contract_rejects_extra_fields_and_schema_is_strict() -> None
 
     assert_objects_are_strict(schema)
 
+    unsupported_keywords = {
+        "minLength",
+        "maxLength",
+        "pattern",
+        "format",
+        "minimum",
+        "maximum",
+        "multipleOf",
+        "patternProperties",
+        "unevaluatedProperties",
+        "propertyNames",
+        "minProperties",
+        "maxProperties",
+        "unevaluatedItems",
+        "contains",
+        "minContains",
+        "maxContains",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+    }
+
+    def assert_azure_supported_schema(value: object) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"properties", "$defs"} and isinstance(item, dict):
+                    for child_schema in item.values():
+                        assert_azure_supported_schema(child_schema)
+                    continue
+                assert key not in unsupported_keywords
+                assert_azure_supported_schema(item)
+        elif isinstance(value, list):
+            for item in value:
+                assert_azure_supported_schema(item)
+
+    assert_azure_supported_schema(schema)
+
 
 def test_validation_requires_exact_official_evidence_and_surfaces_conflicts() -> None:
     valid = validate_and_build_proposal(
@@ -631,3 +668,56 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
     assert sent["response_format"]["json_schema"]["strict"] is True
     assert result.output.identity.name == "Example Scholarship"
     assert result.usage.estimated_cost == Decimal("0.000200")
+
+def test_validation_accepts_equivalent_apostrophe_encoding_in_evidence() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    raw["evidence"][0]["excerpt"] = "Example Scholar\x19s Award"
+    output = CatalogueExtractionOutput.model_validate(raw)
+
+    source_text = SOURCE_TEXT + " Example Scholar" + chr(0x2019) + "s Award"
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=source_text,
+        source_title="Official source",
+        content_hash="d" * 64,
+        trust_tier=2,
+    )
+
+    assert validated.errors == []
+    assert validated.payload is not None
+
+
+def test_non_mandatory_ai_rule_is_not_added_to_structured_matching() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    raw["eligibility"]["rules"] = [
+        {
+            "rule_type": "target_degree",
+            "operator": "equals",
+            "value": "Masters",
+            "unit": None,
+            "grading_scale": None,
+            "required": False,
+            "confidence": "high",
+        }
+    ]
+    output = CatalogueExtractionOutput.model_validate(raw)
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=SOURCE_TEXT,
+        source_title="Official source",
+        content_hash="e" * 64,
+        trust_tier=2,
+    )
+
+    assert validated.errors == []
+    assert validated.payload is not None
+    assert validated.payload.eligibility_rules == []
+    assert any(
+        "Non-mandatory AI-extracted eligibility rules were omitted"
+        in warning
+        for warning in validated.payload.eligibility_warnings
+    )

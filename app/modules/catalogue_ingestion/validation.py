@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -76,6 +77,7 @@ def validate_and_build_proposal(
     application = output.application
     funding = output.funding
     eligibility = output.eligibility
+    omitted_non_mandatory_rules = sum(not rule.required for rule in eligibility.rules)
     rules = [
         EligibilityRuleCreate(
             rule_type=rule.rule_type,
@@ -83,10 +85,11 @@ def validate_and_build_proposal(
             value=rule.value,
             unit=rule.unit,
             grading_scale=rule.grading_scale,
-            required=rule.required,
+            required=True,
             confidence=rule.confidence,
         )
         for rule in eligibility.rules
+        if rule.required
     ]
     try:
         payload = OpportunityCreate(
@@ -130,7 +133,18 @@ def validate_and_build_proposal(
             status=OpportunityStatus.DRAFT,
             data_confidence=DataConfidence.MEDIUM,
             notes="AI-assisted proposal; official-source evidence and human review required.",
-            eligibility_warnings=output.warnings + output.unknown_fields,
+            eligibility_warnings=(
+                output.warnings
+                + output.unknown_fields
+                + (
+                    [
+                        "Non-mandatory AI-extracted eligibility rules were omitted "
+                        "from structured matching."
+                    ]
+                    if omitted_non_mandatory_rules
+                    else []
+                )
+            ),
             eligibility_rules=rules,
             application_cycles=[
                 OpportunityCycleCreate(
@@ -212,4 +226,24 @@ def funding_statuses(
 
 
 def _normalize(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip().casefold()
+    """Canonicalize harmless text-encoding differences for evidence comparison only."""
+
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalized.translate(
+        str.maketrans(
+            {
+                "\u2018": "'",
+                "\u2019": "'",
+                "\u201b": "'",
+                "\u02bc": "'",
+                "\u00b4": "'",
+                "\u0060": "'",
+                "\x19": "'",
+                "\u2013": "-",
+                "\u2014": "-",
+                "\u2212": "-",
+                "\u00a0": " ",
+            }
+        )
+    )
+    return re.sub(r"\s+", " ", normalized).strip().casefold()
