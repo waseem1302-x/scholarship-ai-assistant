@@ -1,6 +1,8 @@
 import hashlib
+import urllib.error
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
 from app.modules.opportunities.models import (
@@ -218,6 +220,100 @@ def test_monitor_normalizes_dynamic_html_before_section_hashing() -> None:
             b"<nav>Navigation noise</nav><main>Official scholarship evidence remains.</main>"
         ).casefold()
     )
+
+
+def test_safe_fetcher_preserves_target_http_failure_code(monkeypatch) -> None:
+    class Opener:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def open(self, request, timeout: int):
+            del timeout
+            self.calls += 1
+
+            if request.full_url.endswith("/robots.txt"):
+                raise urllib.error.HTTPError(
+                    request.full_url,
+                    403,
+                    "Forbidden",
+                    {},
+                    None,
+                )
+
+            raise urllib.error.HTTPError(
+                request.full_url,
+                403,
+                "Forbidden",
+                {},
+                None,
+            )
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+
+    with pytest.raises(
+        SourceFetchError,
+        match=r"source_access_denied: http_403",
+    ):
+        fetcher.fetch("https://example.edu/scholarship")
+
+
+def test_safe_fetcher_treats_robots_4xx_as_unavailable(monkeypatch) -> None:
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            raise urllib.error.HTTPError(
+                "https://example.edu/robots.txt",
+                403,
+                "Forbidden",
+                {},
+                None,
+            )
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    target = "https://example.edu/public/scholarship"
+
+    fetcher._assert_robots_allowed(target, fetcher.policy_for(target))
+
+    assert fetcher._robots["https://example.edu"] is None
+
+
+def test_safe_fetcher_fails_closed_for_robots_5xx(monkeypatch) -> None:
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            raise urllib.error.HTTPError(
+                "https://example.edu/robots.txt",
+                503,
+                "Service Unavailable",
+                {},
+                None,
+            )
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+
+    with pytest.raises(SourceFetchError, match=r"robots_unreachable: http_503"):
+        fetcher._assert_robots_allowed(
+            "https://example.edu/public/scholarship",
+            fetcher.policy_for("https://example.edu/public/scholarship"),
+        )
 
 
 def test_safe_fetcher_respects_robots_disallow(monkeypatch) -> None:

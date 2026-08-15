@@ -600,11 +600,18 @@ def test_cost_and_evaluation_report_fail_closed() -> None:
             official_url=OFFICIAL_URL,
             source_text=SOURCE_TEXT,
             expected={"identity": {"name": "Example Scholarship"}},
+            support={"identity.name": "Example Scholarship offers awards."},
+            expected_unknown=["application.application_deadline"],
         )
     ]
     report = evaluate(FakeExtractionProvider(extraction_output()), gold, max_calls=1)
     assert report.schema_validation_rate == 1
+    assert report.successful_extractions == 1
+    assert report.provider_failure_count == 0
     assert report.official_source_correctness == 1
+    assert report.expected_unknown_count == 1
+    assert report.expected_unknown_accuracy == 1
+    assert report.false_confident_values == 0
     assert report.field_accuracy["identity.name"] == 1
 
     class FailingProvider:
@@ -617,6 +624,8 @@ def test_cost_and_evaluation_report_fail_closed() -> None:
 
     failed = evaluate(FailingProvider(), gold)
     assert failed.schema_validation_rate == 0
+    assert failed.successful_extractions == 0
+    assert failed.provider_failure_count == 1
     assert failed.official_source_correctness == 0
 
 
@@ -781,3 +790,97 @@ def test_canonical_identity_name_strips_official_page_title_wrapper() -> None:
         )
         == "Commonwealth Scholarship Programme"
     )
+
+
+def test_gold_contract_rejects_derived_fields_and_missing_support() -> None:
+    with pytest.raises(ValidationError, match="not AI-scored"):
+        GoldItem(
+            id="derived",
+            official_url=OFFICIAL_URL,
+            source_text=SOURCE_TEXT,
+            expected={"identity": {"provider_canonical_id": "official-provider"}},
+            support={"identity.provider_canonical_id": "Official Provider"},
+            expected_unknown=["application.application_deadline"],
+        )
+
+    with pytest.raises(ValidationError, match="requires a support excerpt"):
+        GoldItem(
+            id="unsupported",
+            official_url=OFFICIAL_URL,
+            source_text=SOURCE_TEXT,
+            expected={"identity": {"name": "Example Scholarship"}},
+            expected_unknown=["application.application_deadline"],
+        )
+
+    with pytest.raises(ValidationError, match="not verbatim source text"):
+        GoldItem(
+            id="invented-support",
+            official_url=OFFICIAL_URL,
+            source_text=SOURCE_TEXT,
+            expected={"identity": {"name": "Example Scholarship"}},
+            support={"identity.name": "This sentence is not in the source."},
+            expected_unknown=["application.application_deadline"],
+        )
+
+
+def test_gold_evaluation_counts_explicit_unknown_hallucinations() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    raw["application"]["application_deadline"] = "2027-01-01T00:00:00+00:00"
+    hallucinating = CatalogueExtractionOutput.model_validate(raw)
+    gold = [
+        GoldItem(
+            id="hallucination",
+            official_url=OFFICIAL_URL,
+            source_text=SOURCE_TEXT,
+            expected={"identity": {"name": "Example Scholarship"}},
+            support={"identity.name": "Example Scholarship offers awards."},
+            expected_unknown=["application.application_deadline"],
+        )
+    ]
+
+    report = evaluate(FakeExtractionProvider(hallucinating), gold)
+
+    assert report.expected_unknown_count == 1
+    assert report.expected_unknown_accuracy == 0
+    assert report.false_confident_values == 1
+    assert report.item_results[0]["unknown_results"]["application.application_deadline"] is False
+
+
+def test_gold_evaluation_normalizes_unordered_document_lists() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    raw["application"]["required_documents"] = ["Academic Transcript", "Passport"]
+    output = CatalogueExtractionOutput.model_validate(raw)
+    source_text = SOURCE_TEXT + " Applicants submit a Passport and Academic Transcript."
+    gold = [
+        GoldItem(
+            id="documents",
+            official_url=OFFICIAL_URL,
+            source_text=source_text,
+            expected={"application": {"required_documents": ["passport", "academic transcript"]}},
+            support={
+                "application.required_documents": (
+                    "Applicants submit a Passport and Academic Transcript."
+                )
+            },
+            expected_unknown=["application.application_deadline"],
+        )
+    ]
+
+    report = evaluate(FakeExtractionProvider(output), gold)
+
+    assert report.field_accuracy["application.required_documents"] == 1
+
+
+def test_gold_set_requires_explicit_unknown_coverage() -> None:
+    gold = [
+        GoldItem(
+            id="no-unknowns",
+            official_url=OFFICIAL_URL,
+            source_text=SOURCE_TEXT,
+            expected={"identity": {"name": "Example Scholarship"}},
+            support={"identity.name": "Example Scholarship offers awards."},
+        )
+    ]
+
+    with pytest.raises(ValueError, match="expected_unknown"):
+        evaluate(FakeExtractionProvider(extraction_output()), gold)

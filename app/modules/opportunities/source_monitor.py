@@ -139,6 +139,14 @@ class SafeSourceFetcher:
                 payload = response.read(policy.max_bytes + 1)
         except SourceFetchError:
             raise
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                raise SourceFetchError("source_rate_limited: http_429") from exc
+            if 400 <= exc.code <= 499:
+                raise SourceFetchError(f"source_access_denied: http_{exc.code}") from exc
+            if 500 <= exc.code <= 599:
+                raise SourceFetchError(f"source_unreachable: http_{exc.code}") from exc
+            raise SourceFetchError(f"source_http_error: http_{exc.code}") from exc
         except (TimeoutError, OSError, urllib.error.URLError) as exc:
             raise SourceFetchError(f"source_fetch_failed: {exc}") from exc
 
@@ -188,12 +196,18 @@ class SafeSourceFetcher:
                     validate_response_peer(response)
                     payload = response.read(min(policy.max_bytes, 512_000) + 1)
             except urllib.error.HTTPError as exc:
-                if exc.code == 404:
+                if 400 <= exc.code <= 499:
+                    # RFC 9309 section 2.3.1.3: a 4xx robots response means
+                    # robots.txt is unavailable, so other resources may be accessed.
                     self._robots[origin] = None
+                elif 500 <= exc.code <= 599:
+                    # RFC 9309 section 2.3.1.4: server/network failures mean
+                    # robots.txt is unreachable and crawling must fail closed.
+                    raise SourceFetchError(f"robots_unreachable: http_{exc.code}") from exc
                 else:
                     raise SourceFetchError(f"robots_check_failed: http_{exc.code}") from exc
             except (TimeoutError, OSError, urllib.error.URLError, SourceFetchError) as exc:
-                raise SourceFetchError("robots_check_failed") from exc
+                raise SourceFetchError("robots_unreachable") from exc
             else:
                 if len(payload) > min(policy.max_bytes, 512_000):
                     raise SourceFetchError("robots_file_too_large")
