@@ -283,6 +283,7 @@ def evaluate(
                     "id": item.id,
                     "status": "provider_error",
                     "error_code": getattr(exc, "code", "ai_extraction_failed"),
+                    "error_detail": str(exc)[:2000],
                     "latency_ms": latency,
                     "estimated_cost": (str(failure_cost) if failure_cost is not None else None),
                     "cost_known": failure_cost is not None,

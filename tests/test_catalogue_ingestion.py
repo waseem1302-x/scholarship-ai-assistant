@@ -1004,6 +1004,7 @@ def test_evaluation_scores_only_successful_extractions_and_reports_failure_cost(
     assert report.sample_count == 2
     assert report.successful_extractions == 1
     assert report.provider_failure_count == 1
+    assert report.item_results[0]["error_detail"] == ("schema failed after a billed response")
 
     # Failed provider calls affect reliability, not extraction accuracy.
     assert report.field_totals == {"identity.name": 1}
@@ -1071,6 +1072,8 @@ def test_azure_schema_failure_preserves_usage_for_evaluation_costs() -> None:
     assert exc_info.value.usage.input_tokens == 100
     assert exc_info.value.usage.output_tokens == 50
     assert exc_info.value.usage.estimated_cost == Decimal("0.000200")
+    assert "strict schema" in str(exc_info.value)
+    assert "identity" in str(exc_info.value)
 
 
 def test_azure_schema_failure_without_usage_remains_uncosted() -> None:
@@ -1105,3 +1108,15 @@ def test_azure_schema_failure_without_usage_remains_uncosted() -> None:
         )
 
     assert exc_info.value.usage is None
+
+
+def test_catalogue_system_instruction_locks_conservative_semantics() -> None:
+    from app.modules.catalogue_ingestion.provider import SYSTEM_INSTRUCTION
+
+    assert "Absence of a benefit from the page must never be converted into not_covered" in (
+        SYSTEM_INSTRUCTION
+    )
+    assert "Do not use partial merely because a grant is fixed" in SYSTEM_INSTRUCTION
+    assert "website or publishing platform" in SYSTEM_INSTRUCTION
+    assert "are not minimum academic requirements" in SYSTEM_INSTRUCTION
+    assert "destination or host study country" in SYSTEM_INSTRUCTION

@@ -11,6 +11,8 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from app.core.config import Settings
 from app.modules.catalogue_ingestion.schemas import (
     CatalogueExtractionOutput,
@@ -23,11 +25,38 @@ Return null/unknown when the text does not explicitly support a value. Never use
 Every non-null decision-critical value must have field-level evidence whose excerpt appears verbatim
 in the supplied text. Normalization may standardize an explicit value but must be marked normalized.
 
-For identity.provider_name, inspect explicit official page titles, organisation headings, programme
-headings, and other authoritative identity text in the supplied source. When an administering
-organisation or programme name is explicitly stated, populate provider_name and provide exact
-field-level evidence. Do not leave provider_name null merely because the provider name appears in a
-page title or heading rather than in a descriptive sentence.
+Identity semantics:
+- identity.name is the most specific explicit scholarship or programme title
+  supported by the source.
+  Prefer the complete official scholarship title in the scholarship content over shortened browser,
+  navigation, or generic site titles. Preserve meaningful official prefixes and acronyms.
+- identity.provider_name is the organisation the source explicitly identifies as responsible for
+  awarding, providing, funding, sponsoring, administering, owning, or developing the scholarship
+  programme. A website publisher, portal, host, or site brand is not automatically the provider when
+  the source explicitly identifies another responsible organisation.
+- identity.country is the scholarship's destination or host study country, not an applicant's
+  nationality or country of origin. Explicit statements that recipients study, attend courses, or
+  enroll at universities in a country support that destination country.
+
+Funding coverage status semantics:
+- confirmed: the official source explicitly confirms that the benefit exists. A fixed grant,
+  allowance, contribution, transportation benefit, insurance benefit, or other explicitly included
+  benefit is confirmed even when it may not cover every real-world expense.
+- partial: use only when the official source explicitly says that a defined benefit or charge is
+  only partly covered, percentage-covered, capped as partial coverage, or otherwise explicitly
+  describes the coverage itself as partial. Do not use partial merely because a grant is fixed,
+  one-time, described as a contribution, or may be smaller than the recipient's total expenses.
+- not_covered: use only when the official source explicitly states that the benefit, cost, or charge
+  is excluded, not paid, or not covered.
+- unknown: use when the supplied source does not establish either coverage or explicit non-coverage.
+  Absence of a benefit from the page must never be converted into not_covered.
+
+For every funding coverage status other than unknown, provide field-level evidence for the exact
+coverage-status field using a verbatim source excerpt.
+
+For identity.provider_name, inspect authoritative scholarship content, organisation statements,
+programme headings, and official identity text. Prefer an organisation explicitly described as
+responsible for the scholarship over the website or publishing platform that hosts the page.
 
 Create eligibility.rules only for explicit applicant eligibility requirements or mandatory
 conditions stated by the official source. Do not convert descriptive programme characteristics,
@@ -35,6 +64,16 @@ typical or majority patterns, preferences, benefits, target audiences, or qualif
 "mostly", "typically", "usually", or "preferred" into eligibility rules. Such information may be
 represented in the appropriate descriptive field or warning when supported, but must not become a
 structured eligibility rule unless the source clearly states it as an eligibility requirement.
+
+For eligibility.minimum_academic_requirement, populate a value only when the source states an
+explicit required prior qualification or academic threshold, such as a required degree, grade,
+percentage, GPA, or equivalent academic condition. Labels such as "graduates", "students",
+"professionals", target groups, eligible programme types, or descriptions of the degree being
+pursued are not minimum academic requirements.
+
+For study.degree_level, if the supplied source explicitly covers multiple materially different
+degree levels and the scalar field cannot represent them faithfully, return null rather than
+selecting one level or synthesizing a narrower value.
 
 For these decision-critical fields:
 - identity.name
@@ -251,6 +290,18 @@ class AzureOpenAIExtractionProvider:
             output = CatalogueExtractionOutput.model_validate_json(message["content"])
         except ExtractionSchemaError:
             raise
+        except ValidationError as exc:
+            diagnostic = json.dumps(
+                exc.errors(
+                    include_input=False,
+                    include_url=False,
+                ),
+                separators=(",", ":"),
+            )[:2000]
+            raise ExtractionSchemaError(
+                f"Azure response did not match the strict schema: {diagnostic}",
+                usage=usage,
+            ) from exc
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ExtractionSchemaError(
                 "Azure response did not match the strict schema",
