@@ -31,7 +31,10 @@ from app.modules.catalogue_ingestion.seed_parser import (
     SeedParseError,
     SeedSourceLoader,
 )
-from app.modules.catalogue_ingestion.service import CatalogueIngestionService
+from app.modules.catalogue_ingestion.service import (
+    CatalogueIngestionService,
+    _identity_name_matches,
+)
 from app.modules.catalogue_ingestion.sources import OfficialSourceClassifier
 from app.modules.catalogue_ingestion.validation import validate_and_build_proposal
 from app.modules.opportunities.models import Opportunity, OpportunityStatus, VerificationStatus
@@ -720,4 +723,14 @@ def test_non_mandatory_ai_rule_is_not_added_to_structured_matching() -> None:
         "Non-mandatory AI-extracted eligibility rules were omitted"
         in warning
         for warning in validated.payload.eligibility_warnings
+    )
+
+def test_identity_name_match_tolerates_programme_label_variants() -> None:
+    assert _identity_name_matches(
+        "Chevening Scholarships",
+        "Chevening Scholarship Programme",
+    )
+    assert not _identity_name_matches(
+        "Chevening Scholarships",
+        "Commonwealth Scholarship Programme",
     )

@@ -577,9 +577,13 @@ def _identity_name_matches(expected: str, actual: str | None) -> bool:
         "award",
         "awards",
         "fellowship",
+        "fellowships",
         "programme",
+        "programmes",
         "program",
+        "programs",
         "scholarship",
+        "scholarships",
         "the",
     }
     expected_tokens = set(re.findall(r"[a-z0-9]+", expected.casefold())) - ignored
