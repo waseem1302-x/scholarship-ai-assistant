@@ -158,6 +158,7 @@ def enabled_settings(**overrides) -> Settings:
         "catalogue_ai_provider": "azure_openai",
         "catalogue_ai_endpoint": "https://example.openai.azure.com",
         "catalogue_ai_model": "structured-output-deployment",
+        "catalogue_ai_max_retries": 2,
         "catalogue_ai_input_cost_per_million": Decimal("1"),
         "catalogue_ai_output_cost_per_million": Decimal("2"),
     }
@@ -924,3 +925,183 @@ def test_gold_evaluator_non_identity_text_remains_strict() -> None:
         "Example Foundation (students)",
         "Example Foundation",
     )
+
+
+def test_evaluation_scores_only_successful_extractions_and_reports_failure_cost() -> None:
+    from app.modules.catalogue_ingestion.schemas import (
+        ExtractionResult,
+        ExtractionUsage,
+    )
+
+    first_url = "https://example.test/failed"
+    second_url = "https://example.test/success"
+
+    gold = [
+        GoldItem(
+            id="failed",
+            official_url=first_url,
+            source_text="Failed Scholarship official source text.",
+            expected={"identity": {"name": "Failed Scholarship"}},
+            support={
+                "identity.name": "Failed Scholarship",
+            },
+            expected_unknown=["study.intake_year"],
+        ),
+        GoldItem(
+            id="success",
+            official_url=second_url,
+            source_text="Expected Scholarship official source text.",
+            expected={"identity": {"name": "Expected Scholarship"}},
+            support={
+                "identity.name": "Expected Scholarship",
+            },
+            expected_unknown=["study.intake_year"],
+        ),
+    ]
+
+    class MixedProvider:
+        name = "mixed"
+        model = "test"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract(self, *, source_url: str, source_text: str):
+            del source_text
+            self.calls += 1
+
+            if self.calls == 1:
+                raise ExtractionProviderError(
+                    "schema failed after a billed response",
+                    usage=ExtractionUsage(
+                        input_tokens=100,
+                        output_tokens=50,
+                        estimated_cost=Decimal("0.001"),
+                        latency_ms=5000,
+                    ),
+                )
+
+            raw = extraction_output(source_url).model_dump(mode="json")
+            raw["study"]["intake_year"] = 2026
+
+            return ExtractionResult(
+                output=CatalogueExtractionOutput.model_validate(raw),
+                usage=ExtractionUsage(
+                    input_tokens=200,
+                    output_tokens=100,
+                    estimated_cost=Decimal("0.002"),
+                    latency_ms=1000,
+                ),
+            )
+
+    report = evaluate(
+        MixedProvider(),
+        gold,
+        max_calls=2,
+        max_cost=Decimal("0.01"),
+    )
+
+    assert report.sample_count == 2
+    assert report.successful_extractions == 1
+    assert report.provider_failure_count == 1
+
+    # Failed provider calls affect reliability, not extraction accuracy.
+    assert report.field_totals == {"identity.name": 1}
+    assert report.expected_unknown_count == 1
+    assert report.benchmark_expected_unknown_count == 2
+
+    # Both calls had measurable Azure-style usage.
+    assert report.costed_call_count == 2
+    assert report.uncosted_provider_failure_count == 0
+    assert report.total_estimated_cost == Decimal("0.003")
+    assert report.total_estimated_cost_is_lower_bound is False
+
+    # Nearest-rank P95 for two observations is the slower call.
+    assert report.p95_latency_ms == 5000
+
+    success_result = report.item_results[1]
+    assert success_result["field_mismatches"] == [
+        {
+            "path": "identity.name",
+            "expected": "Expected Scholarship",
+            "actual": "Example Scholarship",
+        }
+    ]
+    assert success_result["unknown_mismatches"] == [
+        {
+            "path": "study.intake_year",
+            "actual": 2026,
+        }
+    ]
+
+
+def test_azure_schema_failure_preserves_usage_for_evaluation_costs() -> None:
+    import time
+
+    from app.modules.catalogue_ingestion.provider import ExtractionSchemaError
+
+    provider = AzureOpenAIExtractionProvider(
+        enabled_settings(),
+        credential=object(),
+    )
+
+    response_body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{}",
+                    }
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+            },
+        }
+    ).encode()
+
+    with pytest.raises(ExtractionSchemaError) as exc_info:
+        provider._parse_response(
+            response_body,
+            time.perf_counter(),
+        )
+
+    assert exc_info.value.usage is not None
+    assert exc_info.value.usage.input_tokens == 100
+    assert exc_info.value.usage.output_tokens == 50
+    assert exc_info.value.usage.estimated_cost == Decimal("0.000200")
+
+
+def test_azure_schema_failure_without_usage_remains_uncosted() -> None:
+    import time
+
+    from app.modules.catalogue_ingestion.provider import ExtractionSchemaError
+
+    provider = AzureOpenAIExtractionProvider(
+        enabled_settings(),
+        credential=object(),
+    )
+
+    response_body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "{}",
+                    }
+                }
+            ]
+        }
+    ).encode()
+
+    with pytest.raises(
+        ExtractionSchemaError,
+        match="usage was missing or invalid",
+    ) as exc_info:
+        provider._parse_response(
+            response_body,
+            time.perf_counter(),
+        )
+
+    assert exc_info.value.usage is None

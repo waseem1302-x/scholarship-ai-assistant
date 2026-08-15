@@ -58,6 +58,15 @@ Report conflicts and warnings; do not resolve conflicting official statements si
 class ExtractionProviderError(RuntimeError):
     code = "ai_extraction_failed"
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: ExtractionUsage | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.usage = usage
+
 
 class ExtractionProviderUnavailable(ExtractionProviderError):
     code = "ai_provider_unavailable"
@@ -204,20 +213,21 @@ class AzureOpenAIExtractionProvider:
     def _parse_response(self, raw: bytes, started: float) -> ExtractionResult:
         try:
             response = json.loads(raw)
-            message = response["choices"][0]["message"]
-            if message.get("refusal"):
-                raise ExtractionSchemaError("Model refused the extraction request")
-            output = CatalogueExtractionOutput.model_validate_json(message["content"])
-            usage = response.get("usage") or {}
-            input_tokens = int(usage.get("prompt_tokens", 0))
-            output_tokens = int(usage.get("completion_tokens", 0))
-        except ExtractionSchemaError:
-            raise
-        except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ExtractionSchemaError("Azure response did not match the strict schema") from exc
-        return ExtractionResult(
-            output=output,
-            usage=ExtractionUsage(
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ExtractionSchemaError("Azure response was not valid JSON") from exc
+
+        if not isinstance(response, dict):
+            raise ExtractionSchemaError("Azure response did not match the strict schema")
+
+        try:
+            usage_payload = response["usage"]
+            if not isinstance(usage_payload, dict):
+                raise TypeError("usage must be an object")
+
+            input_tokens = int(usage_payload["prompt_tokens"])
+            output_tokens = int(usage_payload["completion_tokens"])
+
+            usage = ExtractionUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 estimated_cost=estimate_cost(
@@ -227,7 +237,29 @@ class AzureOpenAIExtractionProvider:
                     output_per_million=self.settings.catalogue_ai_output_cost_per_million,
                 ),
                 latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
-            ),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ExtractionSchemaError("Azure response usage was missing or invalid") from exc
+
+        try:
+            message = response["choices"][0]["message"]
+            if message.get("refusal"):
+                raise ExtractionSchemaError(
+                    "Model refused the extraction request",
+                    usage=usage,
+                )
+            output = CatalogueExtractionOutput.model_validate_json(message["content"])
+        except ExtractionSchemaError:
+            raise
+        except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ExtractionSchemaError(
+                "Azure response did not match the strict schema",
+                usage=usage,
+            ) from exc
+
+        return ExtractionResult(
+            output=output,
+            usage=usage,
         )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import statistics
 import time
@@ -181,10 +182,14 @@ class EvaluationReport:
     false_confident_values: int
     expected_unknown_accuracy: float | None
     expected_unknown_count: int
+    benchmark_expected_unknown_count: int
     duplicate_resolution_accuracy: float | None
     schema_validation_rate: float
     total_estimated_cost: Decimal
     mean_cost: Decimal
+    costed_call_count: int
+    uncosted_provider_failure_count: int
+    total_estimated_cost_is_lower_bound: bool
     mean_latency_ms: int
     p95_latency_ms: int
     item_results: list[dict[str, Any]]
@@ -238,41 +243,63 @@ def evaluate(
     official_mismatches = 0
     false_confident = 0
     expected_unknown = 0
+    benchmark_expected_unknown = sum(len(item.expected_unknown) for item in gold)
     unknown_correct = 0
     costs: list[Decimal] = []
+    uncosted_provider_failures = 0
     latencies: list[int] = []
     item_results: list[dict[str, Any]] = []
 
     for item in gold:
         flattened_expected = flatten(item.expected)
-        expected_unknown += len(item.expected_unknown)
         started = time.perf_counter()
 
         try:
             result = provider.extract(source_url=item.official_url, source_text=item.source_text)
         except ExtractionProviderError as exc:
-            latency = int((time.perf_counter() - started) * 1000)
+            measured_latency = int((time.perf_counter() - started) * 1000)
+            failure_usage = getattr(exc, "usage", None)
+
+            if failure_usage is not None:
+                latency = max(failure_usage.latency_ms, measured_latency)
+                failure_cost: Decimal | None = failure_usage.estimated_cost
+                costs.append(failure_cost)
+
+                total_cost = sum(costs, Decimal("0"))
+                if max_cost is not None and total_cost > max_cost:
+                    raise RuntimeError(
+                        "evaluation exceeded the configured estimated-cost ceiling"
+                    ) from exc
+            else:
+                latency = measured_latency
+                failure_cost = None
+                uncosted_provider_failures += 1
+
             latencies.append(latency)
-            costs.append(Decimal("0"))
             provider_failures += 1
-            for path in flattened_expected:
-                totals[path] = totals.get(path, 0) + 1
-                correct.setdefault(path, 0)
+
             item_results.append(
                 {
                     "id": item.id,
                     "status": "provider_error",
                     "error_code": getattr(exc, "code", "ai_extraction_failed"),
                     "latency_ms": latency,
-                    "estimated_cost": "0",
+                    "estimated_cost": (str(failure_cost) if failure_cost is not None else None),
+                    "cost_known": failure_cost is not None,
                 }
             )
             continue
 
         successful_extractions += 1
-        elapsed = max(result.usage.latency_ms, int((time.perf_counter() - started) * 1000))
+        expected_unknown += len(item.expected_unknown)
+
+        elapsed = max(
+            result.usage.latency_ms,
+            int((time.perf_counter() - started) * 1000),
+        )
         latencies.append(elapsed)
         costs.append(result.usage.estimated_cost)
+
         total_cost = sum(costs, Decimal("0"))
         if max_cost is not None and total_cost > max_cost:
             raise RuntimeError("evaluation exceeded the configured estimated-cost ceiling")
@@ -284,6 +311,8 @@ def evaluate(
         official_mismatches += int(not source_ok)
 
         item_field_results: dict[str, bool] = {}
+        item_field_mismatches: list[dict[str, Any]] = []
+
         for path, expected in flattened_expected.items():
             actual_value = get_path(actual, path)
             matched = values_equal(path, actual_value, expected)
@@ -291,7 +320,18 @@ def evaluate(
             correct[path] = correct.get(path, 0) + int(matched)
             item_field_results[path] = matched
 
+            if not matched:
+                item_field_mismatches.append(
+                    {
+                        "path": path,
+                        "expected": expected,
+                        "actual": actual_value,
+                    }
+                )
+
         item_unknown_results: dict[str, bool] = {}
+        item_unknown_mismatches: list[dict[str, Any]] = []
+
         for path in item.expected_unknown:
             actual_value = get_path(actual, path)
             abstained = is_unknown_value(path, actual_value)
@@ -299,20 +339,37 @@ def evaluate(
             false_confident += int(not abstained)
             item_unknown_results[path] = abstained
 
+            if not abstained:
+                item_unknown_mismatches.append(
+                    {
+                        "path": path,
+                        "actual": actual_value,
+                    }
+                )
+
         item_results.append(
             {
                 "id": item.id,
                 "status": "ok",
                 "official_source_correct": source_ok,
                 "field_results": item_field_results,
+                "field_mismatches": item_field_mismatches,
                 "unknown_results": item_unknown_results,
+                "unknown_mismatches": item_unknown_mismatches,
                 "latency_ms": elapsed,
                 "estimated_cost": str(result.usage.estimated_cost),
+                "cost_known": True,
             }
         )
 
     ordered = sorted(latencies)
-    p95_index = max(0, min(len(ordered) - 1, int(len(ordered) * 0.95) - 1))
+    p95_index = max(
+        0,
+        min(
+            len(ordered) - 1,
+            math.ceil(len(ordered) * 0.95) - 1,
+        ),
+    )
     total_cost = sum(costs, Decimal("0"))
 
     return EvaluationReport(
@@ -330,10 +387,14 @@ def evaluate(
             unknown_correct / expected_unknown if expected_unknown else None
         ),
         expected_unknown_count=expected_unknown,
+        benchmark_expected_unknown_count=benchmark_expected_unknown,
         duplicate_resolution_accuracy=None,
         schema_validation_rate=successful_extractions / len(gold),
         total_estimated_cost=total_cost,
-        mean_cost=total_cost / Decimal(len(costs)),
+        mean_cost=(total_cost / Decimal(len(costs)) if costs else Decimal("0")),
+        costed_call_count=len(costs),
+        uncosted_provider_failure_count=uncosted_provider_failures,
+        total_estimated_cost_is_lower_bound=uncosted_provider_failures > 0,
         mean_latency_ms=int(statistics.mean(latencies)),
         p95_latency_ms=ordered[p95_index],
         item_results=item_results,
