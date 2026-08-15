@@ -316,6 +316,101 @@ def test_safe_fetcher_allows_ordinary_public_redirect(monkeypatch) -> None:
     assert "Official public scholarship" in (result.normalized_text or "")
 
 
+def test_safe_fetcher_rejects_loading_shell(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/scholarship"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return b"<html><body>KNB Scholarship Loading homepage...</body></html>"
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    with pytest.raises(
+        SourceFetchError,
+        match=r"source_has_no_extractable_evidence",
+    ):
+        fetcher.fetch("https://example.edu/scholarship")
+
+
+def test_safe_fetcher_keeps_short_real_evidence(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/scholarship"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return (
+                b"<html><body>"
+                b"Scholarship deadline: 30 June. "
+                b"International students are eligible."
+                b"</body></html>"
+            )
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    result = fetcher.fetch("https://example.edu/scholarship")
+
+    assert "Scholarship deadline" in (result.normalized_text or "")
+
+
 def test_safe_fetcher_preserves_target_http_failure_code(monkeypatch) -> None:
     class Opener:
         def __init__(self) -> None:

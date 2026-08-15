@@ -150,6 +150,25 @@ def is_authentication_destination(url: str) -> bool:
     )
 
 
+LOW_INFORMATION_SOURCE_MARKERS = (
+    "loading homepage",
+    "loading page",
+    "please enable javascript",
+    "enable javascript to continue",
+    "javascript is required",
+)
+
+
+def is_low_information_source_text(text: str) -> bool:
+    """Detect short browser/loading shells that contain no usable evidence."""
+
+    normalized = " ".join(text.casefold().split())
+
+    return len(normalized) <= 500 and any(
+        marker in normalized for marker in LOW_INFORMATION_SOURCE_MARKERS
+    )
+
+
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         validate_monitor_url(newurl)
@@ -204,6 +223,8 @@ class SafeSourceFetcher:
 
         evidence_text = normalize_source_payload(payload, content_type)
         if len(evidence_text) < 20:
+            raise SourceFetchError("source_has_no_extractable_evidence")
+        if is_low_information_source_text(evidence_text):
             raise SourceFetchError("source_has_no_extractable_evidence")
         section = extract_evidence_section(evidence_text)
         # Preserve the monitor's existing relevant-section hash semantics to avoid a
