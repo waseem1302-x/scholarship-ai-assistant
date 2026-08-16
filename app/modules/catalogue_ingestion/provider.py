@@ -28,15 +28,19 @@ in the supplied text. Normalization may standardize an explicit value but must b
 Identity semantics:
 - identity.name is the most specific explicit scholarship or programme title
   supported by the source.
-  Prefer the complete official scholarship title in the scholarship content over shortened browser,
-  navigation, or generic site titles. Preserve meaningful official prefixes and acronyms.
+  Prefer the exact scholarship or programme heading in the content when one is present.
+  Do not singularize or pluralize that heading, and do not drop leading official tokens
+  such as "SI" or "The". Use a shorter browser or navigation title only when no more
+  specific scholarship heading exists.
 - identity.provider_name is the organisation the source explicitly identifies as responsible for
   awarding, providing, funding, sponsoring, administering, owning, or developing the scholarship
   programme. A website publisher, portal, host, or site brand is not automatically the provider when
   the source explicitly identifies another responsible organisation.
 - identity.country is the scholarship's destination or host study country, not an applicant's
   nationality or country of origin. Explicit statements that recipients study, attend courses, or
-  enroll at universities in a country support that destination country.
+  enroll at universities in a country support that destination country. The country itself must be
+  explicit in the supplied text. Never infer it from a university name, city, provider, URL,
+  internet domain, language, currency, or general geographic knowledge.
 
 Funding coverage status semantics:
 - confirmed: the official source explicitly confirms that the benefit exists. A fixed grant,
@@ -54,9 +58,21 @@ Funding coverage status semantics:
 For every funding coverage status other than unknown, provide field-level evidence for the exact
 coverage-status field using a verbatim source excerpt.
 
+Field-specific funding rules:
+- funding.monthly_stipend_amount and funding.monthly_stipend_currency may be populated only when
+  the source explicitly describes a recurring monthly or per-month stipend or allowance. Do not
+  map an overall scholarship value, annual amount, lump sum, one-time grant, instalment total, or
+  general living-cost contribution into the monthly stipend fields.
+- funding.tuition_coverage_status may be confirmed or not_covered only when the source explicitly
+  establishes tuition or tuition-fee coverage or non-coverage. "Full scholarship",
+  "participation costs", generic costs, or generic fees alone do not establish tuition coverage.
+
 For identity.provider_name, inspect authoritative scholarship content, organisation statements,
 programme headings, and official identity text. Prefer an organisation explicitly described as
 responsible for the scholarship over the website or publishing platform that hosts the page.
+When an awarding, providing, funding, sponsoring, administering, or developing statement names
+the responsible organisation, prefer the organisation wording from that evidence. Do not append
+an acronym, translated label, or alternate site-brand wording that is absent from that evidence.
 
 Create eligibility.rules only for explicit applicant eligibility requirements or mandatory
 conditions stated by the official source. Do not convert descriptive programme characteristics,
@@ -84,9 +100,10 @@ For these decision-critical fields:
 a non-null value MUST have at least one matching evidence item whose field_path is exactly the same
 field name and whose excerpt is a verbatim substring of the supplied source text. If the value is a
 normalization of explicit source wording, cite the original wording verbatim and set basis to
-"normalized". Examples include "UK" normalized to "United Kingdom" and "Masters degrees" normalized
-to the masters degree enum. If no valid source excerpt can support one of these fields, return the
-field as null rather than emitting an unsupported value.
+"normalized". Examples include explicitly stated "UK" normalized to "United Kingdom" and
+explicitly stated "Masters degrees" normalized to the masters degree enum. If no valid source
+excerpt can support one of these fields, return the field as null rather than emitting an
+unsupported value.
 
 Do not assume that populating the factual field itself is sufficient; the matching FieldEvidence
 entry is mandatory for every populated decision-critical field listed above.

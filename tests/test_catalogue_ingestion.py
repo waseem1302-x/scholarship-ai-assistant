@@ -1120,3 +1120,8 @@ def test_catalogue_system_instruction_locks_conservative_semantics() -> None:
     assert "website or publishing platform" in SYSTEM_INSTRUCTION
     assert "are not minimum academic requirements" in SYSTEM_INSTRUCTION
     assert "destination or host study country" in SYSTEM_INSTRUCTION
+    assert "Never infer it from a university name" in SYSTEM_INSTRUCTION
+    assert "Do not singularize or pluralize that heading" in SYSTEM_INSTRUCTION
+    assert "overall scholarship value" in SYSTEM_INSTRUCTION
+    assert "participation costs" in SYSTEM_INSTRUCTION
+    assert "Do not append" in SYSTEM_INSTRUCTION
