@@ -6,13 +6,43 @@ create a second scholarship identity or a publication path.
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.modules.auth.models import utc_now
+from app.modules.auth.models import enum_values, utc_now
 from app.modules.opportunities.models import DegreeLevel
+
+
+class RelationshipKind(StrEnum):
+    SAME_SCHOLARSHIP = "same_scholarship"
+    SAME_SCHEME_TRACK = "same_scheme_track"
+    PARTICIPATING_INSTITUTION = "participating_institution"
+    ELIGIBLE_PROGRAMME = "eligible_programme"
+    INSTITUTION_SPECIFIC_REQUIREMENT = "institution_specific_requirement"
+    INSTITUTION_SPECIFIC_DEADLINE = "institution_specific_deadline"
+    INDEPENDENT_UNIVERSITY_SCHOLARSHIP = "independent_university_scholarship"
+    INDEPENDENT_GOVERNMENT_SCHOLARSHIP = "independent_government_scholarship"
+    INDEPENDENT_FOUNDATION_SCHOLARSHIP = "independent_foundation_scholarship"
+    CO_FUNDED_AWARD = "co_funded_award"
+    SUCCESSOR = "successor"
+    PREDECESSOR = "predecessor"
+    DUPLICATE = "duplicate"
+    UNRESOLVED = "unresolved"
 
 
 class ScholarshipAlias(Base):
@@ -36,7 +66,59 @@ class ScholarshipAlias(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+
+class ScholarshipRelationship(Base):
+    """A reviewed or proposed relationship between two canonical scholarships."""
+
+    __tablename__ = "scholarship_relationships"
+    __table_args__ = (
+        CheckConstraint(
+            "scholarship_id != related_scholarship_id",
+            name="ck_scholarship_relationships_not_self",
+        ),
+        UniqueConstraint(
+            "scholarship_id",
+            "related_scholarship_id",
+            "relationship_kind",
+            name="uq_scholarship_relationship_kind",
+        ),
+        Index("ix_scholarship_relationships_related", "related_scholarship_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    scholarship_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    related_scholarship_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE")
+    )
+    relationship_kind: Mapped[RelationshipKind] = mapped_column(
+        Enum(
+            RelationshipKind,
+            name="scholarship_relationship_kind",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        index=True,
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
@@ -57,7 +139,10 @@ class Institution(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
@@ -83,7 +168,10 @@ class InstitutionAlias(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
@@ -119,7 +207,10 @@ class ApplicationTrack(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
@@ -167,7 +258,10 @@ class InstitutionParticipation(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
@@ -175,7 +269,11 @@ class InstitutionParticipation(Base):
 class AcademicProgramme(Base):
     __tablename__ = "academic_programmes"
     __table_args__ = (
-        UniqueConstraint("institution_id", "slug", name="uq_academic_programmes_institution_slug"),
+        UniqueConstraint(
+            "institution_id",
+            "slug",
+            name="uq_academic_programmes_institution_slug",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -192,7 +290,10 @@ class AcademicProgramme(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
@@ -236,6 +337,9 @@ class TrackProgramme(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
