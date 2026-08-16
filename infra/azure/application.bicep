@@ -286,6 +286,20 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'APP_WEBAUTHN_ORIGINS'
               value: appOrigin
             }
+            // Scholarship graph rollout is expand-first. The API continues to
+            // serve the existing reviewed Opportunity catalogue in PR 0.
+            {
+              name: 'APP_CATALOGUE_GRAPH_READS_ENABLED'
+              value: 'false'
+            }
+            {
+              name: 'APP_CATALOGUE_GRAPH_WRITES_ENABLED'
+              value: 'false'
+            }
+            {
+              name: 'APP_CATALOGUE_AUTO_PUBLISH_ENABLED'
+              value: 'false'
+            }
             // High-risk capabilities stay server-side disabled. The assistant
             // cannot be switched on by a frontend or a public workflow input.
             {

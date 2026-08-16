@@ -403,11 +403,31 @@ resource catalogueIngestionJob 'Microsoft.App/jobs@2024-03-01' = {
               value: catalogueAiModel
             }
             {
+              name: 'APP_CATALOGUE_GRAPH_READS_ENABLED'
+              value: 'false'
+            }
+            {
+              name: 'APP_CATALOGUE_GRAPH_WRITES_ENABLED'
+              value: 'false'
+            }
+            {
               name: 'APP_CATALOGUE_WEB_DISCOVERY_ENABLED'
               value: 'false'
             }
             {
+              name: 'APP_CATALOGUE_BROWSER_FETCH_ENABLED'
+              value: 'false'
+            }
+            {
               name: 'APP_CATALOGUE_DOCUMENT_INTELLIGENCE_ENABLED'
+              value: 'false'
+            }
+            {
+              name: 'APP_CATALOGUE_SCHEDULED_INGESTION_ENABLED'
+              value: 'false'
+            }
+            {
+              name: 'APP_CATALOGUE_AUTO_PUBLISH_ENABLED'
               value: 'false'
             }
             {

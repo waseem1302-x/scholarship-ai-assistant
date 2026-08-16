@@ -88,8 +88,17 @@ class Settings(BaseSettings):
     )
     catalogue_ai_input_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_ai_output_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
+    # Scholarship graph behavior is introduced expand-first. Reads and writes
+    # remain independently disabled until their respective release gates pass.
+    catalogue_graph_reads_enabled: bool = False
+    catalogue_graph_writes_enabled: bool = False
     catalogue_web_discovery_enabled: bool = False
+    catalogue_browser_fetch_enabled: bool = False
     catalogue_document_intelligence_enabled: bool = False
+    catalogue_scheduled_ingestion_enabled: bool = False
+    # Automatic publication is not a supported capability. Literal[False]
+    # rejects an accidental or hostile attempt to enable it through config.
+    catalogue_auto_publish_enabled: Literal[False] = False
     catalogue_reviewed_official_domains: str = ""
     catalogue_worker_claim_seconds: int = Field(default=900, ge=30, le=3600)
     source_monitor_batch_limit: int = Field(default=100, ge=1, le=1_000)

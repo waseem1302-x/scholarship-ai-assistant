@@ -1,0 +1,136 @@
+{
+  "fixture_version": "scholarship-graph-safety.v1",
+  "reviewed_at": "2026-08-16T00:00:00Z",
+  "review_scope": "CSC canonical identity and a bounded Tsinghua participation example",
+  "scholarships": [
+    {
+      "id": "scholarship:csc",
+      "entity_kind": "scholarship",
+      "canonical_name": "Chinese Government Scholarship",
+      "aliases": [
+        "CSC",
+        "CGS",
+        "Chinese Government Scholarship"
+      ],
+      "awarding_authority": "China Scholarship Council",
+      "source_ids": [
+        "source:tsinghua-cgs-2026",
+        "source:tsinghua-cgs-faq"
+      ]
+    }
+  ],
+  "application_tracks": [
+    {
+      "id": "track:csc-type-a",
+      "entity_kind": "application_track",
+      "scholarship_id": "scholarship:csc",
+      "relationship_kind": "same_scheme_track",
+      "name": "Type A",
+      "source_ids": [
+        "source:tsinghua-cgs-faq"
+      ]
+    },
+    {
+      "id": "track:csc-type-b",
+      "entity_kind": "application_track",
+      "scholarship_id": "scholarship:csc",
+      "relationship_kind": "same_scheme_track",
+      "name": "Type B",
+      "source_ids": [
+        "source:tsinghua-cgs-2026",
+        "source:tsinghua-cgs-faq"
+      ]
+    }
+  ],
+  "participating_institutions": [
+    {
+      "id": "institution:tsinghua-university",
+      "entity_kind": "institution",
+      "scholarship_id": "scholarship:csc",
+      "track_ids": [
+        "track:csc-type-b"
+      ],
+      "relationship_kind": "participating_institution",
+      "name": "Tsinghua University",
+      "source_ids": [
+        "source:tsinghua-cgs-2026"
+      ]
+    }
+  ],
+  "eligible_programmes": [
+    {
+      "id": "programme-scope:tsinghua-cgs-masters",
+      "entity_kind": "eligible_programme",
+      "scholarship_id": "scholarship:csc",
+      "track_id": "track:csc-type-b",
+      "institution_id": "institution:tsinghua-university",
+      "relationship_kind": "eligible_programme",
+      "name": "Tsinghua master's programmes approved for the current CGS Type B call",
+      "source_ids": [
+        "source:tsinghua-cgs-2026"
+      ]
+    },
+    {
+      "id": "programme-scope:tsinghua-cgs-doctoral",
+      "entity_kind": "eligible_programme",
+      "scholarship_id": "scholarship:csc",
+      "track_id": "track:csc-type-b",
+      "institution_id": "institution:tsinghua-university",
+      "relationship_kind": "eligible_programme",
+      "name": "Tsinghua doctoral programmes approved for the current CGS Type B call",
+      "source_ids": [
+        "source:tsinghua-cgs-2026"
+      ]
+    }
+  ],
+  "scoped_deadlines": [
+    {
+      "id": "deadline:tsinghua-cgs-2026-guidance",
+      "entity_kind": "deadline",
+      "scholarship_id": "scholarship:csc",
+      "track_id": "track:csc-type-b",
+      "institution_id": "institution:tsinghua-university",
+      "scope_kind": "institution_track",
+      "date": null,
+      "status": "guidance_only",
+      "display_value": "Apply before mid-December 2025 where possible; the specific school or department deadline controls.",
+      "source_ids": [
+        "source:tsinghua-cgs-2026"
+      ]
+    }
+  ],
+  "scoped_requirements": [
+    {
+      "id": "requirement:tsinghua-pre-admission",
+      "entity_kind": "requirement",
+      "scholarship_id": "scholarship:csc",
+      "track_id": "track:csc-type-b",
+      "institution_id": "institution:tsinghua-university",
+      "scope_kind": "institution_track",
+      "requirement": "Tsinghua pre-admission and a school or department recommendation are required for this university route.",
+      "source_ids": [
+        "source:tsinghua-cgs-2026"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "source:tsinghua-cgs-2026",
+      "entity_kind": "official_source",
+      "owner_kind": "institution",
+      "owner_id": "institution:tsinghua-university",
+      "url": "https://yz.tsinghua.edu.cn/en/info/1027/1117.htm",
+      "title": "2026 Chinese Government Scholarship",
+      "evidence_excerpt": "Applicants must be pre-admitted by Tsinghua and recommended for CGS by their pre-admitted schools or departments."
+    },
+    {
+      "id": "source:tsinghua-cgs-faq",
+      "entity_kind": "official_source",
+      "owner_kind": "institution",
+      "owner_id": "institution:tsinghua-university",
+      "url": "https://yz.tsinghua.edu.cn/en/Financial_Aid/Frequently_Asked_Questions.htm",
+      "title": "Scholarship Frequently Asked Questions",
+      "evidence_excerpt": "Type A is administered outside universities; Type B is administered by Chinese universities under CGS."
+    }
+  ]
+}
