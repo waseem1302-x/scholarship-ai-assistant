@@ -3,7 +3,6 @@ from pathlib import Path
 
 from app.core.config import Settings
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "scholarship_graph" / "csc_pr0_safety_boundary.json"
 
 
@@ -12,11 +11,7 @@ def load_fixture() -> dict:
 
 
 def canonical_scholarship_count(payload: dict) -> int:
-    return sum(
-        1
-        for item in payload["canonical_scholarships"]
-        if item["counts_as_scholarship"]
-    )
+    return sum(1 for item in payload["canonical_scholarships"] if item["counts_as_scholarship"])
 
 
 def test_csc_fixture_has_exactly_one_canonical_scholarship() -> None:
