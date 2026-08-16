@@ -116,7 +116,10 @@ class SourceSnapshot(Base):
     __tablename__ = "source_snapshots"
     __table_args__ = (
         UniqueConstraint("source_id", "content_hash", name="uq_source_snapshots_source_hash"),
-        CheckConstraint("http_status >= 100 AND http_status <= 599", name="ck_snapshot_http_status"),
+        CheckConstraint(
+            "http_status >= 100 AND http_status <= 599",
+            name="ck_snapshot_http_status",
+        ),
         CheckConstraint("byte_count >= 0", name="ck_snapshot_byte_count_non_negative"),
         CheckConstraint(
             "character_count >= 0",
