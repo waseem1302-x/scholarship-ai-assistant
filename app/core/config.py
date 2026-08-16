@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     beta_terms_version: str = "phase9.beta-terms.v1"
     beta_privacy_notice_version: str = "phase9.beta-privacy.v1"
     catalogue_maintenance_mode: bool = False
+    # Scholarship Intelligence Graph rollout controls. Reads and writes remain
+    # independently disabled until their reviewed rollout gates pass.
+    catalogue_graph_reads_enabled: bool = False
+    catalogue_graph_writes_enabled: bool = False
     # Catalogue acquisition is a separate, public-data-only AI use case. It is
     # disabled independently from the student Assistant and never publishes.
     catalogue_ai_ingestion_enabled: bool = False
@@ -89,7 +93,9 @@ class Settings(BaseSettings):
     catalogue_ai_input_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_ai_output_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_web_discovery_enabled: bool = False
+    catalogue_browser_fetching_enabled: bool = False
     catalogue_document_intelligence_enabled: bool = False
+    catalogue_scheduled_ingestion_enabled: bool = False
     catalogue_reviewed_official_domains: str = ""
     catalogue_worker_claim_seconds: int = Field(default=900, ge=30, le=3600)
     source_monitor_batch_limit: int = Field(default=100, ge=1, le=1_000)
