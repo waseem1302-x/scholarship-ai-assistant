@@ -250,8 +250,9 @@ class InstitutionParticipation(Base):
     participation_status: Mapped[str | None] = mapped_column(String(64), index=True)
     application_url: Mapped[str | None] = mapped_column(String(2048))
     notes: Mapped[str | None] = mapped_column(Text)
-    # PR2 introduces official_sources; keep this identifier unbound in PR1.
-    source_id: Mapped[uuid.UUID | None] = mapped_column()
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="SET NULL")
+    )
     valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -330,8 +331,9 @@ class TrackProgramme(Base):
     eligibility_status: Mapped[str | None] = mapped_column(String(64), index=True)
     funding_status: Mapped[str | None] = mapped_column(String(64), index=True)
     application_url: Mapped[str | None] = mapped_column(String(2048))
-    # PR2 introduces official_sources; keep this identifier unbound in PR1.
-    source_id: Mapped[uuid.UUID | None] = mapped_column()
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("sources.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
