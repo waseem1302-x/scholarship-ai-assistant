@@ -49,7 +49,10 @@ def _fact_matches_scope(fact: ScopedDeadline, scope: FactScope) -> bool:
         (fact.institution_id, scope.institution_id),
         (fact.programme_id, scope.programme_id),
     )
-    return all(fact_value is None or fact_value == requested_value for fact_value, requested_value in dimensions)
+    return all(
+        fact_value is None or fact_value == requested_value
+        for fact_value, requested_value in dimensions
+    )
 
 
 def _specificity(fact: ScopedDeadline) -> int:
@@ -172,10 +175,7 @@ def resolve_scoped_deadline(
         if not supported:
             continue
 
-        distinct_deadlines = {
-            (fact.deadline_at, fact.timezone)
-            for fact in supported
-        }
+        distinct_deadlines = {(fact.deadline_at, fact.timezone) for fact in supported}
         if len(distinct_deadlines) > 1:
             return _conflict(supported)
 
