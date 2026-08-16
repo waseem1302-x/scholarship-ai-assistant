@@ -11,11 +11,13 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -87,6 +89,14 @@ class DataConfidence(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class IndependenceStatus(StrEnum):
+    CONFIRMED_INDEPENDENT = "confirmed_independent"
+    SAME_SCHEME = "same_scheme"
+    DUPLICATE = "duplicate"
+    UNRESOLVED = "unresolved"
+    LEGACY_UNREVIEWED = "legacy_unreviewed"
 
 
 class DuplicateSuggestionStatus(StrEnum):
@@ -186,6 +196,10 @@ class Opportunity(Base):
             "intake_year IS NULL OR intake_year >= 2000",
             name="ck_intake_year_range",
         ),
+        CheckConstraint(
+            "parent_scholarship_id IS NULL OR parent_scholarship_id <> id",
+            name="ck_opportunities_parent_not_self",
+        ),
         Index("ix_opportunities_country_degree", "country", "degree_level"),
         Index(
             "ix_opportunities_canonical_identity",
@@ -202,12 +216,50 @@ class Opportunity(Base):
             "catalogue_application_opening_date",
             "catalogue_application_deadline",
         ),
+        Index(
+            "uq_opportunity_canonical_slug",
+            "canonical_slug",
+            unique=True,
+            sqlite_where=text("canonical_slug IS NOT NULL"),
+            postgresql_where=text("canonical_slug IS NOT NULL"),
+        ),
+        Index(
+            "ix_opportunity_provider_kind",
+            "canonical_provider_id",
+            "entity_kind",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     provider_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("providers.id"), index=True)
     university_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("universities.id"))
     name: Mapped[str] = mapped_column(String(255))
+    canonical_slug: Mapped[str | None] = mapped_column(String(255))
+    entity_kind: Mapped[str] = mapped_column(
+        String(32), default="scholarship", server_default="scholarship"
+    )
+    canonical_provider_id: Mapped[uuid.UUID | None] = mapped_column()
+    parent_scholarship_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="SET NULL")
+    )
+    independence_status: Mapped[IndependenceStatus] = mapped_column(
+        Enum(
+            IndependenceStatus,
+            name="independence_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=IndependenceStatus.LEGACY_UNREVIEWED,
+        server_default=IndependenceStatus.LEGACY_UNREVIEWED.value,
+    )
+    publication_completeness: Mapped[str] = mapped_column(
+        String(32), default="incomplete", server_default="incomplete"
+    )
+    current_cycle_id: Mapped[uuid.UUID | None] = mapped_column()
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     programme_family_id: Mapped[str | None] = mapped_column(String(120), index=True)
     cycle_id: Mapped[str | None] = mapped_column(String(120), index=True)
     country: Mapped[str] = mapped_column(String(100), index=True)
@@ -422,21 +474,45 @@ class OpportunityCycle(Base):
             "OR application_deadline >= application_opening_date",
             name="ck_opportunity_cycles_deadline_after_opening",
         ),
+        CheckConstraint("version >= 1", name="ck_opportunity_cycles_version_positive"),
+        UniqueConstraint(
+            "opportunity_id",
+            "label",
+            name="uq_opportunity_cycles_opportunity_label",
+        ),
+        Index(
+            "uq_opportunity_cycles_one_current",
+            "opportunity_id",
+            unique=True,
+            sqlite_where=text("is_current = 1"),
+            postgresql_where=text("is_current"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     opportunity_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
     )
+    label: Mapped[str | None] = mapped_column(String(255))
     intake_year: Mapped[int | None] = mapped_column()
     application_opening_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     application_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str | None] = mapped_column(String(32), index=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    is_current: Mapped[bool] = mapped_column(default=False)
     is_rolling: Mapped[bool] = mapped_column(default=False)
     is_archived: Mapped[bool] = mapped_column(default=False)
+    source_id: Mapped[uuid.UUID | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
     opportunity: Mapped[Opportunity] = relationship(back_populates="cycles")
 
