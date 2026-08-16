@@ -94,9 +94,7 @@ def upgrade() -> None:
         batch_op.add_column(
             sa.Column("last_verified_at", sa.DateTime(timezone=True), nullable=True)
         )
-        batch_op.add_column(
-            sa.Column("next_review_at", sa.DateTime(timezone=True), nullable=True)
-        )
+        batch_op.add_column(sa.Column("next_review_at", sa.DateTime(timezone=True), nullable=True))
         batch_op.create_foreign_key(
             "fk_opportunities_parent_scholarship_id_opportunities",
             "opportunities",
@@ -258,9 +256,7 @@ def upgrade() -> None:
     )
 
     relationship_kind_check = (
-        "relationship_kind IN ("
-        + ", ".join(f"'{value}'" for value in RELATIONSHIP_KINDS)
-        + ")"
+        "relationship_kind IN (" + ", ".join(f"'{value}'" for value in RELATIONSHIP_KINDS) + ")"
     )
     op.create_table(
         "scholarship_relationships",
