@@ -63,17 +63,25 @@ def test_scholarship_graph_migration_is_expand_first_and_reversible(tmp_path: Pa
         "scholarship_aliases",
         "scholarship_relationships",
     }.issubset(inspector.get_table_names())
+
+    opportunity_columns = {column["name"] for column in inspector.get_columns("opportunities")}
     assert {
         "canonical_slug",
         "entity_kind",
-        "canonical_provider_id",
         "parent_scholarship_id",
         "independence_status",
         "publication_completeness",
-        "current_cycle_id",
         "last_verified_at",
         "next_review_at",
-    }.issubset({column["name"] for column in inspector.get_columns("opportunities")})
+    }.issubset(opportunity_columns)
+    # The existing provider_id remains the canonical provider relationship; do not
+    # introduce a parallel canonical_provider_id identity path.
+    assert "provider_id" in opportunity_columns
+    assert "canonical_provider_id" not in opportunity_columns
+    # Current-cycle selection stays on opportunity_cycles.is_current instead of
+    # adding a second, potentially inconsistent current_cycle_id pointer.
+    assert "current_cycle_id" not in opportunity_columns
+
     assert {
         "label",
         "status",
