@@ -62,6 +62,16 @@ from app.modules.matching.models import (
     MatchRuleOutcome,
 )
 from app.modules.operations.models import OperationalJobHealth
+from app.modules.opportunities.graph_models import (
+    AcademicProgramme,
+    ApplicationTrack,
+    Institution,
+    InstitutionAlias,
+    InstitutionParticipation,
+    ScholarshipAlias,
+    ScholarshipRelationship,
+    TrackProgramme,
+)
 from app.modules.opportunities.models import (
     EligibilityRule,
     Opportunity,
@@ -75,6 +85,7 @@ from app.modules.opportunities.models import (
 from app.modules.profiles.models import StudentProfile
 
 __all__ = [
+    "AcademicProgramme",
     "AdminStepUpToken",
     "Application",
     "ApplicationDocument",
@@ -83,6 +94,7 @@ __all__ = [
     "ApplicationNotificationPreference",
     "ApplicationReminder",
     "ApplicationTask",
+    "ApplicationTrack",
     "AssistantAnswer",
     "AssistantCitation",
     "AssistantConversation",
@@ -114,6 +126,9 @@ __all__ = [
     "DocumentVersion",
     "EligibilityRule",
     "EmailVerificationToken",
+    "Institution",
+    "InstitutionAlias",
+    "InstitutionParticipation",
     "MatchEvaluation",
     "MatchEvaluationResult",
     "MatchRuleOutcome",
@@ -125,9 +140,12 @@ __all__ = [
     "RefreshToken",
     "ReminderWorkerHealth",
     "SavedOpportunity",
+    "ScholarshipAlias",
+    "ScholarshipRelationship",
     "Source",
     "SourceExcerpt",
     "StudentProfile",
+    "TrackProgramme",
     "University",
     "User",
     "VerificationRecord",
