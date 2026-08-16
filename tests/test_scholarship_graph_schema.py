@@ -125,6 +125,7 @@ def test_graph_children_do_not_increase_scholarship_count(db_session: Session) -
 
 def test_canonical_slug_is_unique_when_present(db_session: Session) -> None:
     create_scholarship(db_session, canonical_slug="canonical-csc")
+    db_session.commit()
 
     with pytest.raises(IntegrityError):
         create_scholarship(
@@ -136,6 +137,7 @@ def test_canonical_slug_is_unique_when_present(db_session: Session) -> None:
 
 def test_only_one_current_cycle_is_allowed_per_scholarship(db_session: Session) -> None:
     scholarship = create_scholarship(db_session)
+    db_session.commit()
     db_session.add_all(
         [
             OpportunityCycle(
@@ -165,7 +167,7 @@ def test_track_code_is_unique_within_cycle(db_session: Session) -> None:
         timezone="UTC",
     )
     db_session.add(cycle)
-    db_session.flush()
+    db_session.commit()
     db_session.add_all(
         [
             ApplicationTrack(
@@ -214,23 +216,26 @@ def test_participation_and_programme_links_are_unique(db_session: Session) -> No
         field_codes=[],
     )
     db_session.add_all([track, programme])
-    db_session.flush()
+    db_session.commit()
 
-    first = InstitutionParticipation(
-        scholarship_id=scholarship.id,
-        cycle_id=cycle.id,
-        track_id=track.id,
-        institution_id=institution.id,
-        role="host",
+    db_session.add_all(
+        [
+            InstitutionParticipation(
+                scholarship_id=scholarship.id,
+                cycle_id=cycle.id,
+                track_id=track.id,
+                institution_id=institution.id,
+                role="host",
+            ),
+            InstitutionParticipation(
+                scholarship_id=scholarship.id,
+                cycle_id=cycle.id,
+                track_id=track.id,
+                institution_id=institution.id,
+                role="host",
+            ),
+        ]
     )
-    duplicate = InstitutionParticipation(
-        scholarship_id=scholarship.id,
-        cycle_id=cycle.id,
-        track_id=track.id,
-        institution_id=institution.id,
-        role="host",
-    )
-    db_session.add_all([first, duplicate])
     with pytest.raises(IntegrityError):
         db_session.commit()
     db_session.rollback()
@@ -260,6 +265,8 @@ def test_participation_and_programme_links_are_unique(db_session: Session) -> No
 
 def test_self_parent_and_duplicate_alias_are_rejected(db_session: Session) -> None:
     scholarship = create_scholarship(db_session)
+    db_session.commit()
+
     scholarship.parent_scholarship_id = scholarship.id
     with pytest.raises(IntegrityError):
         db_session.commit()
@@ -267,7 +274,6 @@ def test_self_parent_and_duplicate_alias_are_rejected(db_session: Session) -> No
 
     scholarship = db_session.get(Opportunity, scholarship.id)
     assert scholarship is not None
-    scholarship.parent_scholarship_id = None
     db_session.add_all(
         [
             ScholarshipAlias(
