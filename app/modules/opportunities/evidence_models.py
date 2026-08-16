@@ -216,16 +216,17 @@ class FieldEvidence(Base):
     )
 
 
-_SCOPE_CHECKS = (
-    CheckConstraint(
-        "track_id IS NULL OR cycle_id IS NOT NULL",
-        name="ck_%(table_name)s_track_requires_cycle",
-    ),
-    CheckConstraint(
-        "programme_id IS NULL OR institution_id IS NOT NULL",
-        name="ck_%(table_name)s_programme_requires_institution",
-    ),
-)
+def _scope_constraints(table_name: str) -> tuple[CheckConstraint, CheckConstraint]:
+    return (
+        CheckConstraint(
+            "track_id IS NULL OR cycle_id IS NOT NULL",
+            name=f"ck_{table_name}_track_requires_cycle",
+        ),
+        CheckConstraint(
+            "programme_id IS NULL OR institution_id IS NOT NULL",
+            name=f"ck_{table_name}_programme_requires_institution",
+        ),
+    )
 
 
 def _scope_index(table_name: str) -> Index:
@@ -241,7 +242,7 @@ def _scope_index(table_name: str) -> Index:
 
 class ScopedDeadline(Base):
     __tablename__ = "scoped_deadlines"
-    __table_args__ = (*_SCOPE_CHECKS, _scope_index("scoped_deadlines"))
+    __table_args__ = (*_scope_constraints("scoped_deadlines"), _scope_index("scoped_deadlines"))
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     scholarship_id: Mapped[uuid.UUID] = mapped_column(
@@ -278,7 +279,7 @@ class ScopedDeadline(Base):
 
 class FundingComponent(Base):
     __tablename__ = "funding_components"
-    __table_args__ = (*_SCOPE_CHECKS, _scope_index("funding_components"))
+    __table_args__ = (*_scope_constraints("funding_components"), _scope_index("funding_components"))
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     scholarship_id: Mapped[uuid.UUID] = mapped_column(
@@ -315,7 +316,7 @@ class FundingComponent(Base):
 
 class RequiredDocument(Base):
     __tablename__ = "required_documents"
-    __table_args__ = (*_SCOPE_CHECKS, _scope_index("required_documents"))
+    __table_args__ = (*_scope_constraints("required_documents"), _scope_index("required_documents"))
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     scholarship_id: Mapped[uuid.UUID] = mapped_column(
@@ -352,7 +353,7 @@ class RequiredDocument(Base):
 
 class ApplicationStep(Base):
     __tablename__ = "application_steps"
-    __table_args__ = (*_SCOPE_CHECKS, _scope_index("application_steps"))
+    __table_args__ = (*_scope_constraints("application_steps"), _scope_index("application_steps"))
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     scholarship_id: Mapped[uuid.UUID] = mapped_column(
