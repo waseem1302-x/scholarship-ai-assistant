@@ -684,6 +684,267 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
     assert result.usage.estimated_cost == Decimal("0.000200")
 
 
+def test_semantic_validation_rejects_country_inferred_from_university() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    inferred_excerpt = "Applicants study at the University of Edinburgh."
+    raw["evidence"][2]["excerpt"] = inferred_excerpt
+
+    output = CatalogueExtractionOutput.model_validate(raw)
+    source_text = SOURCE_TEXT.replace(
+        "Applicants study in the United Kingdom.",
+        inferred_excerpt,
+    )
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=source_text,
+        source_title="Official source",
+        content_hash="f" * 64,
+        trust_tier=2,
+    )
+
+    assert any(
+        "identity.country: evidence does not explicitly name" in error for error in validated.errors
+    )
+    assert validated.payload is None
+
+
+def test_semantic_validation_rejects_generic_costs_as_tuition_coverage() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    excerpt = "Full scholarships cover participation costs and contribute to living expenses."
+    raw["funding"]["tuition_coverage_status"] = "confirmed"
+    raw["evidence"].append(
+        {
+            "field_path": "funding.tuition_coverage_status",
+            "source_url": OFFICIAL_URL,
+            "section_label": "Funding",
+            "locator": None,
+            "excerpt": excerpt,
+            "basis": "explicit",
+        }
+    )
+
+    output = CatalogueExtractionOutput.model_validate(raw)
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=SOURCE_TEXT + " " + excerpt,
+        source_title="Official source",
+        content_hash="1" * 64,
+        trust_tier=2,
+    )
+
+    assert any(
+        "funding.tuition_coverage_status: evidence does not support "
+        "the claimed tuition coverage status" in error
+        for error in validated.errors
+    )
+    assert validated.payload is None
+
+
+def test_semantic_validation_rejects_graduates_as_minimum_academic_requirement() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    excerpt = "The programme supports rigorously selected graduates from developing countries."
+    raw["eligibility"]["minimum_academic_requirement"] = "graduates"
+    raw["evidence"].append(
+        {
+            "field_path": "eligibility.minimum_academic_requirement",
+            "source_url": OFFICIAL_URL,
+            "section_label": "Eligibility",
+            "locator": None,
+            "excerpt": excerpt,
+            "basis": "explicit",
+        }
+    )
+
+    output = CatalogueExtractionOutput.model_validate(raw)
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=SOURCE_TEXT + " " + excerpt,
+        source_title="Official source",
+        content_hash="2" * 64,
+        trust_tier=2,
+    )
+
+    assert any(
+        "minimum_academic_requirement: evidence does not state an explicit" in error
+        for error in validated.errors
+    )
+    assert validated.payload is None
+
+
+def test_semantic_validation_accepts_explicit_tuition_and_degree_requirement() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    tuition_excerpt = "Full tuition fees are covered by the scholarship."
+    academic_excerpt = "Applicants must have a bachelor's degree."
+
+    raw["funding"]["tuition_coverage_status"] = "confirmed"
+    raw["eligibility"]["minimum_academic_requirement"] = "bachelor's degree"
+
+    raw["evidence"].extend(
+        [
+            {
+                "field_path": "funding.tuition_coverage_status",
+                "source_url": OFFICIAL_URL,
+                "section_label": "Funding",
+                "locator": None,
+                "excerpt": tuition_excerpt,
+                "basis": "explicit",
+            },
+            {
+                "field_path": "eligibility.minimum_academic_requirement",
+                "source_url": OFFICIAL_URL,
+                "section_label": "Eligibility",
+                "locator": None,
+                "excerpt": academic_excerpt,
+                "basis": "explicit",
+            },
+        ]
+    )
+
+    output = CatalogueExtractionOutput.model_validate(raw)
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=SOURCE_TEXT + " " + tuition_excerpt + " " + academic_excerpt,
+        source_title="Official source",
+        content_hash="3" * 64,
+        trust_tier=2,
+    )
+
+    assert validated.errors == []
+    assert validated.payload is not None
+
+
+def test_semantic_country_matching_uses_real_word_boundaries() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    raw["identity"]["country"] = "Mali"
+
+    excerpt = "Applicants study in Somalia."
+    raw["evidence"][2]["excerpt"] = excerpt
+
+    output = CatalogueExtractionOutput.model_validate(raw)
+    source_text = SOURCE_TEXT.replace(
+        "Applicants study in the United Kingdom.",
+        excerpt,
+    )
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=source_text,
+        source_title="Official source",
+        content_hash="4" * 64,
+        trust_tier=2,
+    )
+
+    assert any(
+        "identity.country: evidence does not explicitly name" in error for error in validated.errors
+    )
+    assert validated.payload is None
+
+
+def test_semantic_validation_rejects_confirmed_tuition_with_negative_evidence() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    excerpt = "Tuition fees are not covered by the scholarship."
+
+    raw["funding"]["tuition_coverage_status"] = "confirmed"
+    raw["evidence"].append(
+        {
+            "field_path": "funding.tuition_coverage_status",
+            "source_url": OFFICIAL_URL,
+            "section_label": "Funding",
+            "locator": None,
+            "excerpt": excerpt,
+            "basis": "explicit",
+        }
+    )
+
+    output = CatalogueExtractionOutput.model_validate(raw)
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=SOURCE_TEXT + " " + excerpt,
+        source_title="Official source",
+        content_hash="5" * 64,
+        trust_tier=2,
+    )
+
+    assert any("claimed tuition coverage status" in error for error in validated.errors)
+    assert validated.payload is None
+
+
+def test_semantic_validation_accepts_explicit_tuition_noncoverage() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    excerpt = "Tuition fees are not covered by the scholarship."
+
+    raw["funding"]["tuition_coverage_status"] = "not_covered"
+    raw["evidence"].append(
+        {
+            "field_path": "funding.tuition_coverage_status",
+            "source_url": OFFICIAL_URL,
+            "section_label": "Funding",
+            "locator": None,
+            "excerpt": excerpt,
+            "basis": "explicit",
+        }
+    )
+
+    output = CatalogueExtractionOutput.model_validate(raw)
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=SOURCE_TEXT + " " + excerpt,
+        source_title="Official source",
+        content_hash="6" * 64,
+        trust_tier=2,
+    )
+
+    assert validated.errors == []
+    assert validated.payload is not None
+
+
+def test_semantic_validation_rejects_negated_academic_requirement() -> None:
+    raw = extraction_output().model_dump(mode="json")
+    excerpt = "A bachelor's degree is not required."
+
+    raw["eligibility"]["minimum_academic_requirement"] = "bachelor's degree"
+    raw["evidence"].append(
+        {
+            "field_path": "eligibility.minimum_academic_requirement",
+            "source_url": OFFICIAL_URL,
+            "section_label": "Eligibility",
+            "locator": None,
+            "excerpt": excerpt,
+            "basis": "explicit",
+        }
+    )
+
+    output = CatalogueExtractionOutput.model_validate(raw)
+
+    validated = validate_and_build_proposal(
+        output,
+        source_url=OFFICIAL_URL,
+        source_text=SOURCE_TEXT + " " + excerpt,
+        source_title="Official source",
+        content_hash="7" * 64,
+        trust_tier=2,
+    )
+
+    assert any(
+        "minimum_academic_requirement: evidence does not state an explicit" in error
+        for error in validated.errors
+    )
+    assert validated.payload is None
+
+
 def test_validation_accepts_equivalent_apostrophe_encoding_in_evidence() -> None:
     raw = extraction_output().model_dump(mode="json")
     raw["evidence"][0]["excerpt"] = "Example Scholar\x19s Award"

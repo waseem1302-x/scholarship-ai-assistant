@@ -31,6 +31,77 @@ REQUIRED_EVIDENCE_FIELDS = {
     "study.degree_level",
 }
 
+COUNTRY_EVIDENCE_ALIASES = {
+    "united kingdom": ("uk", "u.k."),
+    "united states": (
+        "united states of america",
+        "usa",
+        "u.s.a.",
+        "u.s.",
+    ),
+}
+
+ACADEMIC_REQUIREMENT_CUES = (
+    "must",
+    "required",
+    "requires",
+    "requirement",
+    "minimum",
+    "at least",
+    "should have",
+    "need to have",
+    "needs to have",
+    "eligible if",
+)
+
+ACADEMIC_QUALIFICATION_MARKERS = (
+    "degree",
+    "bachelor",
+    "master",
+    "gpa",
+    "grade",
+    "percentage",
+    "academic qualification",
+    "qualification",
+    "equivalent",
+)
+
+ACADEMIC_NEGATION_CUES = (
+    "not required",
+    "does not require",
+    "do not require",
+    "no minimum",
+    "no requirement",
+    "not mandatory",
+    "without requiring",
+)
+
+TUITION_NEGATION_CUES = (
+    "not covered",
+    "does not cover",
+    "do not cover",
+    "not paid",
+    "not included",
+    "excluded",
+)
+
+TUITION_PARTIAL_CUES = (
+    "partially covered",
+    "partly covered",
+    "partial coverage",
+    "not fully covered",
+)
+
+TUITION_CONFIRMED_CUES = (
+    "covered",
+    "coverage",
+    "paid",
+    "waived",
+    "waiver",
+    "funded",
+    "full tuition",
+)
+
 
 @dataclass(frozen=True)
 class ValidatedProposal:
@@ -48,6 +119,7 @@ def validate_and_build_proposal(
     trust_tier: int,
 ) -> ValidatedProposal:
     errors = evidence_errors(output, source_url=source_url, source_text=source_text)
+    errors.extend(semantic_evidence_errors(output, source_text=source_text))
     if output.conflicts:
         errors.append("unresolved official-source conflicts must be reviewed")
 
@@ -205,10 +277,130 @@ def required_evidence_fields(output: CatalogueExtractionOutput) -> set[str]:
         fields.add("application.application_deadline")
     if output.application.application_url is not None:
         fields.add("application.application_url")
+    if output.eligibility.minimum_academic_requirement is not None:
+        fields.add("eligibility.minimum_academic_requirement")
     for name, value in funding_statuses(output):
         if value is not FundingCoverageStatus.UNKNOWN:
             fields.add(f"funding.{name}")
     return fields
+
+
+def semantic_evidence_errors(
+    output: CatalogueExtractionOutput,
+    *,
+    source_text: str,
+) -> list[str]:
+    """Reject high-risk claims whose cited excerpt does not support the value."""
+
+    normalized_source = _normalize(source_text)
+
+    def excerpts(field_path: str) -> list[str]:
+        return [
+            _normalize(evidence.excerpt)
+            for evidence in output.evidence
+            if evidence.field_path == field_path
+            and evidence.basis != "unknown"
+            and len(evidence.excerpt.strip()) >= 5
+            and _normalize(evidence.excerpt) in normalized_source
+        ]
+
+    errors: list[str] = []
+
+    country = output.identity.country
+    if country is not None:
+        normalized_country = _normalize(country)
+        country_terms = {
+            normalized_country,
+            *COUNTRY_EVIDENCE_ALIASES.get(normalized_country, ()),
+        }
+        country_excerpts = excerpts("identity.country")
+
+        if not any(
+            _contains_term(excerpt, term) for excerpt in country_excerpts for term in country_terms
+        ):
+            errors.append(
+                "identity.country: evidence does not explicitly name the claimed study country"
+            )
+
+    tuition_status = output.funding.tuition_coverage_status
+    if tuition_status is not FundingCoverageStatus.UNKNOWN:
+        tuition_excerpts = excerpts("funding.tuition_coverage_status")
+        if not any(
+            _tuition_status_supported(tuition_status, excerpt) for excerpt in tuition_excerpts
+        ):
+            errors.append(
+                "funding.tuition_coverage_status: evidence does not support "
+                "the claimed tuition coverage status"
+            )
+
+    if output.eligibility.minimum_academic_requirement is not None:
+        academic_excerpts = excerpts("eligibility.minimum_academic_requirement")
+
+        explicit_requirement = any(
+            _academic_requirement_supported(excerpt) for excerpt in academic_excerpts
+        )
+
+        if not explicit_requirement:
+            errors.append(
+                "eligibility.minimum_academic_requirement: evidence does not "
+                "state an explicit academic requirement"
+            )
+
+    return errors
+
+
+def _tuition_status_supported(
+    status: FundingCoverageStatus,
+    excerpt: str,
+) -> bool:
+    if not _contains_term(excerpt, "tuition"):
+        return False
+
+    status_value = status.value
+
+    has_negative = any(cue in excerpt for cue in TUITION_NEGATION_CUES)
+    has_partial = any(cue in excerpt for cue in TUITION_PARTIAL_CUES)
+
+    if status_value == "not_covered":
+        return has_negative
+
+    if status_value == "partial":
+        return has_partial
+
+    if status_value == "confirmed":
+        if has_negative or has_partial:
+            return False
+        return any(cue in excerpt for cue in TUITION_CONFIRMED_CUES)
+
+    return False
+
+
+def _academic_requirement_supported(excerpt: str) -> bool:
+    if any(cue in excerpt for cue in ACADEMIC_NEGATION_CUES):
+        return False
+
+    # Also reject forms such as "No bachelor's degree is required".
+    if re.search(
+        r"(?<!\w)no(?!\w).{0,80}"
+        r"(?:degree|bachelor|master|gpa|grade|qualification)",
+        excerpt,
+    ):
+        return False
+
+    return any(cue in excerpt for cue in ACADEMIC_REQUIREMENT_CUES) and any(
+        marker in excerpt for marker in ACADEMIC_QUALIFICATION_MARKERS
+    )
+
+
+def _contains_term(text: str, term: str) -> bool:
+    normalized_term = _normalize(term)
+    return (
+        re.search(
+            rf"(?<!\w){re.escape(normalized_term)}(?!\w)",
+            text,
+        )
+        is not None
+    )
 
 
 def funding_statuses(
