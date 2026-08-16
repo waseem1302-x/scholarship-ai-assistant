@@ -119,8 +119,11 @@ def test_scholarship_graph_migration_is_expand_first_and_reversible(tmp_path: Pa
         column["name"] for column in inspector.get_columns("opportunities")
     }
     with Session(engine) as session:
-        assert session.scalar(
-            text("SELECT count(*) FROM opportunities WHERE id = :id"),
-            {"id": opportunity_id},
-        ) == 1
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM opportunities WHERE id = :id"),
+                {"id": opportunity_id},
+            )
+            == 1
+        )
     engine.dispose()
