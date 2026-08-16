@@ -10,7 +10,6 @@ from app.modules.opportunities.evidence_models import (
     EvidenceSupportType,
     EvidenceValidatorStatus,
     OfficialityStatus,
-    OfficialSource,
     RequiredDocument,
     ScopedDeadline,
     SourceOwnerType,
@@ -25,11 +24,17 @@ from app.modules.opportunities.graph_query import FactScope, resolve_scoped_dead
 from app.modules.opportunities.models import (
     DataConfidence,
     DegreeLevel,
+    EligibilityOperator,
+    EligibilityRule,
+    EligibilityRuleType,
     FundingType,
     Opportunity,
     OpportunityCycle,
     OpportunityStatus,
     Provider,
+    Source,
+    SourceType,
+    VerificationStatus,
 )
 
 
@@ -89,16 +94,27 @@ def create_scope(db_session: Session, scholarship: Opportunity):
     return cycle, track, institution, programme
 
 
-def create_snapshot(db_session: Session, text: str) -> SourceSnapshot:
-    source = OfficialSource(
-        canonical_url=f"https://example.edu/{uuid.uuid4().hex}/scholarship",
-        normalized_url=f"https://example.edu/{uuid.uuid4().hex}/scholarship",
+def create_snapshot(
+    db_session: Session,
+    scholarship: Opportunity,
+    text: str,
+) -> SourceSnapshot:
+    path = uuid.uuid4().hex
+    source = Source(
+        opportunity_id=scholarship.id,
+        url=f"https://example.edu/{path}/scholarship",
+        canonical_url=f"https://example.edu/{path}/scholarship",
+        normalized_url=f"https://example.edu/{path}/scholarship",
         domain="example.edu",
+        source_type=SourceType.OFFICIAL,
         source_owner_type=SourceOwnerType.INSTITUTION,
         officiality_status=OfficialityStatus.OFFICIAL,
         officiality_reason="fixture resolved to the institution identity",
         robots_status="allowed",
         content_type="text/html",
+        title="PR2 official source fixture",
+        relevant_excerpt=text,
+        verification_status=VerificationStatus.OFFICIALLY_VERIFIED,
         is_active=True,
     )
     db_session.add(source)
@@ -141,28 +157,56 @@ def add_explicit_evidence(
     db_session.commit()
 
 
-def test_official_source_normalized_url_is_globally_unique(db_session: Session) -> None:
+def test_graph_evidence_reuses_legacy_source_identity(db_session: Session) -> None:
+    scholarship = create_scholarship(db_session)
+    snapshot = create_snapshot(
+        db_session,
+        scholarship,
+        "Applications close on 30 June 2027.",
+    )
+
+    source = db_session.get(Source, snapshot.source_id)
+    assert source is not None
+    assert source.opportunity_id == scholarship.id
+    assert source.normalized_url == source.canonical_url
+    assert source.officiality_status == OfficialityStatus.OFFICIAL
+
+
+def test_normalized_source_url_is_unique_within_scholarship(db_session: Session) -> None:
+    scholarship = create_scholarship(db_session)
     normalized_url = "https://example.edu/scholarships/csc"
     db_session.add_all(
         [
-            OfficialSource(
+            Source(
+                opportunity_id=scholarship.id,
+                url=normalized_url,
                 canonical_url=normalized_url,
                 normalized_url=normalized_url,
                 domain="example.edu",
+                source_type=SourceType.OFFICIAL,
                 source_owner_type=SourceOwnerType.INSTITUTION,
                 officiality_status=OfficialityStatus.OFFICIAL,
                 officiality_reason="resolved institution source",
                 robots_status="allowed",
+                title="Primary official source",
+                relevant_excerpt="Official scholarship information.",
+                verification_status=VerificationStatus.OFFICIALLY_VERIFIED,
                 is_active=True,
             ),
-            OfficialSource(
+            Source(
+                opportunity_id=scholarship.id,
+                url=f"{normalized_url}?duplicate=1",
                 canonical_url=f"{normalized_url}?duplicate=1",
                 normalized_url=normalized_url,
                 domain="example.edu",
+                source_type=SourceType.OFFICIAL,
                 source_owner_type=SourceOwnerType.INSTITUTION,
                 officiality_status=OfficialityStatus.OFFICIAL,
                 officiality_reason="same normalized source",
                 robots_status="allowed",
+                title="Duplicate normalized source",
+                relevant_excerpt="Duplicate normalized source fixture.",
+                verification_status=VerificationStatus.OFFICIALLY_VERIFIED,
                 is_active=True,
             ),
         ]
@@ -173,7 +217,12 @@ def test_official_source_normalized_url_is_globally_unique(db_session: Session) 
 
 
 def test_source_snapshots_are_immutable_and_not_deletable(db_session: Session) -> None:
-    snapshot = create_snapshot(db_session, "Applications close on 30 June 2027.")
+    scholarship = create_scholarship(db_session)
+    snapshot = create_snapshot(
+        db_session,
+        scholarship,
+        "Applications close on 30 June 2027.",
+    )
 
     snapshot.normalized_text = "tampered evidence"
     with pytest.raises(EvidenceIntegrityError):
@@ -188,8 +237,9 @@ def test_source_snapshots_are_immutable_and_not_deletable(db_session: Session) -
 
 
 def test_field_evidence_excerpt_must_match_snapshot_offsets(db_session: Session) -> None:
+    scholarship = create_scholarship(db_session)
     text = "Applications close on 30 June 2027. Submit through the university portal."
-    snapshot = create_snapshot(db_session, text)
+    snapshot = create_snapshot(db_session, scholarship, text)
     excerpt = "30 June 2027"
     start = text.index(excerpt)
     store = EvidenceStore(db_session)
@@ -287,6 +337,7 @@ def test_explicit_passed_local_deadline_overrides_inherited_deadline(db_session:
     db_session.commit()
     snapshot = create_snapshot(
         db_session,
+        scholarship,
         "For the university route, applications close on 30 June 2027.",
     )
     add_explicit_evidence(
@@ -337,6 +388,7 @@ def test_contradictory_child_fact_returns_review_conflict(db_session: Session) -
     db_session.commit()
     snapshot = create_snapshot(
         db_session,
+        scholarship,
         "The local page contradicts the umbrella deadline and lists 30 June 2027.",
     )
     excerpt = "30 June 2027"
@@ -381,6 +433,27 @@ def test_programme_scoped_fact_requires_institution_scope(db_session: Session) -
             name="Academic transcript",
             required=True,
             display_order=0,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+
+
+def test_eligibility_rule_uses_graph_scope_without_parallel_rule_table(
+    db_session: Session,
+) -> None:
+    scholarship = create_scholarship(db_session)
+    _, _, _, programme = create_scope(db_session, scholarship)
+    db_session.add(
+        EligibilityRule(
+            opportunity_id=scholarship.id,
+            programme_id=programme.id,
+            rule_type=EligibilityRuleType.NATIONALITY,
+            operator=EligibilityOperator.IN,
+            value_json=["PK"],
+            required=True,
+            confidence=DataConfidence.HIGH,
         )
     )
 
