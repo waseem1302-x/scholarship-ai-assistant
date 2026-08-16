@@ -154,9 +154,7 @@ def resolve_scoped_deadline(
     evidence = _passed_evidence_by_fact(session, [fact.id for fact in matching])
 
     contradicted = [
-        fact
-        for fact in matching
-        if EvidenceSupportType.CONTRADICTS in evidence.get(fact.id, set())
+        fact for fact in matching if EvidenceSupportType.CONTRADICTS in evidence.get(fact.id, set())
     ]
     if contradicted:
         return _conflict(contradicted)
