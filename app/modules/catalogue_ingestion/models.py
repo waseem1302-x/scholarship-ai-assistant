@@ -24,6 +24,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.modules.auth.models import enum_values, utc_now
+from app.modules.opportunities.graph_models import RelationshipKind
 
 
 class IngestionRunStatus(StrEnum):
@@ -71,6 +72,19 @@ class ExtractionAttemptStatus(StrEnum):
     SCHEMA_FAILED = "schema_failed"
     VALIDATION_FAILED = "validation_failed"
     REUSED = "reused"
+
+
+class ClassificationConfidenceBand(StrEnum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    UNRESOLVED = "unresolved"
+
+
+class ClassificationDecisionStatus(StrEnum):
+    NEEDS_REVIEW = "needs_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
 
 
 class CatalogueIngestionRun(Base):
@@ -194,6 +208,9 @@ class CatalogueCandidate(Base):
     extraction_attempts: Mapped[list["CatalogueExtractionAttempt"]] = relationship(
         back_populates="candidate", cascade="all, delete-orphan"
     )
+    classification_decisions: Mapped[list["ClassificationDecision"]] = relationship(
+        back_populates="candidate", cascade="all, delete-orphan"
+    )
 
 
 class CatalogueCandidateSource(Base):
@@ -289,3 +306,74 @@ class CatalogueExtractionAttempt(Base):
 
     candidate: Mapped[CatalogueCandidate] = relationship(back_populates="extraction_attempts")
     source: Mapped[CatalogueCandidateSource] = relationship(back_populates="extraction_attempts")
+
+
+class ClassificationDecision(Base):
+    """Append-only classifier proposal awaiting an explicit human review action."""
+
+    __tablename__ = "classification_decisions"
+    __table_args__ = (
+        Index("ix_classification_decisions_candidate_created", "candidate_id", "created_at"),
+        Index("ix_classification_decisions_status_created", "decision_status", "created_at"),
+        Index(
+            "ix_classification_decisions_relationship_status",
+            "proposed_relationship",
+            "decision_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalogue_candidates.id", ondelete="CASCADE"), index=True
+    )
+    proposed_relationship: Mapped[RelationshipKind] = mapped_column(
+        Enum(
+            RelationshipKind,
+            name="classification_relationship_kind",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        index=True,
+    )
+    parent_scholarship_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="SET NULL"), index=True
+    )
+    proposed_new_scholarship_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="SET NULL"), index=True
+    )
+    deterministic_signals: Mapped[list[str]] = mapped_column(JSON, default=list)
+    model_output: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    confidence_band: Mapped[ClassificationConfidenceBand] = mapped_column(
+        Enum(
+            ClassificationConfidenceBand,
+            name="classification_confidence_band",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        index=True,
+    )
+    evidence_snapshot_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    decision_status: Mapped[ClassificationDecisionStatus] = mapped_column(
+        Enum(
+            ClassificationDecisionStatus,
+            name="classification_decision_status",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        default=ClassificationDecisionStatus.NEEDS_REVIEW,
+        server_default=ClassificationDecisionStatus.NEEDS_REVIEW.value,
+        index=True,
+    )
+    reason_code: Mapped[str] = mapped_column(String(100))
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    candidate: Mapped[CatalogueCandidate] = relationship(back_populates="classification_decisions")
