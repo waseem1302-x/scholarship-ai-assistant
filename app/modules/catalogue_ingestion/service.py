@@ -523,11 +523,7 @@ class CatalogueIngestionService:
             )
             canonical_url = self.opportunities.canonicalize_url(fetched.final_url)
             child_source = next(
-                (
-                    item
-                    for item in candidate.sources
-                    if item.canonical_url == canonical_url
-                ),
+                (item for item in candidate.sources if item.canonical_url == canonical_url),
                 None,
             )
             if child_source is None:
