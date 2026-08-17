@@ -7,6 +7,7 @@ from app.modules.catalogue_ingestion.crawler import (
     CrawlBudget,
     normalize_crawl_url,
 )
+
 from app.modules.opportunities.source_monitor import (
     FetchedLink,
     FetchedSource,
