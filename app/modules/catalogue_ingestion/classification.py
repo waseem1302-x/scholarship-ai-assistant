@@ -344,12 +344,12 @@ def decide_independence(assessment: IndependenceAssessment) -> RelationshipDecis
 
 
 __all__ = [
+    "LINK_OR_EXISTING_RELATIONSHIPS",
     "CandidateRelationshipContext",
     "ConfidenceBand",
     "DeterministicRelationshipClassifier",
     "IndependenceAssessment",
     "IndependenceAuthorityType",
-    "LINK_OR_EXISTING_RELATIONSHIPS",
     "RelationshipDecision",
     "decide_independence",
     "normalize_identity_name",
