@@ -2,7 +2,9 @@
 
 PR2 keeps publication behavior unchanged. These models provide immutable source
 snapshots, field-level provenance, and scoped facts beneath the canonical
-``opportunities`` scholarship identity introduced in PR1.
+``opportunities`` scholarship identity introduced in PR1. Official-source
+metadata is attached to the existing ``sources`` table rather than introducing
+a second source identity.
 """
 
 import uuid
@@ -65,53 +67,6 @@ class EvidenceValidatorStatus(StrEnum):
     FAILED = "failed"
 
 
-class OfficialSource(Base):
-    __tablename__ = "official_sources"
-    __table_args__ = (
-        UniqueConstraint("normalized_url", name="uq_official_sources_normalized_url"),
-        Index("ix_official_sources_owner", "source_owner_type", "source_owner_id"),
-        Index("ix_official_sources_status_active", "officiality_status", "is_active"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    canonical_url: Mapped[str] = mapped_column(String(2048))
-    normalized_url: Mapped[str] = mapped_column(String(2048))
-    domain: Mapped[str] = mapped_column(String(255), index=True)
-    source_owner_type: Mapped[SourceOwnerType] = mapped_column(
-        Enum(
-            SourceOwnerType,
-            name="source_owner_type",
-            native_enum=False,
-            validate_strings=True,
-            create_constraint=True,
-            values_callable=enum_values,
-        )
-    )
-    # Polymorphic graph owner; type is carried by source_owner_type.
-    source_owner_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
-    officiality_status: Mapped[OfficialityStatus] = mapped_column(
-        Enum(
-            OfficialityStatus,
-            name="officiality_status",
-            native_enum=False,
-            validate_strings=True,
-            create_constraint=True,
-            values_callable=enum_values,
-        ),
-        index=True,
-    )
-    officiality_reason: Mapped[str] = mapped_column(Text)
-    robots_status: Mapped[str | None] = mapped_column(String(64))
-    content_type: Mapped[str | None] = mapped_column(String(255))
-    first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, server_default=func.now()
-    )
-    last_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", index=True)
-
-
 class SourceSnapshot(Base):
     __tablename__ = "source_snapshots"
     __table_args__ = (
@@ -130,7 +85,7 @@ class SourceSnapshot(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     source_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("official_sources.id", ondelete="RESTRICT"), index=True
+        ForeignKey("sources.id", ondelete="RESTRICT"), index=True
     )
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
