@@ -24,9 +24,18 @@ from app.modules.catalogue_ingestion.models import (
     ClassificationDecision,
     ClassificationDecisionStatus,
 )
-from app.modules.opportunities.evidence_models import EvidenceSupportType, SourceSnapshot
+from app.modules.opportunities.evidence_models import (
+    EvidenceSupportType,
+    OfficialityStatus,
+    SourceSnapshot,
+)
 from app.modules.opportunities.graph_models import RelationshipKind
-from app.modules.opportunities.models import Opportunity
+from app.modules.opportunities.models import (
+    Opportunity,
+    Source,
+    SourceType,
+    VerificationStatus,
+)
 
 ConfidenceBand = ClassificationConfidenceBand
 
@@ -75,6 +84,7 @@ _GENERIC_IDENTITY_SUFFIXES = {
     "scholarship",
     "scholarships",
 }
+_INDEPENDENCE_GATE_PROOF = object()
 _TRACK_LANGUAGE = re.compile(
     r"\b(?:type|category)\s+[a-z0-9]+\b|"
     r"\b(?:embassy|university|government portal|direct|nomination)\s+"
@@ -87,6 +97,9 @@ _TRACKING_QUERY_KEYS = {
     "mc_cid",
     "mc_eid",
 }
+_TRUSTED_OFFICIALITY_STATUSES = frozenset(
+    {OfficialityStatus.OFFICIAL, OfficialityStatus.SUPPORTING_OFFICIAL}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +140,12 @@ class RelationshipDecision:
     requires_human_review: bool = True
     proposes_independent_scholarship: bool = False
     auto_publish_allowed: bool = False
+    _independence_gate_proof: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
 
 def normalize_identity_name(value: str) -> str:
@@ -346,7 +365,7 @@ def decide_independence(assessment: IndependenceAssessment) -> RelationshipDecis
             missing_mandatory_proofs=tuple(missing),
         )
 
-    return RelationshipDecision(
+    decision = RelationshipDecision(
         relationship=independent_relationship,
         confidence_band=ConfidenceBand.HIGH,
         reason_code="independence_proven_pending_human_review",
@@ -359,6 +378,8 @@ def decide_independence(assessment: IndependenceAssessment) -> RelationshipDecis
         ),
         proposes_independent_scholarship=True,
     )
+    object.__setattr__(decision, "_independence_gate_proof", _INDEPENDENCE_GATE_PROOF)
+    return decision
 
 
 class ClassificationDecisionRecorder:
@@ -402,29 +423,43 @@ class ClassificationDecisionRecorder:
             raise ClassificationIntegrityError(
                 "non-unresolved relationship requires evidence snapshot"
             )
+
+        snapshots: list[SourceSnapshot] = []
         if snapshot_ids:
-            existing_ids = set(
+            snapshots = list(
                 self.session.scalars(
-                    select(SourceSnapshot.id).where(SourceSnapshot.id.in_(snapshot_ids))
+                    select(SourceSnapshot).where(SourceSnapshot.id.in_(snapshot_ids))
                 ).all()
             )
-            missing = set(snapshot_ids) - existing_ids
-            if missing:
+            existing_ids = {snapshot.id for snapshot in snapshots}
+            if set(snapshot_ids) - existing_ids:
                 raise ClassificationIntegrityError(
                     "classification evidence snapshot does not exist"
                 )
 
-        if (
-            decision.relationship in INDEPENDENT_RELATIONSHIPS
-            and not decision.proposes_independent_scholarship
-        ):
-            raise ClassificationIntegrityError(
-                "independent relationship must pass independence gate"
-            )
-        if (
-            decision.relationship not in INDEPENDENT_RELATIONSHIPS
-            and decision.proposes_independent_scholarship
-        ):
+        if decision.relationship != RelationshipKind.UNRESOLVED:
+            for snapshot in snapshots:
+                source = self.session.get(Source, snapshot.source_id)
+                if (
+                    source is None
+                    or not source.is_active
+                    or source.source_type is not SourceType.OFFICIAL
+                    or source.verification_status is not VerificationStatus.OFFICIALLY_VERIFIED
+                    or source.officiality_status not in _TRUSTED_OFFICIALITY_STATUSES
+                ):
+                    raise ClassificationIntegrityError(
+                        "classification evidence must come from a current official source"
+                    )
+
+        if decision.relationship in INDEPENDENT_RELATIONSHIPS:
+            if (
+                not decision.proposes_independent_scholarship
+                or decision._independence_gate_proof is not _INDEPENDENCE_GATE_PROOF
+            ):
+                raise ClassificationIntegrityError(
+                    "independent relationship must pass independence gate"
+                )
+        elif decision.proposes_independent_scholarship:
             raise ClassificationIntegrityError(
                 "only an independent relationship may propose a scholarship"
             )
@@ -445,3 +480,19 @@ class ClassificationDecisionRecorder:
         )
         self.session.add(recorded)
         return recorded
+
+
+__all__ = [
+    "LINK_OR_EXISTING_RELATIONSHIPS",
+    "CandidateRelationshipContext",
+    "ClassificationDecisionRecorder",
+    "ClassificationIntegrityError",
+    "ConfidenceBand",
+    "DeterministicRelationshipClassifier",
+    "IndependenceAssessment",
+    "IndependenceAuthorityType",
+    "RelationshipDecision",
+    "decide_independence",
+    "normalize_identity_name",
+    "normalize_url",
+]
