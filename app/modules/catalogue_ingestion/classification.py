@@ -252,11 +252,11 @@ class DeterministicRelationshipClassifier:
         if explicit is not None and explicit != RelationshipKind.UNRESOLVED:
             return _unresolved("relationship_requires_review", f"proposed:{explicit.value}")
 
-        provider_match = (
-            _normalize_identifier(context.candidate_provider_id) is not None
-            and _normalize_identifier(context.candidate_provider_id)
-            == _normalize_identifier(context.canonical_provider_id)
-        )
+        provider_match = _normalize_identifier(
+            context.candidate_provider_id
+        ) is not None and _normalize_identifier(
+            context.candidate_provider_id
+        ) == _normalize_identifier(context.canonical_provider_id)
         candidate_application = normalize_url(context.candidate_application_url)
         application_match = bool(
             candidate_application
@@ -391,9 +391,7 @@ class ClassificationDecisionRecorder:
             decision.relationship in LINK_OR_EXISTING_RELATIONSHIPS
             and parent_scholarship_id is None
         ):
-            raise ClassificationIntegrityError(
-                "child relationship requires a parent scholarship"
-            )
+            raise ClassificationIntegrityError("child relationship requires a parent scholarship")
         if parent_scholarship_id is not None:
             parent = self.session.get(Opportunity, parent_scholarship_id)
             if parent is None:
