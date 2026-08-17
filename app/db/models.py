@@ -62,6 +62,14 @@ from app.modules.matching.models import (
     MatchRuleOutcome,
 )
 from app.modules.operations.models import OperationalJobHealth
+from app.modules.opportunities.evidence_models import (
+    ApplicationStep,
+    FieldEvidence,
+    FundingComponent,
+    RequiredDocument,
+    ScopedDeadline,
+    SourceSnapshot,
+)
 from app.modules.opportunities.graph_models import (
     AcademicProgramme,
     ApplicationTrack,
@@ -93,6 +101,7 @@ __all__ = [
     "ApplicationEvent",
     "ApplicationNotificationPreference",
     "ApplicationReminder",
+    "ApplicationStep",
     "ApplicationTask",
     "ApplicationTrack",
     "AssistantAnswer",
@@ -126,6 +135,8 @@ __all__ = [
     "DocumentVersion",
     "EligibilityRule",
     "EmailVerificationToken",
+    "FieldEvidence",
+    "FundingComponent",
     "Institution",
     "InstitutionAlias",
     "InstitutionParticipation",
@@ -139,11 +150,14 @@ __all__ = [
     "Provider",
     "RefreshToken",
     "ReminderWorkerHealth",
+    "RequiredDocument",
     "SavedOpportunity",
     "ScholarshipAlias",
     "ScholarshipRelationship",
+    "ScopedDeadline",
     "Source",
     "SourceExcerpt",
+    "SourceSnapshot",
     "StudentProfile",
     "TrackProgramme",
     "University",
