@@ -9,7 +9,10 @@ from app.modules.catalogue_ingestion.classification import (
     ClassificationDecisionRecorder,
     ClassificationIntegrityError,
     ConfidenceBand,
+    IndependenceAssessment,
+    IndependenceAuthorityType,
     RelationshipDecision,
+    decide_independence,
 )
 from app.modules.catalogue_ingestion.models import (
     CatalogueCandidate,
@@ -19,7 +22,11 @@ from app.modules.catalogue_ingestion.models import (
     IngestionMode,
     IngestionRunStatus,
 )
-from app.modules.opportunities.evidence_models import OfficialityStatus, SourceSnapshot
+from app.modules.opportunities.evidence_models import (
+    EvidenceSupportType,
+    OfficialityStatus,
+    SourceSnapshot,
+)
 from app.modules.opportunities.graph_models import RelationshipKind
 from app.modules.opportunities.models import (
     DataConfidence,
@@ -84,7 +91,15 @@ def create_scholarship(db_session: Session, name: str = "Canonical Scholarship")
     return scholarship
 
 
-def create_snapshot(db_session: Session, scholarship: Opportunity) -> SourceSnapshot:
+def create_snapshot(
+    db_session: Session,
+    scholarship: Opportunity,
+    *,
+    source_type: SourceType = SourceType.OFFICIAL,
+    officiality_status: OfficialityStatus = OfficialityStatus.OFFICIAL,
+    verification_status: VerificationStatus = VerificationStatus.OFFICIALLY_VERIFIED,
+    is_active: bool = True,
+) -> SourceSnapshot:
     path = uuid.uuid4().hex
     evidence_text = "Official relationship evidence."
     source = Source(
@@ -93,13 +108,13 @@ def create_snapshot(db_session: Session, scholarship: Opportunity) -> SourceSnap
         canonical_url=f"https://example.edu/{path}",
         normalized_url=f"https://example.edu/{path}",
         domain="example.edu",
-        source_type=SourceType.OFFICIAL,
-        officiality_status=OfficialityStatus.OFFICIAL,
-        officiality_reason="PR3 fixture official source",
-        verification_status=VerificationStatus.OFFICIALLY_VERIFIED,
+        source_type=source_type,
+        officiality_status=officiality_status,
+        officiality_reason="PR3 fixture source classification",
+        verification_status=verification_status,
         title="PR3 classification evidence",
         relevant_excerpt=evidence_text,
-        is_active=True,
+        is_active=is_active,
     )
     db_session.add(source)
     db_session.flush()
@@ -129,18 +144,15 @@ def child_decision() -> RelationshipDecision:
 
 
 def independent_decision() -> RelationshipDecision:
-    return RelationshipDecision(
-        relationship=RelationshipKind.INDEPENDENT_UNIVERSITY_SCHOLARSHIP,
-        confidence_band=ConfidenceBand.HIGH,
-        reason_code="independence_proven_pending_human_review",
-        deterministic_signals=(
-            "official_name_explicit",
-            "awarding_authority_explicit",
-            "separate_application",
-            "independent_award_decision",
-            "current_official_source",
-        ),
-        proposes_independent_scholarship=True,
+    return decide_independence(
+        IndependenceAssessment(
+            official_name_evidence=EvidenceSupportType.EXPLICIT,
+            awarding_authority_evidence=EvidenceSupportType.EXPLICIT,
+            separate_application=True,
+            independent_award_decision=True,
+            current_official_source=True,
+            authority_type=IndependenceAuthorityType.UNIVERSITY,
+        )
     )
 
 
@@ -206,6 +218,56 @@ def test_unknown_snapshot_identifier_fails_closed(db_session: Session) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("source_type", "officiality_status", "verification_status", "is_active"),
+    [
+        (
+            SourceType.OFFICIAL,
+            OfficialityStatus.OFFICIAL,
+            VerificationStatus.OFFICIALLY_VERIFIED,
+            False,
+        ),
+        (
+            SourceType.OTHER,
+            OfficialityStatus.THIRD_PARTY,
+            VerificationStatus.OFFICIALLY_VERIFIED,
+            True,
+        ),
+        (
+            SourceType.OFFICIAL,
+            OfficialityStatus.OFFICIAL,
+            VerificationStatus.NEEDS_REVIEW,
+            True,
+        ),
+    ],
+)
+def test_non_unresolved_decision_rejects_inactive_or_untrusted_evidence(
+    db_session: Session,
+    source_type: SourceType,
+    officiality_status: OfficialityStatus,
+    verification_status: VerificationStatus,
+    is_active: bool,
+) -> None:
+    candidate = create_candidate(db_session)
+    scholarship = create_scholarship(db_session)
+    snapshot = create_snapshot(
+        db_session,
+        scholarship,
+        source_type=source_type,
+        officiality_status=officiality_status,
+        verification_status=verification_status,
+        is_active=is_active,
+    )
+
+    with pytest.raises(ClassificationIntegrityError, match="current official source"):
+        ClassificationDecisionRecorder(db_session).record(
+            candidate_id=candidate.id,
+            decision=child_decision(),
+            parent_scholarship_id=scholarship.id,
+            evidence_snapshot_ids=(snapshot.id,),
+        )
+
+
 def test_independent_proposal_does_not_create_or_confirm_scholarship(
     db_session: Session,
 ) -> None:
@@ -226,6 +288,27 @@ def test_independent_proposal_does_not_create_or_confirm_scholarship(
     assert recorded.decision_status == ClassificationDecisionStatus.NEEDS_REVIEW
     assert recorded.proposed_new_scholarship_id is None
     assert evidence_owner.independence_status == IndependenceStatus.LEGACY_UNREVIEWED
+
+
+def test_fabricated_independent_relationship_cannot_bypass_independence_gate(
+    db_session: Session,
+) -> None:
+    candidate = create_candidate(db_session)
+    evidence_owner = create_scholarship(db_session, "Fabricated Evidence Owner")
+    snapshot = create_snapshot(db_session, evidence_owner)
+    fabricated = RelationshipDecision(
+        relationship=RelationshipKind.INDEPENDENT_UNIVERSITY_SCHOLARSHIP,
+        confidence_band=ConfidenceBand.HIGH,
+        reason_code="fabricated",
+        proposes_independent_scholarship=True,
+    )
+
+    with pytest.raises(ClassificationIntegrityError, match="independence gate"):
+        ClassificationDecisionRecorder(db_session).record(
+            candidate_id=candidate.id,
+            decision=fabricated,
+            evidence_snapshot_ids=(snapshot.id,),
+        )
 
 
 def test_recorder_rejects_any_auto_publish_decision(db_session: Session) -> None:
