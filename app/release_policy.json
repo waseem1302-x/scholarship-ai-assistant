@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "alembic_heads": ["20260817_0039"],
+  "alembic_heads": ["20260817_0040"],
   "migration_classification": "expand",
   "compatible_with_previous_release": true,
   "contract_migration_deferred": true,
