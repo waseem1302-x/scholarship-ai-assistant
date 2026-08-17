@@ -693,9 +693,7 @@ class Source(Base):
     last_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default="1", index=True
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", index=True)
     source_type: Mapped[SourceType] = mapped_column(
         Enum(
             SourceType,
