@@ -12,7 +12,7 @@ from app.modules.catalogue_ingestion.models import (
     IngestionMode,
 )
 from app.modules.catalogue_ingestion.service import CatalogueIngestionService
-from app.modules.opportunities.source_monitor import FetchedLink, FetchedSource
+from app.modules.opportunities.source_monitor import FetchedLink, FetchedSource, SourceFetchError
 
 ROOT = "https://scholarships.gov.uk/example"
 FUNDING = "https://scholarships.gov.uk/example/funding"
@@ -64,9 +64,18 @@ class MappingFetcher:
             DEADLINE: fetched(DEADLINE, "Official scholarship application deadline details."),
         }
 
-    def fetch(self, url: str) -> FetchedSource:
+    def _response(self, url: str) -> FetchedSource:
         self.calls.append(url)
         return self.responses[url]
+
+    def fetch(self, url: str) -> FetchedSource:
+        return self._response(url)
+
+    def fetch_with_limit(self, url: str, *, max_bytes: int) -> FetchedSource:
+        response = self._response(url)
+        if response.bytes_read > max_bytes:
+            raise SourceFetchError("crawl_byte_budget_exceeded")
+        return response
 
 
 def seed_file(tmp_path):
