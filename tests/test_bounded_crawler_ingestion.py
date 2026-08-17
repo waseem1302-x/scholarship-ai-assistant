@@ -143,7 +143,7 @@ def test_ingestion_persists_bounded_same_domain_child_sources_when_enabled(
         max_pages=3,
     )
 
-    assert fetcher.calls == [ROOT, FUNDING, DEADLINE]
+    assert fetcher.calls == [ROOT, DEADLINE, FUNDING]
     assert EXTERNAL not in fetcher.calls
     assert {source.canonical_url for source in sources} == {ROOT, FUNDING, DEADLINE}
     assert all(source.status == CandidateSourceStatus.FETCHED for source in sources)
@@ -164,5 +164,5 @@ def test_ingestion_run_page_budget_caps_total_root_and_child_fetches(
         max_pages=2,
     )
 
-    assert fetcher.calls == [ROOT, FUNDING]
-    assert {source.canonical_url for source in sources} == {ROOT, FUNDING}
+    assert fetcher.calls == [ROOT, DEADLINE]
+    assert {source.canonical_url for source in sources} == {ROOT, DEADLINE}
