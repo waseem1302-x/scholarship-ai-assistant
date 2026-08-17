@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -23,6 +24,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.modules.auth.models import User, enum_values, utc_now
+from app.modules.opportunities.evidence_models import OfficialityStatus, SourceOwnerType
 
 
 class DegreeLevel(StrEnum):
@@ -519,10 +521,40 @@ class OpportunityCycle(Base):
 
 class EligibilityRule(Base):
     __tablename__ = "eligibility_rules"
+    __table_args__ = (
+        CheckConstraint(
+            "track_id IS NULL OR cycle_id IS NOT NULL",
+            name="ck_eligibility_rules_track_requires_cycle",
+        ),
+        CheckConstraint(
+            "programme_id IS NULL OR institution_id IS NOT NULL",
+            name="ck_eligibility_rules_programme_requires_institution",
+        ),
+        Index(
+            "ix_eligibility_rules_graph_scope",
+            "opportunity_id",
+            "cycle_id",
+            "track_id",
+            "institution_id",
+            "programme_id",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     opportunity_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    cycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("opportunity_cycles.id", ondelete="CASCADE"), index=True
+    )
+    track_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("application_tracks.id", ondelete="CASCADE"), index=True
+    )
+    institution_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("institutions.id", ondelete="CASCADE"), index=True
+    )
+    programme_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("academic_programmes.id", ondelete="CASCADE"), index=True
     )
     rule_type: Mapped[EligibilityRuleType] = mapped_column(
         Enum(
@@ -599,6 +631,11 @@ class Source(Base):
     __table_args__ = (
         CheckConstraint("url = trim(url)", name="ck_sources_url_trimmed"),
         UniqueConstraint("opportunity_id", "url", name="uq_sources_opportunity_url"),
+        UniqueConstraint(
+            "opportunity_id",
+            "normalized_url",
+            name="uq_sources_opportunity_normalized_url",
+        ),
         Index(
             "ix_sources_review_status_freshness",
             "verification_status",
@@ -611,6 +648,8 @@ class Source(Base):
             "monitor_claimed_until",
             "verification_status",
         ),
+        Index("ix_sources_owner", "source_owner_type", "source_owner_id"),
+        Index("ix_sources_officiality_active", "officiality_status", "is_active"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -619,6 +658,44 @@ class Source(Base):
     )
     url: Mapped[str] = mapped_column(String(2048))
     canonical_url: Mapped[str | None] = mapped_column(String(2048), index=True)
+    normalized_url: Mapped[str | None] = mapped_column(String(2048), index=True)
+    domain: Mapped[str | None] = mapped_column(String(255), index=True)
+    source_owner_type: Mapped[SourceOwnerType] = mapped_column(
+        Enum(
+            SourceOwnerType,
+            name="source_owner_type",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=SourceOwnerType.UNKNOWN,
+        server_default=SourceOwnerType.UNKNOWN.value,
+        index=True,
+    )
+    source_owner_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    officiality_status: Mapped[OfficialityStatus] = mapped_column(
+        Enum(
+            OfficialityStatus,
+            name="officiality_status",
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=True,
+            values_callable=enum_values,
+        ),
+        default=OfficialityStatus.UNRESOLVED,
+        server_default=OfficialityStatus.UNRESOLVED.value,
+        index=True,
+    )
+    officiality_reason: Mapped[str | None] = mapped_column(Text)
+    robots_status: Mapped[str | None] = mapped_column(String(64))
+    content_type: Mapped[str | None] = mapped_column(String(255))
+    last_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", index=True
+    )
     source_type: Mapped[SourceType] = mapped_column(
         Enum(
             SourceType,
