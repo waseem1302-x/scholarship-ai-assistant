@@ -56,9 +56,10 @@ def test_case_punctuation_and_generic_suffix_normalize_deterministically() -> No
 
 
 def test_url_normalization_removes_tracking_but_preserves_meaningful_query() -> None:
-    assert normalize_url(
-        "HTTPS://Example.EDU:443/scholarships/csc/?cycle=2027&utm_source=news#apply"
-    ) == "https://example.edu/scholarships/csc?cycle=2027"
+    assert (
+        normalize_url("HTTPS://Example.EDU:443/scholarships/csc/?cycle=2027&utm_source=news#apply")
+        == "https://example.edu/scholarships/csc?cycle=2027"
+    )
 
 
 def test_malformed_port_and_credentialed_urls_fail_closed() -> None:
