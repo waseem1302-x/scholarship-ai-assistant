@@ -12,7 +12,11 @@ from app.modules.opportunities.evidence_models import (
     SourceOwnerType,
     SourceSnapshot,
 )
-from app.modules.opportunities.graph_models import AcademicProgramme, ApplicationTrack, Institution
+from app.modules.opportunities.graph_models import (
+    AcademicProgramme,
+    ApplicationTrack,
+    Institution,
+)
 from app.modules.opportunities.graph_query import FactScope, resolve_scoped_deadline
 from app.modules.opportunities.models import (
     DataConfidence,
