@@ -1,13 +1,16 @@
+import pytest
+
 from app.modules.opportunities.source_monitor import (
     FetchedLink,
     SafeRedirectHandler,
     SafeSourceFetcher,
+    SourceFetchError,
 )
 
 ROOT = "https://example.edu/scholarships/csc"
 
 
-def test_safe_source_fetcher_extracts_links_for_crawler(monkeypatch) -> None:
+def _configure_safe_fetcher(monkeypatch, payload: bytes, *, configured_max_bytes: int = 1_000_000):
     class Headers:
         def get_content_type(self) -> str:
             return "text/html"
@@ -25,14 +28,7 @@ def test_safe_source_fetcher_extracts_links_for_crawler(monkeypatch) -> None:
             return ROOT
 
         def read(self, limit: int) -> bytes:
-            del limit
-            return (
-                b"<html><body><main>Official CSC scholarship information with enough text."
-                b'<a href="/scholarships/csc/deadline?utm_source=x#dates" '
-                b'title="Timeline">Application deadline</a>'
-                b'<a href="https://outside.example/csc">External page</a>'
-                b"</main></body></html>"
-            )
+            return payload[:limit]
 
     class Opener:
         def open(self, request, timeout: int):
@@ -48,9 +44,21 @@ def test_safe_source_fetcher_extracts_links_for_crawler(monkeypatch) -> None:
         lambda response: None,
     )
 
-    fetcher = SafeSourceFetcher()
+    fetcher = SafeSourceFetcher(max_bytes=configured_max_bytes)
     fetcher.opener = Opener()
     fetcher._robots["https://example.edu"] = None
+    return fetcher
+
+
+def test_safe_source_fetcher_extracts_links_for_crawler(monkeypatch) -> None:
+    payload = (
+        b"<html><body><main>Official CSC scholarship information with enough text."
+        b'<a href="/scholarships/csc/deadline?utm_source=x#dates" '
+        b'title="Timeline">Application deadline</a>'
+        b'<a href="https://outside.example/csc">External page</a>'
+        b"</main></body></html>"
+    )
+    fetcher = _configure_safe_fetcher(monkeypatch, payload)
 
     fetched = fetcher.fetch(ROOT)
 
@@ -62,6 +70,22 @@ def test_safe_source_fetcher_extracts_links_for_crawler(monkeypatch) -> None:
         ),
         FetchedLink(url="https://outside.example/csc", text="External page", title=None),
     )
+
+
+def test_safe_source_fetcher_enforces_smaller_crawler_remaining_byte_budget(monkeypatch) -> None:
+    payload = b"<html><body>Official scholarship evidence that exceeds thirty bytes.</body></html>"
+    fetcher = _configure_safe_fetcher(monkeypatch, payload, configured_max_bytes=100)
+
+    with pytest.raises(SourceFetchError, match="crawl_byte_budget_exceeded"):
+        fetcher.fetch_with_limit(ROOT, max_bytes=30)
+
+
+def test_safe_source_fetcher_keeps_its_stricter_per_page_limit(monkeypatch) -> None:
+    payload = b"<html><body>Official scholarship evidence that exceeds forty bytes.</body></html>"
+    fetcher = _configure_safe_fetcher(monkeypatch, payload, configured_max_bytes=40)
+
+    with pytest.raises(SourceFetchError, match="source_too_large"):
+        fetcher.fetch_with_limit(ROOT, max_bytes=100)
 
 
 def test_safe_redirect_handler_is_capped_at_five_redirects() -> None:
