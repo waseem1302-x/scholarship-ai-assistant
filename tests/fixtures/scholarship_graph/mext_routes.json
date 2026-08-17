@@ -1,0 +1,24 @@
+{
+  "fixture_type": "structural_regression",
+  "publication_evidence": false,
+  "description": "Synthetic route fixture used only to prove that MEXT application routes remain children of one canonical scholarship.",
+  "canonical_scholarship": {
+    "name": "MEXT Scholarship",
+    "aliases": ["MEXT"],
+    "provider_id": "mext",
+    "application_url": "https://example.go.jp/mext/apply",
+    "source_url": "https://example.go.jp/mext"
+  },
+  "routes": [
+    {
+      "name": "MEXT Embassy Recommendation Route",
+      "expected_relationship": "same_scheme_track"
+    },
+    {
+      "name": "MEXT University Recommendation Route",
+      "expected_relationship": "same_scheme_track"
+    }
+  ],
+  "expected_canonical_scholarship_count": 1,
+  "expected_independent_scholarship_count": 0
+}

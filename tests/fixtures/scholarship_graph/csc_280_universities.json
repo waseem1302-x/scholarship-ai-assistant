@@ -1,0 +1,17 @@
+{
+  "fixture_type": "structural_regression",
+  "publication_evidence": false,
+  "description": "Synthetic scale fixture. It validates graph cardinality only and is not a current official list of CSC institutions.",
+  "canonical_scholarship": {
+    "name": "Chinese Government Scholarship",
+    "aliases": ["CSC", "CGS"],
+    "provider_id": "china-scholarship-council",
+    "application_url": "https://studyinchina.csc.edu.cn/apply",
+    "source_url": "https://www.campuschina.org/csc"
+  },
+  "synthetic_participating_institution_count": 280,
+  "candidate_name_template": "Synthetic CSC Participating University {index}",
+  "expected_relationship": "participating_institution",
+  "expected_canonical_scholarship_count": 1,
+  "expected_independent_scholarship_count": 0
+}

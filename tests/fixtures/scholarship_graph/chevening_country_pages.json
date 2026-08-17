@@ -1,0 +1,29 @@
+{
+  "fixture_type": "structural_regression",
+  "publication_evidence": false,
+  "description": "Synthetic country-page fixture. Country guidance pages must remain attached to one canonical Chevening scholarship identity.",
+  "canonical_scholarship": {
+    "name": "Chevening Scholarship",
+    "aliases": ["Chevening", "Chevening Scholarships"],
+    "provider_id": "chevening",
+    "application_url": "https://www.chevening.org/apply/",
+    "source_url": "https://www.chevening.org/scholarships/"
+  },
+  "country_pages": [
+    {
+      "name": "Chevening Scholarships",
+      "source_url": "https://www.chevening.org/scholarship/synthetic-country-a/"
+    },
+    {
+      "name": "Chevening Scholarships",
+      "source_url": "https://www.chevening.org/scholarship/synthetic-country-b/"
+    },
+    {
+      "name": "Chevening Scholarships",
+      "source_url": "https://www.chevening.org/scholarship/synthetic-country-c/"
+    }
+  ],
+  "expected_relationship": "same_scholarship",
+  "expected_canonical_scholarship_count": 1,
+  "expected_independent_scholarship_count": 0
+}

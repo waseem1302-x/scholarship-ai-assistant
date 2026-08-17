@@ -1,0 +1,34 @@
+{
+  "fixture_type": "structural_regression",
+  "publication_evidence": false,
+  "description": "Synthetic mixed fixture proving that a university CSC page remains a child while a genuinely separate university award must pass the independence gate.",
+  "canonical_scholarship": {
+    "name": "Chinese Government Scholarship",
+    "aliases": ["CSC", "CGS"],
+    "provider_id": "china-scholarship-council"
+  },
+  "cases": [
+    {
+      "name": "Synthetic University Chinese Government Scholarship",
+      "explicit_relationship": "participating_institution",
+      "parent_scheme_explicit": true,
+      "source_is_official": true,
+      "expected_relationship": "participating_institution",
+      "expected_independent": false
+    },
+    {
+      "name": "Synthetic University Excellence Award",
+      "independence": {
+        "official_name_evidence": "explicit",
+        "awarding_authority_evidence": "explicit",
+        "separate_application": true,
+        "independent_award_decision": true,
+        "current_official_source": true,
+        "authority_type": "university"
+      },
+      "expected_relationship": "independent_university_scholarship",
+      "expected_independent": true,
+      "expected_auto_publish": false
+    }
+  ]
+}

@@ -36,6 +36,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
+    ClassificationDecision,
 )
 from app.modules.community.models import (
     CommunityBlock,
@@ -119,6 +120,7 @@ __all__ = [
     "CatalogueCandidateSource",
     "CatalogueExtractionAttempt",
     "CatalogueIngestionRun",
+    "ClassificationDecision",
     "CommunityBlock",
     "CommunityBookmark",
     "CommunityModerationRecord",
