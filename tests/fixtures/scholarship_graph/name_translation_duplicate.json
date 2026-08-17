@@ -1,0 +1,30 @@
+{
+  "fixture_type": "structural_regression",
+  "publication_evidence": false,
+  "description": "Synthetic alias fixture proving that only registered aliases plus deterministic identity evidence can resolve translated or alternate names.",
+  "canonical_scholarship": {
+    "name": "Chinese Government Scholarship",
+    "aliases": ["CSC", "CGS", "中国政府奖学金"],
+    "provider_id": "china-scholarship-council",
+    "application_url": "https://studyinchina.csc.edu.cn/apply",
+    "source_url": "https://www.campuschina.org/csc"
+  },
+  "cases": [
+    {
+      "name": "中国政府奖学金",
+      "registered_alias": true,
+      "provider_matches": true,
+      "application_matches": true,
+      "source_is_official": true,
+      "expected_relationship": "same_scholarship"
+    },
+    {
+      "name": "Beca del Gobierno Chino",
+      "registered_alias": false,
+      "provider_matches": true,
+      "application_matches": false,
+      "source_is_official": true,
+      "expected_relationship": "unresolved"
+    }
+  ]
+}
