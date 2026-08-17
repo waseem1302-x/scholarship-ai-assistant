@@ -1,5 +1,6 @@
 import pytest
 
+from app.modules.catalogue_ingestion.crawler import BoundedOfficialSiteCrawler, CrawlBudget
 from app.modules.opportunities.source_monitor import (
     FetchedLink,
     SafeRedirectHandler,
@@ -72,12 +73,15 @@ def test_safe_source_fetcher_extracts_links_for_crawler(monkeypatch) -> None:
     )
 
 
-def test_safe_source_fetcher_enforces_smaller_crawler_remaining_byte_budget(monkeypatch) -> None:
+def test_bounded_crawler_applies_remaining_budget_through_safe_fetcher(monkeypatch) -> None:
     payload = b"<html><body>Official scholarship evidence that exceeds thirty bytes.</body></html>"
     fetcher = _configure_safe_fetcher(monkeypatch, payload, configured_max_bytes=100)
 
     with pytest.raises(SourceFetchError, match="crawl_byte_budget_exceeded"):
-        fetcher.fetch_with_limit(ROOT, max_bytes=30)
+        BoundedOfficialSiteCrawler(fetcher=fetcher).crawl(
+            ROOT,
+            budget=CrawlBudget(max_pages=1, max_depth=0, max_total_bytes=30),
+        )
 
 
 def test_safe_source_fetcher_keeps_its_stricter_per_page_limit(monkeypatch) -> None:
@@ -85,7 +89,7 @@ def test_safe_source_fetcher_keeps_its_stricter_per_page_limit(monkeypatch) -> N
     fetcher = _configure_safe_fetcher(monkeypatch, payload, configured_max_bytes=40)
 
     with pytest.raises(SourceFetchError, match="source_too_large"):
-        fetcher.fetch_with_limit(ROOT, max_bytes=100)
+        fetcher.fetch(ROOT)
 
 
 def test_safe_redirect_handler_is_capped_at_five_redirects() -> None:
