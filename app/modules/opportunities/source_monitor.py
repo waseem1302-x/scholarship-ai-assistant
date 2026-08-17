@@ -14,6 +14,7 @@ import urllib.request
 import urllib.robotparser
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
@@ -51,6 +52,15 @@ class SourceFetchError(Exception):
 
 
 @dataclass(frozen=True)
+class FetchedLink:
+    """One link discovered in bounded HTML fetched through the safe source boundary."""
+
+    url: str
+    text: str = ""
+    title: str | None = None
+
+
+@dataclass(frozen=True)
 class FetchedSource:
     url: str
     final_url: str
@@ -61,6 +71,7 @@ class FetchedSource:
     normalized_text: str | None = None
     normalized_content_hash: str | None = None
     content_type: str = "text/html"
+    links: tuple[FetchedLink, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -170,6 +181,8 @@ def is_low_information_source_text(text: str) -> bool:
 
 
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    max_redirections = 5
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         validate_monitor_url(newurl)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -231,6 +244,11 @@ class SafeSourceFetcher:
         # one-time false change storm. Ingestion separately uses the full normalized hash.
         hash_input = section.text if section else evidence_text
         content_hash = hashlib.sha256(hash_input.encode()).hexdigest()
+        links = (
+            extract_html_links(payload, base_url=final_url)
+            if content_type in {"text/html", "application/xhtml+xml"}
+            else ()
+        )
         return FetchedSource(
             url=url,
             final_url=final_url,
@@ -241,6 +259,7 @@ class SafeSourceFetcher:
             normalized_text=evidence_text,
             normalized_content_hash=hashlib.sha256(evidence_text.encode()).hexdigest(),
             content_type=content_type,
+            links=links,
         )
 
     def policy_for(self, url: str) -> SourceCrawlPolicy:
@@ -493,6 +512,62 @@ def response_peer_address(response: object) -> str | None:
         return None
     peer = getpeername()
     return peer[0] if peer else None
+
+
+class _HTMLLinkParser(HTMLParser):
+    def __init__(self, *, base_url: str, max_links: int) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.max_links = max_links
+        self.links: list[FetchedLink] = []
+        self._href: str | None = None
+        self._title: str | None = None
+        self._text_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() != "a" or len(self.links) >= self.max_links:
+            return
+        values = {key.casefold(): value for key, value in attrs}
+        href = (values.get("href") or "").strip()
+        if not href:
+            return
+        self._href = href
+        title = (values.get("title") or "").strip()
+        self._title = title[:500] or None
+        self._text_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href is not None:
+            self._text_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.casefold() != "a" or self._href is None:
+            return
+        resolved = urllib.parse.urljoin(self.base_url, self._href)
+        text = " ".join(" ".join(self._text_parts).split())[:500]
+        self.links.append(FetchedLink(url=resolved, text=text, title=self._title))
+        self._href = None
+        self._title = None
+        self._text_parts = []
+
+
+def extract_html_links(
+    payload: bytes,
+    *,
+    base_url: str,
+    max_links: int = 500,
+) -> tuple[FetchedLink, ...]:
+    """Extract bounded link metadata from already-fetched HTML without new I/O."""
+
+    if max_links < 1:
+        return ()
+    parser = _HTMLLinkParser(base_url=base_url, max_links=max_links)
+    try:
+        parser.feed(payload.decode("utf-8", errors="ignore"))
+        parser.close()
+    except Exception:
+        return tuple(parser.links[:max_links])
+    return tuple(parser.links[:max_links])
 
 
 def normalize_evidence_text(payload: bytes) -> str:
