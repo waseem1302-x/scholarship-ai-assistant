@@ -9,18 +9,30 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from app.modules.opportunities.evidence_models import EvidenceSupportType
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.modules.catalogue_ingestion.models import (
+    CatalogueCandidate,
+    ClassificationConfidenceBand,
+    ClassificationDecision,
+    ClassificationDecisionStatus,
+)
+from app.modules.opportunities.evidence_models import EvidenceSupportType, SourceSnapshot
 from app.modules.opportunities.graph_models import RelationshipKind
+from app.modules.opportunities.models import Opportunity
+
+ConfidenceBand = ClassificationConfidenceBand
 
 
-class ConfidenceBand(StrEnum):
-    HIGH = "high"
-    MEDIUM = "medium"
-    UNRESOLVED = "unresolved"
+class ClassificationIntegrityError(RuntimeError):
+    """Raised when a classifier proposal would cross a review or evidence boundary."""
 
 
 class IndependenceAuthorityType(StrEnum):
@@ -349,15 +361,70 @@ def decide_independence(assessment: IndependenceAssessment) -> RelationshipDecis
     )
 
 
-__all__ = [
-    "LINK_OR_EXISTING_RELATIONSHIPS",
-    "CandidateRelationshipContext",
-    "ConfidenceBand",
-    "DeterministicRelationshipClassifier",
-    "IndependenceAssessment",
-    "IndependenceAuthorityType",
-    "RelationshipDecision",
-    "decide_independence",
-    "normalize_identity_name",
-    "normalize_url",
-]
+class ClassificationDecisionRecorder:
+    """Persist classifier proposals without crossing the human publication boundary."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def record(
+        self,
+        *,
+        candidate_id: uuid.UUID,
+        decision: RelationshipDecision,
+        parent_scholarship_id: uuid.UUID | None = None,
+        evidence_snapshot_ids: tuple[uuid.UUID, ...] = (),
+        model_output: dict[str, Any] | None = None,
+    ) -> ClassificationDecision:
+        if decision.auto_publish_allowed:
+            raise ClassificationIntegrityError("classifier auto-publication is permanently forbidden")
+        if not decision.requires_human_review:
+            raise ClassificationIntegrityError("classification decisions must require human review")
+
+        candidate = self.session.get(CatalogueCandidate, candidate_id)
+        if candidate is None:
+            raise ClassificationIntegrityError("catalogue candidate does not exist")
+
+        if decision.relationship in LINK_OR_EXISTING_RELATIONSHIPS:
+            if parent_scholarship_id is None:
+                raise ClassificationIntegrityError("child relationship requires a parent scholarship")
+        if parent_scholarship_id is not None:
+            parent = self.session.get(Opportunity, parent_scholarship_id)
+            if parent is None:
+                raise ClassificationIntegrityError("parent scholarship does not exist")
+
+        snapshot_ids = tuple(dict.fromkeys(evidence_snapshot_ids))
+        if decision.relationship != RelationshipKind.UNRESOLVED and not snapshot_ids:
+            raise ClassificationIntegrityError("non-unresolved relationship requires evidence snapshot")
+        if snapshot_ids:
+            existing_ids = set(
+                self.session.scalars(
+                    select(SourceSnapshot.id).where(SourceSnapshot.id.in_(snapshot_ids))
+                ).all()
+            )
+            missing = set(snapshot_ids) - existing_ids
+            if missing:
+                raise ClassificationIntegrityError("classification evidence snapshot does not exist")
+
+        if decision.relationship in INDEPENDENT_RELATIONSHIPS:
+            if not decision.proposes_independent_scholarship:
+                raise ClassificationIntegrityError("independent relationship must pass independence gate")
+        elif decision.proposes_independent_scholarship:
+            raise ClassificationIntegrityError("only an independent relationship may propose a scholarship")
+
+        recorded = ClassificationDecision(
+            candidate_id=candidate.id,
+            proposed_relationship=decision.relationship,
+            parent_scholarship_id=parent_scholarship_id,
+            proposed_new_scholarship_id=None,
+            deterministic_signals=list(decision.deterministic_signals),
+            model_output=dict(model_output) if model_output is not None else None,
+            confidence_band=decision.confidence_band,
+            evidence_snapshot_ids=[str(snapshot_id) for snapshot_id in snapshot_ids],
+            decision_status=ClassificationDecisionStatus.NEEDS_REVIEW,
+            reason_code=decision.reason_code[:100],
+            reviewer_id=None,
+            reviewed_at=None,
+        )
+        self.session.add(recorded)
+        return recorded
