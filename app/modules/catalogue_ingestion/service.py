@@ -14,6 +14,11 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.models import AuditLog, User
+from app.modules.catalogue_ingestion.crawler import (
+    BoundedOfficialSiteCrawler,
+    CrawlBudget,
+    CrawlResult,
+)
 from app.modules.catalogue_ingestion.metrics import get_catalogue_metrics
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
@@ -226,8 +231,32 @@ class CatalogueIngestionService:
         source, classification = chosen
         self.metrics.add("official_sources_found")
         candidate.status = CandidateStatus.OFFICIAL_SOURCE_CANDIDATE
+        crawl_result: CrawlResult | None = None
         try:
-            fetched = self.fetcher.fetch(source.url)
+            if self.settings.catalogue_bounded_crawling_enabled:
+                per_page_bytes = min(
+                    self.settings.catalogue_ai_max_input_characters * 4,
+                    5_000_000,
+                )
+                crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
+                    source.url,
+                    budget=CrawlBudget(
+                        max_pages=run.max_pages_per_candidate,
+                        max_depth=2,
+                        max_total_bytes=min(
+                            per_page_bytes * run.max_pages_per_candidate,
+                            20_000_000,
+                        ),
+                        per_host_interval_seconds=float(
+                            self.settings.source_monitor_per_host_interval_seconds
+                        ),
+                    ),
+                )
+                if not crawl_result.pages:
+                    raise SourceFetchError("crawler_returned_no_pages")
+                fetched = crawl_result.pages[0].fetched
+            else:
+                fetched = self.fetcher.fetch(source.url)
         except SourceFetchError as exc:
             self.metrics.add("source_fetch_failure")
             source.status = CandidateSourceStatus.MANUAL_REVIEW
@@ -257,6 +286,18 @@ class CatalogueIngestionService:
         source.relevant_excerpt = fetched.excerpt_text
         source.bytes_read = fetched.bytes_read
         source.fetched_at = datetime.now(UTC)
+        if crawl_result is not None:
+            self._persist_crawled_sources(
+                candidate,
+                crawl_result,
+                provider_url=provider_url,
+                university_url=university_url,
+            )
+            child_successes = max(0, len(crawl_result.pages) - 1)
+            if child_successes:
+                self.metrics.add("source_fetch_success", child_successes)
+            if crawl_result.failures:
+                self.metrics.add("source_fetch_failure", len(crawl_result.failures))
         candidate.status = CandidateStatus.SOURCE_FETCHED
         self.session.commit()
 
@@ -462,6 +503,64 @@ class CatalogueIngestionService:
         ) / Decimal(1_000_000)
         if run.estimated_cost + projected_cost > run.max_estimated_cost:
             raise RunBudgetExhausted
+
+    def _persist_crawled_sources(
+        self,
+        candidate: CatalogueCandidate,
+        crawl_result: CrawlResult,
+        *,
+        provider_url: str | None,
+        university_url: str | None,
+    ) -> None:
+        fetched_at = datetime.now(UTC)
+        for page in crawl_result.pages[1:]:
+            fetched = page.fetched
+            classification = self.classifier.classify(
+                fetched.final_url,
+                provider_website_url=provider_url,
+                university_website_url=university_url,
+                reviewed_official_domains=self.settings.catalogue_reviewed_official_domain_set,
+            )
+            canonical_url = self.opportunities.canonicalize_url(fetched.final_url)
+            child_source = next(
+                (
+                    item
+                    for item in candidate.sources
+                    if item.canonical_url == canonical_url
+                ),
+                None,
+            )
+            if child_source is None:
+                child_source = CatalogueCandidateSource(
+                    url=fetched.url,
+                    canonical_url=canonical_url,
+                    is_official=classification.is_official,
+                    trust_tier=classification.trust_tier,
+                    classification_reason=classification.reason,
+                )
+                candidate.sources.append(child_source)
+            child_source.url = fetched.url
+            child_source.final_url = fetched.final_url
+            child_source.canonical_url = canonical_url
+            child_source.is_official = classification.is_official
+            child_source.trust_tier = classification.trust_tier
+            child_source.classification_reason = classification.reason
+            child_source.status = (
+                CandidateSourceStatus.FETCHED
+                if classification.is_official
+                else CandidateSourceStatus.MANUAL_REVIEW
+            )
+            child_source.content_type = fetched.content_type
+            child_source.content_hash = fetched.normalized_content_hash or fetched.content_hash
+            child_source.relevant_excerpt = fetched.excerpt_text
+            child_source.bytes_read = fetched.bytes_read
+            child_source.fetched_at = fetched_at
+            child_source.failure_code = (
+                None if classification.is_official else "crawler_child_not_official"
+            )
+            child_source.failure_reason = (
+                None if classification.is_official else classification.reason[:1000]
+            )
 
     def _manual_review(self, candidate: CatalogueCandidate, code: str) -> None:
         candidate.status = CandidateStatus.NEEDS_REVIEW
