@@ -133,7 +133,10 @@ def normalize_url(value: str | None) -> str | None:
 
     if not value:
         return None
-    parsed = urlsplit(value.strip())
+    try:
+        parsed = urlsplit(value.strip())
+    except ValueError:
+        return None
     if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
         return None
     if parsed.username or parsed.password:
@@ -141,7 +144,10 @@ def normalize_url(value: str | None) -> str | None:
 
     scheme = parsed.scheme.casefold()
     host = parsed.hostname.casefold().strip(".")
-    port = parsed.port
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
     default_port = (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
     netloc = host if port is None or default_port else f"{host}:{port}"
     path = parsed.path or "/"
