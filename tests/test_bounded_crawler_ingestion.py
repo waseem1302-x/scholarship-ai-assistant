@@ -91,7 +91,9 @@ def run_candidate(db_session, tmp_path, *, crawling: bool, max_pages: int = 3):
         dry_run=True,
     )
     service.process_run(run.id, worker_id="crawler-test")
-    candidate = db_session.scalar(select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id))
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
     assert candidate is not None
     sources = list(
         db_session.scalars(
