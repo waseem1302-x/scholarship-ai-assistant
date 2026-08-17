@@ -377,7 +377,9 @@ class ClassificationDecisionRecorder:
         model_output: dict[str, Any] | None = None,
     ) -> ClassificationDecision:
         if decision.auto_publish_allowed:
-            raise ClassificationIntegrityError("classifier auto-publication is permanently forbidden")
+            raise ClassificationIntegrityError(
+                "classifier auto-publication is permanently forbidden"
+            )
         if not decision.requires_human_review:
             raise ClassificationIntegrityError("classification decisions must require human review")
 
@@ -385,9 +387,13 @@ class ClassificationDecisionRecorder:
         if candidate is None:
             raise ClassificationIntegrityError("catalogue candidate does not exist")
 
-        if decision.relationship in LINK_OR_EXISTING_RELATIONSHIPS:
-            if parent_scholarship_id is None:
-                raise ClassificationIntegrityError("child relationship requires a parent scholarship")
+        if (
+            decision.relationship in LINK_OR_EXISTING_RELATIONSHIPS
+            and parent_scholarship_id is None
+        ):
+            raise ClassificationIntegrityError(
+                "child relationship requires a parent scholarship"
+            )
         if parent_scholarship_id is not None:
             parent = self.session.get(Opportunity, parent_scholarship_id)
             if parent is None:
@@ -395,7 +401,9 @@ class ClassificationDecisionRecorder:
 
         snapshot_ids = tuple(dict.fromkeys(evidence_snapshot_ids))
         if decision.relationship != RelationshipKind.UNRESOLVED and not snapshot_ids:
-            raise ClassificationIntegrityError("non-unresolved relationship requires evidence snapshot")
+            raise ClassificationIntegrityError(
+                "non-unresolved relationship requires evidence snapshot"
+            )
         if snapshot_ids:
             existing_ids = set(
                 self.session.scalars(
@@ -404,13 +412,24 @@ class ClassificationDecisionRecorder:
             )
             missing = set(snapshot_ids) - existing_ids
             if missing:
-                raise ClassificationIntegrityError("classification evidence snapshot does not exist")
+                raise ClassificationIntegrityError(
+                    "classification evidence snapshot does not exist"
+                )
 
-        if decision.relationship in INDEPENDENT_RELATIONSHIPS:
-            if not decision.proposes_independent_scholarship:
-                raise ClassificationIntegrityError("independent relationship must pass independence gate")
-        elif decision.proposes_independent_scholarship:
-            raise ClassificationIntegrityError("only an independent relationship may propose a scholarship")
+        if (
+            decision.relationship in INDEPENDENT_RELATIONSHIPS
+            and not decision.proposes_independent_scholarship
+        ):
+            raise ClassificationIntegrityError(
+                "independent relationship must pass independence gate"
+            )
+        if (
+            decision.relationship not in INDEPENDENT_RELATIONSHIPS
+            and decision.proposes_independent_scholarship
+        ):
+            raise ClassificationIntegrityError(
+                "only an independent relationship may propose a scholarship"
+            )
 
         recorded = ClassificationDecision(
             candidate_id=candidate.id,
