@@ -13,12 +13,13 @@ import heapq
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.modules.opportunities.source_monitor import (
     FetchedLink,
     FetchedSource,
+    SafeSourceFetcher,
     SourceFetcher,
     SourceFetchError,
 )
@@ -49,7 +50,12 @@ _NEGATIVE_SIGNAL = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class CrawlBudget:
-    """Hard external-request and traversal limits for one verified root URL."""
+    """Hard accepted-page and traversal limits for one verified root URL.
+
+    ``max_total_bytes`` caps accepted evidence-page payload bytes. ``SafeSourceFetcher``
+    may read one sentinel byte beyond the remaining allowance to detect overflow; robots
+    payloads remain separately bounded by the existing safe fetcher policy.
+    """
 
     max_pages: int = _MAX_ROOT_PAGES
     max_depth: int = 2
@@ -183,12 +189,60 @@ def _failure_code(exc: SourceFetchError) -> str:
     return value.split(":", 1)[0].strip() or "source_fetch_failed"
 
 
+def _safe_fetch_with_limit(
+    fetcher: SafeSourceFetcher,
+    url: str,
+    *,
+    max_bytes: int,
+) -> FetchedSource:
+    """Reuse SafeSourceFetcher while tightening only the current page byte allowance.
+
+    The clone shares the configured opener and robots cache, so PR4 does not introduce a
+    second network path. Existing host-specific policies stay intact except that their
+    payload limit can only become stricter for this one request.
+    """
+
+    original_policy = fetcher.policy_for(url)
+    bounded_policies = {
+        host: replace(policy, max_bytes=min(policy.max_bytes, max_bytes))
+        for host, policy in fetcher.crawl_policies.items()
+    }
+    bounded = SafeSourceFetcher(
+        timeout_seconds=fetcher.timeout_seconds,
+        max_bytes=min(fetcher.max_bytes, max_bytes),
+        crawl_policies=bounded_policies,
+    )
+    bounded.opener = fetcher.opener
+    bounded._robots = fetcher._robots
+    try:
+        return bounded.fetch(url)
+    except SourceFetchError as exc:
+        if _failure_code(exc) == "source_too_large" and max_bytes < original_policy.max_bytes:
+            raise SourceFetchError("crawl_byte_budget_exceeded") from exc
+        raise
+
+
+def _fetch_with_limit(fetcher: SourceFetcher, url: str, *, max_bytes: int) -> FetchedSource:
+    """Fetch through a boundary capable of enforcing the remaining crawl allowance."""
+
+    if max_bytes < 1:
+        raise SourceFetchError("crawl_byte_budget_exceeded")
+    bounded_fetch = getattr(fetcher, "fetch_with_limit", None)
+    if callable(bounded_fetch):
+        return bounded_fetch(url, max_bytes=max_bytes)
+    if isinstance(fetcher, SafeSourceFetcher):
+        return _safe_fetch_with_limit(fetcher, url, max_bytes=max_bytes)
+    raise SourceFetchError("crawler_fetcher_does_not_support_byte_budget")
+
+
 class BoundedOfficialSiteCrawler:
     """Explore a small ranked slice of one already-verified official host.
 
     The crawler performs no HTTP itself. Callers inject the existing source
     fetcher boundary, which keeps SSRF, robots, redirect, peer-IP, MIME, and
-    response-size checks centralized in one implementation.
+    response-size checks centralized in one implementation. Crawling is sequential,
+    giving each host an effective concurrency cap of one in addition to the optional
+    inter-request interval.
     """
 
     def __init__(
@@ -224,6 +278,7 @@ class BoundedOfficialSiteCrawler:
         rejected: list[RejectedCrawlLink] = []
         duplicates: list[str] = []
         seen_urls = {normalized_root}
+        completed_urls: set[str] = set()
         seen_hashes: set[str] = set()
         queue: list[_QueuedLink] = []
         insertion_order = 0
@@ -237,6 +292,10 @@ class BoundedOfficialSiteCrawler:
             if fetch_attempts >= limits.max_pages:
                 budget_exhausted = True
                 return False
+            remaining_bytes = limits.max_total_bytes - total_bytes
+            if remaining_bytes <= 0:
+                budget_exhausted = True
+                return False
 
             current_host = _host(url)
             if (
@@ -248,13 +307,34 @@ class BoundedOfficialSiteCrawler:
 
             fetch_attempts += 1
             try:
-                fetched = self.fetcher.fetch(url)
+                fetched = _fetch_with_limit(self.fetcher, url, max_bytes=remaining_bytes)
             except SourceFetchError as exc:
+                failure_code = _failure_code(exc)
                 if root:
                     raise
-                failures.append(CrawlFailure(url=url, depth=depth, reason=_failure_code(exc)))
+                failures.append(CrawlFailure(url=url, depth=depth, reason=failure_code))
                 previous_host = current_host
+                if failure_code in {
+                    "crawl_byte_budget_exceeded",
+                    "crawler_fetcher_does_not_support_byte_budget",
+                }:
+                    budget_exhausted = True
+                    return False
                 return True
+
+            if fetched.bytes_read > remaining_bytes:
+                if root:
+                    raise SourceFetchError("crawler_fetcher_violated_byte_budget")
+                failures.append(
+                    CrawlFailure(
+                        url=url,
+                        depth=depth,
+                        reason="crawler_fetcher_violated_byte_budget",
+                    )
+                )
+                previous_host = current_host
+                budget_exhausted = True
+                return False
 
             final_url = normalize_crawl_url(fetched.final_url)
             if final_url is None:
@@ -279,6 +359,9 @@ class BoundedOfficialSiteCrawler:
                 previous_host = current_host
                 return True
 
+            completed_urls.add(url)
+            completed_urls.add(final_url)
+            seen_urls.add(final_url)
             total_bytes += fetched.bytes_read
             content_hash = fetched.normalized_content_hash or fetched.content_hash
             if content_hash in seen_hashes:
@@ -290,9 +373,9 @@ class BoundedOfficialSiteCrawler:
                     enqueue_links(fetched.links, depth=depth + 1)
 
             previous_host = final_host
-            if total_bytes > limits.max_total_bytes:
-                budget_exhausted = True
-                return False
+            if total_bytes >= limits.max_total_bytes:
+                budget_exhausted = bool(queue)
+                return not budget_exhausted
             return True
 
         def enqueue_links(links: tuple[FetchedLink, ...], *, depth: int) -> None:
@@ -330,7 +413,7 @@ class BoundedOfficialSiteCrawler:
                         )
                     )
                     continue
-                if normalized in seen_urls:
+                if normalized in seen_urls or normalized in completed_urls:
                     continue
                 seen_urls.add(normalized)
                 score = score_crawl_link(link)
@@ -363,7 +446,7 @@ class BoundedOfficialSiteCrawler:
                 budget_exhausted = True
                 break
             item = heapq.heappop(queue)
-            if item.depth > limits.max_depth:
+            if item.depth > limits.max_depth or item.url in completed_urls:
                 continue
             if not fetch_page(item.url, depth=item.depth, score=item.score):
                 break
