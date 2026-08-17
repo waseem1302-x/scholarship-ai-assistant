@@ -132,9 +132,7 @@ def test_scholarship_graph_migration_is_expand_first_and_reversible(tmp_path: Pa
 def test_scholarship_graph_evidence_migration_reuses_legacy_tables_and_is_reversible(
     tmp_path: Path,
 ) -> None:
-    database_url = (
-        f"sqlite+pysqlite:///{(tmp_path / 'scholarship-graph-evidence.db').as_posix()}"
-    )
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'scholarship-graph-evidence.db').as_posix()}"
     config = alembic_config_for(database_url)
     command.upgrade(config, "20260817_0038")
 
@@ -233,12 +231,8 @@ def test_scholarship_graph_evidence_migration_reuses_legacy_tables_and_is_revers
         "is_active",
     }.issubset(source_columns)
 
-    eligibility_columns = {
-        column["name"] for column in inspector.get_columns("eligibility_rules")
-    }
-    assert {"cycle_id", "track_id", "institution_id", "programme_id"}.issubset(
-        eligibility_columns
-    )
+    eligibility_columns = {column["name"] for column in inspector.get_columns("eligibility_rules")}
+    assert {"cycle_id", "track_id", "institution_id", "programme_id"}.issubset(eligibility_columns)
     assert "scholarship_id" not in eligibility_columns
 
     with Session(engine) as session:
@@ -260,9 +254,7 @@ def test_scholarship_graph_evidence_migration_reuses_legacy_tables_and_is_revers
     command.downgrade(config, "20260817_0038")
     inspector = inspect(engine)
     assert not pr2_tables.intersection(inspector.get_table_names())
-    assert "normalized_url" not in {
-        column["name"] for column in inspector.get_columns("sources")
-    }
+    assert "normalized_url" not in {column["name"] for column in inspector.get_columns("sources")}
     assert "cycle_id" not in {
         column["name"] for column in inspector.get_columns("eligibility_rules")
     }
