@@ -18,11 +18,12 @@ def fetched_page(
     *,
     links: tuple[FetchedLink, ...] = (),
     content_hash: str | None = None,
+    final_url: str | None = None,
 ) -> FetchedSource:
     normalized_hash = content_hash or hashlib.sha256(text.encode()).hexdigest()
     return FetchedSource(
         url=url,
-        final_url=url,
+        final_url=final_url or url,
         content_hash=normalized_hash,
         excerpt_text=text[:500],
         section_label="Scholarship",
@@ -39,11 +40,20 @@ class FakeFetcher:
         self.responses = responses
         self.calls: list[str] = []
 
-    def fetch(self, url: str) -> FetchedSource:
+    def _response(self, url: str) -> FetchedSource:
         self.calls.append(url)
         response = self.responses[url]
         if isinstance(response, Exception):
             raise response
+        return response
+
+    def fetch(self, url: str) -> FetchedSource:
+        return self._response(url)
+
+    def fetch_with_limit(self, url: str, *, max_bytes: int) -> FetchedSource:
+        response = self._response(url)
+        if response.bytes_read > max_bytes:
+            raise SourceFetchError("crawl_byte_budget_exceeded")
         return response
 
 
@@ -181,6 +191,40 @@ def test_bounded_crawler_normalizes_and_deduplicates_urls_before_fetch() -> None
     assert [page.url for page in result.pages] == [ROOT, canonical]
 
 
+def test_bounded_crawler_does_not_refetch_redirect_destination_already_queued() -> None:
+    old_url = "https://example.edu/scholarships/csc/funding-old"
+    canonical = "https://example.edu/scholarships/csc/funding"
+    fetcher = FakeFetcher(
+        {
+            ROOT: fetched_page(
+                ROOT,
+                "Scholarship overview.",
+                links=(
+                    FetchedLink(
+                        url=old_url,
+                        text="Scholarship funding benefits and tuition",
+                    ),
+                    FetchedLink(url=canonical, text="Scholarship funding"),
+                ),
+            ),
+            old_url: fetched_page(
+                old_url,
+                "Official funding details.",
+                final_url=canonical,
+            ),
+            canonical: fetched_page(canonical, "Official funding details."),
+        }
+    )
+
+    result = BoundedOfficialSiteCrawler(fetcher=fetcher).crawl(
+        ROOT,
+        budget=CrawlBudget(max_pages=10, max_depth=1),
+    )
+
+    assert fetcher.calls == [ROOT, old_url]
+    assert [page.url for page in result.pages] == [ROOT, canonical]
+
+
 def test_bounded_crawler_deduplicates_fetched_content_hashes() -> None:
     first = "https://example.edu/scholarships/csc/funding"
     second = "https://example.edu/scholarships/csc/benefits"
@@ -249,7 +293,22 @@ def test_bounded_crawler_root_failure_fails_closed() -> None:
         )
 
 
-def test_bounded_crawler_stops_after_total_byte_budget_is_exceeded() -> None:
+def test_bounded_crawler_requires_fetcher_that_can_enforce_remaining_bytes() -> None:
+    class LegacyFetcher:
+        def fetch(self, url: str) -> FetchedSource:
+            return fetched_page(url, "Official scholarship overview.")
+
+    with pytest.raises(
+        SourceFetchError,
+        match="crawler_fetcher_does_not_support_byte_budget",
+    ):
+        BoundedOfficialSiteCrawler(fetcher=LegacyFetcher()).crawl(
+            ROOT,
+            budget=CrawlBudget(max_pages=10, max_depth=1),
+        )
+
+
+def test_bounded_crawler_stops_before_accepting_page_over_remaining_byte_budget() -> None:
     first = "https://example.edu/scholarships/csc/funding"
     second = "https://example.edu/scholarships/csc/deadline"
     fetcher = FakeFetcher(
@@ -274,5 +333,8 @@ def test_bounded_crawler_stops_after_total_byte_budget_is_exceeded() -> None:
 
     assert fetcher.calls == [ROOT, second]
     assert result.budget_exhausted is True
-    assert result.total_bytes == 60
+    assert result.total_bytes == 40
+    assert result.total_bytes <= 50
+    assert result.failures[-1].url == second
+    assert result.failures[-1].reason == "crawl_byte_budget_exceeded"
     assert first not in fetcher.calls
