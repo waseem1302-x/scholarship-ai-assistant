@@ -19,7 +19,7 @@ from app.modules.catalogue_ingestion.models import (
     IngestionMode,
     IngestionRunStatus,
 )
-from app.modules.opportunities.evidence_models import SourceSnapshot
+from app.modules.opportunities.evidence_models import OfficialityStatus, SourceSnapshot
 from app.modules.opportunities.graph_models import RelationshipKind
 from app.modules.opportunities.models import (
     DataConfidence,
@@ -86,6 +86,7 @@ def create_scholarship(db_session: Session, name: str = "Canonical Scholarship")
 
 def create_snapshot(db_session: Session, scholarship: Opportunity) -> SourceSnapshot:
     path = uuid.uuid4().hex
+    evidence_text = "Official relationship evidence."
     source = Source(
         opportunity_id=scholarship.id,
         url=f"https://example.edu/{path}",
@@ -93,11 +94,11 @@ def create_snapshot(db_session: Session, scholarship: Opportunity) -> SourceSnap
         normalized_url=f"https://example.edu/{path}",
         domain="example.edu",
         source_type=SourceType.OFFICIAL,
-        officiality_status="official",
+        officiality_status=OfficialityStatus.OFFICIAL,
         officiality_reason="PR3 fixture official source",
         verification_status=VerificationStatus.OFFICIALLY_VERIFIED,
         title="PR3 classification evidence",
-        relevant_excerpt="Official relationship evidence.",
+        relevant_excerpt=evidence_text,
         is_active=True,
     )
     db_session.add(source)
@@ -106,11 +107,11 @@ def create_snapshot(db_session: Session, scholarship: Opportunity) -> SourceSnap
         source_id=source.id,
         http_status=200,
         content_hash=uuid.uuid4().hex,
-        normalized_text="Official relationship evidence.",
+        normalized_text=evidence_text,
         extraction_method="http_text",
         language_code="en",
-        byte_count=31,
-        character_count=31,
+        byte_count=len(evidence_text.encode()),
+        character_count=len(evidence_text),
         fetch_metadata={},
     )
     db_session.add(snapshot)
@@ -211,7 +212,6 @@ def test_independent_proposal_does_not_create_or_confirm_scholarship(
     candidate = create_candidate(db_session)
     evidence_owner = create_scholarship(db_session, "Evidence Owner Scholarship")
     snapshot = create_snapshot(db_session, evidence_owner)
-    before_count = db_session.scalar(select(Opportunity).count()) if False else None
     opportunity_ids_before = set(db_session.scalars(select(Opportunity.id)).all())
 
     recorded = ClassificationDecisionRecorder(db_session).record(
@@ -222,7 +222,6 @@ def test_independent_proposal_does_not_create_or_confirm_scholarship(
     db_session.flush()
 
     opportunity_ids_after = set(db_session.scalars(select(Opportunity.id)).all())
-    assert before_count is None
     assert opportunity_ids_after == opportunity_ids_before
     assert recorded.decision_status == ClassificationDecisionStatus.NEEDS_REVIEW
     assert recorded.proposed_new_scholarship_id is None
