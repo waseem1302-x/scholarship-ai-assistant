@@ -55,16 +55,26 @@ def _fact_matches_scope(fact: ScopedDeadline, scope: FactScope) -> bool:
     )
 
 
-def _specificity(fact: ScopedDeadline) -> int:
-    return sum(
-        value is not None
-        for value in (
-            fact.cycle_id,
-            fact.track_id,
-            fact.institution_id,
-            fact.programme_id,
-        )
-    )
+def _scope_rank(fact: ScopedDeadline) -> int:
+    """Return the plan-defined inheritance priority, not a count of dimensions.
+
+    Programme facts outrank institution+track facts even though both commonly
+    carry three non-null scope identifiers once cycle context is included.
+    Institution-only facts are retained as a repository-supported intermediate
+    scope between track and cycle.
+    """
+
+    if fact.programme_id is not None:
+        return 5
+    if fact.institution_id is not None and fact.track_id is not None:
+        return 4
+    if fact.track_id is not None:
+        return 3
+    if fact.institution_id is not None:
+        return 2
+    if fact.cycle_id is not None:
+        return 1
+    return 0
 
 
 def _scope_level(fact: ScopedDeadline) -> str:
@@ -159,15 +169,15 @@ def resolve_scoped_deadline(
     if contradicted:
         return _conflict(contradicted)
 
-    child_specificities = sorted(
-        {_specificity(fact) for fact in matching if _specificity(fact) > 0},
+    child_ranks = sorted(
+        {_scope_rank(fact) for fact in matching if _scope_rank(fact) > 0},
         reverse=True,
     )
-    for specificity in child_specificities:
+    for rank in child_ranks:
         supported = [
             fact
             for fact in matching
-            if _specificity(fact) == specificity
+            if _scope_rank(fact) == rank
             and EvidenceSupportType.EXPLICIT in evidence.get(fact.id, set())
         ]
         if not supported:
@@ -180,7 +190,7 @@ def resolve_scoped_deadline(
         selected = min(supported, key=lambda fact: str(fact.id))
         return _resolved(selected)
 
-    inherited = [fact for fact in matching if _specificity(fact) == 0]
+    inherited = [fact for fact in matching if _scope_rank(fact) == 0]
     if not inherited:
         return ScopedDeadlineResolution(conflict=False)
 
