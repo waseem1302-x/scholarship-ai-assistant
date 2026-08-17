@@ -12,10 +12,10 @@ from app.modules.catalogue_ingestion.classification import (
     RelationshipDecision,
 )
 from app.modules.catalogue_ingestion.models import (
-    ClassificationDecision,
-    ClassificationDecisionStatus,
     CatalogueCandidate,
     CatalogueIngestionRun,
+    ClassificationDecision,
+    ClassificationDecisionStatus,
     IngestionMode,
     IngestionRunStatus,
 )
@@ -290,7 +290,9 @@ def test_repeat_classification_appends_new_decision_instead_of_overwriting_histo
 
     rows = list(
         db_session.scalars(
-            select(ClassificationDecision).where(ClassificationDecision.candidate_id == candidate.id)
+            select(ClassificationDecision).where(
+                ClassificationDecision.candidate_id == candidate.id
+            )
         ).all()
     )
     assert first.id != second.id
