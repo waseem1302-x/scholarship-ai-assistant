@@ -82,8 +82,8 @@ def test_bounded_crawler_fetches_root_then_highest_value_same_host_pages() -> No
         budget=CrawlBudget(max_pages=3, max_depth=1),
     )
 
-    assert fetcher.calls == [ROOT, funding, deadline]
-    assert [page.url for page in result.pages] == [ROOT, funding, deadline]
+    assert fetcher.calls == [ROOT, deadline, funding]
+    assert [page.url for page in result.pages] == [ROOT, deadline, funding]
     assert news not in fetcher.calls
     assert result.budget_exhausted is True
 
@@ -269,10 +269,10 @@ def test_bounded_crawler_stops_after_total_byte_budget_is_exceeded() -> None:
 
     result = BoundedOfficialSiteCrawler(fetcher=fetcher).crawl(
         ROOT,
-        budget=CrawlBudget(max_pages=10, max_depth=1, max_total_bytes=100),
+        budget=CrawlBudget(max_pages=10, max_depth=1, max_total_bytes=50),
     )
 
-    assert fetcher.calls == [ROOT, first]
+    assert fetcher.calls == [ROOT, second]
     assert result.budget_exhausted is True
-    assert result.total_bytes == 110
-    assert second not in fetcher.calls
+    assert result.total_bytes == 60
+    assert first not in fetcher.calls
