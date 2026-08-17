@@ -160,12 +160,8 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column("officiality_reason", sa.Text(), nullable=True))
         batch_op.add_column(sa.Column("robots_status", sa.String(length=64), nullable=True))
         batch_op.add_column(sa.Column("content_type", sa.String(length=255), nullable=True))
-        batch_op.add_column(
-            sa.Column("last_fetched_at", sa.DateTime(timezone=True), nullable=True)
-        )
-        batch_op.add_column(
-            sa.Column("last_success_at", sa.DateTime(timezone=True), nullable=True)
-        )
+        batch_op.add_column(sa.Column("last_fetched_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(sa.Column("last_success_at", sa.DateTime(timezone=True), nullable=True))
         batch_op.add_column(
             sa.Column("consecutive_failures", sa.Integer(), nullable=False, server_default="0")
         )
