@@ -8,20 +8,21 @@ from app.modules.opportunities.graph_models import RelationshipKind
 
 
 def classify(**overrides: object):
-    context = CandidateRelationshipContext(
-        candidate_name="Chinese Government Scholarship",
-        canonical_name="Chinese Government Scholarship",
-        aliases=("CSC", "CGS"),
-        candidate_provider_id="china-scholarship-council",
-        canonical_provider_id="china-scholarship-council",
-        candidate_application_url="https://studyinchina.csc.edu.cn/apply",
-        canonical_application_urls=("https://studyinchina.csc.edu.cn/apply",),
-        candidate_source_url="https://www.campuschina.org/content/details3_74776.html",
-        canonical_source_urls=("https://www.campuschina.org/content/details3_74776.html",),
-        source_is_official=True,
-        parent_scheme_explicit=True,
-        **overrides,
-    )
+    values: dict[str, object] = {
+        "candidate_name": "Chinese Government Scholarship",
+        "canonical_name": "Chinese Government Scholarship",
+        "aliases": ("CSC", "CGS"),
+        "candidate_provider_id": "china-scholarship-council",
+        "canonical_provider_id": "china-scholarship-council",
+        "candidate_application_url": "https://studyinchina.csc.edu.cn/apply",
+        "canonical_application_urls": ("https://studyinchina.csc.edu.cn/apply",),
+        "candidate_source_url": "https://www.campuschina.org/content/details3_74776.html",
+        "canonical_source_urls": ("https://www.campuschina.org/content/details3_74776.html",),
+        "source_is_official": True,
+        "parent_scheme_explicit": True,
+    }
+    values.update(overrides)
+    context = CandidateRelationshipContext(**values)
     return DeterministicRelationshipClassifier().classify(context)
 
 
