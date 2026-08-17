@@ -45,9 +45,7 @@ def test_government_and_foundation_authorities_map_to_correct_relationships() ->
 
 
 def test_missing_official_name_proof_fails_closed() -> None:
-    decision = decide_independence(
-        assessment(official_name_evidence=EvidenceSupportType.PARTIAL)
-    )
+    decision = decide_independence(assessment(official_name_evidence=EvidenceSupportType.PARTIAL))
 
     assert decision.relationship == RelationshipKind.UNRESOLVED
     assert "official_name" in decision.missing_mandatory_proofs
@@ -91,9 +89,7 @@ def test_conflicts_block_independence_even_when_all_positive_signals_exist() -> 
 
 
 def test_unknown_authority_type_cannot_create_independent_award() -> None:
-    decision = decide_independence(
-        assessment(authority_type=IndependenceAuthorityType.UNKNOWN)
-    )
+    decision = decide_independence(assessment(authority_type=IndependenceAuthorityType.UNKNOWN))
 
     assert decision.relationship == RelationshipKind.UNRESOLVED
     assert "recognized_awarding_authority_type" in decision.missing_mandatory_proofs
