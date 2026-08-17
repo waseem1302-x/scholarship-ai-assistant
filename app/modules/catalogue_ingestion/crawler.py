@@ -12,8 +12,8 @@ from __future__ import annotations
 import heapq
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.modules.opportunities.source_monitor import (
