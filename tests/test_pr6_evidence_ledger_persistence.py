@@ -47,7 +47,6 @@ from app.modules.catalogue_ingestion.models import (
 )
 from app.modules.opportunities.evidence_models import OfficialityStatus, SourceOwnerType
 
-
 _PR6_LEDGER_METADATA = CatalogueCandidateSourceSnapshot.__table__.metadata
 _PR6_LEDGER_TABLES = tuple(
     mapper.local_table
