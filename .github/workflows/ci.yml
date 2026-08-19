@@ -73,6 +73,7 @@ jobs:
         run: uv run pytest -ra -m "not e2e" --cov=app --cov-report=term-missing --cov-fail-under=85
 
   browser-e2e:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
