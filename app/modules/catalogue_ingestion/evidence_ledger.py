@@ -340,8 +340,7 @@ def prepare_snapshot_promotion(
 
     existing = session.scalar(
         select(CatalogueSnapshotPromotion).where(
-            CatalogueSnapshotPromotion.candidate_source_snapshot_id
-            == candidate_source_snapshot_id,
+            CatalogueSnapshotPromotion.candidate_source_snapshot_id == candidate_source_snapshot_id,
             CatalogueSnapshotPromotion.source_snapshot_id == source_snapshot_id,
         )
     )
