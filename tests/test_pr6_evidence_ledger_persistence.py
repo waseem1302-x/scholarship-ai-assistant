@@ -1,14 +1,17 @@
 import hashlib
+import os
 import uuid
 from datetime import date
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.db.base import Base
 from app.modules.auth.models import utc_now
+from app.modules.catalogue_ingestion import evidence_ledger_models as ledger_models
 from app.modules.catalogue_ingestion.claim_core import (
     ClaimType,
     EvidenceProposal,
@@ -46,6 +49,44 @@ from app.modules.catalogue_ingestion.models import (
     IngestionRunStatus,
 )
 from app.modules.opportunities.evidence_models import OfficialityStatus, SourceOwnerType
+
+
+_PR6_LEDGER_TABLES = tuple(
+    mapper.local_table
+    for mapper in Base.registry.mappers
+    if mapper.class_.__module__ == ledger_models.__name__
+)
+
+
+@pytest.fixture(scope="module")
+def postgres_engine():
+    database_url = os.environ.get("TEST_POSTGRES_URL")
+    if not database_url:
+        pytest.skip("TEST_POSTGRES_URL is required for PR6 persistence tests")
+
+    engine = create_engine(database_url, pool_pre_ping=True)
+    assert engine.dialect.name == "postgresql"
+    Base.metadata.create_all(engine, tables=_PR6_LEDGER_TABLES)
+    yield engine
+    Base.metadata.drop_all(engine, tables=_PR6_LEDGER_TABLES)
+    engine.dispose()
+
+
+@pytest.fixture
+def db_session(postgres_engine):
+    connection = postgres_engine.connect()
+    transaction = connection.begin()
+    try:
+        with Session(
+            bind=connection,
+            join_transaction_mode="create_savepoint",
+            expire_on_commit=False,
+        ) as session:
+            yield session
+    finally:
+        if transaction.is_active:
+            transaction.rollback()
+        connection.close()
 
 
 def _hash(value: str) -> str:
