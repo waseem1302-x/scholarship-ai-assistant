@@ -26,7 +26,6 @@ from app.modules.catalogue_ingestion.evidence_ledger import (
 )
 from app.modules.catalogue_ingestion.evidence_ledger_models import (
     CatalogueCandidateSourceSnapshot,
-    CatalogueClaimEvidence,
     CatalogueEvidenceBundle,
     CatalogueEvidenceBundleClaim,
     CatalogueFieldClaim,
