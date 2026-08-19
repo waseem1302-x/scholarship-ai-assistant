@@ -28,8 +28,8 @@ from sqlalchemy import (
     UniqueConstraint,
     event,
     func,
-    inspect as sa_inspect,
 )
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
