@@ -267,8 +267,19 @@ class SourceClaim(StrictModel):
 
     @model_validator(mode="after")
     def validate_claim_shape(self) -> "SourceClaim":
-        if self.value_state is ClaimValueState.ASSERTED_VALUE and self.value is None:
-            raise ValueError("asserted_value claims require a value")
+        if self.value_state is ClaimValueState.ASSERTED_VALUE:
+            if self.value is None:
+                raise ValueError("asserted_value claims require a value")
+            if not any(item.role is EvidenceRole.VALUE for item in self.evidence):
+                raise ValueError("asserted_value claims require value evidence")
+        else:
+            if self.value is not None:
+                raise ValueError("non-value claim states cannot contain a typed value")
+            if self.value_state in {
+                ClaimValueState.ASSERTED_ABSENT,
+                ClaimValueState.ASSERTED_NOT_APPLICABLE,
+            } and not any(item.role is EvidenceRole.NEGATION for item in self.evidence):
+                raise ValueError("absence/not-applicable claims require negation evidence")
         if self.value is not None and self.value.kind != _EXPECTED_KIND[self.claim_type]:
             raise ValueError("claim type and typed value kind do not match")
         return self
