@@ -9,7 +9,6 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.base import Base
 from app.modules.auth.models import utc_now
 from app.modules.catalogue_ingestion.claim_core import (
     ClaimType,
@@ -50,9 +49,10 @@ from app.modules.catalogue_ingestion.models import (
 from app.modules.opportunities.evidence_models import OfficialityStatus, SourceOwnerType
 
 
+_PR6_LEDGER_METADATA = CatalogueCandidateSourceSnapshot.__table__.metadata
 _PR6_LEDGER_TABLES = tuple(
     mapper.local_table
-    for mapper in Base.registry.mappers
+    for mapper in CatalogueCandidateSourceSnapshot.__mapper__.registry.mappers
     if mapper.class_.__module__ == CatalogueCandidateSourceSnapshot.__module__
 )
 
@@ -65,9 +65,9 @@ def postgres_engine():
 
     engine = create_engine(database_url, pool_pre_ping=True)
     assert engine.dialect.name == "postgresql"
-    Base.metadata.create_all(engine, tables=_PR6_LEDGER_TABLES)
+    _PR6_LEDGER_METADATA.create_all(engine, tables=_PR6_LEDGER_TABLES)
     yield engine
-    Base.metadata.drop_all(engine, tables=_PR6_LEDGER_TABLES)
+    _PR6_LEDGER_METADATA.drop_all(engine, tables=_PR6_LEDGER_TABLES)
     engine.dispose()
 
 
