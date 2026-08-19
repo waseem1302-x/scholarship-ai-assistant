@@ -202,6 +202,7 @@ def persist_source_claim(
         for index, proposal in enumerate(claim.evidence)
     )
     session.add(row)
+    session.flush()
     session.add_all(evidence_rows)
     return PersistedSourceClaim(row, evidence_rows, False)
 
