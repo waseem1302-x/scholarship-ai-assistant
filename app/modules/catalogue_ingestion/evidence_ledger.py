@@ -1,9 +1,9 @@
 """Deterministic service boundary for PR6 evidence-ledger persistence.
 
 The service accepts already typed source claims, preserves immutable source
-identity, validates exact evidence spans, and prevents cross-snapshot bundle
-bindings. It has no model-provider dependency and never writes canonical graph
-facts or publication state.
+identity, validates exact evidence spans, and prevents cross-target/cross-snapshot
+bundle bindings. It has no model-provider dependency and never writes canonical
+graph facts or publication state.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from app.modules.catalogue_ingestion.claim_core import SourceClaim, claim_finger
 from app.modules.catalogue_ingestion.evidence_ledger_models import (
     CatalogueCandidateSourceSnapshot,
     CatalogueClaimEvidence,
+    CatalogueEvidenceBundle,
     CatalogueEvidenceBundleClaim,
     CatalogueEvidenceBundleSource,
     CatalogueFieldClaim,
@@ -32,7 +33,11 @@ from app.modules.catalogue_ingestion.evidence_ledger_models import (
     SourceExtractionStatus,
 )
 from app.modules.catalogue_ingestion.models import CatalogueCandidateSource
-from app.modules.opportunities.evidence_models import SourceSnapshot
+from app.modules.opportunities.evidence_models import (
+    OfficialityStatus,
+    SourceOwnerType,
+    SourceSnapshot,
+)
 from app.modules.opportunities.models import Source
 
 
@@ -45,6 +50,94 @@ class PersistedSourceClaim:
     claim: CatalogueFieldClaim
     evidence: tuple[CatalogueClaimEvidence, ...]
     reused: bool
+
+
+def attach_snapshot_to_bundle(
+    session: Session,
+    *,
+    bundle_id: uuid.UUID,
+    source_context_hash: str,
+    normalized_url: str,
+    domain: str,
+    source_owner_type: SourceOwnerType,
+    source_owner_id: uuid.UUID | None,
+    officiality_status: OfficialityStatus,
+    authority_class: str,
+    authority_scope_snapshot: dict[str, Any],
+    authority_policy_version: str,
+    candidate_source_snapshot_id: uuid.UUID | None = None,
+    source_snapshot_id: uuid.UUID | None = None,
+) -> CatalogueEvidenceBundleSource:
+    """Freeze one source context only when the snapshot belongs to the bundle target."""
+
+    bundle = session.get(CatalogueEvidenceBundle, bundle_id)
+    if bundle is None:
+        raise LedgerBindingError("evidence bundle does not exist")
+
+    snapshot_kind, snapshot_id = _snapshot_identity(
+        candidate_source_snapshot_id,
+        source_snapshot_id,
+    )
+    if snapshot_kind == "candidate":
+        if bundle.candidate_id is None or bundle.opportunity_id is not None:
+            raise LedgerBindingError("candidate snapshot requires a candidate evidence bundle")
+        snapshot = session.get(CatalogueCandidateSourceSnapshot, snapshot_id)
+        if snapshot is None:
+            raise LedgerBindingError("candidate source snapshot does not exist")
+        candidate_source = session.get(CatalogueCandidateSource, snapshot.candidate_source_id)
+        if candidate_source is None or candidate_source.candidate_id != bundle.candidate_id:
+            raise LedgerBindingError("candidate snapshot does not belong to bundle candidate")
+        existing_query = select(CatalogueEvidenceBundleSource).where(
+            CatalogueEvidenceBundleSource.bundle_id == bundle_id,
+            CatalogueEvidenceBundleSource.candidate_source_snapshot_id == snapshot_id,
+        )
+    else:
+        if bundle.opportunity_id is None or bundle.candidate_id is not None:
+            raise LedgerBindingError("canonical snapshot requires an opportunity evidence bundle")
+        snapshot = session.get(SourceSnapshot, snapshot_id)
+        if snapshot is None:
+            raise LedgerBindingError("canonical source snapshot does not exist")
+        canonical_source = session.get(Source, snapshot.source_id)
+        if canonical_source is None or canonical_source.opportunity_id != bundle.opportunity_id:
+            raise LedgerBindingError("canonical snapshot does not belong to bundle opportunity")
+        existing_query = select(CatalogueEvidenceBundleSource).where(
+            CatalogueEvidenceBundleSource.bundle_id == bundle_id,
+            CatalogueEvidenceBundleSource.source_snapshot_id == snapshot_id,
+        )
+
+    existing = session.scalar(existing_query)
+    if existing is not None:
+        _assert_same_source_context(
+            existing,
+            source_context_hash=source_context_hash,
+            normalized_url=normalized_url,
+            domain=domain,
+            source_owner_type=source_owner_type,
+            source_owner_id=source_owner_id,
+            officiality_status=officiality_status,
+            authority_class=authority_class,
+            authority_scope_snapshot=authority_scope_snapshot,
+            authority_policy_version=authority_policy_version,
+        )
+        return existing
+
+    row = CatalogueEvidenceBundleSource(
+        id=uuid.uuid4(),
+        bundle_id=bundle_id,
+        candidate_source_snapshot_id=(snapshot_id if snapshot_kind == "candidate" else None),
+        source_snapshot_id=(snapshot_id if snapshot_kind == "canonical" else None),
+        source_context_hash=source_context_hash,
+        normalized_url=normalized_url,
+        domain=domain,
+        source_owner_type=source_owner_type,
+        source_owner_id=source_owner_id,
+        officiality_status=officiality_status,
+        authority_class=authority_class,
+        authority_scope_snapshot=authority_scope_snapshot,
+        authority_policy_version=authority_policy_version,
+    )
+    session.add(row)
+    return row
 
 
 def persist_source_claim(
@@ -269,6 +362,45 @@ def prepare_snapshot_promotion(
     return row
 
 
+def _assert_same_source_context(
+    existing: CatalogueEvidenceBundleSource,
+    *,
+    source_context_hash: str,
+    normalized_url: str,
+    domain: str,
+    source_owner_type: SourceOwnerType,
+    source_owner_id: uuid.UUID | None,
+    officiality_status: OfficialityStatus,
+    authority_class: str,
+    authority_scope_snapshot: dict[str, Any],
+    authority_policy_version: str,
+) -> None:
+    expected = (
+        source_context_hash,
+        normalized_url,
+        domain,
+        source_owner_type,
+        source_owner_id,
+        officiality_status,
+        authority_class,
+        _canonical_json(authority_scope_snapshot),
+        authority_policy_version,
+    )
+    actual = (
+        existing.source_context_hash,
+        existing.normalized_url,
+        existing.domain,
+        existing.source_owner_type,
+        existing.source_owner_id,
+        existing.officiality_status,
+        existing.authority_class,
+        _canonical_json(existing.authority_scope_snapshot),
+        existing.authority_policy_version,
+    )
+    if actual != expected:
+        raise LedgerBindingError("bundle source already exists with different frozen context")
+
+
 def _load_extraction_text(session: Session, extraction: CatalogueSourceExtraction) -> str:
     if extraction.candidate_source_snapshot_id is not None:
         snapshot = session.get(
@@ -324,6 +456,7 @@ def _canonical_json(value: object) -> str:
 __all__ = [
     "LedgerBindingError",
     "PersistedSourceClaim",
+    "attach_snapshot_to_bundle",
     "bind_claim_to_bundle",
     "persist_source_claim",
     "prepare_snapshot_promotion",
