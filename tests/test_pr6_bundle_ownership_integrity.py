@@ -1,8 +1,7 @@
 """Adversarial PostgreSQL proof for PR6 bundle ownership integrity.
 
-This module intentionally tests the relational invariant before the schema is
-hardened.  A resolution owned by bundle A must never be able to consume an
-assessment owned by bundle B, even when every referenced row exists.
+A resolution owned by bundle A must never be able to consume an assessment
+owned by bundle B, even when every referenced row exists.
 """
 
 from __future__ import annotations
@@ -49,6 +48,7 @@ assert db_session is not None
 def _assessment(
     *,
     bundle_claim_id: uuid.UUID,
+    bundle_id: uuid.UUID,
     candidate_id: uuid.UUID,
     claim_key_hash: str,
     policy_label: str,
@@ -56,6 +56,7 @@ def _assessment(
     return CatalogueClaimAssessment(
         id=uuid.uuid4(),
         bundle_claim_id=bundle_claim_id,
+        bundle_id=bundle_id,
         policy_fingerprint=_hash(f"assessment-policy:{policy_label}"),
         scope_resolver_version="test-scope.v1",
         authority_policy_version="test-authority.v1",
@@ -134,12 +135,14 @@ def test_database_rejects_resolution_member_assessment_from_another_bundle(
     claim_key_hash = _hash("application.deadline:cross-bundle-proof")
     assessment_a = _assessment(
         bundle_claim_id=bundle_claim_a.id,
+        bundle_id=bundle_a.id,
         candidate_id=candidate.id,
         claim_key_hash=claim_key_hash,
         policy_label="a",
     )
     assessment_b = _assessment(
         bundle_claim_id=bundle_claim_b.id,
+        bundle_id=bundle_b.id,
         candidate_id=candidate.id,
         claim_key_hash=claim_key_hash,
         policy_label="b",
@@ -162,23 +165,27 @@ def test_database_rejects_resolution_member_assessment_from_another_bundle(
     db_session.add_all([assessment_a, assessment_b, resolution_a])
     db_session.flush()
 
-    # Control: same-bundle membership is valid.
+    # Control: same-bundle membership remains valid.
     db_session.add(
         CatalogueClaimResolutionMember(
             id=uuid.uuid4(),
             resolution_id=resolution_a.id,
             claim_assessment_id=assessment_a.id,
+            bundle_id=bundle_a.id,
             role=ResolutionMemberRole.UNRESOLVED,
         )
     )
     db_session.flush()
 
-    # Attack: resolution A attempts to consume assessment B.
+    # Attack: resolution A attempts to consume assessment B while presenting A
+    # as the ownership witness. The resolution FK matches A; the assessment FK
+    # must reject B.
     db_session.add(
         CatalogueClaimResolutionMember(
             id=uuid.uuid4(),
             resolution_id=resolution_a.id,
             claim_assessment_id=assessment_b.id,
+            bundle_id=bundle_a.id,
             role=ResolutionMemberRole.UNRESOLVED,
         )
     )
