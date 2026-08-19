@@ -1,16 +1,16 @@
-"""Deterministic PR6 claim resolution primitives.
+"""Deterministic PR6 claim-resolution primitives.
 
 This module has no database, network, or model dependency. It resolves already
-validated source assertions by exact graph scope, field-specific authority
-priority, applicability, and typed value semantics. It does not publish or
-materialize graph facts.
+validated source assertions by exact graph scope, field-specific authority,
+applicability, and typed value semantics. It never publishes or materializes
+canonical graph facts.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -19,8 +19,12 @@ from typing import Any
 from app.modules.catalogue_ingestion.claim_core import (
     ClaimType,
     ClaimValueState,
+    DegreeClaimSubject,
     DegreeClaimValue,
+    EligibilityClaimSubject,
     EligibilityClaimValue,
+    EligibilityOperator,
+    FundingClaimSubject,
     FundingClaimValue,
     SourceClaim,
     TemporalClaimValue,
@@ -28,7 +32,7 @@ from app.modules.catalogue_ingestion.claim_core import (
     clean_text,
 )
 
-RESOLUTION_CORE_VERSION = "pr6-resolution-core.v1"
+RESOLUTION_CORE_VERSION = "pr6-resolution-core.v2"
 
 
 class EvidenceMatchStatus(StrEnum):
@@ -103,7 +107,7 @@ _FIELD_PATHS = {
 
 @dataclass(frozen=True, slots=True)
 class ResolvedScope:
-    """System-resolved target scope; references are never model-generated IDs."""
+    """System-resolved target scope; keys are never model-generated graph IDs."""
 
     target_key: str
     cycle_key: str | None = None
@@ -153,6 +157,8 @@ class ClaimAssessmentInput:
         if self.authority_status is AuthorityStatus.AUTHORIZED:
             if self.authority_priority is None or self.authority_priority < 0:
                 raise ValueError("authorized claims require a non-negative authority_priority")
+        elif self.authority_priority is not None:
+            raise ValueError("non-authorized claims cannot carry authority_priority")
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,61 +201,283 @@ class _ValueResolution:
     value_hash: str | None = None
     partial: bool = False
     reason_codes: tuple[str, ...] = field(default_factory=tuple)
+    temporal_local_dates: tuple[str, ...] = field(default_factory=tuple)
 
 
 def resolve_claim_assessments(
     assessments: list[ClaimAssessmentInput] | tuple[ClaimAssessmentInput, ...],
 ) -> tuple[ClaimResolution, ...]:
-    """Resolve assessments by exact semantic claim key, deterministically.
+    """Resolve source assertions without majority voting or model arbitration.
 
-    Different graph scopes, cycles, and collection members are partitioned before
-    values are compared. Source count never selects between conflicting values.
+    Exact graph scope is partitioned before values are compared. Eligibility is
+    additionally partitioned by semantic constraint slot so, for example, an age
+    lower bound does not erase an age upper bound. Family-level eligibility
+    negation is reconciled against each observed constraint slot by authority.
     """
 
-    grouped: dict[
+    standard_groups: dict[
         tuple[str, str, tuple[str, str, str, str, str]],
         list[ClaimAssessmentInput],
     ] = {}
+    eligibility_families: dict[
+        tuple[str, tuple[str, str, str, str, str]],
+        list[ClaimAssessmentInput],
+    ] = {}
+
     for assessment in assessments:
+        if assessment.claim.claim_type is ClaimType.ELIGIBILITY_RULE:
+            rule_type = _eligibility_rule_type(assessment.claim)
+            family_key = (rule_type, assessment.scope.key())
+            eligibility_families.setdefault(family_key, []).append(assessment)
+            continue
+
         field_path = _FIELD_PATHS[assessment.claim.claim_type]
         collection_key = collection_key_for_claim(assessment.claim)
         group_key = (field_path, collection_key, assessment.scope.key())
-        grouped.setdefault(group_key, []).append(assessment)
+        standard_groups.setdefault(group_key, []).append(assessment)
 
-    resolutions = [
-        _resolve_exact_group(group)
-        for _, group in sorted(grouped.items(), key=lambda item: item[0])
-    ]
+    resolutions: list[ClaimResolution] = []
+    for _, group in sorted(standard_groups.items(), key=lambda item: item[0]):
+        resolutions.append(_resolve_exact_group(group))
+    for _, family in sorted(eligibility_families.items(), key=lambda item: item[0]):
+        resolutions.extend(_resolve_eligibility_family(family))
+
     return tuple(sorted(resolutions, key=lambda item: item.resolution_key))
 
 
 def collection_key_for_claim(claim: SourceClaim) -> str:
-    """Return the system semantic collection key for the implemented claim families."""
+    """Return a closed system-derived semantic collection key."""
 
-    if claim.collection_key_hint:
-        return _normalize_key_text(claim.collection_key_hint)
     if isinstance(claim.value, DegreeClaimValue):
         return f"degree:{claim.value.level.value}"
+    if isinstance(claim.subject, DegreeClaimSubject):
+        return f"degree:{claim.subject.level.value}"
+
     if isinstance(claim.value, FundingClaimValue):
         return f"funding:{claim.value.component_type.value}"
+    if isinstance(claim.subject, FundingClaimSubject):
+        return f"funding:{claim.subject.component_type.value}"
+
     if isinstance(claim.value, EligibilityClaimValue):
-        return f"eligibility:{claim.value.rule_type.value}"
+        slot = _eligibility_slot(claim.value.operator)
+        return f"eligibility:{claim.value.rule_type.value}:{slot}"
+    if isinstance(claim.subject, EligibilityClaimSubject):
+        return f"eligibility:{claim.subject.rule_type.value}:family"
+
     if claim.claim_type is ClaimType.APPLICATION_OPENING:
         return "application:opening"
     if claim.claim_type is ClaimType.APPLICATION_DEADLINE:
         return "application:deadline"
-    return claim.claim_type.value
+    raise ValueError(f"claim lacks a typed collection identity: {claim.claim_type.value}")
+
+
+def normalize_claim_value(claim: SourceClaim) -> dict[str, Any] | None:
+    """Normalize typed source values without adding unsupported semantics."""
+
+    if claim.value is None:
+        return None
+    value = claim.value
+    if isinstance(value, DegreeClaimValue):
+        return {"kind": "degree", "level": value.level.value}
+    if isinstance(value, TemporalClaimValue):
+        if value.precision is TemporalPrecision.DATE:
+            return {
+                "kind": "temporal",
+                "precision": "date",
+                "calendar_date": value.calendar_date.isoformat(),
+            }
+        normalized_instant = value.datetime_value.astimezone(UTC)
+        return {
+            "kind": "temporal",
+            "precision": "datetime",
+            "datetime_value": normalized_instant.isoformat().replace("+00:00", "Z"),
+        }
+    if isinstance(value, FundingClaimValue):
+        return _normalize_funding(value)
+    if isinstance(value, EligibilityClaimValue):
+        return _normalize_eligibility(value)
+    raise TypeError(f"unsupported PR6 claim value: {type(value)!r}")
+
+
+def _resolve_eligibility_family(
+    family: list[ClaimAssessmentInput],
+) -> tuple[ClaimResolution, ...]:
+    rule_type = _eligibility_rule_type(family[0].claim)
+    scope = family[0].scope
+    for item in family[1:]:
+        if _eligibility_rule_type(item.claim) != rule_type or item.scope != scope:
+            raise ValueError("eligibility family contains mixed rule type or scope")
+
+    family_claims = [item for item in family if item.claim.value is None]
+    slot_groups: dict[str, list[ClaimAssessmentInput]] = {}
+    for item in family:
+        if item.claim.value is None:
+            continue
+        key = collection_key_for_claim(item.claim)
+        slot_groups.setdefault(key, []).append(item)
+
+    if not slot_groups:
+        return (_resolve_exact_group(family_claims),)
+
+    family_accepted = _accepted_claims(family_claims)
+    family_top = _top_authority_claims(family_accepted)
+    family_value_resolution = (
+        _resolve_values(ClaimType.ELIGIBILITY_RULE, family_top) if family_top else None
+    )
+
+    if family_value_resolution is not None and family_value_resolution.conflict:
+        return (
+            _eligibility_family_conflict(
+                family=family,
+                rule_type=rule_type,
+                scope=scope,
+                reason="SAME_AUTHORITY_ELIGIBILITY_APPLICABILITY_CONFLICT",
+            ),
+        )
+
+    output: list[ClaimResolution] = []
+    for slot_key, slot_claims in sorted(slot_groups.items()):
+        slot_accepted = _accepted_claims(slot_claims)
+        if not family_top or not slot_accepted:
+            output.append(_resolve_exact_group(slot_claims))
+            continue
+
+        slot_top = _top_authority_claims(slot_accepted)
+        family_priority = _authority_priority(family_top[0])
+        slot_priority = _authority_priority(slot_top[0])
+
+        if family_priority < slot_priority:
+            output.append(
+                _eligibility_family_overrides_slot(
+                    family=family,
+                    family_top=family_top,
+                    slot_claims=slot_claims,
+                    slot_key=slot_key,
+                )
+            )
+            continue
+
+        if family_priority == slot_priority:
+            output.append(
+                _eligibility_family_conflict(
+                    family=family + slot_claims,
+                    rule_type=rule_type,
+                    scope=scope,
+                    collection_key=slot_key,
+                    reason="SAME_AUTHORITY_APPLICABILITY_VALUE_CONFLICT",
+                )
+            )
+            continue
+
+        resolved = _resolve_exact_group(slot_claims)
+        output.append(
+            _append_resolution_members(
+                resolved,
+                [
+                    _member(
+                        item,
+                        ResolutionMemberRole.COMPETING,
+                        extra=("LOWER_AUTHORITY_FAMILY_ASSERTION",),
+                    )
+                    for item in family_top
+                ],
+            )
+        )
+
+    return tuple(output)
+
+
+def _eligibility_family_overrides_slot(
+    *,
+    family: list[ClaimAssessmentInput],
+    family_top: list[_AcceptedClaim],
+    slot_claims: list[ClaimAssessmentInput],
+    slot_key: str,
+) -> ClaimResolution:
+    exemplar = slot_claims[0]
+    state_resolution = _resolve_values(ClaimType.ELIGIBILITY_RULE, family_top)
+    members: list[ResolutionMember] = []
+
+    top_keys = {item.assessment.assessment_key for item in family_top}
+    for item in family:
+        role = (
+            ResolutionMemberRole.EFFECTIVE
+            if item.assessment_key in top_keys
+            else ResolutionMemberRole.COMPETING
+        )
+        members.append(_member(item, role))
+    for item in slot_claims:
+        members.append(
+            _member(
+                item,
+                ResolutionMemberRole.COMPETING,
+                extra=("LOWER_AUTHORITY_CONSTRAINT",),
+            )
+        )
+
+    return ClaimResolution(
+        resolution_key=_resolution_key(_FIELD_PATHS[ClaimType.ELIGIBILITY_RULE], slot_key, exemplar.scope),
+        claim_type=ClaimType.ELIGIBILITY_RULE,
+        field_path=_FIELD_PATHS[ClaimType.ELIGIBILITY_RULE],
+        collection_key=slot_key,
+        scope=exemplar.scope,
+        outcome=ResolutionOutcome.RESOLVED_BY_AUTHORITY,
+        effective_state=state_resolution.state,
+        effective_value=None,
+        effective_value_hash=state_resolution.value_hash,
+        members=_sorted_members(members),
+        reason_codes=("STRONGER_FAMILY_ASSERTION_OVERRIDES_CONSTRAINT",),
+    )
+
+
+def _eligibility_family_conflict(
+    *,
+    family: list[ClaimAssessmentInput],
+    rule_type: str,
+    scope: ResolvedScope,
+    reason: str,
+    collection_key: str | None = None,
+) -> ClaimResolution:
+    key = collection_key or f"eligibility:{rule_type}:family"
+    members = [
+        _member(item, ResolutionMemberRole.COMPETING)
+        for item in sorted(family, key=lambda value: (value.source_key, value.assessment_key))
+    ]
+    return ClaimResolution(
+        resolution_key=_resolution_key(_FIELD_PATHS[ClaimType.ELIGIBILITY_RULE], key, scope),
+        claim_type=ClaimType.ELIGIBILITY_RULE,
+        field_path=_FIELD_PATHS[ClaimType.ELIGIBILITY_RULE],
+        collection_key=key,
+        scope=scope,
+        outcome=ResolutionOutcome.CONFLICT_REVIEW_REQUIRED,
+        effective_state=None,
+        effective_value=None,
+        effective_value_hash=None,
+        members=_sorted_members(members),
+        reason_codes=(reason,),
+    )
 
 
 def _resolve_exact_group(group: list[ClaimAssessmentInput]) -> ClaimResolution:
+    if not group:
+        raise ValueError("cannot resolve an empty claim group")
+
     ordered = sorted(group, key=lambda item: (item.source_key, item.assessment_key))
     exemplar = ordered[0]
     claim_type = exemplar.claim.claim_type
     field_path = _FIELD_PATHS[claim_type]
     collection_key = collection_key_for_claim(exemplar.claim)
     scope = exemplar.scope
-    resolution_key = _resolution_key(field_path, collection_key, scope)
 
+    for item in ordered[1:]:
+        if item.scope != scope:
+            raise ValueError("exact claim group contains mixed scope")
+        if item.claim.claim_type is not claim_type:
+            raise ValueError("exact claim group contains mixed claim type")
+        if collection_key_for_claim(item.claim) != collection_key:
+            raise ValueError("exact claim group contains mixed collection key")
+
+    resolution_key = _resolution_key(field_path, collection_key, scope)
     members: list[ResolutionMember] = []
     accepted: list[_AcceptedClaim] = []
     saw_stale = False
@@ -257,43 +485,17 @@ def _resolve_exact_group(group: list[ClaimAssessmentInput]) -> ClaimResolution:
     saw_unresolved = False
 
     for assessment in ordered:
-        if assessment.scope_status is ScopeResolutionStatus.OUT_OF_TARGET_SCOPE:
-            members.append(_member(assessment, ResolutionMemberRole.OUT_OF_SCOPE))
+        accepted_item, role = _classify_assessment(assessment)
+        if accepted_item is not None:
+            accepted.append(accepted_item)
             continue
-        if assessment.scope_status is not ScopeResolutionStatus.RESOLVED_EXISTING:
-            saw_unresolved = True
-            members.append(_member(assessment, ResolutionMemberRole.UNRESOLVED))
-            continue
-        if assessment.evidence_status is not EvidenceMatchStatus.MATCHED:
-            saw_unresolved = True
-            members.append(_member(assessment, ResolutionMemberRole.UNRESOLVED))
-            continue
-        if assessment.authority_status is AuthorityStatus.UNSUPPORTED_AUTHORITY:
-            saw_unsupported = True
-            members.append(_member(assessment, ResolutionMemberRole.REJECTED_AUTHORITY))
-            continue
-        if assessment.authority_status is not AuthorityStatus.AUTHORIZED:
-            saw_unresolved = True
-            members.append(_member(assessment, ResolutionMemberRole.UNRESOLVED))
-            continue
-        if assessment.applicability_status is ApplicabilityStatus.STALE:
+        if role is ResolutionMemberRole.STALE:
             saw_stale = True
-            members.append(_member(assessment, ResolutionMemberRole.STALE))
-            continue
-        if assessment.applicability_status not in _APPLICABLE:
+        elif role is ResolutionMemberRole.REJECTED_AUTHORITY:
+            saw_unsupported = True
+        elif role is ResolutionMemberRole.UNRESOLVED:
             saw_unresolved = True
-            members.append(_member(assessment, ResolutionMemberRole.UNRESOLVED))
-            continue
-
-        normalized = normalize_claim_value(assessment.claim)
-        accepted.append(
-            _AcceptedClaim(
-                assessment=assessment,
-                state=assessment.claim.value_state,
-                normalized_value=normalized,
-                normalized_hash=_hash_value_state(assessment.claim.value_state, normalized),
-            )
-        )
+        members.append(_member(assessment, role))
 
     if not accepted:
         if saw_unsupported and not saw_stale and not saw_unresolved:
@@ -315,20 +517,27 @@ def _resolve_exact_group(group: list[ClaimAssessmentInput]) -> ClaimResolution:
             effective_state=None,
             effective_value=None,
             effective_value_hash=None,
-            members=tuple(members),
+            members=_sorted_members(members),
             reason_codes=reasons,
         )
 
-    top_priority = min(item.assessment.authority_priority or 0 for item in accepted)
-    strongest = [item for item in accepted if item.assessment.authority_priority == top_priority]
-    weaker = [item for item in accepted if item.assessment.authority_priority != top_priority]
+    strongest = _top_authority_claims(accepted)
+    top_priority = _authority_priority(strongest[0])
+    weaker = [item for item in accepted if _authority_priority(item) != top_priority]
 
     value_resolution = _resolve_values(claim_type, strongest)
     if value_resolution.conflict:
         members.extend(
             _member(item.assessment, ResolutionMemberRole.COMPETING) for item in strongest
         )
-        members.extend(_weaker_member(item, strongest) for item in weaker)
+        members.extend(
+            _member(
+                item.assessment,
+                ResolutionMemberRole.COMPETING,
+                extra=("LOWER_AUTHORITY_NON_EFFECTIVE",),
+            )
+            for item in weaker
+        )
         return ClaimResolution(
             resolution_key=resolution_key,
             claim_type=claim_type,
@@ -360,7 +569,22 @@ def _resolve_exact_group(group: list[ClaimAssessmentInput]) -> ClaimResolution:
         )
         members.append(_member(item.assessment, role))
     for item in weaker:
-        members.append(_weaker_member(item, strongest, value_resolution=value_resolution))
+        if _accepted_matches_resolution(item, value_resolution):
+            members.append(
+                _member(
+                    item.assessment,
+                    ResolutionMemberRole.CORROBORATING,
+                    extra=("LOWER_AUTHORITY_CORROBORATION",),
+                )
+            )
+        else:
+            members.append(
+                _member(
+                    item.assessment,
+                    ResolutionMemberRole.COMPETING,
+                    extra=("LOWER_AUTHORITY_NON_EFFECTIVE",),
+                )
+            )
 
     if weaker_disagrees:
         outcome = ResolutionOutcome.RESOLVED_BY_AUTHORITY
@@ -393,32 +617,55 @@ def _resolve_exact_group(group: list[ClaimAssessmentInput]) -> ClaimResolution:
     )
 
 
-def normalize_claim_value(claim: SourceClaim) -> dict[str, Any] | None:
-    """Normalize typed source values without adding unsupported semantics."""
+def _accepted_claims(group: list[ClaimAssessmentInput]) -> list[_AcceptedClaim]:
+    accepted: list[_AcceptedClaim] = []
+    for assessment in group:
+        item, _ = _classify_assessment(assessment)
+        if item is not None:
+            accepted.append(item)
+    return accepted
 
-    if claim.value is None:
-        return None
-    value = claim.value
-    if isinstance(value, DegreeClaimValue):
-        return {"kind": "degree", "level": value.level.value}
-    if isinstance(value, TemporalClaimValue):
-        if value.precision is TemporalPrecision.DATE:
-            return {
-                "kind": "temporal",
-                "precision": "date",
-                "calendar_date": value.calendar_date.isoformat(),
-            }
-        normalized_instant = value.datetime_value.astimezone(UTC)
-        return {
-            "kind": "temporal",
-            "precision": "datetime",
-            "datetime_value": normalized_instant.isoformat().replace("+00:00", "Z"),
-        }
-    if isinstance(value, FundingClaimValue):
-        return _normalize_funding(value)
-    if isinstance(value, EligibilityClaimValue):
-        return _normalize_eligibility(value)
-    raise TypeError(f"unsupported PR6 claim value: {type(value)!r}")
+
+def _classify_assessment(
+    assessment: ClaimAssessmentInput,
+) -> tuple[_AcceptedClaim | None, ResolutionMemberRole]:
+    if assessment.scope_status is ScopeResolutionStatus.OUT_OF_TARGET_SCOPE:
+        return None, ResolutionMemberRole.OUT_OF_SCOPE
+    if assessment.scope_status is not ScopeResolutionStatus.RESOLVED_EXISTING:
+        return None, ResolutionMemberRole.UNRESOLVED
+    if assessment.evidence_status is not EvidenceMatchStatus.MATCHED:
+        return None, ResolutionMemberRole.UNRESOLVED
+    if assessment.authority_status is AuthorityStatus.UNSUPPORTED_AUTHORITY:
+        return None, ResolutionMemberRole.REJECTED_AUTHORITY
+    if assessment.authority_status is not AuthorityStatus.AUTHORIZED:
+        return None, ResolutionMemberRole.UNRESOLVED
+    if assessment.applicability_status is ApplicabilityStatus.STALE:
+        return None, ResolutionMemberRole.STALE
+    if assessment.applicability_status not in _APPLICABLE:
+        return None, ResolutionMemberRole.UNRESOLVED
+
+    normalized = normalize_claim_value(assessment.claim)
+    item = _AcceptedClaim(
+        assessment=assessment,
+        state=assessment.claim.value_state,
+        normalized_value=normalized,
+        normalized_hash=_hash_value_state(assessment.claim.value_state, normalized),
+    )
+    return item, ResolutionMemberRole.EFFECTIVE
+
+
+def _top_authority_claims(claims: list[_AcceptedClaim]) -> list[_AcceptedClaim]:
+    if not claims:
+        return []
+    top_priority = min(_authority_priority(item) for item in claims)
+    return [item for item in claims if _authority_priority(item) == top_priority]
+
+
+def _authority_priority(item: _AcceptedClaim) -> int:
+    priority = item.assessment.authority_priority
+    if priority is None:
+        raise ValueError("accepted claim is missing authority priority")
+    return priority
 
 
 def _resolve_values(claim_type: ClaimType, claims: list[_AcceptedClaim]) -> _ValueResolution:
@@ -475,7 +722,7 @@ def _resolve_temporal_values(claims: list[_AcceptedClaim]) -> _ValueResolution:
             return _ValueResolution(conflict=True)
         if date_values:
             asserted_date = next(iter(date_values))
-            if local_dates != {asserted_date}:
+            if asserted_date not in local_dates:
                 return _ValueResolution(conflict=True)
         instant = next(iter(instants))
         value = {
@@ -490,6 +737,7 @@ def _resolve_temporal_values(claims: list[_AcceptedClaim]) -> _ValueResolution:
             value_hash=_hash_value_state(ClaimValueState.ASSERTED_VALUE, value),
             partial=bool(date_values),
             reason_codes=("TEMPORAL_PRECISION_REFINEMENT",) if date_values else (),
+            temporal_local_dates=tuple(sorted(local_dates)),
         )
 
     if not date_values:
@@ -525,10 +773,10 @@ def _normalize_eligibility(value: EligibilityClaimValue) -> dict[str, Any]:
     normalized_value: Any
     if isinstance(value.value, list):
         normalized_items = [_normalize_scalar(item) for item in value.value]
-        normalized_value = sorted(
-            {json.dumps(item, sort_keys=True, ensure_ascii=False) for item in normalized_items}
-        )
-        normalized_value = [json.loads(item) for item in normalized_value]
+        serialized = {
+            json.dumps(item, sort_keys=True, ensure_ascii=False) for item in normalized_items
+        }
+        normalized_value = [json.loads(item) for item in sorted(serialized)]
     else:
         normalized_value = _normalize_scalar(value.value)
     return {
@@ -568,41 +816,63 @@ def _accepted_matches_resolution(item: _AcceptedClaim, resolution: _ValueResolut
         ClaimType.APPLICATION_OPENING,
         ClaimType.APPLICATION_DEADLINE,
     }:
-        return _temporal_claim_compatible(item.assessment.claim, resolution.value)
+        return _temporal_claim_compatible(item.assessment.claim, resolution)
     return item.normalized_hash == resolution.value_hash
 
 
-def _temporal_claim_compatible(claim: SourceClaim, resolved: dict[str, Any] | None) -> bool:
-    if resolved is None or not isinstance(claim.value, TemporalClaimValue):
+def _temporal_claim_compatible(claim: SourceClaim, resolution: _ValueResolution) -> bool:
+    if resolution.value is None or not isinstance(claim.value, TemporalClaimValue):
         return False
     value = claim.value
-    if resolved["precision"] == "date":
+    if resolution.value["precision"] == "date":
         return (
             value.precision is TemporalPrecision.DATE
-            and value.calendar_date.isoformat() == resolved["calendar_date"]
+            and value.calendar_date.isoformat() == resolution.value["calendar_date"]
         )
-    resolved_instant = datetime.fromisoformat(resolved["datetime_value"].replace("Z", "+00:00"))
+
+    resolved_instant = datetime.fromisoformat(
+        resolution.value["datetime_value"].replace("Z", "+00:00")
+    )
     if value.precision is TemporalPrecision.DATETIME:
         return value.datetime_value.astimezone(UTC) == resolved_instant.astimezone(UTC)
-    return value.calendar_date.isoformat() == resolved_instant.date().isoformat()
+    return value.calendar_date.isoformat() in set(resolution.temporal_local_dates)
 
 
-def _weaker_member(
-    item: _AcceptedClaim,
-    strongest: list[_AcceptedClaim],
-    *,
-    value_resolution: _ValueResolution | None = None,
-) -> ResolutionMember:
-    if value_resolution is not None and _accepted_matches_resolution(item, value_resolution):
-        return _member(
-            item.assessment,
-            ResolutionMemberRole.CORROBORATING,
-            extra=("LOWER_AUTHORITY_CORROBORATION",),
-        )
-    return _member(
-        item.assessment,
-        ResolutionMemberRole.COMPETING,
-        extra=("LOWER_AUTHORITY_NON_EFFECTIVE",),
+def _eligibility_rule_type(claim: SourceClaim) -> str:
+    if isinstance(claim.value, EligibilityClaimValue):
+        return claim.value.rule_type.value
+    if isinstance(claim.subject, EligibilityClaimSubject):
+        return claim.subject.rule_type.value
+    raise ValueError("eligibility claim requires typed value or subject")
+
+
+def _eligibility_slot(operator: EligibilityOperator) -> str:
+    return {
+        EligibilityOperator.GTE: "lower_bound",
+        EligibilityOperator.LTE: "upper_bound",
+        EligibilityOperator.EQUALS: "equals",
+        EligibilityOperator.IN: "include_set",
+        EligibilityOperator.NOT_IN: "exclude_set",
+    }[operator]
+
+
+def _append_resolution_members(
+    resolution: ClaimResolution,
+    members: list[ResolutionMember],
+) -> ClaimResolution:
+    return ClaimResolution(
+        resolution_key=resolution.resolution_key,
+        claim_type=resolution.claim_type,
+        field_path=resolution.field_path,
+        collection_key=resolution.collection_key,
+        scope=resolution.scope,
+        outcome=resolution.outcome,
+        effective_state=resolution.effective_state,
+        effective_value=resolution.effective_value,
+        effective_value_hash=resolution.effective_value_hash,
+        members=_sorted_members(list(resolution.members) + members),
+        reason_codes=resolution.reason_codes,
+        policy_version=resolution.policy_version,
     )
 
 
@@ -621,7 +891,15 @@ def _member(
 
 
 def _sorted_members(members: list[ResolutionMember]) -> tuple[ResolutionMember, ...]:
-    return tuple(sorted(members, key=lambda item: (item.source_key, item.assessment_key, item.role)))
+    unique: dict[tuple[str, str, ResolutionMemberRole], ResolutionMember] = {}
+    for item in members:
+        unique[(item.assessment_key, item.source_key, item.role)] = item
+    return tuple(
+        sorted(
+            unique.values(),
+            key=lambda item: (item.source_key, item.assessment_key, item.role.value),
+        )
+    )
 
 
 def _resolution_key(field_path: str, collection_key: str, scope: ResolvedScope) -> str:
@@ -638,10 +916,6 @@ def _hash_value_state(state: ClaimValueState, value: dict[str, Any] | None) -> s
     return hashlib.sha256(
         _canonical_json({"state": state.value, "value": value}).encode("utf-8")
     ).hexdigest()
-
-
-def _normalize_key_text(value: str) -> str:
-    return clean_text(value).casefold()
 
 
 def _canonical_json(value: object) -> str:
