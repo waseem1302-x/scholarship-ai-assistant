@@ -36,6 +36,9 @@ param catalogueAiModel string = 'unconfigured'
 @description('Fail-closed catalogue extraction feature gate. Enable only after gold evaluation.')
 param catalogueAiIngestionEnabled bool = false
 
+@description('Fail-closed bounded official-site crawling gate. Enable only for reviewed acquisition runs.')
+param catalogueBoundedCrawlingEnabled bool = false
+
 @description('Reviewed input-token price per million; required to enable catalogue AI.')
 param catalogueAiInputCostPerMillion string = '0'
 
@@ -405,6 +408,10 @@ resource catalogueIngestionJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'APP_CATALOGUE_WEB_DISCOVERY_ENABLED'
               value: 'false'
+            }
+            {
+              name: 'APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED'
+              value: string(catalogueBoundedCrawlingEnabled)
             }
             {
               name: 'APP_CATALOGUE_DOCUMENT_INTELLIGENCE_ENABLED'
