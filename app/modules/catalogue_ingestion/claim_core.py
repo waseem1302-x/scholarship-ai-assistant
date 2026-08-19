@@ -176,7 +176,7 @@ class FundingClaimSubject(StrictModel):
     component_type: FundingComponentType
 
     @model_validator(mode="after")
-    def reject_untyped_other(self) -> "FundingClaimSubject":
+    def reject_untyped_other(self) -> FundingClaimSubject:
         if self.component_type is FundingComponentType.OTHER:
             raise ValueError("other funding components require a future typed subtype")
         return self
@@ -187,7 +187,7 @@ class EligibilityClaimSubject(StrictModel):
     rule_type: EligibilityRuleType
 
     @model_validator(mode="after")
-    def reject_untyped_other(self) -> "EligibilityClaimSubject":
+    def reject_untyped_other(self) -> EligibilityClaimSubject:
         if self.rule_type is EligibilityRuleType.OTHER:
             raise ValueError("other eligibility rules require a future typed subtype")
         return self
@@ -212,7 +212,7 @@ class TemporalClaimValue(StrictModel):
     timezone_label: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
-    def validate_precision(self) -> "TemporalClaimValue":
+    def validate_precision(self) -> TemporalClaimValue:
         if self.precision is TemporalPrecision.DATE:
             if self.calendar_date is None or self.datetime_value is not None:
                 raise ValueError("date precision requires calendar_date only")
@@ -245,7 +245,7 @@ class FundingClaimValue(StrictModel):
         return value.upper()
 
     @model_validator(mode="after")
-    def validate_amount_shape(self) -> "FundingClaimValue":
+    def validate_amount_shape(self) -> FundingClaimValue:
         if self.component_type is FundingComponentType.OTHER:
             raise ValueError("other funding components require a future typed subtype")
         if self.frequency is FundingFrequency.OTHER:
@@ -266,9 +266,12 @@ class FundingClaimValue(StrictModel):
         present = tuple(item is not None for item in values)
         if present != expected:
             raise ValueError("funding amount fields do not match amount_kind")
-        if self.amount_min is not None and self.amount_max is not None:
-            if self.amount_min > self.amount_max:
-                raise ValueError("funding range minimum cannot exceed maximum")
+        if (
+            self.amount_min is not None
+            and self.amount_max is not None
+            and self.amount_min > self.amount_max
+        ):
+            raise ValueError("funding range minimum cannot exceed maximum")
         if any(expected) and self.currency is None:
             raise ValueError("currency is required when a monetary amount is present")
         return self
@@ -287,7 +290,7 @@ class EligibilityClaimValue(StrictModel):
     required: bool = True
 
     @model_validator(mode="after")
-    def validate_operator_and_value_domain(self) -> "EligibilityClaimValue":
+    def validate_operator_and_value_domain(self) -> EligibilityClaimValue:
         if self.rule_type is EligibilityRuleType.OTHER:
             raise ValueError("other eligibility rules require a future typed subtype")
         list_operator = self.operator in {EligibilityOperator.IN, EligibilityOperator.NOT_IN}
@@ -303,11 +306,7 @@ class EligibilityClaimValue(StrictModel):
                 EligibilityOperator.LTE,
             }:
                 raise ValueError("numeric eligibility rules require equals/gte/lte")
-            if (
-                isinstance(self.value, list)
-                or isinstance(self.value, (str, bool))
-                or not isinstance(self.value, (int, Decimal))
-            ):
+            if isinstance(self.value, bool) or not isinstance(self.value, (int, Decimal)):
                 raise ValueError("numeric eligibility rules require a numeric scalar")
 
         if self.rule_type in _TEXT_ELIGIBILITY_TYPES:
@@ -356,7 +355,7 @@ class SourceClaim(StrictModel):
     evidence: list[EvidenceProposal] = Field(min_length=1, max_length=8)
 
     @model_validator(mode="after")
-    def validate_claim_shape(self) -> "SourceClaim":
+    def validate_claim_shape(self) -> SourceClaim:
         if self.value_state is ClaimValueState.ASSERTED_VALUE:
             if self.value is None:
                 raise ValueError("asserted_value claims require a value")
