@@ -1,11 +1,10 @@
 import hashlib
-import os
 import uuid
 from datetime import date
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -59,6 +58,10 @@ _PR6_LEDGER_TABLES = tuple(
 
 @pytest.fixture(scope="module")
 def postgres_engine():
+    import os
+
+    from sqlalchemy import create_engine
+
     database_url = os.environ.get("TEST_POSTGRES_URL")
     if not database_url:
         pytest.skip("TEST_POSTGRES_URL is required for PR6 persistence tests")
