@@ -183,17 +183,21 @@ def test_database_rejects_conflict_claim_assessment_from_another_bundle(
             id=uuid.uuid4(),
             conflict_set_id=conflict.id,
             claim_assessment_id=context.assessment_member_a.id,
+            bundle_id=context.bundle_a_id,
             role=ResolutionMemberRole.COMPETING,
         )
     )
     db_session.flush()
 
-    # Attack: conflict set A attempts to consume assessment B.
+    # Attack: conflict set A attempts to consume assessment B while presenting
+    # bundle A as the ownership witness. The assessment-side composite FK must
+    # reject the cross-bundle relationship.
     db_session.add(
         CatalogueConflictClaim(
             id=uuid.uuid4(),
             conflict_set_id=conflict.id,
             claim_assessment_id=context.assessment_b.id,
+            bundle_id=context.bundle_a_id,
             role=ResolutionMemberRole.COMPETING,
         )
     )
@@ -215,6 +219,7 @@ def test_database_rejects_review_selection_not_in_conflict_set(
             id=uuid.uuid4(),
             conflict_set_id=conflict.id,
             claim_assessment_id=context.assessment_member_a.id,
+            bundle_id=context.bundle_a_id,
             role=ResolutionMemberRole.COMPETING,
         )
     )
