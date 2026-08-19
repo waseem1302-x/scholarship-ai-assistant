@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.modules.auth.models import utc_now
-from app.modules.catalogue_ingestion import evidence_ledger_models as ledger_models
 from app.modules.catalogue_ingestion.claim_core import (
     ClaimType,
     EvidenceProposal,
@@ -54,7 +53,7 @@ from app.modules.opportunities.evidence_models import OfficialityStatus, SourceO
 _PR6_LEDGER_TABLES = tuple(
     mapper.local_table
     for mapper in Base.registry.mappers
-    if mapper.class_.__module__ == ledger_models.__name__
+    if mapper.class_.__module__ == CatalogueCandidateSourceSnapshot.__module__
 )
 
 
