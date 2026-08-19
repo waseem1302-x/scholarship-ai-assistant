@@ -797,7 +797,7 @@ class CatalogueConflictSet(Base):
     reason_code: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=func.now(),
+        default=utc_now,
         server_default=func.now(),
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
