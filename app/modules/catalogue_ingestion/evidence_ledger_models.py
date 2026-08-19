@@ -352,9 +352,7 @@ class CatalogueSourceExtraction(Base):
         server_default=SourceExtractionStatus.PENDING.value,
         index=True,
     )
-    accepted_output_json: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON(none_as_null=True)
-    )
+    accepted_output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     failure_code: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -462,13 +460,9 @@ class CatalogueFieldClaim(Base):
         _enum(ClaimType, "cat_field_claim_type"),
         index=True,
     )
-    source_subject_json: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON(none_as_null=True)
-    )
+    source_subject_json: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     scope_hint_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    source_value_json: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON(none_as_null=True)
-    )
+    source_value_json: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     source_value_hash: Mapped[str | None] = mapped_column(String(64))
     value_state: Mapped[ClaimValueState] = mapped_column(
         _enum(ClaimValueState, "cat_field_claim_value_state"),
@@ -527,7 +521,7 @@ class CatalogueClaimEvidence(Base):
     failure_code: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=utc_now,
+        default=func.now(),
         server_default=func.now(),
     )
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -658,9 +652,7 @@ class CatalogueClaimAssessment(Base):
         ForeignKey("academic_programmes.id", ondelete="RESTRICT"),
         index=True,
     )
-    normalized_value_json: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON(none_as_null=True)
-    )
+    normalized_value_json: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     normalized_value_hash: Mapped[str | None] = mapped_column(String(64))
     claim_key_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     reason_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -715,9 +707,7 @@ class CatalogueClaimResolution(Base):
     effective_state: Mapped[ClaimValueState | None] = mapped_column(
         _enum(ClaimValueState, "cat_claim_resolution_effective_state")
     )
-    effective_value_json: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON(none_as_null=True)
-    )
+    effective_value_json: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     effective_value_hash: Mapped[str | None] = mapped_column(String(64))
     reason_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(
