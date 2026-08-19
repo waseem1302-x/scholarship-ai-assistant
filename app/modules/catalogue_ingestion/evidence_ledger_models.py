@@ -771,6 +771,7 @@ class CatalogueConflictSet(Base):
             ondelete="RESTRICT",
             name="fk_cat_conflict_resolution_bundle",
         ),
+        UniqueConstraint("id", "bundle_id", name="uq_cat_conflict_set_id_bundle"),
         UniqueConstraint("resolution_id", name="uq_cat_conflict_resolution"),
         CheckConstraint(
             "(status = 'open' AND resolved_at IS NULL) OR "
@@ -805,6 +806,18 @@ class CatalogueConflictSet(Base):
 class CatalogueConflictClaim(Base):
     __tablename__ = "catalogue_conflict_claims"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["conflict_set_id", "bundle_id"],
+            ["catalogue_conflict_sets.id", "catalogue_conflict_sets.bundle_id"],
+            ondelete="RESTRICT",
+            name="fk_cat_conflict_claim_set_bundle",
+        ),
+        ForeignKeyConstraint(
+            ["claim_assessment_id", "bundle_id"],
+            ["catalogue_claim_assessments.id", "catalogue_claim_assessments.bundle_id"],
+            ondelete="RESTRICT",
+            name="fk_cat_conflict_claim_assessment_bundle",
+        ),
         UniqueConstraint(
             "conflict_set_id",
             "claim_assessment_id",
@@ -813,14 +826,9 @@ class CatalogueConflictClaim(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    conflict_set_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("catalogue_conflict_sets.id", ondelete="RESTRICT"),
-        index=True,
-    )
-    claim_assessment_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("catalogue_claim_assessments.id", ondelete="RESTRICT"),
-        index=True,
-    )
+    conflict_set_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    claim_assessment_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    bundle_id: Mapped[uuid.UUID] = mapped_column(index=True)
     role: Mapped[ResolutionMemberRole] = mapped_column(
         _enum(ResolutionMemberRole, "cat_conflict_claim_role")
     )
@@ -834,6 +842,15 @@ class CatalogueConflictClaim(Base):
 class CatalogueConflictReviewDecision(Base):
     __tablename__ = "catalogue_conflict_review_decisions"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["conflict_set_id", "selected_claim_assessment_id"],
+            [
+                "catalogue_conflict_claims.conflict_set_id",
+                "catalogue_conflict_claims.claim_assessment_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cat_conflict_review_selected_membership",
+        ),
         CheckConstraint(
             "(decision = 'select_claim' AND selected_claim_assessment_id IS NOT NULL) OR "
             "(decision <> 'select_claim' AND selected_claim_assessment_id IS NULL)",
@@ -858,10 +875,7 @@ class CatalogueConflictReviewDecision(Base):
     decision: Mapped[ConflictReviewDecisionType] = mapped_column(
         _enum(ConflictReviewDecisionType, "cat_conflict_review_decision")
     )
-    selected_claim_assessment_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("catalogue_claim_assessments.id", ondelete="RESTRICT"),
-        index=True,
-    )
+    selected_claim_assessment_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     resolution_notes: Mapped[str] = mapped_column(Text)
     reviewer_id: Mapped[uuid.UUID] = mapped_column(index=True)
     reviewer_identity_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
