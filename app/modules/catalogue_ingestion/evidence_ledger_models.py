@@ -573,11 +573,29 @@ class CatalogueClaimAssessment(Base):
             ondelete="RESTRICT",
             name="fk_cat_claim_assessment_bundle_claim_bundle",
         ),
+        ForeignKeyConstraint(
+            ["supersedes_assessment_id", "bundle_claim_id"],
+            [
+                "catalogue_claim_assessments.id",
+                "catalogue_claim_assessments.bundle_claim_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cat_claim_assessment_supersedes_bundle_claim",
+        ),
         UniqueConstraint("id", "bundle_id", name="uq_cat_claim_assessment_id_bundle"),
+        UniqueConstraint(
+            "id",
+            "bundle_claim_id",
+            name="uq_cat_claim_assessment_id_bundle_claim",
+        ),
         UniqueConstraint(
             "bundle_claim_id",
             "policy_fingerprint",
             name="uq_cat_claim_assessment_policy",
+        ),
+        CheckConstraint(
+            "supersedes_assessment_id IS NULL OR supersedes_assessment_id <> id",
+            name="ck_cat_claim_assessment_not_self_superseding",
         ),
         CheckConstraint(
             "(candidate_id IS NOT NULL AND scholarship_id IS NULL) OR "
@@ -613,10 +631,7 @@ class CatalogueClaimAssessment(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     bundle_claim_id: Mapped[uuid.UUID] = mapped_column(index=True)
     bundle_id: Mapped[uuid.UUID] = mapped_column(index=True)
-    supersedes_assessment_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("catalogue_claim_assessments.id", ondelete="RESTRICT"),
-        index=True,
-    )
+    supersedes_assessment_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     policy_fingerprint: Mapped[str] = mapped_column(String(64))
     scope_resolver_version: Mapped[str] = mapped_column(String(100))
     authority_policy_version: Mapped[str] = mapped_column(String(100))
@@ -675,6 +690,16 @@ class CatalogueClaimAssessment(Base):
 class CatalogueClaimResolution(Base):
     __tablename__ = "catalogue_claim_resolutions"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["supersedes_resolution_id", "bundle_id", "claim_key_hash"],
+            [
+                "catalogue_claim_resolutions.id",
+                "catalogue_claim_resolutions.bundle_id",
+                "catalogue_claim_resolutions.claim_key_hash",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cat_claim_resolution_supersedes_bundle_key",
+        ),
         UniqueConstraint(
             "bundle_id",
             "claim_key_hash",
@@ -682,6 +707,16 @@ class CatalogueClaimResolution(Base):
             name="uq_cat_claim_resolution_policy",
         ),
         UniqueConstraint("id", "bundle_id", name="uq_cat_resolution_id_bundle"),
+        UniqueConstraint(
+            "id",
+            "bundle_id",
+            "claim_key_hash",
+            name="uq_cat_claim_resolution_id_bundle_key",
+        ),
+        CheckConstraint(
+            "supersedes_resolution_id IS NULL OR supersedes_resolution_id <> id",
+            name="ck_cat_claim_resolution_not_self_superseding",
+        ),
         CheckConstraint(
             "(effective_state IS NULL AND effective_value_json IS NULL "
             "AND effective_value_hash IS NULL) OR "
@@ -699,10 +734,7 @@ class CatalogueClaimResolution(Base):
         ForeignKey("catalogue_evidence_bundles.id", ondelete="RESTRICT"),
         index=True,
     )
-    supersedes_resolution_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("catalogue_claim_resolutions.id", ondelete="RESTRICT"),
-        index=True,
-    )
+    supersedes_resolution_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     claim_key_hash: Mapped[str] = mapped_column(String(64))
     canonical_field_path: Mapped[str] = mapped_column(String(255))
     collection_key: Mapped[str] = mapped_column(String(255))
@@ -851,6 +883,24 @@ class CatalogueConflictReviewDecision(Base):
             ondelete="RESTRICT",
             name="fk_cat_conflict_review_selected_membership",
         ),
+        ForeignKeyConstraint(
+            ["supersedes_decision_id", "conflict_set_id"],
+            [
+                "catalogue_conflict_review_decisions.id",
+                "catalogue_conflict_review_decisions.conflict_set_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cat_conflict_review_supersedes_conflict",
+        ),
+        UniqueConstraint(
+            "id",
+            "conflict_set_id",
+            name="uq_cat_conflict_review_id_conflict",
+        ),
+        CheckConstraint(
+            "supersedes_decision_id IS NULL OR supersedes_decision_id <> id",
+            name="ck_cat_conflict_review_not_self_superseding",
+        ),
         CheckConstraint(
             "(decision = 'select_claim' AND selected_claim_assessment_id IS NOT NULL) OR "
             "(decision <> 'select_claim' AND selected_claim_assessment_id IS NULL)",
@@ -868,10 +918,7 @@ class CatalogueConflictReviewDecision(Base):
         ForeignKey("catalogue_conflict_sets.id", ondelete="RESTRICT"),
         index=True,
     )
-    supersedes_decision_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("catalogue_conflict_review_decisions.id", ondelete="RESTRICT"),
-        index=True,
-    )
+    supersedes_decision_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     decision: Mapped[ConflictReviewDecisionType] = mapped_column(
         _enum(ConflictReviewDecisionType, "cat_conflict_review_decision")
     )
@@ -928,7 +975,34 @@ class CatalogueSnapshotPromotion(Base):
 class CatalogueGraphMaterialization(Base):
     __tablename__ = "catalogue_graph_materializations"
     __table_args__ = (
+        ForeignKeyConstraint(
+            [
+                "previous_materialization_id",
+                "entity_type",
+                "entity_id",
+                "field_path",
+            ],
+            [
+                "catalogue_graph_materializations.id",
+                "catalogue_graph_materializations.entity_type",
+                "catalogue_graph_materializations.entity_id",
+                "catalogue_graph_materializations.field_path",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cat_graph_materialization_previous_target",
+        ),
+        UniqueConstraint(
+            "id",
+            "entity_type",
+            "entity_id",
+            "field_path",
+            name="uq_cat_graph_materialization_id_target",
+        ),
         UniqueConstraint("idempotency_key", name="uq_cat_graph_materialization_key"),
+        CheckConstraint(
+            "previous_materialization_id IS NULL OR previous_materialization_id <> id",
+            name="ck_cat_graph_materialization_not_self_previous",
+        ),
         Index("ix_cat_graph_materialization_target", "entity_type", "entity_id"),
     )
 
@@ -946,10 +1020,7 @@ class CatalogueGraphMaterialization(Base):
     field_path: Mapped[str] = mapped_column(String(255))
     target_state_fingerprint: Mapped[str] = mapped_column(String(64))
     resulting_state_fingerprint: Mapped[str | None] = mapped_column(String(64))
-    previous_materialization_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("catalogue_graph_materializations.id", ondelete="RESTRICT"),
-        index=True,
-    )
+    previous_materialization_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     idempotency_key: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
