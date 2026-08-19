@@ -521,7 +521,7 @@ class CatalogueClaimEvidence(Base):
     failure_code: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=func.now(),
+        default=utc_now,
         server_default=func.now(),
     )
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
