@@ -539,6 +539,7 @@ class CatalogueEvidenceBundleClaim(Base):
             ondelete="RESTRICT",
             name="fk_cat_bundle_claim_source_bundle",
         ),
+        UniqueConstraint("id", "bundle_id", name="uq_cat_bundle_claim_id_bundle"),
         UniqueConstraint("bundle_id", "claim_id", name="uq_cat_bundle_claim"),
         Index("ix_cat_bundle_claim_source", "bundle_source_id", "claim_id"),
     )
@@ -563,6 +564,16 @@ class CatalogueEvidenceBundleClaim(Base):
 class CatalogueClaimAssessment(Base):
     __tablename__ = "catalogue_claim_assessments"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["bundle_claim_id", "bundle_id"],
+            [
+                "catalogue_evidence_bundle_claims.id",
+                "catalogue_evidence_bundle_claims.bundle_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_cat_claim_assessment_bundle_claim_bundle",
+        ),
+        UniqueConstraint("id", "bundle_id", name="uq_cat_claim_assessment_id_bundle"),
         UniqueConstraint(
             "bundle_claim_id",
             "policy_fingerprint",
@@ -600,10 +611,8 @@ class CatalogueClaimAssessment(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    bundle_claim_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("catalogue_evidence_bundle_claims.id", ondelete="RESTRICT"),
-        index=True,
-    )
+    bundle_claim_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    bundle_id: Mapped[uuid.UUID] = mapped_column(index=True)
     supersedes_assessment_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("catalogue_claim_assessments.id", ondelete="RESTRICT"),
         index=True,
@@ -720,6 +729,18 @@ class CatalogueClaimResolution(Base):
 class CatalogueClaimResolutionMember(Base):
     __tablename__ = "catalogue_claim_resolution_members"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["resolution_id", "bundle_id"],
+            ["catalogue_claim_resolutions.id", "catalogue_claim_resolutions.bundle_id"],
+            ondelete="RESTRICT",
+            name="fk_cat_resolution_member_resolution_bundle",
+        ),
+        ForeignKeyConstraint(
+            ["claim_assessment_id", "bundle_id"],
+            ["catalogue_claim_assessments.id", "catalogue_claim_assessments.bundle_id"],
+            ondelete="RESTRICT",
+            name="fk_cat_resolution_member_assessment_bundle",
+        ),
         UniqueConstraint(
             "resolution_id",
             "claim_assessment_id",
@@ -728,14 +749,9 @@ class CatalogueClaimResolutionMember(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    resolution_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("catalogue_claim_resolutions.id", ondelete="RESTRICT"),
-        index=True,
-    )
-    claim_assessment_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("catalogue_claim_assessments.id", ondelete="RESTRICT"),
-        index=True,
-    )
+    resolution_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    claim_assessment_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    bundle_id: Mapped[uuid.UUID] = mapped_column(index=True)
     role: Mapped[ResolutionMemberRole] = mapped_column(
         _enum(ResolutionMemberRole, "cat_resolution_member_role")
     )
