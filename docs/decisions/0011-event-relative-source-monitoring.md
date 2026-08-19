@@ -53,6 +53,7 @@ class MonitoringDecision:
     priority: int
     policy_version: str
 
+
 class MonitoringSchedulePolicy(Protocol):
     def next_check(
         self,
