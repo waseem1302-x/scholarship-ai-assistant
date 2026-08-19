@@ -416,7 +416,11 @@ def _eligibility_family_overrides_slot(
         )
 
     return ClaimResolution(
-        resolution_key=_resolution_key(_FIELD_PATHS[ClaimType.ELIGIBILITY_RULE], slot_key, exemplar.scope),
+        resolution_key=_resolution_key(
+            _FIELD_PATHS[ClaimType.ELIGIBILITY_RULE],
+            slot_key,
+            exemplar.scope,
+        ),
         claim_type=ClaimType.ELIGIBILITY_RULE,
         field_path=_FIELD_PATHS[ClaimType.ELIGIBILITY_RULE],
         collection_key=slot_key,
@@ -923,16 +927,16 @@ def _canonical_json(value: object) -> str:
 
 
 __all__ = [
+    "RESOLUTION_CORE_VERSION",
     "ApplicabilityStatus",
     "AuthorityStatus",
     "ClaimAssessmentInput",
     "ClaimResolution",
     "EvidenceMatchStatus",
-    "RESOLUTION_CORE_VERSION",
-    "ResolvedScope",
     "ResolutionMember",
     "ResolutionMemberRole",
     "ResolutionOutcome",
+    "ResolvedScope",
     "ScopeResolutionStatus",
     "collection_key_for_claim",
     "normalize_claim_value",
