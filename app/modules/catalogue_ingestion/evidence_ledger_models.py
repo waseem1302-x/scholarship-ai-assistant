@@ -305,6 +305,17 @@ class CatalogueSourceExtraction(Base):
             "(candidate_source_snapshot_id IS NULL AND source_snapshot_id IS NOT NULL)",
             name="ck_cat_source_extraction_snapshot_xor",
         ),
+        CheckConstraint(
+            "(status = 'pending' AND started_at IS NULL AND completed_at IS NULL "
+            "AND accepted_output_json IS NULL AND failure_code IS NULL) OR "
+            "(status = 'running' AND started_at IS NOT NULL AND completed_at IS NULL "
+            "AND accepted_output_json IS NULL AND failure_code IS NULL) OR "
+            "(status = 'succeeded' AND started_at IS NOT NULL AND completed_at IS NOT NULL "
+            "AND accepted_output_json IS NOT NULL AND failure_code IS NULL) OR "
+            "(status = 'failed' AND completed_at IS NOT NULL "
+            "AND accepted_output_json IS NULL AND failure_code IS NOT NULL)",
+            name="ck_cat_source_extraction_state_shape",
+        ),
         UniqueConstraint(
             "candidate_source_snapshot_id",
             "contract_fingerprint",
@@ -370,6 +381,13 @@ class CatalogueSourceExtractionAttempt(Base):
             "latency_ms IS NULL OR latency_ms >= 0",
             name="ck_cat_source_attempt_latency",
         ),
+        CheckConstraint(
+            "(status = 'in_progress' AND completed_at IS NULL AND error_code IS NULL) OR "
+            "(status = 'succeeded' AND completed_at IS NOT NULL AND error_code IS NULL) OR "
+            "(status IN ('rate_limited', 'timeout', 'provider_failed', 'schema_failed', "
+            "'abandoned') AND completed_at IS NOT NULL AND error_code IS NOT NULL)",
+            name="ck_cat_source_attempt_state_shape",
+        ),
         Index("ix_cat_source_attempt_status", "status", "started_at"),
     )
 
@@ -419,9 +437,17 @@ class CatalogueFieldClaim(Base):
         ),
         CheckConstraint("ordinal >= 0", name="ck_cat_field_claim_ordinal"),
         CheckConstraint(
-            "(value_state = 'asserted_value' AND source_value_hash IS NOT NULL) OR "
-            "(value_state <> 'asserted_value' AND source_value_hash IS NULL)",
-            name="ck_cat_field_claim_value_hash_state",
+            "(value_state = 'asserted_value' AND source_value_json IS NOT NULL "
+            "AND source_value_hash IS NOT NULL) OR "
+            "(value_state <> 'asserted_value' AND source_value_json IS NULL "
+            "AND source_value_hash IS NULL)",
+            name="ck_cat_field_claim_value_state_shape",
+        ),
+        CheckConstraint(
+            "value_state = 'asserted_value' OR claim_type NOT IN "
+            "('degree_level', 'funding_component', 'eligibility_rule') "
+            "OR source_subject_json IS NOT NULL",
+            name="ck_cat_field_claim_collection_subject",
         ),
         Index("ix_cat_field_claim_type_created", "claim_type", "created_at"),
     )
@@ -466,12 +492,16 @@ class CatalogueClaimEvidence(Base):
             name="ck_cat_claim_evidence_excerpt_nonempty",
         ),
         CheckConstraint(
+            "(validation_status = 'pending' AND excerpt_start IS NULL "
+            "AND excerpt_end IS NULL AND validated_at IS NULL AND failure_code IS NULL) OR "
             "(validation_status = 'matched' AND excerpt_start IS NOT NULL "
             "AND excerpt_end IS NOT NULL AND excerpt_start >= 0 "
-            "AND excerpt_end >= excerpt_start) OR "
-            "(validation_status <> 'matched' AND excerpt_start IS NULL "
-            "AND excerpt_end IS NULL)",
-            name="ck_cat_claim_evidence_offset_shape",
+            "AND excerpt_end >= excerpt_start AND validated_at IS NOT NULL "
+            "AND failure_code IS NULL) OR "
+            "(validation_status IN ('not_found', 'ambiguous', 'invalid') "
+            "AND excerpt_start IS NULL AND excerpt_end IS NULL "
+            "AND validated_at IS NOT NULL AND failure_code IS NOT NULL)",
+            name="ck_cat_claim_evidence_state_shape",
         ),
         Index("ix_cat_claim_evidence_status", "validation_status", "created_at"),
     )
@@ -652,9 +682,13 @@ class CatalogueClaimResolution(Base):
         ),
         UniqueConstraint("id", "bundle_id", name="uq_cat_resolution_id_bundle"),
         CheckConstraint(
-            "(effective_state IS NULL AND effective_value_hash IS NULL) OR "
-            "(effective_state IS NOT NULL AND effective_value_hash IS NOT NULL)",
-            name="ck_cat_claim_resolution_effective_hash",
+            "(effective_state IS NULL AND effective_value_json IS NULL "
+            "AND effective_value_hash IS NULL) OR "
+            "(effective_state = 'asserted_value' AND effective_value_json IS NOT NULL "
+            "AND effective_value_hash IS NOT NULL) OR "
+            "(effective_state IS NOT NULL AND effective_state <> 'asserted_value' "
+            "AND effective_value_json IS NULL AND effective_value_hash IS NOT NULL)",
+            name="ck_cat_claim_resolution_effective_state_shape",
         ),
         Index("ix_cat_claim_resolution_outcome", "outcome", "created_at"),
     )
@@ -732,6 +766,11 @@ class CatalogueConflictSet(Base):
             name="fk_cat_conflict_resolution_bundle",
         ),
         UniqueConstraint("resolution_id", name="uq_cat_conflict_resolution"),
+        CheckConstraint(
+            "(status = 'open' AND resolved_at IS NULL) OR "
+            "(status <> 'open' AND resolved_at IS NOT NULL)",
+            name="ck_cat_conflict_resolution_time",
+        ),
         Index("ix_cat_conflict_status", "status", "created_at"),
     )
 
@@ -789,6 +828,15 @@ class CatalogueConflictClaim(Base):
 class CatalogueConflictReviewDecision(Base):
     __tablename__ = "catalogue_conflict_review_decisions"
     __table_args__ = (
+        CheckConstraint(
+            "(decision = 'select_claim' AND selected_claim_assessment_id IS NOT NULL) OR "
+            "(decision <> 'select_claim' AND selected_claim_assessment_id IS NULL)",
+            name="ck_cat_conflict_review_selected_claim",
+        ),
+        CheckConstraint(
+            "length(trim(resolution_notes)) > 0",
+            name="ck_cat_conflict_review_notes_nonempty",
+        ),
         Index("ix_cat_conflict_review_conflict", "conflict_set_id", "created_at"),
     )
 
@@ -821,6 +869,10 @@ class CatalogueConflictReviewDecision(Base):
 class CatalogueSnapshotPromotion(Base):
     __tablename__ = "catalogue_snapshot_promotions"
     __table_args__ = (
+        UniqueConstraint(
+            "candidate_source_snapshot_id",
+            name="uq_cat_snapshot_promotion_candidate",
+        ),
         UniqueConstraint(
             "candidate_source_snapshot_id",
             "source_snapshot_id",
@@ -901,13 +953,13 @@ _IMMUTABLE_MODELS = (
 )
 
 
+def _raise_immutable() -> None:
+    raise LedgerIntegrityError("PR6 ledger history is immutable; append a new record")
+
+
 for _model in _IMMUTABLE_MODELS:
     event.listen(_model, "before_update", lambda *_: _raise_immutable())
     event.listen(_model, "before_delete", lambda *_: _raise_immutable())
-
-
-def _raise_immutable() -> None:
-    raise LedgerIntegrityError("PR6 ledger history is immutable; append a new record")
 
 
 def _changed_columns(target: object) -> set[str]:
@@ -919,8 +971,8 @@ def _changed_columns(target: object) -> set[str]:
     }
 
 
-def _previous_status(target: object) -> object | None:
-    history = sa_inspect(target).attrs.status.history
+def _previous_enum_value(target: object, attribute_name: str) -> object | None:
+    history = getattr(sa_inspect(target).attrs, attribute_name).history
     if history.deleted:
         return history.deleted[0]
     return None
@@ -931,7 +983,7 @@ def _guard_source_extraction_update(*args: object) -> None:
     target = args[-1]
     if not isinstance(target, CatalogueSourceExtraction):
         return
-    previous = _previous_status(target)
+    previous = _previous_enum_value(target, "status")
     changed = _changed_columns(target)
     if previous is None:
         raise LedgerIntegrityError("source extraction updates require an explicit state transition")
@@ -947,7 +999,13 @@ def _guard_source_extraction_update(*args: object) -> None:
     }
     if target.status not in allowed.get(previous, set()):
         raise LedgerIntegrityError("invalid or terminal source extraction state transition")
-    allowed_columns = {"status", "started_at", "completed_at", "accepted_output_json", "failure_code"}
+    allowed_columns = {
+        "status",
+        "started_at",
+        "completed_at",
+        "accepted_output_json",
+        "failure_code",
+    }
     if not changed <= allowed_columns:
         raise LedgerIntegrityError("source extraction contract fields are immutable")
 
@@ -962,7 +1020,7 @@ def _guard_source_attempt_update(*args: object) -> None:
     target = args[-1]
     if not isinstance(target, CatalogueSourceExtractionAttempt):
         return
-    previous = _previous_status(target)
+    previous = _previous_enum_value(target, "status")
     if previous is not SourceExtractionAttemptStatus.IN_PROGRESS:
         raise LedgerIntegrityError("terminal source extraction attempts are immutable")
     if target.status is SourceExtractionAttemptStatus.IN_PROGRESS:
@@ -992,7 +1050,7 @@ def _guard_claim_evidence_update(*args: object) -> None:
     target = args[-1]
     if not isinstance(target, CatalogueClaimEvidence):
         return
-    previous = _previous_status(target)
+    previous = _previous_enum_value(target, "validation_status")
     if previous is not ClaimEvidenceValidationStatus.PENDING:
         raise LedgerIntegrityError("terminal claim evidence is immutable")
     if target.validation_status is ClaimEvidenceValidationStatus.PENDING:
@@ -1047,7 +1105,7 @@ def _guard_bundle_update(*args: object) -> None:
     target = args[-1]
     if not isinstance(target, CatalogueEvidenceBundle):
         return
-    previous = _previous_status(target)
+    previous = _previous_enum_value(target, "status")
     if previous is None or target.status not in _BUNDLE_TRANSITIONS.get(previous, set()):
         raise LedgerIntegrityError("invalid or terminal evidence-bundle state transition")
     changed = _changed_columns(target)
@@ -1075,7 +1133,7 @@ def _guard_conflict_update(*args: object) -> None:
     target = args[-1]
     if not isinstance(target, CatalogueConflictSet):
         return
-    previous = _previous_status(target)
+    previous = _previous_enum_value(target, "status")
     if previous is None or target.status not in _CONFLICT_TRANSITIONS.get(previous, set()):
         raise LedgerIntegrityError("invalid or terminal conflict-set state transition")
     changed = _changed_columns(target)
