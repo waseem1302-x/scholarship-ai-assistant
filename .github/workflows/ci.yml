@@ -1,15 +1,24 @@
 name: CI
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# One current validation run per PR/ref. A newer commit makes an older run obsolete.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -65,6 +74,7 @@ jobs:
 
   browser-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -100,7 +110,18 @@ jobs:
         run: |
           python -m pip install uv==0.11.33
           uv sync --frozen --extra dev
-      - run: uv run playwright install --with-deps chromium firefox webkit
+      - name: Install Playwright browsers for this validation depth
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # PRs prove the complete browser journey on Chromium. Full cross-engine
+            # compatibility remains a main/release gate, where it provides extra signal.
+            uv run playwright install --with-deps chromium
+          else
+            uv run playwright install --with-deps chromium firefox webkit
+          fi
       - run: uv run alembic upgrade head
       - run: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/scholarship-api.log 2>&1 &
       - name: Wait for the API
@@ -113,11 +134,16 @@ jobs:
           exit 1
       - name: Full browser journeys on Chromium
         run: uv run pytest -m "e2e and not browser_compat" --browser chromium
+      - name: Critical compatibility and accessibility journey on Chromium
+        if: github.event_name == 'pull_request'
+        run: uv run pytest -m "e2e and browser_compat" --browser chromium
       - name: Critical compatibility and accessibility journey on all engines
+        if: github.event_name != 'pull_request'
         run: uv run pytest -m "e2e and browser_compat" --browser chromium --browser firefox --browser webkit
 
   security-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build release candidate image
