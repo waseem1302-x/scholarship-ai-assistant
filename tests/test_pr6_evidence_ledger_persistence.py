@@ -181,7 +181,11 @@ def _add_candidate_artifact(
         started_at=now,
         completed_at=now,
     )
-    db_session.add_all([source, snapshot, extraction])
+    db_session.add(source)
+    db_session.flush()
+    db_session.add(snapshot)
+    db_session.flush()
+    db_session.add(extraction)
     db_session.flush()
     return snapshot, extraction
 
