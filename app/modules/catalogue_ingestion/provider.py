@@ -254,12 +254,12 @@ class AzureOpenAIExtractionProvider:
                 if len(raw) > self.settings.catalogue_ai_max_response_bytes:
                     raise ExtractionSchemaError("AI response exceeded the configured byte limit")
                 return self._parse_response(raw, started)
-            except (TimeoutError, urllib.error.URLError) as exc:
-                last_error = exc
             except urllib.error.HTTPError as exc:
                 last_error = exc
                 if exc.code < 500 and exc.code != 429:
                     break
+            except (TimeoutError, urllib.error.URLError) as exc:
+                last_error = exc
             if attempt < self.settings.catalogue_ai_max_retries:
                 self.sleeper(min(2**attempt, 4))
         if isinstance(last_error, TimeoutError):

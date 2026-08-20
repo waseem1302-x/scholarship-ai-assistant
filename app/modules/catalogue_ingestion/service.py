@@ -148,6 +148,7 @@ class CatalogueIngestionService:
         if run.status in {IngestionRunStatus.COMPLETED, IngestionRunStatus.FAILED}:
             return IngestionRunResponse.model_validate(run)
         run.status = IngestionRunStatus.RUNNING
+        run.failure_code = None
         run.started_at = run.started_at or datetime.now(UTC)
         self.session.commit()
 
@@ -359,6 +360,16 @@ class CatalogueIngestionService:
             run.output_tokens += usage.output_tokens
             run.estimated_cost += usage.estimated_cost
             if run.estimated_cost > run.max_estimated_cost:
+                self.session.add(
+                    self._attempt(
+                        candidate,
+                        source,
+                        ExtractionAttemptStatus.SUCCEEDED,
+                        None,
+                        output=output,
+                        usage=usage,
+                    )
+                )
                 raise RunBudgetExhausted
 
         candidate.status = CandidateStatus.EXTRACTED
