@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select, text
 
+from app.modules.auth import models as auth_models
 from app.modules.auth.models import AuditLog, verify_audit_integrity_chain
 from app.modules.operations.models import OperationalJobHealth, OperationalJobRun
 from app.modules.operations.service import OperationalJobService
@@ -146,4 +147,21 @@ def test_multiple_audit_rows_in_one_flush_form_one_chain(db_session) -> None:
     db_session.commit()
 
     assert second.previous_integrity_hash == first.integrity_hash
+    assert verify_audit_integrity_chain(db_session) == (True, None)
+
+
+def test_audit_chain_orders_rows_when_clock_tick_repeats(db_session, monkeypatch) -> None:
+    fixed_time = datetime(2026, 8, 20, 9, 30, tzinfo=UTC)
+    monkeypatch.setattr(auth_models, "utc_now", lambda: fixed_time)
+
+    first = AuditLog(action="test.clock.first", entity_type="test", entity_id="clock-one")
+    second = AuditLog(action="test.clock.second", entity_type="test", entity_id="clock-two")
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    third = AuditLog(action="test.clock.third", entity_type="test", entity_id="clock-three")
+    db_session.add(third)
+    db_session.commit()
+
+    assert first.created_at < second.created_at < third.created_at
     assert verify_audit_integrity_chain(db_session) == (True, None)
