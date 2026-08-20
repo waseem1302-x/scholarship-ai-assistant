@@ -1,0 +1,120 @@
+{
+  "contract_version": "scholarship-acquisition.v1",
+  "execution_evidence": false,
+  "scenarios": [
+    {
+      "scenario_id": "csc_root_to_complete_graph",
+      "title": "One CSC root discovers the complete authoritative structure",
+      "input_kind": "url",
+      "operator_supplied_url_count": 1,
+      "expected_seed_candidate_count": 1,
+      "expected_canonical_scholarship_count": 1,
+      "required_objectives": [
+        "resolve_canonical_source",
+        "resolve_provider_identity",
+        "current_cycle_status",
+        "current_application_opening",
+        "current_application_deadline",
+        "funding_coverage",
+        "eligibility_core",
+        "application_route",
+        "required_documents",
+        "application_steps",
+        "participating_institutions",
+        "eligible_programmes",
+        "institution_local_requirements",
+        "institution_local_deadline",
+        "related_independent_awards"
+      ],
+      "required_owner_types": [
+        "government",
+        "institution"
+      ],
+      "collections": [
+        {
+          "objective": "application_route",
+          "minimum_items": 2,
+          "require_authoritative_source_complete": true,
+          "require_graph_matches_authoritative_source": true
+        },
+        {
+          "objective": "participating_institutions",
+          "minimum_items": 10,
+          "require_authoritative_source_complete": true,
+          "require_graph_matches_authoritative_source": true
+        }
+      ],
+      "max_manual_followup_urls": 0,
+      "require_source_checks_for_unknowns": true,
+      "require_field_evidence": true,
+      "require_scope_preservation": true,
+      "require_idempotent_rerun": true,
+      "automatic_publication_allowed": false
+    },
+    {
+      "scenario_id": "mext_name_to_complete_core",
+      "title": "A MEXT name resolves routes and complete core facts",
+      "input_kind": "name",
+      "operator_supplied_url_count": 0,
+      "expected_seed_candidate_count": 1,
+      "expected_canonical_scholarship_count": 1,
+      "required_objectives": [
+        "resolve_canonical_source",
+        "resolve_provider_identity",
+        "current_cycle_status",
+        "current_application_opening",
+        "current_application_deadline",
+        "funding_coverage",
+        "eligibility_core",
+        "application_route",
+        "required_documents",
+        "application_steps"
+      ],
+      "required_owner_types": [
+        "government",
+        "institution"
+      ],
+      "collections": [
+        {
+          "objective": "application_route",
+          "minimum_items": 2,
+          "require_authoritative_source_complete": true,
+          "require_graph_matches_authoritative_source": true
+        }
+      ],
+      "max_manual_followup_urls": 0,
+      "require_source_checks_for_unknowns": true,
+      "require_field_evidence": true,
+      "require_scope_preservation": true,
+      "require_idempotent_rerun": true,
+      "automatic_publication_allowed": false
+    },
+    {
+      "scenario_id": "text_pdf_to_independent_acquisition_runs",
+      "title": "A text PDF enumerates scholarships for independent acquisition",
+      "input_kind": "document",
+      "operator_supplied_url_count": 0,
+      "expected_seed_candidate_count": 3,
+      "expected_canonical_scholarship_count": 3,
+      "required_objectives": [
+        "resolve_canonical_source",
+        "resolve_provider_identity",
+        "current_cycle_status",
+        "current_application_deadline",
+        "funding_coverage",
+        "eligibility_core",
+        "application_route",
+        "required_documents",
+        "application_steps"
+      ],
+      "required_owner_types": [],
+      "collections": [],
+      "max_manual_followup_urls": 0,
+      "require_source_checks_for_unknowns": true,
+      "require_field_evidence": true,
+      "require_scope_preservation": true,
+      "require_idempotent_rerun": true,
+      "automatic_publication_allowed": false
+    }
+  ]
+}

@@ -9,12 +9,18 @@
 
 ## Current implementation boundary
 
-The merged runtime foundation implements Slices 1-4: the discovery ledger migration,
+The merged runtime foundation implements Slices 1-5: the discovery ledger migration,
 pure deterministic objective/query planning, transactional repository state and budget
-accounting, and the bounded provider protocol with a fake provider. The next isolated
-increment implements Slice 5 URL normalization and policy-gated lead ingestion. It still
-does not include candidate binding execution, safe fetching, live Azure configuration,
-an Azure provider adapter, infrastructure changes, or billable calls.
+accounting, the bounded provider protocol with a fake provider, and policy-gated normalized URL
+lead ingestion. The next isolated runtime increment is Slice 6 contextual officiality assessment.
+The merged foundation still does not include candidate binding execution, live discovery fetching,
+live Azure configuration, an Azure provider adapter, infrastructure changes, or billable calls.
+
+After Slice 5, the complete acquisition checkpoint in
+`complete-scholarship-acquisition-contract.md` freezes the larger name/URL/document outcome and
+CSC/MEXT proof gates. It does not expand PR5 scope: multi-source evidence aggregation, OCR/browser
+fallbacks and complete graph construction remain later work. PR5 must deliver trusted discovery and
+binding boundaries that those later stages can reuse.
 
 ## Objective
 
