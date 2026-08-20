@@ -30,6 +30,11 @@ review action can later move the resulting draft opportunity to active publicati
   storage data-plane scope; managed identity is preferred. Text PDFs use `pypdf` first.
 - `SafeSourceFetcher` requires HTTPS, blocks private/reserved DNS and connected peers, validates every
   redirect, restricts content type/size/time, removes active HTML content, and records the final URL.
+- `BoundedOfficialSiteCrawler` can expand only from an already-classified official HTTPS root. It
+  ranks scholarship-relevant same-host links deterministically, rejects authentication/session and
+  unverified cross-domain targets, deduplicates URL/redirect/content identities, and enforces hard
+  page, depth, aggregate-byte, and sequential per-host request limits. Every network request remains
+  behind `SafeSourceFetcher` or an injected boundary that can enforce the remaining byte allowance.
 - `AzureOpenAIExtractionProvider` uses `DefaultAzureCredential`, a configurable deployment, strict
   JSON Schema structured output, byte/token/time/retry ceilings, and configured price estimates.
 - deterministic validation checks exact evidence excerpts, source URL, required identity fields,
@@ -44,10 +49,16 @@ must cite an excerpt present in the fetched normalized source. Inferred model kn
 
 ## Supported and deliberately deferred adapters
 
-Seed-supplied URLs are implemented as discovery leads. Autonomous Foundry web search is not wired in
-the first version; `APP_CATALOGUE_WEB_DISCOVERY_ENABLED` remains false and an absent official URL goes
-to manual review. The `WebDiscoveryProvider` interface allows a later reviewed adapter without
-changing verification.
+Seed-supplied URLs are implemented as discovery leads. When
+`APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED=true`, an already-classified official root may be explored by
+the bounded crawler and successfully fetched child pages are staged as candidate sources for later
+evidence/classification work. The flag defaults to false. Child source texts are not concatenated
+into the root extraction input: the current extraction contract still processes the selected root
+source only so field-level evidence cannot be misattributed across pages.
+
+Autonomous Foundry web search is not wired in this version;
+`APP_CATALOGUE_WEB_DISCOVERY_ENABLED` remains false and an absent official URL goes to manual review.
+The `WebDiscoveryProvider` interface allows a later reviewed adapter without changing verification.
 
 Normal text PDF parsing is implemented. `AzureDocumentIntelligenceParser` is a fail-closed interface,
 not a paid implementation; image-only or encrypted PDFs require manual handling while
@@ -85,6 +96,12 @@ support strict structured outputs and is supplied through `catalogueAiModel`; ch
 Bicep parameter update, not an application release.
 When `catalogueSeedStorageAccountName` is supplied, the same identity receives Storage Blob Data
 Reader only on that existing account. No public container or storage account is created.
+
+The bounded crawler has an explicit Azure deployment parameter,
+`catalogueBoundedCrawlingEnabled`, which defaults to `false` and maps to
+`APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED`. Enabling it does not enable web discovery, browser fetching,
+Document Intelligence, AI ingestion, or publication. Use it only for reviewed acquisition runs that
+already have a verified official root URL.
 
 Before a real run:
 
@@ -145,7 +162,8 @@ stop ingestion and monitoring, confirm no old application revision uses them, ex
 required, then apply the Alembic downgrade. The upgrade is additive and does not rewrite catalogue
 truth.
 
-Known limitations: no autonomous web-search adapter, no Document Intelligence implementation, no
-browser/login/CAPTCHA acquisition, exact duplicate detection is canonical-URL based before the
-existing review workflow's broader duplicate suggestions, and production quality cannot be asserted
-until the private gold evaluation and real Azure staging run are completed.
+Known limitations: no autonomous web-search adapter, no provenance-safe multi-source extraction
+aggregation yet, no Document Intelligence implementation, no browser/login/CAPTCHA acquisition,
+exact duplicate detection is canonical-URL based before the existing review workflow's broader
+duplicate suggestions, and production quality cannot be asserted until the private gold evaluation
+and real Azure staging run are completed.

@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     catalogue_ai_input_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_ai_output_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_web_discovery_enabled: bool = False
+    catalogue_bounded_crawling_enabled: bool = False
     catalogue_browser_fetching_enabled: bool = False
     catalogue_document_intelligence_enabled: bool = False
     catalogue_scheduled_ingestion_enabled: bool = False
