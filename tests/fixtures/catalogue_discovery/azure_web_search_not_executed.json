@@ -1,0 +1,33 @@
+{
+  "id": "resp_without_search_001",
+  "object": "response",
+  "status": "completed",
+  "output": [
+    {
+      "id": "msg_without_search_001",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Try https://untrusted.example.test/mext instead.",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://untrusted.example.test/mext",
+              "title": "Untrusted prose URL",
+              "start_index": 4,
+              "end_index": 39
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 20,
+    "output_tokens": 12,
+    "total_tokens": 32
+  }
+}

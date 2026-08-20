@@ -2,7 +2,7 @@
 
 - Status: implementation ordering contract
 - Date: 2026-08-19
-- Last reconciled: 2026-08-20 against ADRs 0003-0006 and the Azure feature baseline
+- Last reconciled: 2026-08-21 against ADRs 0003-0007 and the stacked Azure feature branches
 - Integration baseline: Azure feature head `041783773b01f0997fb1d14ad3079e8727c8cb4b`
   (PR4, Step 1/2 safety fixes, PR5 architecture reconciliation, Slices 1-7, and the merged
   complete-acquisition checkpoint).
@@ -11,17 +11,21 @@
 
 ## Current implementation boundary
 
-The runtime foundation implements Slices 1-8: the discovery ledger migration, pure deterministic
+The runtime foundation implements Slices 1-10: the discovery ledger migration, pure deterministic
 objective/query planning, transactional repository state and budget accounting, the bounded provider
 protocol with a fake provider, policy-gated normalized URL lead ingestion, and append-only contextual
 officiality assessment against reviewed owner/domain inputs. It now also implements deterministic,
 idempotent source binding for an explicit known candidate under the documented lifecycle and authority
 gates, plus an explicit ingestion hook that safe-fetches one pre-bound source, revalidates its final
-owner and target identity, reconciles redirect convergence, and records one idempotent promotion. The
-next isolated runtime increment is Slice 9 configuration and kill switches. The foundation still does
-not include a live discovery provider, autonomous scheduling, crawler expansion from the promoted
-root, AI extraction, graph construction, publication, live Azure configuration, infrastructure
-changes, or billable AI calls.
+owner and target identity, reconciles redirect convergence, and records one idempotent promotion.
+Discovery configuration now fails closed behind explicit provider, endpoint, model, token-scope, and
+budget controls. The Azure Responses adapter performs one managed-identity-authenticated stable
+`web_search` request per durable attempt and accepts URLs only from completed tool source/citation
+structures under frozen-fixture tests. The next isolated runtime increment is Slice 11 Azure
+infrastructure wiring. The foundation still does not include an Azure-runtime capability proof,
+autonomous scheduling, crawler expansion from the promoted root, multi-source extraction, graph
+construction, publication, enabled live Azure configuration, infrastructure deployment, or billable
+AI calls.
 
 After Slice 5, the complete acquisition checkpoint in
 `complete-scholarship-acquisition-contract.md` freezes the larger name/URL/document outcome and

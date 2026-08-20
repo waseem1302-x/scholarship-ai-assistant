@@ -1,0 +1,27 @@
+{
+  "id": "resp_invalid_source_001",
+  "object": "response",
+  "status": "completed",
+  "output": [
+    {
+      "id": "ws_invalid_001",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "query": "MEXT Scholarship official source",
+        "sources": [
+          {
+            "type": "url",
+            "title": "Missing URL"
+          }
+        ]
+      }
+    }
+  ],
+  "usage": {
+    "input_tokens": 20,
+    "output_tokens": 5,
+    "total_tokens": 25
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "id": "resp_mext_identity_001",
+  "object": "response",
+  "status": "completed",
+  "output": [
+    {
+      "id": "ws_mext_001",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "query": "MEXT Scholarship official source",
+        "sources": [
+          {
+            "type": "url",
+            "url": "https://www.mext.go.jp/en/policy/education/highered/title02/detail02/1373809.htm"
+          },
+          {
+            "type": "url",
+            "url": "https://www.studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/"
+          }
+        ]
+      }
+    },
+    {
+      "id": "msg_mext_001",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Official MEXT sources were found.",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://www.mext.go.jp/en/policy/education/highered/title02/detail02/1373809.htm",
+              "title": "MEXT Scholarships",
+              "start_index": 0,
+              "end_index": 14
+            },
+            {
+              "type": "url_citation",
+              "url": "https://www.mext.go.jp/en/policy/education/highered/",
+              "title": "Higher Education",
+              "start_index": 15,
+              "end_index": 28
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 42,
+    "output_tokens": 18,
+    "total_tokens": 60
+  }
+}
