@@ -13,7 +13,6 @@ import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +23,7 @@ from app.modules.catalogue_ingestion.models import (
     ClassificationDecision,
     ClassificationDecisionStatus,
 )
+from app.modules.catalogue_ingestion.url_policy import normalize_comparison_url
 from app.modules.opportunities.evidence_models import (
     EvidenceSupportType,
     OfficialityStatus,
@@ -91,12 +91,6 @@ _TRACK_LANGUAGE = re.compile(
     r"(?:route|track|recommendation)\b",
     re.IGNORECASE,
 )
-_TRACKING_QUERY_KEYS = {
-    "fbclid",
-    "gclid",
-    "mc_cid",
-    "mc_eid",
-}
 _TRUSTED_OFFICIALITY_STATUSES = frozenset(
     {OfficialityStatus.OFFICIAL, OfficialityStatus.SUPPORTING_OFFICIAL}
 )
@@ -162,38 +156,7 @@ def normalize_identity_name(value: str) -> str:
 def normalize_url(value: str | None) -> str | None:
     """Canonicalize comparable HTTPS/HTTP URLs while preserving meaningful query keys."""
 
-    if not value:
-        return None
-    try:
-        parsed = urlsplit(value.strip())
-    except ValueError:
-        return None
-    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
-        return None
-    if parsed.username or parsed.password:
-        return None
-
-    scheme = parsed.scheme.casefold()
-    host = parsed.hostname.casefold().strip(".")
-    try:
-        port = parsed.port
-    except ValueError:
-        return None
-    default_port = (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
-    netloc = host if port is None or default_port else f"{host}:{port}"
-    path = parsed.path or "/"
-    if path != "/":
-        path = path.rstrip("/")
-
-    query_pairs = []
-    for key, query_value in parse_qsl(parsed.query, keep_blank_values=True):
-        lowered = key.casefold()
-        if lowered.startswith("utm_") or lowered in _TRACKING_QUERY_KEYS:
-            continue
-        query_pairs.append((key, query_value))
-    query_pairs.sort(key=lambda pair: (pair[0].casefold(), pair[1]))
-    query = urlencode(query_pairs, doseq=True)
-    return urlunsplit((scheme, netloc, path, query, ""))
+    return normalize_comparison_url(value)
 
 
 def _normalize_identifier(value: str | None) -> str | None:

@@ -35,6 +35,10 @@ from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
     CatalogueCandidateSource,
 )
+from app.modules.catalogue_ingestion.url_policy import (
+    URLRejectionCode,
+    normalize_discovery_lead_url,
+)
 
 RETRYABLE_QUERY_STATUSES = {
     DiscoveryQueryStatus.PROVIDER_RATE_LIMITED,
@@ -50,6 +54,12 @@ class DiscoveryBudgetExhausted(DiscoveryStateError):
     def __init__(self, attempt_id: uuid.UUID) -> None:
         super().__init__("catalogue_discovery_budget_exhausted")
         self.attempt_id = attempt_id
+
+
+class DiscoveryURLRejected(DiscoveryStateError):
+    def __init__(self, code: URLRejectionCode) -> None:
+        super().__init__(code.value)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -239,6 +249,20 @@ class CatalogueDiscoveryRepository:
 
     def get_attempt(self, attempt_id: uuid.UUID) -> CatalogueDiscoveryAttempt | None:
         return self.session.get(CatalogueDiscoveryAttempt, attempt_id)
+
+    def get_latest_successful_attempt(
+        self,
+        query_id: uuid.UUID,
+    ) -> CatalogueDiscoveryAttempt | None:
+        return self.session.scalar(
+            select(CatalogueDiscoveryAttempt)
+            .where(
+                CatalogueDiscoveryAttempt.query_id == query_id,
+                CatalogueDiscoveryAttempt.status == DiscoveryAttemptStatus.SUCCEEDED,
+            )
+            .order_by(CatalogueDiscoveryAttempt.attempt_number.desc())
+            .limit(1)
+        )
 
     def claim_queries(
         self,
@@ -461,20 +485,27 @@ class CatalogueDiscoveryRepository:
         self,
         *,
         query_id: uuid.UUID,
-        normalized_url: str,
-        host: str,
+        url: str,
         discovery_reason: str,
         provider_rank: int | None = None,
         provider_source_type: str | None = None,
         minimal_title: str | None = None,
         observed_at: datetime | None = None,
     ) -> tuple[CatalogueDiscoveryLead, CatalogueDiscoveryObservation]:
-        if not normalized_url or len(normalized_url) > 2048:
-            raise ValueError("normalized discovery URL must be non-empty and bounded")
-        if not host or len(host) > 255:
-            raise ValueError("discovery host must be non-empty and bounded")
+        normalization = normalize_discovery_lead_url(url)
+        if normalization.normalized is None:
+            assert normalization.rejection_code is not None
+            raise DiscoveryURLRejected(normalization.rejection_code)
+        normalized_url = normalization.normalized.value
+        host = normalization.normalized.host
         if not discovery_reason or len(discovery_reason) > 255:
             raise ValueError("discovery reason must be non-empty and bounded")
+        if provider_rank is not None and provider_rank < 1:
+            raise ValueError("provider rank must be positive when supplied")
+        if provider_source_type is not None and (
+            not provider_source_type or len(provider_source_type) > 64
+        ):
+            raise ValueError("provider source type must be non-empty and bounded when supplied")
         if minimal_title is not None and len(minimal_title) > 500:
             raise ValueError("discovery title exceeds the persistence limit")
         timestamp = observed_at or datetime.now(UTC)
@@ -512,6 +543,8 @@ class CatalogueDiscoveryRepository:
                 if lead is None:
                     raise
         assert lead is not None
+        if lead.normalized_url != normalized_url:
+            raise DiscoveryStateError("catalogue_discovery_url_fingerprint_collision")
         observation = self.session.scalar(
             select(CatalogueDiscoveryObservation).where(
                 CatalogueDiscoveryObservation.query_id == query.id,

@@ -89,10 +89,10 @@ def _create_run(
     )
 
 
-def _cleanup(sessions, run_id: uuid.UUID) -> None:
+def _cleanup(sessions, *run_ids: uuid.UUID) -> None:
     with sessions() as cleanup:
         query_ids = select(CatalogueDiscoveryQuery.id).where(
-            CatalogueDiscoveryQuery.run_id == run_id
+            CatalogueDiscoveryQuery.run_id.in_(run_ids)
         )
         lead_ids = list(
             cleanup.scalars(
@@ -103,7 +103,7 @@ def _cleanup(sessions, run_id: uuid.UUID) -> None:
         )
         cleanup.execute(
             delete(CatalogueDiscoveryAssessment).where(
-                CatalogueDiscoveryAssessment.run_id == run_id
+                CatalogueDiscoveryAssessment.run_id.in_(run_ids)
             )
         )
         cleanup.execute(
@@ -117,9 +117,9 @@ def _cleanup(sessions, run_id: uuid.UUID) -> None:
             )
         )
         cleanup.execute(
-            delete(CatalogueDiscoveryQuery).where(CatalogueDiscoveryQuery.run_id == run_id)
+            delete(CatalogueDiscoveryQuery).where(CatalogueDiscoveryQuery.run_id.in_(run_ids))
         )
-        cleanup.execute(delete(CatalogueDiscoveryRun).where(CatalogueDiscoveryRun.id == run_id))
+        cleanup.execute(delete(CatalogueDiscoveryRun).where(CatalogueDiscoveryRun.id.in_(run_ids)))
         if lead_ids:
             cleanup.execute(
                 delete(CatalogueDiscoveryLead).where(CatalogueDiscoveryLead.id.in_(lead_ids))
@@ -287,8 +287,7 @@ def test_concurrent_identical_assessments_reuse_one_row(postgres_engine) -> None
         )
         lead, _ = repository.record_lead_observation(
             query_id=query.id,
-            normalized_url=f"https://example.test/{uuid.uuid4().hex}",
-            host="example.test",
+            url=f"https://example.test/{uuid.uuid4().hex}",
             discovery_reason="concurrency proof",
         )
         run_id = run.id
@@ -333,3 +332,87 @@ def test_concurrent_identical_assessments_reuse_one_row(postgres_engine) -> None
             assert len(persisted) == 1
     finally:
         _cleanup(sessions, run_id)
+
+
+def test_concurrent_equivalent_urls_reuse_one_global_lead(postgres_engine) -> None:
+    sessions = sessionmaker(bind=postgres_engine, expire_on_commit=False)
+    run_ids: list[uuid.UUID] = []
+    query_ids: list[uuid.UUID] = []
+    with sessions() as setup:
+        for worker_number in range(2):
+            run = _create_run(setup)
+            repository = CatalogueDiscoveryRepository(setup)
+            query = repository.claim_queries(
+                run_id=run.id,
+                worker_id=f"url-setup-{worker_number}",
+                limit=1,
+                lease_seconds=60,
+                max_attempts=3,
+            )[0]
+            attempt = repository.reserve_attempt(
+                query_id=query.id,
+                worker_id=f"url-setup-{worker_number}",
+                request_fingerprint=str(worker_number + 1) * 64,
+                reserved_tool_calls=1,
+                reserved_estimated_cost=Decimal("0.10"),
+            )
+            repository.settle_attempt(
+                attempt.id,
+                DiscoveryAttemptOutcome(
+                    status=DiscoveryAttemptStatus.SUCCEEDED,
+                    web_search_executed=True,
+                    tool_call_count=1,
+                    result_url_count=1,
+                    response_bytes=100,
+                    estimated_tool_cost=Decimal("0.10"),
+                ),
+            )
+            run_ids.append(run.id)
+            query_ids.append(query.id)
+
+    barrier = threading.Barrier(2)
+    raw_urls = (
+        "HTTPS://EXAMPLE.TEST:443/scholarship/?utm_source=one&b=2&a=1#fragment",
+        "https://example.test/scholarship?a=1&b=2&utm_campaign=two",
+    )
+
+    def record(arguments: tuple[uuid.UUID, str]) -> uuid.UUID:
+        query_id, raw_url = arguments
+        with sessions() as session:
+            barrier.wait(timeout=10)
+            lead, _ = CatalogueDiscoveryRepository(session).record_lead_observation(
+                query_id=query_id,
+                url=raw_url,
+                discovery_reason="concurrent normalization proof",
+            )
+            return lead.id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            lead_ids = list(executor.map(record, zip(query_ids, raw_urls, strict=True)))
+        assert len(set(lead_ids)) == 1
+        with sessions() as verify:
+            leads = list(
+                verify.scalars(
+                    select(CatalogueDiscoveryLead).where(CatalogueDiscoveryLead.id == lead_ids[0])
+                )
+            )
+            assert len(leads) == 1
+            assert leads[0].normalized_url == "https://example.test/scholarship?a=1&b=2"
+            observations = list(
+                verify.scalars(
+                    select(CatalogueDiscoveryObservation).where(
+                        CatalogueDiscoveryObservation.lead_id == lead_ids[0]
+                    )
+                )
+            )
+            assert len(observations) == 2
+            runs = list(
+                verify.scalars(
+                    select(CatalogueDiscoveryRun).where(CatalogueDiscoveryRun.id.in_(run_ids))
+                )
+            )
+            assert len(runs) == 2
+            assert all(run.unique_leads == 1 for run in runs)
+    finally:
+        _cleanup(sessions, *run_ids)

@@ -15,6 +15,7 @@ from app.modules.catalogue_ingestion.discovery import (
 )
 from app.modules.catalogue_ingestion.discovery_models import (
     CatalogueDiscoveryAttempt,
+    CatalogueDiscoveryLead,
     CatalogueDiscoveryObservation,
     CatalogueDiscoveryQuery,
     CatalogueDiscoveryRun,
@@ -36,9 +37,11 @@ from app.modules.catalogue_ingestion.discovery_repository import (
     DiscoveryBudgetExhausted,
     DiscoveryRunLimits,
     DiscoveryStateError,
+    DiscoveryURLRejected,
 )
 from app.modules.catalogue_ingestion.discovery_service import (
     CatalogueDiscoveryExecutionService,
+    CatalogueDiscoveryLeadIngestionService,
 )
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
@@ -47,6 +50,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueIngestionRun,
     IngestionMode,
 )
+from app.modules.catalogue_ingestion.url_policy import URLRejectionCode
 
 
 def _candidate(db_session) -> CatalogueCandidate:
@@ -499,20 +503,20 @@ def test_leads_observations_and_assessments_are_idempotent_and_immutable(db_sess
     _settle_success(repository, first_query)
     lead, observation = repository.record_lead_observation(
         query_id=first_query.id,
-        normalized_url="https://scholarships.gov.uk/example",
-        host="scholarships.gov.uk",
+        url=("HTTPS://SCHOLARSHIPS.GOV.UK:443/example/?utm_source=provider&b=2&a=1#fragment"),
         discovery_reason="exact identity query",
         provider_rank=1,
     )
     repeated_lead, repeated_observation = repository.record_lead_observation(
         query_id=first_query.id,
-        normalized_url="https://scholarships.gov.uk/example",
-        host="scholarships.gov.uk",
+        url="https://scholarships.gov.uk/example?a=1&b=2",
         discovery_reason="exact identity query",
         provider_rank=1,
     )
     assert repeated_lead.id == lead.id
     assert repeated_observation.id == observation.id
+    assert lead.normalized_url == "https://scholarships.gov.uk/example?a=1&b=2"
+    assert lead.host == "scholarships.gov.uk"
     assert run.raw_leads_seen == 1
     assert run.unique_leads == 1
 
@@ -521,8 +525,7 @@ def test_leads_observations_and_assessments_are_idempotent_and_immutable(db_sess
     _settle_success(second_repository, second_query)
     global_lead, _ = second_repository.record_lead_observation(
         query_id=second_query.id,
-        normalized_url="https://scholarships.gov.uk/example",
-        host="scholarships.gov.uk",
+        url="https://scholarships.gov.uk/example?b=2&a=1&utm_campaign=repeat",
         discovery_reason="provider refinement",
     )
     assert global_lead.id == lead.id
@@ -580,6 +583,98 @@ def test_leads_observations_and_assessments_are_idempotent_and_immutable(db_sess
     db_session.rollback()
 
 
+def test_provider_url_ingestion_rejects_unsafe_urls_without_persisting_them(db_session) -> None:
+    repository, run, _ = _run(db_session)
+    query = _claim(repository, run.id)
+    provider_result = DiscoveryProviderResult(
+        provider_response_id="response-url-policy",
+        web_search_executed=True,
+        urls=(
+            "https://b\u00fccher.example/Scholarship?b=2&a=1&utm_source=search#overview",
+            "https://xn--bcher-kva.example/Scholarship?a=1&b=2",
+            "http://example.edu/scholarship",
+            "https://example.edu/login",
+            "https://127.0.0.1/private",
+        ),
+        tool_call_count=1,
+        response_bytes=800,
+        latency_ms=20,
+        estimated_tool_cost=Decimal("0.02"),
+    )
+    provider = FakeDiscoveryProvider({query.query_hash: provider_result})
+    returned = CatalogueDiscoveryExecutionService(db_session, provider).execute_claimed_query(
+        query_id=query.id,
+        worker_id="worker-1",
+        max_urls=5,
+        max_tool_calls=1,
+        max_estimated_cost=Decimal("0.10"),
+    )
+
+    ingestion_service = CatalogueDiscoveryLeadIngestionService(db_session)
+    with pytest.raises(DiscoveryStateError, match="does_not_match_settled_attempt"):
+        ingestion_service.ingest_provider_result(
+            query_id=query.id,
+            result=returned.model_copy(update={"urls": returned.urls[:1]}),
+        )
+
+    summary = ingestion_service.ingest_provider_result(
+        query_id=query.id,
+        result=returned,
+    )
+
+    assert summary.urls_seen == 5
+    assert summary.accepted_urls == 2
+    assert summary.rejected_urls == 3
+    assert len(summary.unique_lead_ids) == 1
+    assert dict(summary.rejection_counts) == {
+        URLRejectionCode.AUTHENTICATION_TARGET: 1,
+        URLRejectionCode.PRIVATE_LITERAL: 1,
+        URLRejectionCode.UNSUPPORTED_SCHEME: 1,
+    }
+    leads = list(db_session.scalars(select(CatalogueDiscoveryLead)))
+    assert len(leads) == 1
+    assert leads[0].normalized_url == "https://xn--bcher-kva.example/Scholarship?a=1&b=2"
+    assert leads[0].host == "xn--bcher-kva.example"
+    assert run.raw_leads_seen == 1
+    assert run.unique_leads == 1
+
+    with pytest.raises(DiscoveryURLRejected) as rejected:
+        repository.record_lead_observation(
+            query_id=query.id,
+            url="https://[::1]/bypass",
+            discovery_reason="direct repository bypass",
+        )
+    assert rejected.value.code is URLRejectionCode.PRIVATE_LITERAL
+    assert len(list(db_session.scalars(select(CatalogueDiscoveryLead)))) == 1
+
+    with pytest.raises(ValueError, match="provider rank must be positive"):
+        repository.record_lead_observation(
+            query_id=query.id,
+            url="https://example.edu/scholarship",
+            discovery_reason="invalid provider metadata",
+            provider_rank=0,
+        )
+    with pytest.raises(ValueError, match="provider source type must be non-empty"):
+        repository.record_lead_observation(
+            query_id=query.id,
+            url="https://example.edu/scholarship",
+            discovery_reason="invalid provider metadata",
+            provider_source_type="",
+        )
+    assert len(list(db_session.scalars(select(CatalogueDiscoveryLead)))) == 1
+
+    second_query = _claim(repository, run.id)
+    _settle_success(repository, second_query)
+    repeated_lead, _ = repository.record_lead_observation(
+        query_id=second_query.id,
+        url="https://xn--bcher-kva.example/Scholarship?b=2&a=1#repeat",
+        discovery_reason="second query same run",
+    )
+    assert repeated_lead.id == leads[0].id
+    assert run.raw_leads_seen == 2
+    assert run.unique_leads == 1
+
+
 def test_promotion_requires_matching_fetched_source_and_is_idempotent(db_session) -> None:
     candidate = _candidate(db_session)
     repository, run, _ = _run(db_session, candidate.id)
@@ -587,8 +682,7 @@ def test_promotion_requires_matching_fetched_source_and_is_idempotent(db_session
     _settle_success(repository, query)
     lead, _ = repository.record_lead_observation(
         query_id=query.id,
-        normalized_url="https://scholarships.gov.uk/example",
-        host="scholarships.gov.uk",
+        url="https://scholarships.gov.uk/example",
         discovery_reason="official root",
     )
     assessment = repository.append_assessment(
