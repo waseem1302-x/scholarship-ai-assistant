@@ -75,6 +75,18 @@ def test_discovery_foundation_migration_is_additive_and_reversible(tmp_path: Pat
     for table_name in expected_tables:
         migrated_columns = {column["name"] for column in inspector.get_columns(table_name)}
         assert migrated_columns == set(Base.metadata.tables[table_name].columns.keys())
+    for table_name in expected_tables | {"catalogue_candidate_sources"}:
+        named_schema_objects = (
+            inspector.get_indexes(table_name)
+            + inspector.get_unique_constraints(table_name)
+            + inspector.get_foreign_keys(table_name)
+            + inspector.get_check_constraints(table_name)
+        )
+        assert all(
+            len(schema_object["name"]) <= 63
+            for schema_object in named_schema_objects
+            if schema_object.get("name")
+        )
     source_columns = {
         column["name"] for column in inspector.get_columns("catalogue_candidate_sources")
     }
@@ -84,6 +96,11 @@ def test_discovery_foundation_migration_is_additive_and_reversible(tmp_path: Pat
         for constraint in inspector.get_unique_constraints("catalogue_candidate_sources")
     }
     assert "uq_catalogue_candidate_source_discovery_lead" in source_uniques
+    source_foreign_keys = {
+        constraint["name"]
+        for constraint in inspector.get_foreign_keys("catalogue_candidate_sources")
+    }
+    assert "fk_candidate_sources_discovery_lead" in source_foreign_keys
     attempt_columns = {
         column["name"] for column in inspector.get_columns("catalogue_discovery_attempts")
     }

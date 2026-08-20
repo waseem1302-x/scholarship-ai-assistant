@@ -311,7 +311,7 @@ def upgrade() -> None:
     with op.batch_alter_table("catalogue_candidate_sources") as batch_op:
         batch_op.add_column(sa.Column("discovery_lead_id", sa.Uuid(), nullable=True))
         batch_op.create_foreign_key(
-            "fk_catalogue_candidate_sources_discovery_lead_id_catalogue_discovery_leads",
+            "fk_candidate_sources_discovery_lead",
             "catalogue_discovery_leads",
             ["discovery_lead_id"],
             ["id"],
@@ -522,7 +522,7 @@ def downgrade() -> None:
         batch_op.drop_index(op.f("ix_catalogue_candidate_sources_discovery_lead_id"))
         batch_op.drop_constraint("uq_catalogue_candidate_source_discovery_lead", type_="unique")
         batch_op.drop_constraint(
-            "fk_catalogue_candidate_sources_discovery_lead_id_catalogue_discovery_leads",
+            "fk_candidate_sources_discovery_lead",
             type_="foreignkey",
         )
         batch_op.drop_column("discovery_lead_id")
