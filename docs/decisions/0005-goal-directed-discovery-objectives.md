@@ -428,9 +428,11 @@ Even when a URL was discovered for a deadline/funding/eligibility objective, pro
 ```text
 lead
  -> contextual deterministic assessment
- -> SafeSourceFetcher
+ -> deterministic binding to the explicit known target candidate
+ -> CandidateSource(DISCOVERED, discovery_lead_id)
+ -> existing ingestion / SafeSourceFetcher
  -> target-content binding
- -> candidate-source persistence
+ -> CandidateSource(FETCHED) + promotion event
  -> downstream evidence/extraction/validation
 ```
 

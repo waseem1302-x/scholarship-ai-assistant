@@ -65,10 +65,13 @@ The only path from a search lead to factual evidence remains:
 untrusted URL lead
   -> deterministic URL/scope screening
   -> contextual OfficialSourceClassifier assessment
-  -> SafeSourceFetcher
+  -> explicit binding to a known candidate source
+  -> existing ingestion / SafeSourceFetcher
   -> immutable official source snapshot/evidence
   -> deterministic validation
 ```
+
+ADR 0003 defines the binding and promotion ordering in detail. This high-level trust chain does not authorize discovery to fetch a lead independently or to create a candidate from a URL.
 
 ### 3. Officiality is assessed in context and is append-only
 

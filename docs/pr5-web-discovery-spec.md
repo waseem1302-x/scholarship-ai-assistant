@@ -2,9 +2,10 @@
 
 - Status: Architecture-only implementation contract; no PR5 runtime code authorized by this document
 - Date: 2026-08-19
-- Baseline: final PR4 bounded-crawler head `daaf8ffc23cde323509b4ed6f40c9dab97f9fd16`
+- Last reconciled: 2026-08-20 against ADRs 0003-0006 and the Azure feature baseline
+- Integration baseline: Azure feature head `552ff0137fca7ff806a13f24e6a10ce79097682a`
 - Architecture branch: `scholarship-graph/pr5-discovery-architecture`
-- Related decisions: `docs/decisions/0002-auditable-catalogue-web-discovery.md`
+- Related decisions: ADRs 0002-0006 in `docs/decisions/`
 - Product contract: `docs/scholarship-information-contract.md`
 
 ## 1. PR5 objective
@@ -37,7 +38,8 @@ Those decisions remain downstream of official-source acquisition, evidence, dete
 - global URL-lead deduplication;
 - per-query observation provenance;
 - contextual source assessment using existing official-source rules;
-- safe-fetch confirmation before promotion;
+- explicit binding to an already-known target candidate before network acquisition;
+- authoritative safe-fetch confirmation through the existing ingestion boundary before promotion;
 - idempotent promotion into the existing `CatalogueCandidate` / candidate-source pipeline;
 - low-cardinality discovery metrics;
 - protected live capability/evaluation workflow;
@@ -78,20 +80,22 @@ Public catalogue identity / reviewed backlog
                    ↓
    URL policy + contextual assessment
                    ↓
-         SafeSourceFetcher
+ explicit known-candidate authorization
                    ↓
-       verified fetched source
+ CandidateSource(DISCOVERED) binding
                    ↓
-     explicit DiscoveryPromotion
+ existing ingestion / SafeSourceFetcher
                    ↓
- existing CatalogueCandidate / CandidateSource
+ final owner + target-content verification
+                   ↓
+ CandidateSource(FETCHED) + DiscoveryPromotion
                    ↓
           PR4 bounded crawler
                    ↓
  evidence / extraction / PR3 classification / review
 ```
 
-The discovery service never writes `Opportunity`, `SourceSnapshot`, `FieldEvidence`, or publication state directly.
+The discovery service never creates a candidate from a URL and never writes `Opportunity`, `SourceSnapshot`, `FieldEvidence`, or publication state directly. `SafeSourceFetcher` remains owned by the existing ingestion service; discovery does not introduce a second fetch path.
 
 ## 4. Discovery frontier supported by PR5
 
@@ -118,8 +122,14 @@ Required fields:
 
 ```text
 id UUID PK
-objective_type varchar(32)
-objective_ref varchar(255) nullable
+target_candidate_id UUID FK -> catalogue_candidates ON DELETE SET NULL nullable
+target_identity_snapshot json NOT NULL
+objective_kind varchar(64)
+objective_scope json NOT NULL
+objective_field_paths json NOT NULL
+objective_reason_codes json NOT NULL
+objective_criticality_tier int NOT NULL
+objective_priority_snapshot json NOT NULL
 planner_version varchar(100)
 provider varchar(100)
 model varchar(255)
@@ -130,11 +140,13 @@ max_provider_calls int
 max_leads int
 max_response_bytes int
 max_estimated_cost numeric(12,6)
-provider_calls int default 0
+provider_calls_reserved int default 0
+provider_calls_completed int default 0
+estimated_cost_reserved numeric(12,6) default 0
+estimated_cost_settled numeric(12,6) default 0
 raw_leads_seen int default 0
 unique_leads int default 0
 promotions int default 0
-estimated_cost numeric(12,6) default 0
 failure_code varchar(100) nullable
 aggregate_summary json
 created_at timestamptz
@@ -142,16 +154,23 @@ started_at timestamptz nullable
 completed_at timestamptz nullable
 ```
 
-`objective_type` initially supports:
+`objective_kind` uses the deterministic taxonomy from ADR 0005, beginning with:
 
 ```text
-scholarship_identity
-provider_identity
-institution_identity
-scholarship_institution_route
+RESOLVE_CANONICAL_SOURCE
+RESOLVE_PROVIDER_IDENTITY
+CURRENT_CYCLE_STATUS
+CURRENT_APPLICATION_DEADLINE
+FUNDING_COVERAGE
+ELIGIBILITY_CORE
+APPLICATION_ROUTE
+PARTICIPATING_INSTITUTIONS
+ELIGIBLE_PROGRAMMES
+CONFLICT_RESOLUTION_SOURCE
+FRESHNESS_REFRESH
 ```
 
-Future owner/global frontier values may be added later without changing current promotion rules.
+Only a non-null `target_candidate_id` can authorize PR5 source binding. The immutable target and objective snapshots preserve why the run existed; they are bounded typed payloads, never arbitrary ORM dumps. Future objective kinds may be added without changing current promotion rules.
 
 ### 5.2 `catalogue_discovery_queries`
 
@@ -171,7 +190,6 @@ attempt_count int default 0
 next_attempt_at timestamptz nullable
 claimed_by varchar(100) nullable
 claimed_until timestamptz nullable
-provider_response_id varchar(255) nullable
 provider_call_count int default 0
 response_bytes int default 0
 latency_ms int default 0
@@ -188,7 +206,48 @@ Constraints:
 - `query_text` contains public catalogue metadata only;
 - `public_context` must be a deliberately small schema, not an arbitrary application object dump.
 
-### 5.3 `catalogue_discovery_leads`
+The query row is mutable worker/current-state data. Its provider and cost values are aggregates only; `catalogue_discovery_attempts` is authoritative for individual outbound calls.
+
+### 5.3 `catalogue_discovery_attempts`
+
+One durable row per outbound provider request attempt.
+
+```text
+id UUID PK
+query_id UUID FK -> catalogue_discovery_queries ON DELETE RESTRICT
+attempt_number int
+status varchar(32)
+request_fingerprint varchar(64)
+provider varchar(100)
+model varchar(255)
+provider_response_id varchar(255) nullable
+http_status int nullable
+web_search_executed bool nullable
+tool_call_count int default 0
+result_url_count int default 0
+response_bytes int default 0
+input_tokens int nullable
+output_tokens int nullable
+estimated_model_cost numeric(12,6) default 0
+estimated_tool_cost numeric(12,6) default 0
+estimated_total_cost numeric(12,6) default 0
+latency_ms int nullable
+error_code varchar(100) nullable
+started_at timestamptz
+completed_at timestamptz nullable
+```
+
+Constraints and lifecycle:
+
+- unique `(query_id, attempt_number)` and positive attempt numbers;
+- non-negative tool/result/byte/cost counters;
+- insert as `IN_PROGRESS` before network I/O;
+- transition once to a terminal result, or to `ABANDONED` during expired-lease recovery;
+- never retain raw provider bodies, grounded prose, credentials, or applicant context.
+
+Before inserting `IN_PROGRESS`, atomically reserve the provider request, worst-case tool-call allowance, and worst-case estimated request cost on the parent run. Settle the reservation transactionally with the terminal attempt and query/run aggregates. A crash may conservatively consume capacity, but concurrent workers must never overspend the run ceiling.
+
+### 5.4 `catalogue_discovery_leads`
 
 Global normalized URL identity. A row means "this public URL has been observed", not "this is a scholarship".
 
@@ -212,13 +271,13 @@ Constraints:
 
 Do not store search-result prose as evidence on this row.
 
-### 5.4 `catalogue_discovery_observations`
+### 5.5 `catalogue_discovery_observations`
 
 A query/result relationship.
 
 ```text
 id UUID PK
-query_id UUID FK -> catalogue_discovery_queries ON DELETE CASCADE
+query_id UUID FK -> catalogue_discovery_queries ON DELETE RESTRICT
 lead_id UUID FK -> catalogue_discovery_leads ON DELETE RESTRICT
 provider_rank int nullable
 provider_source_type varchar(64) nullable
@@ -233,14 +292,14 @@ Constraints:
 - title is discovery metadata only and has a bounded length;
 - snippets/body prose are not retained by default.
 
-### 5.5 `catalogue_discovery_assessments`
+### 5.6 `catalogue_discovery_assessments`
 
 Append-only contextual officiality/ownership assessment.
 
 ```text
 id UUID PK
 lead_id UUID FK -> catalogue_discovery_leads ON DELETE RESTRICT
-run_id UUID FK -> catalogue_discovery_runs ON DELETE CASCADE
+run_id UUID FK -> catalogue_discovery_runs ON DELETE RESTRICT
 assessment_context_hash varchar(64)
 context_type varchar(64)
 context_scholarship_id UUID nullable
@@ -255,7 +314,7 @@ trust_tier int nullable
 reason_code varchar(100)
 reason_detail varchar(500)
 classifier_version varchar(100)
-supersedes_assessment_id UUID nullable
+supersedes_assessment_id UUID FK -> catalogue_discovery_assessments ON DELETE RESTRICT nullable
 created_at timestamptz
 ```
 
@@ -271,16 +330,16 @@ rejected_url_policy
 
 This table is append-only. Do not mutate an old assessment from unresolved to official; create a new assessment and link the superseded record.
 
-### 5.6 `catalogue_discovery_promotions`
+### 5.7 `catalogue_discovery_promotions`
 
 Explicit bridge into the existing ingestion domain.
 
 ```text
 id UUID PK
-run_id UUID FK -> catalogue_discovery_runs ON DELETE CASCADE
+run_id UUID FK -> catalogue_discovery_runs ON DELETE RESTRICT
 lead_id UUID FK -> catalogue_discovery_leads ON DELETE RESTRICT
 assessment_id UUID FK -> catalogue_discovery_assessments ON DELETE RESTRICT
-candidate_id UUID FK -> catalogue_candidates ON DELETE CASCADE
+candidate_id UUID FK -> catalogue_candidates ON DELETE RESTRICT
 candidate_source_id UUID FK -> catalogue_candidate_sources ON DELETE SET NULL nullable
 promotion_kind varchar(64)
 reason_code varchar(100)
@@ -293,6 +352,24 @@ Constraints:
 - assessment must belong to the same lead;
 - promotion occurs only after an acceptable deterministic assessment and successful `SafeSourceFetcher` result;
 - promotion cannot set opportunity/publication state.
+
+### 5.8 Existing `catalogue_candidate_sources` refinement
+
+Add the provenance link defined by ADR 0003:
+
+```text
+discovery_lead_id UUID FK -> catalogue_discovery_leads ON DELETE SET NULL nullable
+```
+
+with unique `(candidate_id, discovery_lead_id)` for non-null lead IDs. Discovery binds a selected lead to the known target as a `DISCOVERED` candidate source before the ingestion service fetches it. Seed/manual/crawler-created sources retain `discovery_lead_id = NULL`.
+
+### 5.9 Deletion and immutability policy
+
+- attempts preserve each call and allow only `IN_PROGRESS` to terminal mutation;
+- observations, assessments, and promotions are immutable business provenance;
+- assessments supersede rather than rewrite prior decisions;
+- downstream provenance uses `RESTRICT`; only the run-to-query relationship may cascade while no attempt or other protected provenance exists;
+- retention must be an explicit reviewed policy, never an accidental cascade.
 
 ## 6. State machines
 
@@ -332,7 +409,24 @@ Terminal alternatives:
 
 Retryable terminal states may move back to `PLANNED` only through explicit bounded retry scheduling and attempt limits.
 
-### 6.3 Lead assessment
+### 6.3 Provider attempt
+
+```text
+IN_PROGRESS
+  -> SUCCEEDED
+  -> RATE_LIMITED
+  -> TIMEOUT
+  -> PROVIDER_FAILED
+  -> RESPONSE_INVALID
+  -> TOOL_NOT_EXECUTED
+  -> CAPABILITY_UNAVAILABLE
+  -> BUDGET_REJECTED
+  -> ABANDONED
+```
+
+Every provider request has exactly one attempt row allocated before network I/O. A retry always receives a new `attempt_number`.
+
+### 6.4 Lead assessment
 
 Lead identity itself does not need a mutable state machine. Context-specific assessment records capture outcomes append-only:
 
@@ -344,7 +438,7 @@ SUPPORTING_OFFICIAL
 OFFICIAL
 ```
 
-### 6.4 Promotion
+### 6.5 Promotion
 
 Promotion is an event, not a mutable lifecycle. A duplicate promotion attempt returns/reuses the existing promotion row.
 
@@ -356,14 +450,23 @@ Input schema example:
 
 ```python
 class DiscoveryObjective(BaseModel):
-    objective_type: DiscoveryObjectiveType
+    objective_kind: DiscoveryObjectiveKind
+    scholarship_id: UUID | None
+    candidate_id: UUID | None
+    cycle_id: UUID | None
+    track_id: UUID | None
+    institution_id: UUID | None
+    programme_id: UUID | None
+    field_paths: tuple[str, ...]
+    reason_codes: tuple[str, ...]
+    criticality_tier: int
     scholarship_name: str | None
-    scholarship_aliases: list[str]
+    scholarship_aliases: tuple[str, ...]
     provider_name: str | None
     institution_name: str | None
     country: str | None
     programme_name: str | None
-    reviewed_domains: list[str]
+    reviewed_domains: tuple[str, ...]
 ```
 
 No student/application/document fields are accepted by this schema.
@@ -402,6 +505,7 @@ provider_response_id
 web_search_executed bool
 urls[]
 provider_call_count
+tool_call_count
 response_bytes
 latency_ms
 usage/cost fields available from provider
@@ -431,6 +535,8 @@ APP_CATALOGUE_DISCOVERY_MAX_PROVIDER_CALLS_PER_RUN=5
 APP_CATALOGUE_DISCOVERY_MAX_LEADS_PER_RUN=25
 APP_CATALOGUE_DISCOVERY_MAX_URLS_PER_QUERY=5
 APP_CATALOGUE_DISCOVERY_MAX_ESTIMATED_COST_PER_RUN=<reviewed value>
+APP_CATALOGUE_DISCOVERY_MAX_ESTIMATED_COST_PER_PROVIDER_REQUEST=<reviewed value>
+APP_CATALOGUE_DISCOVERY_MAX_TOOL_CALLS_PER_PROVIDER_REQUEST=1
 ```
 
 If discovery is enabled in production/staging, startup/job validation must reject:
@@ -439,6 +545,7 @@ If discovery is enabled in production/staging, startup/job validation must rejec
 - missing HTTPS endpoint;
 - model `unconfigured`;
 - non-positive required spend/call ceilings;
+- a per-request reservation greater than the corresponding run ceiling;
 - malformed token scope;
 - configurations that silently enable preview fallback.
 
@@ -502,19 +609,22 @@ An institution URL may be `supporting_official` for local facts even when it is 
 
 PR5 does not redesign the downstream `Source` table in this PR. It records richer context in the discovery assessment so later evidence/source work can preserve scope correctly.
 
-## 12. Safe-fetch promotion gate
+## 12. Candidate binding and authoritative safe-fetch promotion gate
 
-An acceptable discovery assessment alone is insufficient for promotion.
+An acceptable discovery assessment alone is insufficient for binding or promotion. Binding is authorized only for the run's explicit, known `target_candidate_id`; a human-readable label cannot substitute for that foreign key.
 
 Promotion sequence:
 
 ```text
 lead
  -> acceptable contextual assessment
- -> SafeSourceFetcher.fetch(lead.normalized_url)
- -> fetch policy success
- -> final URL remains within approved ownership/domain relationship
- -> candidate-source persistence
+ -> deterministic root selection for the known target candidate
+ -> create/reuse CandidateSource(DISCOVERED, discovery_lead_id)
+ -> existing CatalogueIngestionService
+ -> SafeSourceFetcher.fetch(candidate_source.url)
+ -> fetch policy success and final URL canonicalization
+ -> final ownership/officiality and target-content verification
+ -> CandidateSource(FETCHED)
  -> DiscoveryPromotion record
 ```
 
@@ -526,6 +636,8 @@ Failures:
 - unsafe cross-domain redirect -> no promotion;
 - unsupported MIME -> no promotion;
 - provider search says official but deterministic classifier disagrees -> deterministic result wins.
+
+The discovery worker does not fetch the lead before binding. A blocked or failed fetch retains the source binding and discovery provenance but creates no promotion event. Redirect convergence must reconcile multiple leads to one effective canonical candidate source without deleting either lead's observation history.
 
 PR4 bounded crawling may run only after this official fetched root exists and its independent crawler feature flag is enabled.
 
@@ -608,6 +720,8 @@ Enforce before each provider call:
 - URLs per query;
 - response-byte ceiling;
 - estimated spend ceiling.
+
+The enforcement operation is an atomic reservation, not a read-then-increment check. It reserves one provider request, the configured worst-case tool calls, and the configured worst-case request cost before network I/O. Provider requests and actual web-search tool calls are separate counters and budgets.
 
 When the next call would exceed a hard ceiling:
 
@@ -823,15 +937,19 @@ A failed gate means improve planner/parser/officiality logic and rerun the evalu
 - provider response byte ceiling;
 - retry categorization;
 - cost/call budget enforcement;
+- durable attempt creation, terminal immutability, and query aggregate reconciliation;
+- atomic budget reservation under concurrent workers;
 - assessment context hashing;
 - contextual officiality examples;
-- promotion gate requires safe fetch;
+- promotion requires a known-target binding followed by authoritative ingestion safe-fetch acceptance;
 - metrics reject unsupported/high-cardinality names.
 
 ### PostgreSQL integration
 
 - concurrent workers do not claim the same query;
 - expired leases can be reclaimed;
+- stale in-progress attempts become `ABANDONED` before retrying with a new attempt number;
+- concurrent reservations cannot exceed provider, tool-call, or estimated-cost ceilings;
 - same normalized URL from many queries creates one lead;
 - observations remain distinct;
 - append-only assessment behavior;
@@ -845,6 +963,7 @@ A failed gate means improve planner/parser/officiality logic and rerun the evalu
 - no provider call when feature flag disabled;
 - no provider call with invalid production configuration;
 - no URL fetched outside `SafeSourceFetcher`;
+- discovery never fetches a lead before candidate-source binding;
 - no search prose written to `FieldEvidence`/canonical facts;
 - no automatic publication;
 - URL policy blocks credentials/private targets;

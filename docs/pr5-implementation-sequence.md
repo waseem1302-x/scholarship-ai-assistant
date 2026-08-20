@@ -2,8 +2,9 @@
 
 - Status: implementation ordering contract
 - Date: 2026-08-19
-- Baseline dependency: PR4 bounded crawler head `daaf8ffc23cde323509b4ed6f40c9dab97f9fd16`
-- Runtime coding starts from the feature branch only after PR4 is merged or otherwise explicitly integrated.
+- Last reconciled: 2026-08-20 against ADRs 0003-0006 and the Azure feature baseline
+- Integration baseline: Azure feature head `552ff0137fca7ff806a13f24e6a10ce79097682a` (PR4 plus Step 1/2 safety fixes).
+- Runtime coding starts from a fresh branch at the then-current Azure feature head after this architecture PR is merged.
 - This document does not authorize publication, autonomous scheduling, or billable Azure provisioning.
 
 ## Objective
@@ -18,8 +19,9 @@ schema durability
   -> untrusted provider output
   -> URL ledger
   -> contextual assessment
-  -> safe fetch
-  -> target binding
+  -> known-candidate source binding
+  -> authoritative ingestion safe fetch
+  -> target-content verification
   -> promotion
   -> protected live capability proof
 ```
@@ -31,6 +33,7 @@ No later stage may be treated as proof of an earlier stage.
 ### Preconditions
 
 - PR4 is merged/integrated into `feature/azure-ai-catalogue-pipeline` by explicit authorization.
+- Step 1/2 extraction safety fixes are present at or after `552ff0137fca7ff806a13f24e6a10ce79097682a`.
 - Updated feature branch CI is green.
 - PR5 runtime branch is created from that updated feature branch, not from the temporary architecture branch.
 
@@ -49,6 +52,7 @@ Tables:
 ```text
 catalogue_discovery_runs
 catalogue_discovery_queries
+catalogue_discovery_attempts
 catalogue_discovery_leads
 catalogue_discovery_observations
 catalogue_discovery_assessments
@@ -68,13 +72,23 @@ objective_criticality_tier
 objective_priority_snapshot
 ```
 
+Refine existing `catalogue_candidate_sources` with:
+
+```text
+discovery_lead_id UUID nullable FK -> catalogue_discovery_leads ON DELETE SET NULL
+UNIQUE(candidate_id, discovery_lead_id)
+```
+
 ### Required invariants
 
 - no applicant/private columns;
 - lead URL identity is global and normalized;
 - observations preserve query provenance;
+- each outbound provider call has one durable attempt row;
+- provider/tool/cost capacity is reserved atomically before network I/O;
 - assessments are append-only/superseding;
 - promotion is idempotent;
+- downstream provenance uses the `RESTRICT`/`SET NULL` deletion policy from ADR 0006;
 - promotion cannot directly reference publication transitions;
 - downgrade is tested where repository policy requires it.
 
@@ -130,6 +144,8 @@ Add repositories/services for:
 - persist immutable identity/objective snapshots;
 - persist query plan;
 - claim query with lease/CAS semantics;
+- reserve run budget and create an in-progress attempt before provider I/O;
+- settle or abandon attempts without erasing prior call history;
 - record/reuse lead;
 - record observation;
 - append/reuse contextual assessment;
@@ -141,6 +157,8 @@ Still no live Web Search provider.
 
 - two workers cannot successfully claim the same query concurrently;
 - query retries are bounded;
+- terminal attempts cannot be rewritten and retries use a new attempt number;
+- concurrent workers cannot overspend provider, tool-call, or cost ceilings;
 - state transitions are allowlisted;
 - append-only records are not silently rewritten;
 - same normalized URL reuses a lead;
@@ -153,6 +171,8 @@ Still no live Web Search provider.
 - transaction rollback test;
 - invalid transition tests;
 - duplicate insert race tests;
+- attempt/query aggregate reconciliation and crash-recovery tests;
+- concurrent atomic budget-reservation tests;
 - no promotion without acceptable assessment/fetch proof input.
 
 ## Slice 4 — provider interface + fake provider
@@ -177,6 +197,7 @@ provider_response_id
 web_search_executed
 urls
 provider_call_count
+tool_call_count
 response_bytes
 latency_ms
 usage/cost metadata when available
@@ -190,6 +211,7 @@ Do not pass generated answer prose into downstream extraction.
 - oversized result rejected;
 - missing tool execution represented explicitly;
 - cost/call budgets enforced in service before additional calls;
+- provider requests and web-search tool calls are accounted separately;
 - provider failures produce deterministic state/outcome.
 
 ## Slice 5 — URL normalization and lead ingestion
@@ -258,54 +280,53 @@ rejected_url_policy
 - cross-owner/cross-domain unresolved cases;
 - same URL can have different contextual assessments across objectives without mutating historical assessment.
 
-## Slice 7 — safe-fetch confirmation and target-content binding
+## Slice 7 — deterministic known-candidate source binding
 
-Only now connect discovery to `SafeSourceFetcher`.
+Bind only a deterministically selected, acceptably assessed lead to the run's explicit, existing `target_candidate_id`.
 
 Sequence:
 
 ```text
-acceptable assessment
-  -> SafeSourceFetcher
-  -> final URL/ownership revalidation
-  -> fetched payload
-  -> target-content binding
+lead exists
+  -> contextual assessment acceptable
+  -> target_candidate_id authorizes binding
+  -> candidate lifecycle permits acquisition
+  -> create/reuse CandidateSource(DISCOVERED, discovery_lead_id)
 ```
 
-Target-content binding must fail closed when fetched content does not describe the expected public target identity.
-
-No AI extraction is required to prove the PR5 root-binding boundary.
+Binding means the URL is worth attempting for this known candidate. It is not fetch acceptance, evidence, promotion, classification approval, or canonical scholarship creation.
 
 ### Proof gate
 
-- SSRF/private peer blocked;
-- DNS/rebinding protection retained;
-- robots blocked;
-- login/CAPTCHA not bypassed;
-- unsafe cross-domain redirect blocked;
-- unsupported MIME blocked;
-- target mismatch rejected;
-- final canonical URL recorded safely;
-- no candidate source created before binding success.
+- a lead can never create a candidate;
+- an objective label/snapshot without `target_candidate_id` cannot authorize binding;
+- repeated binding is idempotent;
+- terminal/incompatible candidates are not automatically reset;
+- the narrow `NEEDS_REVIEW` source-not-found resume rule is enforced;
+- deterministic root selection is stable under ties;
+- supporting institution pages cannot bind as umbrella roots without the required authority context.
 
-## Slice 8 — promotion into existing candidate-source pipeline
+## Slice 8 — authoritative ingestion fetch and promotion
 
-Create/reuse `CatalogueCandidateSource` only after:
+Extend the existing ingestion service with the small hook needed to process a pre-bound discovery source. Discovery does not add a second HTTP client or pre-fetch the lead.
 
 ```text
-lead exists
-assessment acceptable
-safe fetch success
-final owner/domain acceptable
-target binding success
+CandidateSource(DISCOVERED)
+  -> existing CatalogueIngestionService / SafeSourceFetcher
+  -> final URL canonicalization and owner/officiality revalidation
+  -> target-content verification
+  -> CandidateSource(FETCHED)
+  -> catalogue_discovery_promotions
 ```
 
-Then record `catalogue_discovery_promotions`.
+Target-content verification fails closed when fetched content does not describe the expected public target identity. No AI extraction is required to prove this root-binding boundary.
 
 ### Required behavior
 
 - promotion never creates/publishes an `Opportunity`;
 - promotion never approves a classification decision;
+- blocked/failed/mismatched fetches retain binding provenance but create no promotion;
+- redirect convergence produces one effective canonical candidate source without deleting lead provenance;
 - downstream PR4 crawler remains independently gated;
 - downstream AI extraction remains independently gated;
 - duplicate promotion reuses existing result.
@@ -319,13 +340,14 @@ objective
  -> fake provider
  -> lead
  -> assessment
- -> fake-safe fetch
- -> binding
- -> candidate source
+ -> CandidateSource(DISCOVERED) binding
+ -> existing ingestion fake-safe fetch
+ -> final owner and target-content verification
+ -> CandidateSource(FETCHED)
  -> promotion
 ```
 
-and negative tests at every boundary.
+and negative tests at every boundary, including SSRF/private peer, DNS/rebinding, robots, login/CAPTCHA, unsafe redirects, unsupported MIME, target mismatch, failed fetch, and converging redirects.
 
 ## Slice 9 — configuration and kill switches
 
@@ -345,6 +367,8 @@ APP_CATALOGUE_DISCOVERY_MAX_PROVIDER_CALLS_PER_RUN=5
 APP_CATALOGUE_DISCOVERY_MAX_LEADS_PER_RUN=25
 APP_CATALOGUE_DISCOVERY_MAX_URLS_PER_QUERY=5
 APP_CATALOGUE_DISCOVERY_MAX_ESTIMATED_COST_PER_RUN=<explicit reviewed positive value when enabled>
+APP_CATALOGUE_DISCOVERY_MAX_ESTIMATED_COST_PER_PROVIDER_REQUEST=<explicit reviewed positive value when enabled>
+APP_CATALOGUE_DISCOVERY_MAX_TOOL_CALLS_PER_PROVIDER_REQUEST=1
 ```
 
 ### Required startup/job validation
@@ -356,6 +380,7 @@ If discovery enabled, reject:
 - unconfigured model;
 - malformed token scope;
 - non-positive required budgets;
+- a per-request reservation greater than the corresponding run limit;
 - unsupported capability mode;
 - implicit preview fallback.
 
