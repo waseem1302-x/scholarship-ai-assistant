@@ -1,7 +1,7 @@
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from sqlalchemy import (
@@ -311,17 +311,28 @@ def set_audit_integrity_hashes(
             (AUDIT_CHAIN_ADVISORY_LOCK_ID,),
         )
 
-    previous_hash = connection.execute(
-        select(AuditLog.integrity_hash)
+    previous_row = connection.execute(
+        select(AuditLog.created_at, AuditLog.integrity_hash)
         .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
         .limit(1)
-    ).scalar_one_or_none()
+    ).one_or_none()
+    previous_created_at = previous_row.created_at if previous_row else None
+    previous_hash = previous_row.integrity_hash if previous_row else None
+    next_created_at = utc_now()
+    if previous_created_at is not None:
+        if previous_created_at.tzinfo is None:
+            previous_created_at = previous_created_at.replace(tzinfo=UTC)
+        else:
+            previous_created_at = previous_created_at.astimezone(UTC)
+        if next_created_at <= previous_created_at:
+            next_created_at = previous_created_at + timedelta(microseconds=1)
+
     for target in targets:
         if target.id is None:
             target.id = uuid.uuid4()
         # Audit ordering is server-canonical and assigned only after the
         # transaction holds the chain lock, preventing timestamp/chain races.
-        target.created_at = utc_now()
+        target.created_at = next_created_at
         target.previous_integrity_hash = previous_hash
         target.integrity_hash = audit_integrity_hash(
             previous_hash=previous_hash,
@@ -334,6 +345,7 @@ def set_audit_integrity_hashes(
             created_at=target.created_at,
         )
         previous_hash = target.integrity_hash
+        next_created_at += timedelta(microseconds=1)
 
 
 @event.listens_for(AuditLog, "before_update")
