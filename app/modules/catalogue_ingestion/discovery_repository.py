@@ -801,14 +801,35 @@ class CatalogueDiscoveryRepository:
             or assessment.officiality_status is not DiscoveryOfficialityStatus.OFFICIAL
         ):
             raise DiscoveryStateError("promotion_requires_official_matching_assessment")
+        if self.session.scalar(
+            select(
+                exists().where(
+                    CatalogueDiscoveryAssessment.supersedes_assessment_id == assessment.id
+                )
+            )
+        ):
+            raise DiscoveryStateError("promotion_assessment_was_superseded")
         if (
             source is None
             or source.candidate_id != candidate_id
-            or source.discovery_lead_id != lead_id
             or source.status is not CandidateSourceStatus.FETCHED
             or not source.is_official
         ):
             raise DiscoveryStateError("promotion_requires_fetched_matching_candidate_source")
+        if source.discovery_lead_id != lead_id:
+            redirect_alias = self.session.scalar(
+                select(CatalogueCandidateSource).where(
+                    CatalogueCandidateSource.candidate_id == candidate_id,
+                    CatalogueCandidateSource.discovery_lead_id == lead_id,
+                )
+            )
+            if (
+                redirect_alias is None
+                or redirect_alias.status is not CandidateSourceStatus.MANUAL_REVIEW
+                or redirect_alias.failure_code != "redirect_converged_to_existing_source"
+                or redirect_alias.final_url != source.final_url
+            ):
+                raise DiscoveryStateError("promotion_requires_fetched_matching_candidate_source")
         try:
             with self.session.begin_nested():
                 promotion = CatalogueDiscoveryPromotion(
