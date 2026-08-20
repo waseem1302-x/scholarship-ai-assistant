@@ -7,8 +7,9 @@ import uuid
 
 from app.core.config import get_settings
 from app.db.session import SystemSessionLocal
-from app.modules.catalogue_ingestion.models import IngestionMode
-from app.modules.catalogue_ingestion.service import CatalogueIngestionService
+from app.modules.catalogue_ingestion.models import IngestionMode, IngestionRunStatus
+from app.modules.catalogue_ingestion.schemas import IngestionRunResponse
+from app.modules.catalogue_ingestion.service import CatalogueIngestionService, RunBudgetExhausted
 from app.modules.operations.service import OperationalJobService
 
 
@@ -25,6 +26,16 @@ def parser() -> argparse.ArgumentParser:
         default=IngestionMode.CANDIDATE_ONLY.value,
     )
     return result
+
+
+def _record_run_health(
+    health: OperationalJobService,
+    result: IngestionRunResponse,
+) -> None:
+    if result.status is IngestionRunStatus.BUDGET_EXHAUSTED:
+        health.failed("catalogue_ingestion", RunBudgetExhausted())
+        return
+    health.completed("catalogue_ingestion", result.checkpoint_cursor)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -54,8 +65,7 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 run_id = run.id
             result = service.process_run(run_id, worker_id=worker_id, batch_size=args.batch_size)
-            processed = result.checkpoint_cursor
-            health.completed("catalogue_ingestion", processed)
+            _record_run_health(health, result)
         except Exception as exc:
             health.failed("catalogue_ingestion", exc)
             raise

@@ -24,7 +24,11 @@ from app.modules.catalogue_ingestion.provider import (
     azure_structured_output_schema,
     estimate_cost,
 )
-from app.modules.catalogue_ingestion.schemas import CatalogueExtractionOutput
+from app.modules.catalogue_ingestion.schemas import (
+    CatalogueExtractionOutput,
+    ExtractionResult,
+    ExtractionUsage,
+)
 from app.modules.catalogue_ingestion.seed_parser import (
     LoadedSeed,
     LocalSeedDocumentParser,
@@ -541,6 +545,71 @@ def test_budget_exhaustion_is_explicit_and_resumeable(db_session, tmp_path) -> N
     assert candidate.claimed_by is None
 
 
+def test_actual_cost_overflow_preserves_paid_output_for_resume(db_session, tmp_path) -> None:
+    class CostlyExtractionProvider:
+        name = "fake"
+        model = "costly-test-v1"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract(self, *, source_url: str, source_text: str) -> ExtractionResult:
+            del source_url, source_text
+            self.calls += 1
+            return ExtractionResult(
+                output=extraction_output(),
+                usage=ExtractionUsage(
+                    input_tokens=100,
+                    output_tokens=50,
+                    estimated_cost=Decimal("0.002"),
+                    latency_ms=1,
+                ),
+            )
+
+    extractor = CostlyExtractionProvider()
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_ai_max_output_tokens=256,
+            catalogue_ai_max_estimated_cost_per_run=Decimal("0.001"),
+        ),
+        fetcher=FakeFetcher(),
+        extractor=extractor,
+    )
+    run = service.create_run_from_source(
+        str(
+            write_seed(
+                tmp_path,
+                [{"name": "Example Scholarship", "possible_official_url": OFFICIAL_URL}],
+            )
+        ),
+        mode=IngestionMode.EXTRACTION,
+        dry_run=False,
+    )
+
+    stopped = service.process_run(run.id, worker_id="test-worker", batch_size=1)
+    attempt = db_session.scalar(select(CatalogueExtractionAttempt))
+    candidate = db_session.scalar(select(CatalogueCandidate))
+
+    assert stopped.status is IngestionRunStatus.BUDGET_EXHAUSTED
+    assert stopped.model_calls == 1
+    assert stopped.estimated_cost == Decimal("0.002")
+    assert attempt is not None
+    assert attempt.status.value == "succeeded"
+    assert attempt.output_json is not None
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.SOURCE_FETCHED
+    assert candidate.claimed_by is None
+
+    resumed = service.process_run(run.id, worker_id="resume-worker", batch_size=1)
+
+    assert resumed.status is IngestionRunStatus.COMPLETED
+    assert resumed.failure_code is None
+    assert extractor.calls == 1
+    assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == 1
+    assert candidate.status is CandidateStatus.READY_FOR_REVIEW
+
+
 def test_500_candidate_run_is_bounded_and_never_calls_ai(db_session, tmp_path) -> None:
     rows = [{"name": f"Scholarship {index:03d}"} for index in range(500)]
     extractor = FakeExtractionProvider(extraction_output())
@@ -682,6 +751,34 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
     assert sent["response_format"]["json_schema"]["strict"] is True
     assert result.output.identity.name == "Example Scholarship"
     assert result.usage.estimated_cost == Decimal("0.000200")
+
+
+def test_azure_provider_does_not_retry_non_retryable_http_errors() -> None:
+    class Credential:
+        def get_token(self, scope: str):
+            del scope
+            return type("Token", (), {"token": "entra-token"})()
+
+    class Opener:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def open(self, request, timeout: int):
+            del timeout
+            self.calls += 1
+            raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, None)
+
+    opener = Opener()
+    waits: list[float] = []
+    provider = AzureOpenAIExtractionProvider(
+        enabled_settings(), credential=Credential(), opener=opener, sleeper=waits.append
+    )
+
+    with pytest.raises(ExtractionProviderError):
+        provider.extract(source_url=OFFICIAL_URL, source_text=SOURCE_TEXT)
+
+    assert opener.calls == 1
+    assert waits == []
 
 
 def test_semantic_validation_rejects_country_inferred_from_university() -> None:

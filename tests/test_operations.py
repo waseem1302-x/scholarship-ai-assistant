@@ -3,8 +3,10 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select, text
 
+from app.cli.ingest_catalogue_seeds import _record_run_health
 from app.modules.auth import models as auth_models
 from app.modules.auth.models import AuditLog, verify_audit_integrity_chain
+from app.modules.catalogue_ingestion.models import IngestionRunStatus
 from app.modules.operations.models import OperationalJobHealth, OperationalJobRun
 from app.modules.operations.service import OperationalJobService
 
@@ -30,6 +32,31 @@ def test_operational_job_health_records_safe_completion_and_failure(db_session) 
     assert len(runs) == 2
     assert {run.failed_count for run in runs} == {0, 1}
     assert all(run.duration_ms is not None for run in runs)
+
+
+def test_catalogue_budget_stop_is_not_recorded_as_completed(db_session) -> None:
+    health = OperationalJobService(db_session)
+    health.started("catalogue_ingestion")
+    result = type(
+        "RunResult",
+        (),
+        {"status": IngestionRunStatus.BUDGET_EXHAUSTED, "checkpoint_cursor": 7},
+    )()
+
+    _record_run_health(health, result)
+
+    record = db_session.get(OperationalJobHealth, "catalogue_ingestion")
+    assert record is not None
+    assert record.last_completed_at is None
+    assert record.processed_count == 0
+    assert record.failed_count == 1
+    assert record.last_error_code == "RunBudgetExhausted"
+    run = db_session.scalar(
+        select(OperationalJobRun).where(OperationalJobRun.job_name == "catalogue_ingestion")
+    )
+    assert run is not None
+    assert run.failed_count == 1
+    assert run.error_code == "RunBudgetExhausted"
 
 
 def test_operational_health_reports_safe_job_summary(client, db_session) -> None:
