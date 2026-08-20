@@ -19,6 +19,10 @@ from app.modules.catalogue_ingestion.crawler import (
     CrawlBudget,
     CrawlResult,
 )
+from app.modules.catalogue_ingestion.discovery_promotion import (
+    CatalogueDiscoveryPromotionService,
+    DiscoveryPromotionResult,
+)
 from app.modules.catalogue_ingestion.metrics import get_catalogue_metrics
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
@@ -184,6 +188,24 @@ class CatalogueIngestionService:
         self.repository.refresh_run_summary(run)
         self.session.commit()
         return IngestionRunResponse.model_validate(run)
+
+    def process_bound_discovery_source(
+        self,
+        discovery_run_id: uuid.UUID,
+        candidate_source_id: uuid.UUID,
+    ) -> DiscoveryPromotionResult:
+        """Fetch and promote one pre-bound discovery root without extraction."""
+
+        return CatalogueDiscoveryPromotionService(
+            self.session,
+            fetcher=self.fetcher,
+            classifier=self.classifier,
+            reviewed_official_domains=self.settings.catalogue_reviewed_official_domain_set,
+            metrics=self.metrics,
+        ).process(
+            run_id=discovery_run_id,
+            candidate_source_id=candidate_source_id,
+        )
 
     def _process_candidate(self, run: CatalogueIngestionRun, candidate: CatalogueCandidate) -> None:
         discovered = self.discovery.discover(

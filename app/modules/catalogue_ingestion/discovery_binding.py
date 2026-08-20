@@ -59,7 +59,12 @@ class CatalogueDiscoveryBindingService:
         self.session = session
         self.repository = CatalogueDiscoveryRepository(session)
 
-    def select_root(self, *, run_id: uuid.UUID) -> DiscoveryRootSelection:
+    def select_root(
+        self,
+        *,
+        run_id: uuid.UUID,
+        lead_id: uuid.UUID | None = None,
+    ) -> DiscoveryRootSelection:
         run = self.session.get(CatalogueDiscoveryRun, run_id)
         if run is None:
             raise DiscoveryStateError("catalogue_discovery_run_not_found")
@@ -103,6 +108,8 @@ class CatalogueDiscoveryBindingService:
 
         selections: dict[tuple[uuid.UUID, uuid.UUID], DiscoveryRootSelection] = {}
         for assessment, lead, query, observation in rows:
+            if lead_id is not None and lead.id != lead_id:
+                continue
             if not _assessment_matches_root_context(
                 assessment,
                 objective_kind=objective_kind,
