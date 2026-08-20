@@ -14,6 +14,7 @@ from app.modules.catalogue_ingestion.discovery import (
     DiscoveryQueryPlanner,
 )
 from app.modules.catalogue_ingestion.discovery_models import (
+    CatalogueDiscoveryAssessment,
     CatalogueDiscoveryAttempt,
     CatalogueDiscoveryLead,
     CatalogueDiscoveryObservation,
@@ -23,6 +24,11 @@ from app.modules.catalogue_ingestion.discovery_models import (
     DiscoveryOfficialityStatus,
     DiscoveryQueryStatus,
     DiscoveryRunStatus,
+)
+from app.modules.catalogue_ingestion.discovery_officiality import (
+    CatalogueDiscoveryOfficialityService,
+    ReviewedOwnerDomain,
+    SourceAuthorityClass,
 )
 from app.modules.catalogue_ingestion.discovery_provider import (
     DiscoveryProviderError,
@@ -51,6 +57,9 @@ from app.modules.catalogue_ingestion.models import (
     IngestionMode,
 )
 from app.modules.catalogue_ingestion.url_policy import URLRejectionCode
+from app.modules.opportunities.evidence_models import SourceOwnerType
+from app.modules.opportunities.graph_models import Institution
+from app.modules.opportunities.models import Provider
 
 
 def _candidate(db_session) -> CatalogueCandidate:
@@ -141,6 +150,33 @@ def _run(db_session, candidate_id: uuid.UUID | None = None, **limit_overrides):
         )
     )
     return repository, run, queries
+
+
+def _run_for_objective(db_session, objective: DiscoveryObjective):
+    repository = CatalogueDiscoveryRepository(db_session)
+    run = repository.create_run(
+        objective=objective,
+        priority=DiscoveryPrioritySnapshot(
+            blocking_class=0,
+            criticality_tier=objective.criticality_tier,
+            conflict_or_stale_rank=1,
+            current_cycle_rank=2,
+            deterministic_tiebreak=f"context-{objective.objective_kind.value}",
+            reason_codes=objective.reason_codes,
+        ),
+        plans=DiscoveryQueryPlanner(max_queries=2).plan(objective),
+        provider="fake",
+        model="fake-web-search-v1",
+        limits=_limits(),
+    )
+    query = db_session.scalar(
+        select(CatalogueDiscoveryQuery)
+        .where(CatalogueDiscoveryQuery.run_id == run.id)
+        .order_by(CatalogueDiscoveryQuery.ordinal)
+        .limit(1)
+    )
+    assert query is not None
+    return repository, run, query
 
 
 def _claim(repository, run_id, *, worker="worker-1", now=None):
@@ -581,6 +617,107 @@ def test_leads_observations_and_assessments_are_idempotent_and_immutable(db_sess
     with pytest.raises(ValueError, match="immutable provenance"):
         db_session.commit()
     db_session.rollback()
+
+
+def test_same_lead_keeps_distinct_contextual_assessment_history(db_session) -> None:
+    provider = Provider(
+        name=f"China Scholarship Council {uuid.uuid4().hex}",
+        website_url="https://csc.edu.cn",
+    )
+    institution = Institution(
+        canonical_name="Tsinghua University",
+        slug=f"tsinghua-{uuid.uuid4().hex}",
+        institution_type="university",
+        country_code="CN",
+        official_domain="tsinghua.edu.cn",
+        official_website="https://tsinghua.edu.cn",
+        identity_status="verified",
+    )
+    db_session.add_all((provider, institution))
+    db_session.commit()
+    registrations = (
+        ReviewedOwnerDomain(
+            domain="csc.edu.cn",
+            owner_type=SourceOwnerType.PROVIDER,
+            owner_name_snapshot=provider.name,
+            authority_class=SourceAuthorityClass.CANONICAL_OWNER,
+            review_reason="Verified provider fixture.",
+            provider_id=provider.id,
+        ),
+        ReviewedOwnerDomain(
+            domain="tsinghua.edu.cn",
+            owner_type=SourceOwnerType.INSTITUTION,
+            owner_name_snapshot=institution.canonical_name,
+            authority_class=SourceAuthorityClass.SUPPORTING_INSTITUTION,
+            review_reason="Verified institution fixture.",
+            institution_id=institution.id,
+        ),
+    )
+    shared = {
+        "field_paths": ("identity.official_source",),
+        "reason_codes": ("OFFICIAL_SOURCE_MISSING",),
+        "criticality_tier": 0,
+        "scholarship_name": "Chinese Government Scholarship",
+        "provider_name": provider.name,
+        "country": "China",
+        "reviewed_domains": ("csc.edu.cn", "tsinghua.edu.cn"),
+    }
+    local_objective = DiscoveryObjective(
+        objective_kind=DiscoveryObjectiveKind.INSTITUTION_LOCAL_REQUIREMENTS,
+        institution_id=institution.id,
+        institution_name=institution.canonical_name,
+        **shared,
+    )
+    umbrella_objective = DiscoveryObjective(
+        objective_kind=DiscoveryObjectiveKind.RESOLVE_CANONICAL_SOURCE,
+        **shared,
+    )
+
+    local_repository, local_run, local_query = _run_for_objective(db_session, local_objective)
+    _claim(local_repository, local_run.id)
+    _settle_success(local_repository, local_query)
+    lead, _ = local_repository.record_lead_observation(
+        query_id=local_query.id,
+        url="https://tsinghua.edu.cn/csc",
+        discovery_reason="institution-local objective",
+    )
+    local_assessment = CatalogueDiscoveryOfficialityService(db_session).assess_lead(
+        run_id=local_run.id,
+        lead_id=lead.id,
+        reviewed_owner_domains=registrations,
+    )
+
+    umbrella_repository, umbrella_run, umbrella_query = _run_for_objective(
+        db_session, umbrella_objective
+    )
+    _claim(umbrella_repository, umbrella_run.id)
+    _settle_success(umbrella_repository, umbrella_query)
+    repeated_lead, _ = umbrella_repository.record_lead_observation(
+        query_id=umbrella_query.id,
+        url="https://tsinghua.edu.cn/csc",
+        discovery_reason="umbrella objective",
+    )
+    umbrella_assessment = CatalogueDiscoveryOfficialityService(db_session).assess_lead(
+        run_id=umbrella_run.id,
+        lead_id=repeated_lead.id,
+        reviewed_owner_domains=registrations,
+    )
+
+    assert repeated_lead.id == lead.id
+    assert local_assessment.id != umbrella_assessment.id
+    assert local_assessment.officiality_status is DiscoveryOfficialityStatus.SUPPORTING_OFFICIAL
+    assert umbrella_assessment.officiality_status is DiscoveryOfficialityStatus.UNRESOLVED
+    persisted_local = db_session.get(CatalogueDiscoveryAssessment, local_assessment.id)
+    assert persisted_local is not None
+    assert persisted_local.reason_code == "REVIEWED_SUPPORTING_INSTITUTION"
+    assessments = list(
+        db_session.scalars(
+            select(CatalogueDiscoveryAssessment).where(
+                CatalogueDiscoveryAssessment.lead_id == lead.id
+            )
+        )
+    )
+    assert len(assessments) == 2
 
 
 def test_provider_url_ingestion_rejects_unsafe_urls_without_persisting_them(db_session) -> None:
