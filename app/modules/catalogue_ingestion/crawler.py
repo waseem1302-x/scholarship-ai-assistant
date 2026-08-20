@@ -14,8 +14,12 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
+from app.modules.catalogue_ingestion.url_policy import (
+    is_authentication_or_session_url,
+    normalize_crawl_url_identity,
+)
 from app.modules.opportunities.source_monitor import (
     FetchedLink,
     FetchedSource,
@@ -26,13 +30,6 @@ from app.modules.opportunities.source_monitor import (
 
 _MAX_ROOT_PAGES = 10
 _DEFAULT_TOTAL_BYTES = 20 * 1024 * 1024
-_TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
-_AUTH_PATH_CUES = re.compile(
-    r"(?:^|/)(?:account|auth|captcha|idp|login|logout|session|signin|sign-in|sso)(?:/|$)",
-    re.IGNORECASE,
-)
-_AUTH_QUERY_KEYS = {"session", "sessionid", "jsessionid", "execution", "samlrequest"}
-
 _POSITIVE_SIGNALS: tuple[tuple[re.Pattern[str], int], ...] = (
     (re.compile(r"\b(?:scholarship|scholarships|award|awards|funding)\b", re.I), 20),
     (re.compile(r"\b(?:eligibility|eligible|requirement|requirements)\b", re.I), 15),
@@ -122,34 +119,7 @@ class _QueuedLink:
 def normalize_crawl_url(value: str) -> str | None:
     """Normalize public HTTPS crawl identities without erasing meaningful query data."""
 
-    try:
-        parsed = urlsplit(value.strip())
-    except ValueError:
-        return None
-    if parsed.scheme.casefold() != "https" or not parsed.hostname:
-        return None
-    if parsed.username or parsed.password:
-        return None
-
-    host = parsed.hostname.casefold().strip(".")
-    try:
-        port = parsed.port
-    except ValueError:
-        return None
-    netloc = host if port in {None, 443} else f"{host}:{port}"
-    path = parsed.path or "/"
-    if path != "/":
-        path = path.rstrip("/")
-
-    query_pairs: list[tuple[str, str]] = []
-    for key, query_value in parse_qsl(parsed.query, keep_blank_values=True):
-        lowered = key.casefold()
-        if lowered.startswith("utm_") or lowered in _TRACKING_QUERY_KEYS:
-            continue
-        query_pairs.append((key, query_value))
-    query_pairs.sort(key=lambda pair: (pair[0].casefold(), pair[1]))
-    query = urlencode(query_pairs, doseq=True)
-    return urlunsplit(("https", netloc, path, query, ""))
+    return normalize_crawl_url_identity(value)
 
 
 def _host(value: str) -> str | None:
@@ -160,13 +130,7 @@ def _host(value: str) -> str | None:
 
 
 def _is_authentication_or_session_link(url: str) -> bool:
-    try:
-        parsed = urlsplit(url)
-    except ValueError:
-        return True
-    if _AUTH_PATH_CUES.search(parsed.path):
-        return True
-    return any(key.casefold() in _AUTH_QUERY_KEYS for key, _ in parse_qsl(parsed.query))
+    return is_authentication_or_session_url(url)
 
 
 def score_crawl_link(link: FetchedLink) -> int:

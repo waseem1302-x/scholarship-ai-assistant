@@ -9,11 +9,12 @@
 
 ## Current implementation boundary
 
-The first runtime increment implements Slices 1-4 only: the discovery ledger migration,
+The merged runtime foundation implements Slices 1-4: the discovery ledger migration,
 pure deterministic objective/query planning, transactional repository state and budget
-accounting, and the bounded provider protocol with a fake provider. It intentionally does
-not include URL normalization, candidate binding execution, safe fetching, live Azure
-configuration, an Azure provider adapter, infrastructure changes, or billable calls.
+accounting, and the bounded provider protocol with a fake provider. The next isolated
+increment implements Slice 5 URL normalization and policy-gated lead ingestion. It still
+does not include candidate binding execution, safe fetching, live Azure configuration,
+an Azure provider adapter, infrastructure changes, or billable calls.
 
 ## Objective
 
@@ -235,6 +236,17 @@ Reject before persistence where possible:
 - oversized URL;
 - obvious auth/session/logout target;
 - malformed port/URL.
+
+Normalization policy:
+
+- Unicode DNS hosts are normalized with NFKC and stored as lowercase IDNA ASCII;
+- fragments and recognized tracking parameters are removed;
+- meaningful and duplicate query parameters are sorted deterministically and retained;
+- default ports are removed while valid non-default ports remain part of URL identity;
+- rejected raw URLs are not persisted, while bounded rejection-code counts may be returned;
+- non-public IP literals and obvious internal hosts are rejected without DNS access;
+- DNS resolution, redirect validation, and peer-IP verification remain the later
+  `SafeSourceFetcher` boundary.
 
 ### Proof gate
 
