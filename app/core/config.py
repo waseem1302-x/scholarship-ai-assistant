@@ -93,6 +93,28 @@ class Settings(BaseSettings):
     catalogue_ai_input_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_ai_output_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_web_discovery_enabled: bool = False
+    catalogue_web_discovery_provider: Literal["unavailable", "azure_responses_web_search"] = (
+        "unavailable"
+    )
+    catalogue_web_discovery_endpoint: str | None = None
+    catalogue_web_discovery_model: str = "unconfigured"
+    catalogue_web_discovery_token_scope: str = "https://ai.azure.com/.default"
+    catalogue_web_discovery_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    catalogue_web_discovery_max_retries: int = Field(default=2, ge=0, le=5)
+    catalogue_web_discovery_max_response_bytes: int = Field(
+        default=500_000, ge=10_000, le=5_000_000
+    )
+    catalogue_discovery_max_queries_per_run: int = Field(default=5, ge=0, le=50)
+    catalogue_discovery_max_provider_calls_per_run: int = Field(default=5, ge=0, le=100)
+    catalogue_discovery_max_leads_per_run: int = Field(default=25, ge=0, le=1_000)
+    catalogue_discovery_max_urls_per_query: int = Field(default=5, ge=0, le=50)
+    catalogue_discovery_max_estimated_cost_per_run: Decimal = Field(
+        default=Decimal("0"), ge=0, le=10_000
+    )
+    catalogue_discovery_max_estimated_cost_per_provider_request: Decimal = Field(
+        default=Decimal("0"), ge=0, le=10_000
+    )
+    catalogue_discovery_max_tool_calls_per_provider_request: int = Field(default=1, ge=0, le=5)
     catalogue_bounded_crawling_enabled: bool = False
     catalogue_browser_fetching_enabled: bool = False
     catalogue_document_intelligence_enabled: bool = False
@@ -195,6 +217,88 @@ class Settings(BaseSettings):
     # Phase 8 scholarship-only community. The single-instance limiter is a
     # deliberate interim control; a shared limiter is required before scaling.
     community_write_rate_limit_per_minute: int = Field(default=10, ge=1, le=120)
+
+    @model_validator(mode="after")
+    def reject_unsafe_catalogue_web_discovery_settings(self) -> "Settings":
+        if not self.catalogue_web_discovery_enabled:
+            return self
+
+        if self.catalogue_web_discovery_provider != "azure_responses_web_search":
+            raise ValueError(
+                "Enabled catalogue web discovery requires "
+                "APP_CATALOGUE_WEB_DISCOVERY_PROVIDER=azure_responses_web_search"
+            )
+
+        endpoint = self.catalogue_web_discovery_endpoint
+        parsed_endpoint = urlparse(endpoint) if endpoint else None
+        if (
+            endpoint is None
+            or endpoint != endpoint.strip()
+            or parsed_endpoint is None
+            or parsed_endpoint.scheme != "https"
+            or not parsed_endpoint.hostname
+            or parsed_endpoint.username
+            or parsed_endpoint.password
+            or parsed_endpoint.query
+            or parsed_endpoint.fragment
+        ):
+            raise ValueError(
+                "APP_CATALOGUE_WEB_DISCOVERY_ENDPOINT must be an uncredentialed HTTPS URL"
+            )
+
+        model = self.catalogue_web_discovery_model.strip()
+        if not model or model.casefold() == "unconfigured":
+            raise ValueError("APP_CATALOGUE_WEB_DISCOVERY_MODEL must be explicitly configured")
+
+        if self.catalogue_web_discovery_token_scope != "https://ai.azure.com/.default":
+            raise ValueError(
+                "APP_CATALOGUE_WEB_DISCOVERY_TOKEN_SCOPE must be https://ai.azure.com/.default"
+            )
+
+        positive_limits = {
+            "APP_CATALOGUE_DISCOVERY_MAX_QUERIES_PER_RUN": (
+                self.catalogue_discovery_max_queries_per_run
+            ),
+            "APP_CATALOGUE_DISCOVERY_MAX_PROVIDER_CALLS_PER_RUN": (
+                self.catalogue_discovery_max_provider_calls_per_run
+            ),
+            "APP_CATALOGUE_DISCOVERY_MAX_LEADS_PER_RUN": (
+                self.catalogue_discovery_max_leads_per_run
+            ),
+            "APP_CATALOGUE_DISCOVERY_MAX_URLS_PER_QUERY": (
+                self.catalogue_discovery_max_urls_per_query
+            ),
+            "APP_CATALOGUE_DISCOVERY_MAX_ESTIMATED_COST_PER_RUN": (
+                self.catalogue_discovery_max_estimated_cost_per_run
+            ),
+            "APP_CATALOGUE_DISCOVERY_MAX_ESTIMATED_COST_PER_PROVIDER_REQUEST": (
+                self.catalogue_discovery_max_estimated_cost_per_provider_request
+            ),
+            "APP_CATALOGUE_DISCOVERY_MAX_TOOL_CALLS_PER_PROVIDER_REQUEST": (
+                self.catalogue_discovery_max_tool_calls_per_provider_request
+            ),
+        }
+        non_positive = [name for name, value in positive_limits.items() if value <= 0]
+        if non_positive:
+            raise ValueError(
+                "Enabled catalogue web discovery requires positive limits: "
+                + ", ".join(non_positive)
+            )
+
+        if (
+            self.catalogue_discovery_max_estimated_cost_per_provider_request
+            > self.catalogue_discovery_max_estimated_cost_per_run
+        ):
+            raise ValueError(
+                "APP_CATALOGUE_DISCOVERY_MAX_ESTIMATED_COST_PER_PROVIDER_REQUEST "
+                "cannot exceed APP_CATALOGUE_DISCOVERY_MAX_ESTIMATED_COST_PER_RUN"
+            )
+        if self.catalogue_discovery_max_urls_per_query > self.catalogue_discovery_max_leads_per_run:
+            raise ValueError(
+                "APP_CATALOGUE_DISCOVERY_MAX_URLS_PER_QUERY cannot exceed "
+                "APP_CATALOGUE_DISCOVERY_MAX_LEADS_PER_RUN"
+            )
+        return self
 
     @model_validator(mode="after")
     def reject_unsafe_production_settings(self) -> "Settings":
