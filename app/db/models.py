@@ -31,6 +31,22 @@ from app.modules.auth.models import (
     WebAuthnCredential,
 )
 from app.modules.beta.models import BetaInvitation, BetaLegalAcceptance
+from app.modules.catalogue_ingestion.discovery_models import (
+    CatalogueDiscoveryAssessment,
+    CatalogueDiscoveryAttempt,
+    CatalogueDiscoveryLead,
+    CatalogueDiscoveryObservation,
+    CatalogueDiscoveryPromotion,
+    CatalogueDiscoveryQuery,
+    CatalogueDiscoveryRun,
+)
+from app.modules.catalogue_ingestion.models import (
+    CatalogueCandidate,
+    CatalogueCandidateSource,
+    CatalogueExtractionAttempt,
+    CatalogueIngestionRun,
+    ClassificationDecision,
+)
 from app.modules.community.models import (
     CommunityBlock,
     CommunityBookmark,
@@ -56,6 +72,24 @@ from app.modules.matching.models import (
     MatchRuleOutcome,
 )
 from app.modules.operations.models import OperationalJobHealth
+from app.modules.opportunities.evidence_models import (
+    ApplicationStep,
+    FieldEvidence,
+    FundingComponent,
+    RequiredDocument,
+    ScopedDeadline,
+    SourceSnapshot,
+)
+from app.modules.opportunities.graph_models import (
+    AcademicProgramme,
+    ApplicationTrack,
+    Institution,
+    InstitutionAlias,
+    InstitutionParticipation,
+    ScholarshipAlias,
+    ScholarshipRelationship,
+    TrackProgramme,
+)
 from app.modules.opportunities.models import (
     EligibilityRule,
     Opportunity,
@@ -69,6 +103,7 @@ from app.modules.opportunities.models import (
 from app.modules.profiles.models import StudentProfile
 
 __all__ = [
+    "AcademicProgramme",
     "AdminStepUpToken",
     "Application",
     "ApplicationDocument",
@@ -76,7 +111,9 @@ __all__ = [
     "ApplicationEvent",
     "ApplicationNotificationPreference",
     "ApplicationReminder",
+    "ApplicationStep",
     "ApplicationTask",
+    "ApplicationTrack",
     "AssistantAnswer",
     "AssistantCitation",
     "AssistantConversation",
@@ -88,6 +125,18 @@ __all__ = [
     "AuditLog",
     "BetaInvitation",
     "BetaLegalAcceptance",
+    "CatalogueCandidate",
+    "CatalogueCandidateSource",
+    "CatalogueDiscoveryAssessment",
+    "CatalogueDiscoveryAttempt",
+    "CatalogueDiscoveryLead",
+    "CatalogueDiscoveryObservation",
+    "CatalogueDiscoveryPromotion",
+    "CatalogueDiscoveryQuery",
+    "CatalogueDiscoveryRun",
+    "CatalogueExtractionAttempt",
+    "CatalogueIngestionRun",
+    "ClassificationDecision",
     "CommunityBlock",
     "CommunityBookmark",
     "CommunityModerationRecord",
@@ -104,6 +153,11 @@ __all__ = [
     "DocumentVersion",
     "EligibilityRule",
     "EmailVerificationToken",
+    "FieldEvidence",
+    "FundingComponent",
+    "Institution",
+    "InstitutionAlias",
+    "InstitutionParticipation",
     "MatchEvaluation",
     "MatchEvaluationResult",
     "MatchRuleOutcome",
@@ -114,10 +168,16 @@ __all__ = [
     "Provider",
     "RefreshToken",
     "ReminderWorkerHealth",
+    "RequiredDocument",
     "SavedOpportunity",
+    "ScholarshipAlias",
+    "ScholarshipRelationship",
+    "ScopedDeadline",
     "Source",
     "SourceExcerpt",
+    "SourceSnapshot",
     "StudentProfile",
+    "TrackProgramme",
     "University",
     "User",
     "VerificationRecord",

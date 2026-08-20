@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from functools import lru_cache
 from ipaddress import ip_network
 from typing import Literal
@@ -66,6 +67,41 @@ class Settings(BaseSettings):
     beta_terms_version: str = "phase9.beta-terms.v1"
     beta_privacy_notice_version: str = "phase9.beta-privacy.v1"
     catalogue_maintenance_mode: bool = False
+    # Scholarship Intelligence Graph rollout controls. Reads and writes remain
+    # independently disabled until their reviewed rollout gates pass.
+    catalogue_graph_reads_enabled: bool = False
+    catalogue_graph_writes_enabled: bool = False
+    # Catalogue acquisition is a separate, public-data-only AI use case. It is
+    # disabled independently from the student Assistant and never publishes.
+    catalogue_ai_ingestion_enabled: bool = False
+    catalogue_ai_provider: Literal["unavailable", "azure_openai"] = "unavailable"
+    catalogue_ai_endpoint: str | None = None
+    catalogue_ai_model: str = "unconfigured"
+    catalogue_ai_api_version: str = "2024-10-21"
+    catalogue_ai_token_scope: str = "https://cognitiveservices.azure.com/.default"
+    catalogue_ai_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    catalogue_ai_max_retries: int = Field(default=2, ge=0, le=5)
+    catalogue_ai_max_response_bytes: int = Field(default=1_000_000, ge=10_000, le=5_000_000)
+    catalogue_ai_max_candidates_per_run: int = Field(default=500, ge=1, le=5_000)
+    catalogue_ai_max_pages_per_candidate: int = Field(default=3, ge=1, le=10)
+    catalogue_ai_max_calls_per_run: int = Field(default=500, ge=0, le=5_000)
+    catalogue_ai_max_input_characters: int = Field(default=80_000, ge=1_000, le=500_000)
+    catalogue_ai_max_output_tokens: int = Field(default=4_000, ge=256, le=16_000)
+    catalogue_ai_max_estimated_cost_per_run: Decimal = Field(
+        default=Decimal("50.00"), ge=0, le=10_000
+    )
+    catalogue_ai_input_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
+    catalogue_ai_output_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
+    catalogue_web_discovery_enabled: bool = False
+    catalogue_bounded_crawling_enabled: bool = False
+    catalogue_browser_fetching_enabled: bool = False
+    catalogue_document_intelligence_enabled: bool = False
+    catalogue_scheduled_ingestion_enabled: bool = False
+    catalogue_reviewed_official_domains: str = ""
+    catalogue_worker_claim_seconds: int = Field(default=900, ge=30, le=3600)
+    source_monitor_batch_limit: int = Field(default=100, ge=1, le=1_000)
+    source_monitor_claim_seconds: int = Field(default=900, ge=30, le=3600)
+    source_monitor_per_host_interval_seconds: Decimal = Field(default=Decimal("1.0"), ge=0, le=60)
     # High-risk capabilities begin disabled. A beta deployment opts in only
     # after the corresponding release gate has been evidenced.
     assistant_enabled: bool = False
@@ -236,6 +272,34 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Remote Document Lab analysis requires explicit privacy and vendor approval"
                 )
+        if self.catalogue_ai_ingestion_enabled:
+            if self.catalogue_ai_provider != "azure_openai":
+                raise ValueError(
+                    "Enabled catalogue AI ingestion requires APP_CATALOGUE_AI_PROVIDER=azure_openai"
+                )
+            if (
+                not self.catalogue_ai_endpoint
+                or not self.catalogue_ai_model.strip()
+                or self.catalogue_ai_model == "unconfigured"
+            ):
+                raise ValueError("Catalogue AI endpoint and deployment/model are required")
+            parsed_catalogue_endpoint = urlparse(self.catalogue_ai_endpoint)
+            if (
+                parsed_catalogue_endpoint.scheme != "https"
+                or not parsed_catalogue_endpoint.hostname
+                or parsed_catalogue_endpoint.username
+                or parsed_catalogue_endpoint.password
+                or parsed_catalogue_endpoint.query
+                or parsed_catalogue_endpoint.fragment
+            ):
+                raise ValueError("Catalogue AI endpoint must be an uncredentialed HTTPS origin")
+            if (
+                self.catalogue_ai_input_cost_per_million <= 0
+                or self.catalogue_ai_output_cost_per_million <= 0
+            ):
+                raise ValueError(
+                    "Enabled catalogue AI ingestion requires explicit positive pricing"
+                )
         if self.env == "production":
             if self.operations_health_token is None:
                 raise ValueError("Production requires APP_OPERATIONS_HEALTH_TOKEN")
@@ -340,6 +404,14 @@ class Settings(BaseSettings):
     @property
     def trusted_proxy_ip_list(self) -> list[str]:
         return [item.strip() for item in self.trusted_proxy_ips.split(",") if item.strip()]
+
+    @property
+    def catalogue_reviewed_official_domain_set(self) -> set[str]:
+        return {
+            item.strip().casefold().strip(".")
+            for item in self.catalogue_reviewed_official_domains.split(",")
+            if item.strip()
+        }
 
     @property
     def database_url_for_migrations(self) -> str:

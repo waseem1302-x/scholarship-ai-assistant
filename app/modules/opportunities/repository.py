@@ -324,6 +324,67 @@ class OpportunityRepository:
         )
         return list(self.session.scalars(statement))
 
+    def claim_sources_due_for_monitoring(
+        self,
+        *,
+        now: datetime,
+        check_interval_days: int,
+        freshness_days: int,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[Source]:
+        check_cutoff = now - timedelta(days=check_interval_days)
+        freshness_cutoff = now - timedelta(days=freshness_days)
+        statement = (
+            select(Source)
+            .join(Opportunity)
+            .where(
+                Opportunity.status == OpportunityStatus.ACTIVE,
+                Source.source_type == SourceType.OFFICIAL,
+                Source.verification_status == VerificationStatus.OFFICIALLY_VERIFIED,
+                or_(Source.monitor_claimed_until.is_(None), Source.monitor_claimed_until < now),
+                or_(
+                    Source.monitor_next_check_at <= now,
+                    and_(
+                        Source.monitor_next_check_at.is_(None),
+                        or_(
+                            Source.last_updated_at.is_(None),
+                            Source.last_updated_at <= check_cutoff,
+                            Source.last_verified_at <= freshness_cutoff,
+                        ),
+                    ),
+                ),
+            )
+            .order_by(
+                Source.monitor_next_check_at.asc().nulls_first(),
+                Source.last_updated_at.asc().nulls_first(),
+                Source.date_collected.asc(),
+            )
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        sources = list(self.session.scalars(statement))
+        lease_until = now + timedelta(seconds=lease_seconds)
+        for source in sources:
+            source.monitor_claimed_until = lease_until
+        self.session.commit()
+        return sources
+
+    def complete_source_monitoring(
+        self,
+        source_id: uuid.UUID,
+        *,
+        next_check_at: datetime,
+        succeeded: bool,
+    ) -> None:
+        source = self.get_source(source_id)
+        if source is None:
+            return
+        source.monitor_claimed_until = None
+        source.monitor_next_check_at = next_check_at
+        source.monitor_failure_count = 0 if succeeded else source.monitor_failure_count + 1
+        self.session.commit()
+
     def list_admin_opportunities(
         self,
         *,

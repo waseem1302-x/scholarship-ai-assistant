@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -99,7 +100,7 @@ class OpportunityService:
             ) from exc
 
     def _create_opportunity(
-        self, payload: OpportunityCreate, *, created_by: User, commit: bool
+        self, payload: OpportunityCreate, *, created_by: User | None, commit: bool
     ) -> AdminOpportunityResponse:
         if payload.status is OpportunityStatus.ACTIVE:
             raise AppError(
@@ -189,7 +190,7 @@ class OpportunityService:
             data_confidence=payload.data_confidence,
             notes=payload.notes,
             eligibility_warnings=payload.eligibility_warnings,
-            created_by_user_id=created_by.id,
+            created_by_user_id=created_by.id if created_by else None,
         )
         source = Source(
             url=str(payload.source.url),
@@ -202,7 +203,8 @@ class OpportunityService:
             relevant_excerpt=payload.source.relevant_excerpt.strip(),
             verification_status=payload.source.verification_status,
             verified_by_user_id=created_by.id
-            if payload.source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
+            if created_by
+            and payload.source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
             else None,
             last_verified_at=datetime.now(UTC)
             if payload.source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
@@ -230,7 +232,7 @@ class OpportunityService:
                 text=source.relevant_excerpt,
                 hash_algorithm=source.hash_algorithm,
                 content_hash=source.content_hash,
-                captured_by_user_id=created_by.id,
+                captured_by_user_id=created_by.id if created_by else None,
             )
             self.session.add(excerpt)
             self.session.flush()
@@ -254,7 +256,7 @@ class OpportunityService:
                 opportunity.eligibility_rules.append(eligibility_rule)
         self.session.add(
             AuditLog(
-                actor_user_id=created_by.id,
+                actor_user_id=created_by.id if created_by else None,
                 action="opportunity_created",
                 entity_type="opportunity",
                 entity_id=str(opportunity.id),
@@ -265,6 +267,11 @@ class OpportunityService:
             self.session.commit()
         self.session.refresh(opportunity)
         return self.to_admin_response(opportunity)
+
+    def stage_opportunity_for_review(self, payload: OpportunityCreate) -> AdminOpportunityResponse:
+        """Internal worker boundary: create only a draft in the existing review workflow."""
+
+        return self._create_opportunity(payload, created_by=None, commit=True)
 
     def import_opportunities(
         self, payload: OpportunityImportRequest, *, created_by: User
@@ -450,6 +457,23 @@ class OpportunityService:
         self._validate_review_action(payload)
 
         status = self._apply_review_transition(opportunity, source, payload, reviewed_by)
+        pipeline_candidate_published = False
+        if payload.action in {ReviewAction.PUBLISH, ReviewAction.RESOLVE_CONFLICT}:
+            # Runtime imports keep the core catalogue independent at module load time while
+            # allowing an audited staging candidate to follow the existing human transition.
+            from app.modules.catalogue_ingestion.models import (
+                CandidateStatus,
+                CatalogueCandidate,
+            )
+
+            pipeline_candidate = self.session.scalar(
+                select(CatalogueCandidate).where(
+                    CatalogueCandidate.opportunity_id == opportunity.id
+                )
+            )
+            if pipeline_candidate is not None:
+                pipeline_candidate.status = CandidateStatus.PUBLISHED
+                pipeline_candidate_published = True
         self.session.add(
             VerificationRecord(
                 opportunity_id=opportunity.id,
@@ -479,6 +503,11 @@ class OpportunityService:
             )
         )
         self.session.commit()
+        if pipeline_candidate_published:
+            from app.core.config import get_settings
+            from app.modules.catalogue_ingestion.metrics import get_catalogue_metrics
+
+            get_catalogue_metrics(get_settings()).add("candidates_published")
         self.session.refresh(opportunity)
         return self.to_admin_response(opportunity)
 

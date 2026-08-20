@@ -2,11 +2,12 @@
 
 import os
 
+from app.core.config import get_settings
 from app.db.session import SessionLocal
+from app.modules.catalogue_ingestion.metrics import get_catalogue_metrics
 from app.modules.operations.service import OperationalJobService
 from app.modules.opportunities.source_monitor import (
     DEFAULT_CHECK_INTERVAL_DAYS,
-    DEFAULT_MONITOR_LIMIT,
     SourceMonitor,
 )
 
@@ -26,8 +27,9 @@ def _env_int(name: str, *, default: int) -> int:
 
 
 def main() -> None:
+    settings = get_settings()
     dry_run = _env_bool("APP_SOURCE_MONITOR_DRY_RUN", default=False)
-    limit = _env_int("APP_SOURCE_MONITOR_LIMIT", default=DEFAULT_MONITOR_LIMIT)
+    limit = _env_int("APP_SOURCE_MONITOR_LIMIT", default=settings.source_monitor_batch_limit)
     check_interval_days = _env_int(
         "APP_SOURCE_MONITOR_INTERVAL_DAYS",
         default=DEFAULT_CHECK_INTERVAL_DAYS,
@@ -37,7 +39,12 @@ def main() -> None:
         health = OperationalJobService(session)
         health.started("source_monitor")
         try:
-            result = SourceMonitor(session).run(
+            result = SourceMonitor(
+                session,
+                claim_seconds=settings.source_monitor_claim_seconds,
+                per_host_interval_seconds=float(settings.source_monitor_per_host_interval_seconds),
+                metrics=get_catalogue_metrics(settings),
+            ).run(
                 dry_run=dry_run,
                 limit=limit,
                 check_interval_days=check_interval_days,
@@ -61,8 +68,7 @@ def main() -> None:
     # operators can inspect the protected source-monitor records when needed.
     for failure in result.failures:
         print(
-            "Source monitor failure "
-            f"source_id={failure.source_id} error_class={type(failure.error).__name__}"
+            f"Source monitor failure source_id={failure.source_id} error_code={failure.error_code}"
         )
 
 

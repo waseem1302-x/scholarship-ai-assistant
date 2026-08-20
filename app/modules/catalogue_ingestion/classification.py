@@ -1,0 +1,461 @@
+"""Fail-closed relationship classification for Scholarship Intelligence Graph candidates.
+
+The classifier is deliberately deterministic. It may propose a relationship for
+human review, but it never publishes, creates a scholarship automatically, or
+treats model confidence as proof of independence.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+import uuid
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.modules.catalogue_ingestion.models import (
+    CatalogueCandidate,
+    ClassificationConfidenceBand,
+    ClassificationDecision,
+    ClassificationDecisionStatus,
+)
+from app.modules.catalogue_ingestion.url_policy import normalize_comparison_url
+from app.modules.opportunities.evidence_models import (
+    EvidenceSupportType,
+    OfficialityStatus,
+    SourceSnapshot,
+)
+from app.modules.opportunities.graph_models import RelationshipKind
+from app.modules.opportunities.models import (
+    Opportunity,
+    Source,
+    SourceType,
+    VerificationStatus,
+)
+
+ConfidenceBand = ClassificationConfidenceBand
+
+
+class ClassificationIntegrityError(RuntimeError):
+    """Raised when a classifier proposal would cross a review or evidence boundary."""
+
+
+class IndependenceAuthorityType(StrEnum):
+    UNIVERSITY = "university"
+    GOVERNMENT = "government"
+    FOUNDATION = "foundation"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+LINK_OR_EXISTING_RELATIONSHIPS = frozenset(
+    {
+        RelationshipKind.SAME_SCHOLARSHIP,
+        RelationshipKind.SAME_SCHEME_TRACK,
+        RelationshipKind.PARTICIPATING_INSTITUTION,
+        RelationshipKind.ELIGIBLE_PROGRAMME,
+        RelationshipKind.INSTITUTION_SPECIFIC_REQUIREMENT,
+        RelationshipKind.INSTITUTION_SPECIFIC_DEADLINE,
+        RelationshipKind.DUPLICATE,
+    }
+)
+
+INDEPENDENT_RELATIONSHIPS = frozenset(
+    {
+        RelationshipKind.INDEPENDENT_UNIVERSITY_SCHOLARSHIP,
+        RelationshipKind.INDEPENDENT_GOVERNMENT_SCHOLARSHIP,
+        RelationshipKind.INDEPENDENT_FOUNDATION_SCHOLARSHIP,
+    }
+)
+
+_GENERIC_IDENTITY_SUFFIXES = {
+    "award",
+    "awards",
+    "program",
+    "programme",
+    "programs",
+    "programmes",
+    "scheme",
+    "schemes",
+    "scholarship",
+    "scholarships",
+}
+_INDEPENDENCE_GATE_PROOF = object()
+_TRACK_LANGUAGE = re.compile(
+    r"\b(?:type|category)\s+[a-z0-9]+\b|"
+    r"\b(?:embassy|university|government portal|direct|nomination)\s+"
+    r"(?:route|track|recommendation)\b",
+    re.IGNORECASE,
+)
+_TRUSTED_OFFICIALITY_STATUSES = frozenset(
+    {OfficialityStatus.OFFICIAL, OfficialityStatus.SUPPORTING_OFFICIAL}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateRelationshipContext:
+    candidate_name: str
+    canonical_name: str
+    aliases: tuple[str, ...] = ()
+    candidate_provider_id: str | None = None
+    canonical_provider_id: str | None = None
+    candidate_application_url: str | None = None
+    canonical_application_urls: tuple[str, ...] = ()
+    candidate_source_url: str | None = None
+    canonical_source_urls: tuple[str, ...] = ()
+    source_is_official: bool = False
+    parent_scheme_explicit: bool = False
+    explicit_relationship: RelationshipKind | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IndependenceAssessment:
+    proposed_relationship: RelationshipKind = RelationshipKind.UNRESOLVED
+    official_name_evidence: EvidenceSupportType = EvidenceSupportType.UNKNOWN
+    awarding_authority_evidence: EvidenceSupportType = EvidenceSupportType.UNKNOWN
+    separate_application: bool | None = None
+    independent_award_decision: bool | None = None
+    current_official_source: bool = False
+    authority_type: IndependenceAuthorityType = IndependenceAuthorityType.UNKNOWN
+    conflicts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipDecision:
+    relationship: RelationshipKind
+    confidence_band: ConfidenceBand
+    reason_code: str
+    deterministic_signals: tuple[str, ...] = field(default_factory=tuple)
+    missing_mandatory_proofs: tuple[str, ...] = field(default_factory=tuple)
+    requires_human_review: bool = True
+    proposes_independent_scholarship: bool = False
+    auto_publish_allowed: bool = False
+    _independence_gate_proof: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+
+def normalize_identity_name(value: str) -> str:
+    """Normalize identity text without turning name similarity into proof."""
+
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    normalized = re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE)
+    tokens = normalized.split()
+    while tokens and tokens[-1] in _GENERIC_IDENTITY_SUFFIXES:
+        tokens.pop()
+    return " ".join(tokens)
+
+
+def normalize_url(value: str | None) -> str | None:
+    """Canonicalize comparable HTTPS/HTTP URLs while preserving meaningful query keys."""
+
+    return normalize_comparison_url(value)
+
+
+def _normalize_identifier(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    normalized = re.sub(r"[^a-z0-9]+", "", normalized)
+    return normalized or None
+
+
+def _normalized_urls(values: tuple[str, ...]) -> set[str]:
+    return {url for value in values if (url := normalize_url(value)) is not None}
+
+
+def _identity_names(context: CandidateRelationshipContext) -> set[str]:
+    return {
+        normalized
+        for value in (context.canonical_name, *context.aliases)
+        if (normalized := normalize_identity_name(value))
+    }
+
+
+def _route_language_matches_known_identity(context: CandidateRelationshipContext) -> bool:
+    if not _TRACK_LANGUAGE.search(context.candidate_name):
+        return False
+    candidate = normalize_identity_name(context.candidate_name)
+    return any(identity and identity in candidate for identity in _identity_names(context))
+
+
+def _unresolved(reason_code: str, *signals: str) -> RelationshipDecision:
+    return RelationshipDecision(
+        relationship=RelationshipKind.UNRESOLVED,
+        confidence_band=ConfidenceBand.UNRESOLVED,
+        reason_code=reason_code,
+        deterministic_signals=tuple(signals),
+    )
+
+
+class DeterministicRelationshipClassifier:
+    """Classify only relationships that deterministic official evidence can establish."""
+
+    def classify(self, context: CandidateRelationshipContext) -> RelationshipDecision:
+        candidate_name = normalize_identity_name(context.candidate_name)
+        canonical_name = normalize_identity_name(context.canonical_name)
+        candidate_source = normalize_url(context.candidate_source_url)
+        canonical_sources = _normalized_urls(context.canonical_source_urls)
+
+        exact_name = bool(candidate_name and candidate_name == canonical_name)
+        exact_source = bool(candidate_source and candidate_source in canonical_sources)
+        if exact_name and exact_source:
+            if not context.source_is_official:
+                return _unresolved("official_evidence_required", "exact_name", "exact_source")
+            return RelationshipDecision(
+                relationship=RelationshipKind.DUPLICATE,
+                confidence_band=ConfidenceBand.HIGH,
+                reason_code="exact_existing_source_and_name",
+                deterministic_signals=("exact_name", "exact_canonical_source"),
+            )
+
+        explicit = context.explicit_relationship
+        if explicit in LINK_OR_EXISTING_RELATIONSHIPS:
+            if not context.source_is_official:
+                return _unresolved("official_evidence_required", f"explicit:{explicit.value}")
+            if explicit != RelationshipKind.DUPLICATE and not context.parent_scheme_explicit:
+                return _unresolved("parent_scheme_not_proven", f"explicit:{explicit.value}")
+            return RelationshipDecision(
+                relationship=explicit,
+                confidence_band=ConfidenceBand.HIGH,
+                reason_code="explicit_official_relationship",
+                deterministic_signals=(f"explicit:{explicit.value}", "official_source"),
+            )
+
+        if explicit in INDEPENDENT_RELATIONSHIPS:
+            return _unresolved("independence_requires_gate", f"proposed:{explicit.value}")
+        if explicit is not None and explicit != RelationshipKind.UNRESOLVED:
+            return _unresolved("relationship_requires_review", f"proposed:{explicit.value}")
+
+        provider_match = _normalize_identifier(
+            context.candidate_provider_id
+        ) is not None and _normalize_identifier(
+            context.candidate_provider_id
+        ) == _normalize_identifier(context.canonical_provider_id)
+        candidate_application = normalize_url(context.candidate_application_url)
+        application_match = bool(
+            candidate_application
+            and candidate_application in _normalized_urls(context.canonical_application_urls)
+        )
+        alias_match = candidate_name in _identity_names(context)
+
+        if context.source_is_official and provider_match and alias_match and application_match:
+            return RelationshipDecision(
+                relationship=RelationshipKind.SAME_SCHOLARSHIP,
+                confidence_band=ConfidenceBand.HIGH,
+                reason_code="alias_provider_application_match",
+                deterministic_signals=(
+                    "official_source",
+                    "provider_match",
+                    "alias_match",
+                    "application_url_match",
+                ),
+            )
+
+        if (
+            context.source_is_official
+            and context.parent_scheme_explicit
+            and provider_match
+            and _route_language_matches_known_identity(context)
+        ):
+            return RelationshipDecision(
+                relationship=RelationshipKind.SAME_SCHEME_TRACK,
+                confidence_band=ConfidenceBand.HIGH,
+                reason_code="explicit_route_language_under_same_scheme",
+                deterministic_signals=(
+                    "official_source",
+                    "parent_scheme_explicit",
+                    "provider_match",
+                    "route_language",
+                ),
+            )
+
+        return _unresolved("deterministic_relationship_not_proven")
+
+
+def decide_independence(assessment: IndependenceAssessment) -> RelationshipDecision:
+    """Apply the mandatory five-part independence gate and always require review."""
+
+    if assessment.proposed_relationship in LINK_OR_EXISTING_RELATIONSHIPS:
+        return RelationshipDecision(
+            relationship=assessment.proposed_relationship,
+            confidence_band=ConfidenceBand.HIGH,
+            reason_code="existing_or_child_relationship",
+            deterministic_signals=("independence_gate_bypassed_for_link",),
+        )
+
+    if assessment.conflicts:
+        return RelationshipDecision(
+            relationship=RelationshipKind.UNRESOLVED,
+            confidence_band=ConfidenceBand.UNRESOLVED,
+            reason_code="independence_conflict_requires_review",
+            deterministic_signals=("conflicting_evidence",),
+        )
+
+    missing: list[str] = []
+    if assessment.official_name_evidence != EvidenceSupportType.EXPLICIT:
+        missing.append("official_name")
+    if assessment.awarding_authority_evidence != EvidenceSupportType.EXPLICIT:
+        missing.append("awarding_authority")
+    if assessment.separate_application is not True:
+        missing.append("separate_application")
+    if assessment.independent_award_decision is not True:
+        missing.append("independent_award_decision")
+    if assessment.current_official_source is not True:
+        missing.append("current_official_source")
+
+    relationship_by_authority = {
+        IndependenceAuthorityType.UNIVERSITY: RelationshipKind.INDEPENDENT_UNIVERSITY_SCHOLARSHIP,
+        IndependenceAuthorityType.GOVERNMENT: RelationshipKind.INDEPENDENT_GOVERNMENT_SCHOLARSHIP,
+        IndependenceAuthorityType.FOUNDATION: RelationshipKind.INDEPENDENT_FOUNDATION_SCHOLARSHIP,
+    }
+    independent_relationship = relationship_by_authority.get(assessment.authority_type)
+    if independent_relationship is None:
+        missing.append("recognized_awarding_authority_type")
+
+    if missing:
+        return RelationshipDecision(
+            relationship=RelationshipKind.UNRESOLVED,
+            confidence_band=ConfidenceBand.UNRESOLVED,
+            reason_code="independence_not_proven",
+            missing_mandatory_proofs=tuple(missing),
+        )
+
+    decision = RelationshipDecision(
+        relationship=independent_relationship,
+        confidence_band=ConfidenceBand.HIGH,
+        reason_code="independence_proven_pending_human_review",
+        deterministic_signals=(
+            "official_name_explicit",
+            "awarding_authority_explicit",
+            "separate_application",
+            "independent_award_decision",
+            "current_official_source",
+        ),
+        proposes_independent_scholarship=True,
+    )
+    object.__setattr__(decision, "_independence_gate_proof", _INDEPENDENCE_GATE_PROOF)
+    return decision
+
+
+class ClassificationDecisionRecorder:
+    """Persist classifier proposals without crossing the human publication boundary."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def record(
+        self,
+        *,
+        candidate_id: uuid.UUID,
+        decision: RelationshipDecision,
+        parent_scholarship_id: uuid.UUID | None = None,
+        evidence_snapshot_ids: tuple[uuid.UUID, ...] = (),
+        model_output: dict[str, Any] | None = None,
+    ) -> ClassificationDecision:
+        if decision.auto_publish_allowed:
+            raise ClassificationIntegrityError(
+                "classifier auto-publication is permanently forbidden"
+            )
+        if not decision.requires_human_review:
+            raise ClassificationIntegrityError("classification decisions must require human review")
+
+        candidate = self.session.get(CatalogueCandidate, candidate_id)
+        if candidate is None:
+            raise ClassificationIntegrityError("catalogue candidate does not exist")
+
+        if (
+            decision.relationship in LINK_OR_EXISTING_RELATIONSHIPS
+            and parent_scholarship_id is None
+        ):
+            raise ClassificationIntegrityError("child relationship requires a parent scholarship")
+        if parent_scholarship_id is not None:
+            parent = self.session.get(Opportunity, parent_scholarship_id)
+            if parent is None:
+                raise ClassificationIntegrityError("parent scholarship does not exist")
+
+        snapshot_ids = tuple(dict.fromkeys(evidence_snapshot_ids))
+        if decision.relationship != RelationshipKind.UNRESOLVED and not snapshot_ids:
+            raise ClassificationIntegrityError(
+                "non-unresolved relationship requires evidence snapshot"
+            )
+
+        snapshots: list[SourceSnapshot] = []
+        if snapshot_ids:
+            snapshots = list(
+                self.session.scalars(
+                    select(SourceSnapshot).where(SourceSnapshot.id.in_(snapshot_ids))
+                ).all()
+            )
+            existing_ids = {snapshot.id for snapshot in snapshots}
+            if set(snapshot_ids) - existing_ids:
+                raise ClassificationIntegrityError(
+                    "classification evidence snapshot does not exist"
+                )
+
+        if decision.relationship != RelationshipKind.UNRESOLVED:
+            for snapshot in snapshots:
+                source = self.session.get(Source, snapshot.source_id)
+                if (
+                    source is None
+                    or not source.is_active
+                    or source.source_type is not SourceType.OFFICIAL
+                    or source.verification_status is not VerificationStatus.OFFICIALLY_VERIFIED
+                    or source.officiality_status not in _TRUSTED_OFFICIALITY_STATUSES
+                ):
+                    raise ClassificationIntegrityError(
+                        "classification evidence must come from a current official source"
+                    )
+
+        if decision.relationship in INDEPENDENT_RELATIONSHIPS:
+            if (
+                not decision.proposes_independent_scholarship
+                or decision._independence_gate_proof is not _INDEPENDENCE_GATE_PROOF
+            ):
+                raise ClassificationIntegrityError(
+                    "independent relationship must pass independence gate"
+                )
+        elif decision.proposes_independent_scholarship:
+            raise ClassificationIntegrityError(
+                "only an independent relationship may propose a scholarship"
+            )
+
+        recorded = ClassificationDecision(
+            candidate_id=candidate.id,
+            proposed_relationship=decision.relationship,
+            parent_scholarship_id=parent_scholarship_id,
+            proposed_new_scholarship_id=None,
+            deterministic_signals=list(decision.deterministic_signals),
+            model_output=dict(model_output) if model_output is not None else None,
+            confidence_band=decision.confidence_band,
+            evidence_snapshot_ids=[str(snapshot_id) for snapshot_id in snapshot_ids],
+            decision_status=ClassificationDecisionStatus.NEEDS_REVIEW,
+            reason_code=decision.reason_code[:100],
+            reviewer_id=None,
+            reviewed_at=None,
+        )
+        self.session.add(recorded)
+        return recorded
+
+
+__all__ = [
+    "LINK_OR_EXISTING_RELATIONSHIPS",
+    "CandidateRelationshipContext",
+    "ClassificationDecisionRecorder",
+    "ClassificationIntegrityError",
+    "ConfidenceBand",
+    "DeterministicRelationshipClassifier",
+    "IndependenceAssessment",
+    "IndependenceAuthorityType",
+    "RelationshipDecision",
+    "decide_independence",
+    "normalize_identity_name",
+    "normalize_url",
+]

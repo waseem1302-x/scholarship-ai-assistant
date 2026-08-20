@@ -1,0 +1,82 @@
+{
+  "fixture_name": "csc_pr0_safety_boundary",
+  "fixture_scope": "structural_regression_only",
+  "review_basis": "Project-owner Scholarship Intelligence Graph contract; this fixture is not catalogue publication evidence.",
+  "canonical_scholarships": [
+    {
+      "id": "csc",
+      "canonical_name": "Chinese Government Scholarship",
+      "aliases": [
+        "CSC",
+        "CGS",
+        "Chinese Government Scholarship"
+      ],
+      "counts_as_scholarship": true
+    }
+  ],
+  "tracks": [
+    {
+      "id": "csc-reviewed-test-track-a",
+      "scholarship_id": "csc",
+      "label": "Reviewed structural test track A",
+      "counts_as_scholarship": false
+    },
+    {
+      "id": "csc-reviewed-test-track-b",
+      "scholarship_id": "csc",
+      "label": "Reviewed structural test track B",
+      "counts_as_scholarship": false
+    }
+  ],
+  "institution_participation": [
+    {
+      "id": "csc-tsinghua",
+      "scholarship_id": "csc",
+      "institution": "Tsinghua University",
+      "counts_as_scholarship": false
+    },
+    {
+      "id": "csc-reviewed-test-institution-b",
+      "scholarship_id": "csc",
+      "institution": "Reviewed structural test institution B",
+      "counts_as_scholarship": false
+    }
+  ],
+  "eligible_programmes": [
+    {
+      "id": "csc-reviewed-test-programme-a",
+      "scholarship_id": "csc",
+      "institution_participation_id": "csc-tsinghua",
+      "label": "Reviewed structural test programme A",
+      "counts_as_scholarship": false
+    }
+  ],
+  "local_deadlines": [
+    {
+      "id": "csc-tsinghua-local-deadline",
+      "scholarship_id": "csc",
+      "scope_kind": "institution",
+      "scope_ref": "csc-tsinghua",
+      "value": "fixture-only-local-deadline",
+      "counts_as_scholarship": false
+    }
+  ],
+  "institution_requirements": [
+    {
+      "id": "csc-tsinghua-local-requirement",
+      "scholarship_id": "csc",
+      "scope_kind": "institution",
+      "scope_ref": "csc-tsinghua",
+      "value": "fixture-only-local-requirement",
+      "counts_as_scholarship": false
+    }
+  ],
+  "unresolved_candidates": [
+    {
+      "id": "csc-ambiguous-independent-award",
+      "relationship": "unresolved",
+      "reason": "independence_not_proven",
+      "counts_as_scholarship": false
+    }
+  ]
+}

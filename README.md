@@ -23,6 +23,8 @@ environment-dependent capability inventory is
 [docs/current-product-state.md](docs/current-product-state.md). Historical phase plans and audits
 record intent at a point in time; they do not override that current-state document or executable
 configuration. The React frontend is one client of the versioned backend API and is served at `/`.
+The fail-closed, manual [AI-assisted catalogue ingestion pipeline](docs/catalogue-ingestion-pipeline.md)
+stages official-source proposals for the existing human review workflow; it never publishes directly.
 
 Implemented so far:
 

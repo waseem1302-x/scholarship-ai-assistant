@@ -1,6 +1,8 @@
 import hashlib
+import urllib.error
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
 from app.modules.opportunities.models import (
@@ -16,6 +18,7 @@ from app.modules.opportunities.models import (
 )
 from app.modules.opportunities.source_monitor import (
     FetchedSource,
+    SafeSourceFetcher,
     SourceFetchError,
     SourceMonitor,
     extract_evidence_section,
@@ -211,6 +214,337 @@ def test_monitor_normalizes_dynamic_html_before_section_hashing() -> None:
     assert second_section is not None
     assert first_section.label == "Eligibility"
     assert first_section.text == second_section.text
+    assert (
+        "navigation noise"
+        not in normalize_evidence_text(
+            b"<nav>Navigation noise</nav><main>Official scholarship evidence remains.</main>"
+        ).casefold()
+    )
+
+
+def test_safe_fetcher_rejects_authentication_destination(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://idp.example.edu/idp/profile/SAML2/Redirect/SSO?execution=e1s1"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return b"<html><main>Central Login stale request page.</main></html>"
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    with pytest.raises(
+        SourceFetchError,
+        match=r"source_authentication_required",
+    ):
+        fetcher.fetch("https://example.edu/scholarship")
+
+
+def test_safe_fetcher_allows_ordinary_public_redirect(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://www.example.edu/scholarships/programme"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return (
+                b"<html><main>Official public scholarship eligibility "
+                b"and funding information.</main></html>"
+            )
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    result = fetcher.fetch("https://example.edu/scholarship")
+
+    assert result.final_url == ("https://www.example.edu/scholarships/programme")
+    assert "Official public scholarship" in (result.normalized_text or "")
+
+
+def test_safe_fetcher_rejects_loading_shell(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/scholarship"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return b"<html><body>KNB Scholarship Loading homepage...</body></html>"
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    with pytest.raises(
+        SourceFetchError,
+        match=r"source_has_no_extractable_evidence",
+    ):
+        fetcher.fetch("https://example.edu/scholarship")
+
+
+def test_safe_fetcher_keeps_short_real_evidence(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/scholarship"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return (
+                b"<html><body>"
+                b"Scholarship deadline: 30 June. "
+                b"International students are eligible."
+                b"</body></html>"
+            )
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    result = fetcher.fetch("https://example.edu/scholarship")
+
+    assert "Scholarship deadline" in (result.normalized_text or "")
+
+
+def test_safe_fetcher_preserves_target_http_failure_code(monkeypatch) -> None:
+    class Opener:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def open(self, request, timeout: int):
+            del timeout
+            self.calls += 1
+
+            if request.full_url.endswith("/robots.txt"):
+                raise urllib.error.HTTPError(
+                    request.full_url,
+                    403,
+                    "Forbidden",
+                    {},
+                    None,
+                )
+
+            raise urllib.error.HTTPError(
+                request.full_url,
+                403,
+                "Forbidden",
+                {},
+                None,
+            )
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+
+    with pytest.raises(
+        SourceFetchError,
+        match=r"source_access_denied: http_403",
+    ):
+        fetcher.fetch("https://example.edu/scholarship")
+
+
+def test_safe_fetcher_treats_robots_4xx_as_unavailable(monkeypatch) -> None:
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            raise urllib.error.HTTPError(
+                "https://example.edu/robots.txt",
+                403,
+                "Forbidden",
+                {},
+                None,
+            )
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    target = "https://example.edu/public/scholarship"
+
+    fetcher._assert_robots_allowed(target, fetcher.policy_for(target))
+
+    assert fetcher._robots["https://example.edu"] is None
+
+
+def test_safe_fetcher_fails_closed_for_robots_5xx(monkeypatch) -> None:
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            raise urllib.error.HTTPError(
+                "https://example.edu/robots.txt",
+                503,
+                "Service Unavailable",
+                {},
+                None,
+            )
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+
+    with pytest.raises(SourceFetchError, match=r"robots_unreachable: http_503"):
+        fetcher._assert_robots_allowed(
+            "https://example.edu/public/scholarship",
+            fetcher.policy_for("https://example.edu/public/scholarship"),
+        )
+
+
+def test_safe_fetcher_respects_robots_disallow(monkeypatch) -> None:
+    class RobotsResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/robots.txt"
+
+        def read(self, limit: int) -> bytes:
+            assert limit > 0
+            return b"User-agent: *\nDisallow: /private\n"
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return RobotsResponse()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+
+    try:
+        fetcher._assert_robots_allowed(
+            "https://example.edu/private/scholarship",
+            fetcher.policy_for("https://example.edu/private/scholarship"),
+        )
+    except SourceFetchError as exc:
+        assert str(exc) == "robots_disallowed"
+        return
+    raise AssertionError("robots.txt disallow rule was ignored")
 
 
 class PeerSocket:
@@ -236,3 +570,73 @@ def test_response_peer_validation_rejects_private_addresses() -> None:
     except SourceFetchError:
         return
     raise AssertionError("Private response peer address was accepted")
+
+
+def test_source_monitor_claim_completion_schedules_next_check(db_session) -> None:
+    source = add_active_verified_source(
+        db_session,
+        url="https://example.edu/scheduled",
+        content_hash=_hash(b"stable source content"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+    fetcher = FakeFetcher({source.url: b"stable source content"})
+
+    first = SourceMonitor(db_session, fetcher=fetcher).run(now=NOW, limit=10)
+    db_session.refresh(source)
+    second = SourceMonitor(db_session, fetcher=fetcher).run(now=NOW, limit=10)
+
+    assert first.checked == 1
+    assert second.candidates == 0
+    assert source.monitor_claimed_until is None
+    assert source.monitor_next_check_at.replace(tzinfo=UTC) == NOW + timedelta(days=7)
+    assert source.monitor_failure_count == 0
+
+
+def test_source_monitor_failure_releases_claim_with_exponential_backoff(db_session) -> None:
+    source = add_active_verified_source(
+        db_session,
+        url="https://example.edu/failing",
+        content_hash=_hash(b"old content"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+
+    class FailingFetcher:
+        def fetch(self, url: str) -> FetchedSource:
+            del url
+            raise SourceFetchError("source_fetch_failed: blocked")
+
+    result = SourceMonitor(db_session, fetcher=FailingFetcher()).run(now=NOW, limit=10)
+    db_session.refresh(source)
+
+    assert result.failed == 1
+    assert source.monitor_claimed_until is None
+    assert source.monitor_failure_count == 1
+    assert source.monitor_next_check_at.replace(tzinfo=UTC) == NOW + timedelta(hours=2)
+
+
+def test_source_monitor_enforces_per_host_interval(db_session) -> None:
+    first = add_active_verified_source(
+        db_session,
+        url="https://example.edu/one",
+        content_hash=_hash(b"same content one"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+    second = add_active_verified_source(
+        db_session,
+        url="https://example.edu/two",
+        content_hash=_hash(b"same content two"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+    waits: list[float] = []
+    fetcher = FakeFetcher({first.url: b"same content one", second.url: b"same content two"})
+
+    result = SourceMonitor(
+        db_session,
+        fetcher=fetcher,
+        per_host_interval_seconds=1,
+        sleeper=waits.append,
+    ).run(now=NOW, limit=10)
+
+    assert result.checked == 2
+    assert len(waits) == 1
+    assert 0 < waits[0] <= 1
