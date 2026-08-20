@@ -3,21 +3,22 @@
 - Status: implementation ordering contract
 - Date: 2026-08-19
 - Last reconciled: 2026-08-20 against ADRs 0003-0006 and the Azure feature baseline
-- Integration baseline: Azure feature head `23180429ed35e65166628a79f0c7e08d4c895dd0`
-  (PR4, Step 1/2 safety fixes, PR5 architecture reconciliation, Slices 1-5, and the merged
+- Integration baseline: Azure feature head `b6dbb7dcc76e9274434fa029d475309a78712f6c`
+  (PR4, Step 1/2 safety fixes, PR5 architecture reconciliation, Slices 1-6, and the merged
   complete-acquisition checkpoint).
 - Runtime coding starts from a fresh branch at the then-current Azure feature head after this architecture PR is merged.
 - This document does not authorize publication, autonomous scheduling, or billable Azure provisioning.
 
 ## Current implementation boundary
 
-The runtime foundation implements Slices 1-6: the discovery ledger migration, pure deterministic
+The runtime foundation implements Slices 1-7: the discovery ledger migration, pure deterministic
 objective/query planning, transactional repository state and budget accounting, the bounded provider
 protocol with a fake provider, policy-gated normalized URL lead ingestion, and append-only contextual
-officiality assessment against reviewed owner/domain inputs. The next isolated runtime increment is
-Slice 7 deterministic known-candidate source binding. The foundation still does not include candidate
-binding execution, live discovery fetching, live Azure configuration, an Azure provider adapter,
-infrastructure changes, or billable calls.
+officiality assessment against reviewed owner/domain inputs. It now also implements deterministic,
+idempotent source binding for an explicit known candidate under the documented lifecycle and authority
+gates. The next isolated runtime increment is Slice 8 authoritative ingestion fetch and promotion. The
+foundation still does not include live discovery fetching, live Azure configuration, an Azure provider
+adapter, infrastructure changes, promotion execution, or billable calls.
 
 After Slice 5, the complete acquisition checkpoint in
 `complete-scholarship-acquisition-contract.md` freezes the larger name/URL/document outcome and

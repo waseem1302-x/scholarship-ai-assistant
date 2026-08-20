@@ -33,6 +33,8 @@ from app.modules.catalogue_ingestion.discovery_models import (
 )
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
+    CandidateStatus,
+    CatalogueCandidate,
     CatalogueCandidateSource,
 )
 from app.modules.catalogue_ingestion.url_policy import (
@@ -165,6 +167,13 @@ class DiscoveryAssessmentInput:
             raise ValueError("assessment canonical domain exceeds the persistence limit")
         if self.trust_tier is not None and not 1 <= self.trust_tier <= 4:
             raise ValueError("assessment trust tier must be between 1 and 4")
+
+
+@dataclass(frozen=True)
+class DiscoverySourceBindingOutcome:
+    source: CatalogueCandidateSource
+    created: bool
+    candidate_resumed: bool
 
 
 class CatalogueDiscoveryRepository:
@@ -643,6 +652,122 @@ class CatalogueDiscoveryRepository:
         self.session.commit()
         return record
 
+    def bind_candidate_source(
+        self,
+        *,
+        run_id: uuid.UUID,
+        lead_id: uuid.UUID,
+        assessment_id: uuid.UUID,
+        now: datetime | None = None,
+    ) -> DiscoverySourceBindingOutcome:
+        observed_at = now or datetime.now(UTC)
+        run = self._run_for_update(run_id)
+        if run.target_candidate_id is None:
+            raise DiscoveryStateError("binding_requires_explicit_target_candidate")
+        if run.dry_run:
+            raise DiscoveryStateError("binding_disabled_for_dry_run")
+        if not self._lead_was_observed_in_run(run_id=run.id, lead_id=lead_id):
+            raise DiscoveryStateError("binding_lead_was_not_observed_in_run")
+
+        assessment = self.session.get(CatalogueDiscoveryAssessment, assessment_id)
+        if (
+            assessment is None
+            or assessment.lead_id != lead_id
+            or assessment.officiality_status is not DiscoveryOfficialityStatus.OFFICIAL
+            or assessment.trust_tier is None
+        ):
+            raise DiscoveryStateError("binding_requires_acceptable_official_assessment")
+        if self.session.scalar(
+            select(
+                exists().where(
+                    CatalogueDiscoveryAssessment.supersedes_assessment_id == assessment.id
+                )
+            )
+        ):
+            raise DiscoveryStateError("binding_assessment_was_superseded")
+        lead = self.session.get(CatalogueDiscoveryLead, lead_id)
+        if lead is None or not lead.active:
+            raise DiscoveryStateError("binding_requires_active_discovery_lead")
+        candidate = self.session.scalar(
+            select(CatalogueCandidate)
+            .where(CatalogueCandidate.id == run.target_candidate_id)
+            .with_for_update()
+        )
+        if candidate is None:
+            raise DiscoveryStateError("binding_target_candidate_not_found")
+
+        existing = self.session.scalar(
+            select(CatalogueCandidateSource).where(
+                CatalogueCandidateSource.candidate_id == candidate.id,
+                CatalogueCandidateSource.discovery_lead_id == lead.id,
+            )
+        )
+        if existing is not None:
+            if existing.canonical_url != lead.normalized_url:
+                raise DiscoveryStateError("binding_existing_source_url_mismatch")
+            self.session.commit()
+            return DiscoverySourceBindingOutcome(
+                source=existing,
+                created=False,
+                candidate_resumed=False,
+            )
+
+        classification_reason = f"{assessment.reason_code}: {assessment.reason_detail}"[:500]
+        source = self.session.scalar(
+            select(CatalogueCandidateSource).where(
+                CatalogueCandidateSource.candidate_id == candidate.id,
+                CatalogueCandidateSource.canonical_url == lead.normalized_url,
+            )
+        )
+        created = source is None
+        if source is not None and (
+            source.discovery_lead_id is not None
+            or source.status is not CandidateSourceStatus.DISCOVERED
+        ):
+            raise DiscoveryStateError("binding_canonical_url_already_owned")
+        candidate_resumed = self._prepare_candidate_for_binding(
+            candidate,
+            observed_at=observed_at,
+        )
+        if source is not None:
+            source.discovery_lead_id = lead.id
+            source.url = lead.normalized_url
+            source.is_official = True
+            source.trust_tier = assessment.trust_tier
+            source.classification_reason = classification_reason
+        else:
+            try:
+                with self.session.begin_nested():
+                    source = CatalogueCandidateSource(
+                        candidate_id=candidate.id,
+                        discovery_lead_id=lead.id,
+                        url=lead.normalized_url,
+                        canonical_url=lead.normalized_url,
+                        status=CandidateSourceStatus.DISCOVERED,
+                        is_official=True,
+                        trust_tier=assessment.trust_tier,
+                        classification_reason=classification_reason,
+                    )
+                    self.session.add(source)
+                    self.session.flush()
+            except IntegrityError:
+                source = self.session.scalar(
+                    select(CatalogueCandidateSource).where(
+                        CatalogueCandidateSource.candidate_id == candidate.id,
+                        CatalogueCandidateSource.discovery_lead_id == lead.id,
+                    )
+                )
+                if source is None:
+                    self.session.rollback()
+                    raise
+                created = False
+        self.session.commit()
+        return DiscoverySourceBindingOutcome(
+            source=source,
+            created=created,
+            candidate_resumed=candidate_resumed,
+        )
+
     def record_promotion(
         self,
         *,
@@ -743,6 +868,48 @@ class CatalogueDiscoveryRepository:
         if query is None:
             raise DiscoveryStateError("catalogue_discovery_query_not_found")
         return query
+
+    @staticmethod
+    def _prepare_candidate_for_binding(
+        candidate: CatalogueCandidate,
+        *,
+        observed_at: datetime,
+    ) -> bool:
+        if candidate.opportunity_id is not None:
+            raise DiscoveryStateError("binding_candidate_already_has_opportunity")
+        if any(
+            (
+                candidate.proposed_payload is not None,
+                bool(candidate.validation_errors),
+                bool(candidate.conflicts),
+                bool(candidate.duplicate_opportunity_ids),
+            )
+        ):
+            raise DiscoveryStateError("binding_candidate_has_review_or_resolution_state")
+        if (
+            candidate.claimed_by is not None
+            and candidate.claimed_until is not None
+            and candidate.claimed_until >= observed_at
+        ):
+            raise DiscoveryStateError("binding_candidate_is_actively_claimed")
+
+        if candidate.status is CandidateStatus.DISCOVERED:
+            if candidate.claimed_by is not None or candidate.claimed_until is not None:
+                candidate.claimed_by = None
+                candidate.claimed_until = None
+            return False
+        if (
+            candidate.status is CandidateStatus.NEEDS_REVIEW
+            and candidate.failure_code == "official_source_not_found"
+        ):
+            candidate.status = CandidateStatus.DISCOVERED
+            candidate.failure_code = None
+            candidate.failure_reason = None
+            candidate.next_attempt_at = observed_at
+            candidate.claimed_by = None
+            candidate.claimed_until = None
+            return True
+        raise DiscoveryStateError("binding_candidate_lifecycle_incompatible")
 
     def _run_for_update(self, run_id: uuid.UUID) -> CatalogueDiscoveryRun:
         run = self.session.scalar(
