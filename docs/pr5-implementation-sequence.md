@@ -3,9 +3,17 @@
 - Status: implementation ordering contract
 - Date: 2026-08-19
 - Last reconciled: 2026-08-20 against ADRs 0003-0006 and the Azure feature baseline
-- Integration baseline: Azure feature head `552ff0137fca7ff806a13f24e6a10ce79097682a` (PR4 plus Step 1/2 safety fixes).
+- Integration baseline: Azure feature head `04266d9d238ec7a363c54a413e53abe478871d83` (PR4, Step 1/2 safety fixes, and merged PR5 architecture reconciliation).
 - Runtime coding starts from a fresh branch at the then-current Azure feature head after this architecture PR is merged.
 - This document does not authorize publication, autonomous scheduling, or billable Azure provisioning.
+
+## Current implementation boundary
+
+The first runtime increment implements Slices 1-4 only: the discovery ledger migration,
+pure deterministic objective/query planning, transactional repository state and budget
+accounting, and the bounded provider protocol with a fake provider. It intentionally does
+not include URL normalization, candidate binding execution, safe fetching, live Azure
+configuration, an Azure provider adapter, infrastructure changes, or billable calls.
 
 ## Objective
 

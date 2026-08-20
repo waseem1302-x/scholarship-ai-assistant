@@ -24,6 +24,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.modules.auth.models import enum_values, utc_now
+from app.modules.catalogue_ingestion import discovery_models as _discovery_models  # noqa: F401
 from app.modules.opportunities.graph_models import RelationshipKind
 
 
@@ -217,6 +218,11 @@ class CatalogueCandidateSource(Base):
     __tablename__ = "catalogue_candidate_sources"
     __table_args__ = (
         UniqueConstraint("candidate_id", "canonical_url", name="uq_catalogue_candidate_source_url"),
+        UniqueConstraint(
+            "candidate_id",
+            "discovery_lead_id",
+            name="uq_catalogue_candidate_source_discovery_lead",
+        ),
         Index("ix_catalogue_candidate_sources_hash", "content_hash", "candidate_id"),
         Index("ix_catalogue_candidate_sources_official", "is_official", "trust_tier"),
     )
@@ -224,6 +230,9 @@ class CatalogueCandidateSource(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     candidate_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("catalogue_candidates.id", ondelete="CASCADE"), index=True
+    )
+    discovery_lead_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("catalogue_discovery_leads.id", ondelete="SET NULL"), index=True
     )
     url: Mapped[str] = mapped_column(String(2048))
     canonical_url: Mapped[str] = mapped_column(String(2048))

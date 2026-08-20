@@ -31,6 +31,15 @@ from app.modules.auth.models import (
     WebAuthnCredential,
 )
 from app.modules.beta.models import BetaInvitation, BetaLegalAcceptance
+from app.modules.catalogue_ingestion.discovery_models import (
+    CatalogueDiscoveryAssessment,
+    CatalogueDiscoveryAttempt,
+    CatalogueDiscoveryLead,
+    CatalogueDiscoveryObservation,
+    CatalogueDiscoveryPromotion,
+    CatalogueDiscoveryQuery,
+    CatalogueDiscoveryRun,
+)
 from app.modules.catalogue_ingestion.models import (
     CatalogueCandidate,
     CatalogueCandidateSource,
@@ -118,6 +127,13 @@ __all__ = [
     "BetaLegalAcceptance",
     "CatalogueCandidate",
     "CatalogueCandidateSource",
+    "CatalogueDiscoveryAssessment",
+    "CatalogueDiscoveryAttempt",
+    "CatalogueDiscoveryLead",
+    "CatalogueDiscoveryObservation",
+    "CatalogueDiscoveryPromotion",
+    "CatalogueDiscoveryQuery",
+    "CatalogueDiscoveryRun",
     "CatalogueExtractionAttempt",
     "CatalogueIngestionRun",
     "ClassificationDecision",
