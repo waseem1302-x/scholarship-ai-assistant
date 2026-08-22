@@ -1,3 +1,5 @@
+from urllib.request import Request
+
 import pytest
 
 from app.modules.catalogue_ingestion.crawler import BoundedOfficialSiteCrawler, CrawlBudget
@@ -94,3 +96,51 @@ def test_safe_source_fetcher_keeps_its_stricter_per_page_limit(monkeypatch) -> N
 
 def test_safe_redirect_handler_is_capped_at_five_redirects() -> None:
     assert SafeRedirectHandler.max_redirections == 5
+
+
+def test_safe_redirect_handler_upgrades_same_host_downgrade_without_http_request(
+    monkeypatch,
+) -> None:
+    validated: list[str] = []
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        validated.append,
+    )
+    request = Request("https://www.example.go.jp/scholarship")
+
+    redirected = SafeRedirectHandler().redirect_request(
+        request,
+        None,
+        301,
+        "Moved",
+        {},
+        "http://www.example.go.jp/scholarship/",
+    )
+
+    assert redirected is not None
+    assert redirected.full_url == "https://www.example.go.jp/scholarship/"
+    assert validated == ["https://www.example.go.jp/scholarship/"]
+
+
+def test_safe_redirect_handler_does_not_upgrade_cross_host_downgrade() -> None:
+    request = Request("https://www.example.go.jp/scholarship")
+
+    with pytest.raises(SourceFetchError, match="only https"):
+        SafeRedirectHandler().redirect_request(
+            request,
+            None,
+            301,
+            "Moved",
+            {},
+            "http://outside.example/scholarship/",
+        )
+
+    with pytest.raises(SourceFetchError, match="invalid redirect port"):
+        SafeRedirectHandler().redirect_request(
+            request,
+            None,
+            301,
+            "Moved",
+            {},
+            "http://www.example.go.jp:not-a-port/scholarship/",
+        )

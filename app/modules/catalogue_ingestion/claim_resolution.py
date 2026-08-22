@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable
 
 from app.modules.catalogue_ingestion.claim_schemas import (
+    SUPPORTED_CLAIM_FIELDS,
     ClaimEntityType,
     ClaimResolution,
     ExtractedClaim,
@@ -22,10 +24,23 @@ def resolve_claims(
     rejected: list[str] = []
     for artifact, trust_tier, claims in extracted:
         for claim in claims:
+            if claim.field_path not in SUPPORTED_CLAIM_FIELDS[claim.entity_type]:
+                rejected.append(
+                    f"{artifact.id}:{claim.entity_type.value}:{claim.entity_key}:"
+                    f"{claim.field_path}:unsupported_field_path"
+                )
+                continue
             if not _valid_evidence_span(artifact.normalized_text, claim):
                 rejected.append(
                     f"{artifact.id}:{claim.entity_type.value}:{claim.entity_key}:"
                     f"{claim.field_path}:evidence_span_invalid"
+                )
+                continue
+            semantic_error = _semantic_claim_error(claim)
+            if semantic_error is not None:
+                rejected.append(
+                    f"{artifact.id}:{claim.entity_type.value}:{claim.entity_key}:"
+                    f"{claim.field_path}:{semantic_error}"
                 )
                 continue
             scope_key = json.dumps(claim.scope.model_dump(), sort_keys=True)
@@ -133,3 +148,26 @@ def _valid_evidence_span(text: str, claim: ExtractedClaim) -> bool:
         claim.excerpt_end <= len(text)
         and text[claim.excerpt_start : claim.excerpt_end] == claim.excerpt
     )
+
+
+def _semantic_claim_error(claim: ExtractedClaim) -> str | None:
+    excerpt = claim.excerpt.casefold()
+    if claim.entity_type is ClaimEntityType.CYCLE and claim.field_path == "intake_year":
+        value = claim.value.primitive()
+        if not isinstance(value, int) or str(value) not in excerpt:
+            return "intake_year_evidence_mismatch"
+        if not re.search(
+            r"\b(?:academic|application|arrival|arrive|arriving|fiscal|fy|intake|recruit)",
+            excerpt,
+        ):
+            return "intake_year_context_missing"
+    if claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "name":
+        if claim.entity_key == "embassy_recommendation" and not (
+            "embassy" in excerpt and "recommend" in excerpt
+        ):
+            return "embassy_route_evidence_mismatch"
+        if claim.entity_key == "university_recommendation" and not (
+            "university" in excerpt and "recommend" in excerpt
+        ):
+            return "university_route_evidence_mismatch"
+    return None

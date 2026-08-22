@@ -22,6 +22,49 @@ class ClaimEntityType(StrEnum):
     STEP = "step"
 
 
+SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
+    ClaimEntityType.SCHOLARSHIP: frozenset(
+        {"name", "provider_name", "country_code", "degree_levels", "alias"}
+    ),
+    ClaimEntityType.CYCLE: frozenset({"intake_year"}),
+    ClaimEntityType.TRACK: frozenset(
+        {
+            "name",
+            "track_type",
+            "parent_track_key",
+            "application_method",
+            "application_url",
+            "display_order",
+        }
+    ),
+    ClaimEntityType.INSTITUTION: frozenset(
+        {
+            "canonical_name",
+            "institution_type",
+            "country_code",
+            "official_website",
+            "role",
+            "application_url",
+        }
+    ),
+    ClaimEntityType.DEADLINE: frozenset(
+        {"deadline_at", "deadline_type", "timezone", "label", "notes"}
+    ),
+    ClaimEntityType.FUNDING: frozenset(
+        {
+            "component_type",
+            "coverage_status",
+            "amount",
+            "currency",
+            "frequency",
+            "description",
+        }
+    ),
+    ClaimEntityType.DOCUMENT: frozenset({"name", "required", "notes", "display_order"}),
+    ClaimEntityType.STEP: frozenset({"title", "description", "application_url", "display_order"}),
+}
+
+
 class StrictClaimModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -42,6 +85,8 @@ class ClaimValue(StrictClaimModel):
 
     @model_validator(mode="after")
     def exactly_one_value(self) -> ClaimValue:
+        if self.string_list_value == []:
+            self.string_list_value = None
         values = (
             self.string_value,
             self.decimal_value,
@@ -79,6 +124,13 @@ class ExtractedClaim(StrictClaimModel):
 
     @model_validator(mode="after")
     def valid_span(self) -> ExtractedClaim:
+        field_path = self.field_path.strip().casefold()
+        for separator in (".", " "):
+            prefix = f"{self.entity_type.value}{separator}"
+            if field_path.startswith(prefix):
+                field_path = field_path[len(prefix) :]
+                break
+        self.field_path = field_path.replace(" ", "_").replace("-", "_")
         if self.excerpt_end <= self.excerpt_start:
             raise ValueError("Claim evidence span must be non-empty")
         return self

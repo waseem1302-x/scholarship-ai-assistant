@@ -96,6 +96,9 @@ class RunBudgetExhausted(RuntimeError):
     pass
 
 
+_MEXT_TOPIC_MARKER = re.compile(r"\b(?:mext|monbukagakusho)\b", re.IGNORECASE)
+
+
 class CatalogueIngestionService:
     def __init__(
         self,
@@ -792,6 +795,7 @@ class CatalogueIngestionService:
         university_url: str | None,
     ) -> None:
         fetched_at = datetime.now(UTC)
+        root = crawl_result.pages[0].fetched
         for page in crawl_result.pages[1:]:
             fetched = page.fetched
             classification = self.classifier.classify(
@@ -830,15 +834,24 @@ class CatalogueIngestionService:
             child_source.relevant_excerpt = fetched.excerpt_text
             child_source.bytes_read = fetched.bytes_read
             child_source.fetched_at = fetched_at
-            child_source.failure_code = (
-                None if classification.is_official else "crawler_child_not_official"
-            )
-            child_source.failure_reason = (
-                None if classification.is_official else classification.reason[:1000]
-            )
-            if classification.is_official:
+            topic_matches = _crawler_child_matches_root(root, fetched)
+            if classification.is_official and topic_matches:
+                child_source.failure_code = None
+                child_source.failure_reason = None
                 self.session.flush()
                 self._persist_source_artifact(child_source, fetched)
+            else:
+                child_source.status = CandidateSourceStatus.MANUAL_REVIEW
+                child_source.failure_code = (
+                    "crawler_child_topic_mismatch"
+                    if classification.is_official
+                    else "crawler_child_not_official"
+                )
+                child_source.failure_reason = (
+                    "Crawled page does not contain the MEXT identity marker from the root source"
+                    if classification.is_official
+                    else classification.reason[:1000]
+                )
 
     def _persist_source_artifact(
         self, source: CatalogueCandidateSource, fetched: FetchedSource
@@ -1019,6 +1032,18 @@ def _identity_resolution_errors(
     ):
         errors.append("extracted intake year conflicts with the seed candidate")
     return errors
+
+
+def _crawler_child_matches_root(root: FetchedSource, child: FetchedSource) -> bool:
+    root_identity = " ".join(
+        item for item in (root.final_url, root.normalized_text, root.excerpt_text) if item
+    )
+    if not _MEXT_TOPIC_MARKER.search(root_identity):
+        return True
+    child_identity = " ".join(
+        item for item in (child.final_url, child.normalized_text, child.excerpt_text) if item
+    )
+    return _MEXT_TOPIC_MARKER.search(child_identity) is not None
 
 
 def _canonical_identity_name(expected: str, actual: str) -> str:

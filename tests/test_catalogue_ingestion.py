@@ -16,9 +16,10 @@ from app.modules.catalogue_ingestion.claim_provider import (
     ClaimExtractionResult,
     FakeClaimProvider,
     _azure_schema,
+    _normalize_claim_output,
 )
 from app.modules.catalogue_ingestion.claim_resolution import resolve_claims
-from app.modules.catalogue_ingestion.claim_schemas import ClaimExtractionOutput
+from app.modules.catalogue_ingestion.claim_schemas import ClaimExtractionOutput, ClaimValue
 from app.modules.catalogue_ingestion.evaluation import GoldItem, evaluate
 from app.modules.catalogue_ingestion.models import (
     CandidateStatus,
@@ -51,6 +52,7 @@ from app.modules.catalogue_ingestion.seed_parser import (
 from app.modules.catalogue_ingestion.service import (
     CatalogueIngestionService,
     _canonical_identity_name,
+    _crawler_child_matches_root,
     _identity_name_matches,
 )
 from app.modules.catalogue_ingestion.sources import OfficialSourceClassifier
@@ -229,6 +231,42 @@ def claim_output() -> ClaimExtractionOutput:
             "warnings": [],
         }
     )
+
+
+def test_claim_value_treats_an_unused_empty_list_as_unset() -> None:
+    value = ClaimValue(
+        string_value="Embassy Recommendation",
+        decimal_value=None,
+        integer_value=None,
+        boolean_value=None,
+        string_list_value=[],
+    )
+
+    assert value.primitive() == "Embassy Recommendation"
+    assert value.string_list_value is None
+
+
+def test_claim_output_normalizes_paths_offsets_and_core_priority() -> None:
+    raw = claim_output().model_dump(mode="json")
+    raw["claims"][11]["field_path"] = "funding.coverage_status"
+    output = ClaimExtractionOutput.model_validate(raw)
+    output.claims[0] = output.claims[0].model_copy(
+        update={"excerpt_start": 1, "excerpt_end": 1 + len("MEXT Scholarship")}
+    )
+
+    normalized = _normalize_claim_output(output, MEXT_TEXT)
+
+    assert len(normalized.claims) == 12
+    assert normalized.claims[0].excerpt_start == 0
+    assert output.claims[11].field_path == "coverage_status"
+    present = {
+        (item.entity_type.value, item.entity_key, item.field_path) for item in normalized.claims
+    }
+    assert ("scholarship", "mext", "name") in present
+    assert ("track", "embassy_recommendation", "name") in present
+    assert ("track", "university_recommendation", "name") in present
+    assert ("funding", "tuition", "coverage_status") in present
+    assert any(item.startswith("claim_limit_applied:") for item in normalized.warnings)
 
 
 def extraction_output(
@@ -644,6 +682,31 @@ def test_claim_resolution_fails_closed_when_one_entity_key_spans_routes() -> Non
     assert "funding:tuition:coverage_status:ambiguous_scope_key" in resolution.conflicts
     assert resolution.is_materializable is False
 
+    unsupported = claim_output().claims[5].model_copy(deep=True)
+    unsupported.field_path = "eligibility.age"
+    unsupported_resolution = resolve_claims([(artifact, 1, [unsupported])])
+    assert any(
+        item.endswith("eligibility.age:unsupported_field_path")
+        for item in unsupported_resolution.rejected
+    )
+
+    contextless_year = claim_output().claims[4].model_copy(deep=True)
+    contextless_year.excerpt = "2027"
+    contextless_year.excerpt_end = contextless_year.excerpt_start + 4
+    wrong_route = claim_output().claims[5].model_copy(deep=True)
+    wrong_route.excerpt = "University Recommendation"
+    wrong_route.excerpt_start = MEXT_TEXT.index(wrong_route.excerpt)
+    wrong_route.excerpt_end = wrong_route.excerpt_start + len(wrong_route.excerpt)
+    semantic_resolution = resolve_claims([(artifact, 1, [contextless_year, wrong_route])])
+    assert any(
+        item.endswith("intake_year:intake_year_context_missing")
+        for item in semantic_resolution.rejected
+    )
+    assert any(
+        item.endswith("name:embassy_route_evidence_mismatch")
+        for item in semantic_resolution.rejected
+    )
+
 
 def test_seed_parser_fails_closed_for_image_only_pdf() -> None:
     with pytest.raises(SeedParseError, match="malformed_seed_pdf"):
@@ -700,12 +763,33 @@ def test_remote_seed_redirect_cannot_leave_private_blob_boundary(monkeypatch) ->
 def test_official_source_classification_is_deterministic() -> None:
     classifier = OfficialSourceClassifier()
     assert classifier.classify(OFFICIAL_URL).trust_tier == 2
+    assert (
+        classifier.classify(
+            "https://www.studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/"
+        ).trust_tier
+        == 2
+    )
     assert not classifier.classify("https://scholarshipportal.com/example").is_official
     assert classifier.classify(
         "https://funding.example.edu/program",
         university_website_url="https://example.edu",
     ).is_official
     assert not classifier.classify("https://unknown.example/program").is_official
+
+
+def test_mext_crawl_rejects_official_but_topic_unrelated_children() -> None:
+    root = FakeFetcher("Japanese Government MEXT Scholarship").fetch(
+        "https://www.studyinjapan.go.jp/en/mext"
+    )
+    relevant = FakeFetcher("MEXT Embassy Recommendation application").fetch(
+        "https://www.studyinjapan.go.jp/en/mext-application"
+    )
+    unrelated = FakeFetcher("Yamagata privately financed student scholarship").fetch(
+        "https://www.studyinjapan.go.jp/en/other-scholarship"
+    )
+
+    assert _crawler_child_matches_root(root, relevant) is True
+    assert _crawler_child_matches_root(root, unrelated) is False
 
 
 def test_extraction_contract_rejects_extra_fields_and_schema_is_strict() -> None:
@@ -1266,6 +1350,19 @@ def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_us
 
     assert exc_info.value.usage is not None
     assert exc_info.value.usage.estimated_cost == Decimal("0.000200")
+    assert "claims" in str(exc_info.value)
+
+    truncated_response = json.dumps(
+        {
+            "choices": [{"finish_reason": "length", "message": {"content": "{"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 4000},
+        }
+    ).encode()
+    with pytest.raises(ExtractionSchemaError) as truncated_info:
+        provider._parse(truncated_response, time.perf_counter())
+
+    assert truncated_info.value.code == "ai_output_truncated"
+    assert truncated_info.value.usage is not None
 
 
 def test_azure_provider_does_not_retry_non_retryable_http_errors() -> None:

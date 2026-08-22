@@ -12,7 +12,11 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ValidationError
 
 from app.core.config import Settings
-from app.modules.catalogue_ingestion.claim_schemas import ClaimExtractionOutput
+from app.modules.catalogue_ingestion.claim_schemas import (
+    ClaimEntityType,
+    ClaimExtractionOutput,
+    ExtractedClaim,
+)
 from app.modules.catalogue_ingestion.provider import (
     ExtractionProviderError,
     ExtractionProviderTimeout,
@@ -24,10 +28,27 @@ from app.modules.catalogue_ingestion.schemas import ExtractionUsage
 
 CLAIM_SYSTEM_INSTRUCTION = """Extract atomic scholarship claims only from this one official source.
 Never use general knowledge or transfer a fact between application routes. Every claim must contain
-the exact character offsets and verbatim excerpt from SOURCE TEXT. Use stable snake_case keys.
-For MEXT, represent one scholarship; use embassy_recommendation and university_recommendation as
-top-level track keys when explicit. Put cycle, track, institution, and programme keys in scope.
-Unknown facts belong in unknown_objectives. Report contradictions; do not reconcile them."""
+the exact character offsets and verbatim excerpt from SOURCE TEXT. Return no more than 12 claims and
+use stable snake_case keys. Prioritize scholarship name, provider_name, country_code, degree_levels,
+intake_year, both recommendation routes, funding, required documents, application steps, deadlines,
+and explicitly named institutions. Emit at most one claim for each core objective in that order
+before adding any second funding fact, category track, deadline, or institution. If a core
+objective is absent, name it once in unknown_objectives and continue to the next objective. For
+MEXT, represent one scholarship; use embassy_recommendation and university_recommendation as
+top-level track keys when explicit, and category tracks beneath them only when the source states
+that relationship. Allowed field paths are: scholarship name, provider_name, country_code,
+degree_levels, alias; cycle intake_year; track name, track_type,
+parent_track_key, application_method, application_url, display_order; institution canonical_name,
+institution_type, country_code, official_website, role, application_url; deadline deadline_at,
+deadline_type, timezone, label, notes; funding component_type, coverage_status, amount, currency,
+frequency, description; document name, required, notes, display_order; step title, description,
+application_url, display_order. Do not emit eligibility or narrative fields outside this list.
+Put cycle, track, institution, and programme keys in scope. Unknown required facts belong in
+unknown_objectives. Report contradictions; do not reconcile them."""
+
+
+class ClaimOutputTruncated(ExtractionSchemaError):
+    code = "ai_output_truncated"
 
 
 class ClaimExtractionResult(BaseModel):
@@ -151,7 +172,9 @@ class AzureOpenAIClaimProvider:
                     raw = response.read(self.settings.catalogue_ai_max_response_bytes + 1)
                 if len(raw) > self.settings.catalogue_ai_max_response_bytes:
                     raise ExtractionSchemaError("AI response exceeded the configured byte limit")
-                return self._parse(raw, started)
+                result = self._parse(raw, started)
+                result.output = _normalize_claim_output(result.output, bounded)
+                return result
             except urllib.error.HTTPError as exc:
                 last_error = exc
                 if exc.code < 500 and exc.code != 429:
@@ -181,12 +204,26 @@ class AzureOpenAIClaimProvider:
                 latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
             )
             message = response["choices"][0]["message"]
+            if response["choices"][0].get("finish_reason") == "length":
+                raise ClaimOutputTruncated(
+                    "Model output reached the configured token limit", usage=usage
+                )
             if message.get("refusal"):
                 raise ExtractionSchemaError("Model refused the claim extraction", usage=usage)
             output = ClaimExtractionOutput.model_validate_json(message["content"])
         except ExtractionSchemaError:
             raise
-        except (KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
+        except ValidationError as exc:
+            diagnostic = json.dumps(
+                exc.errors(include_input=False, include_url=False),
+                separators=(",", ":"),
+                default=str,
+            )[:2000]
+            raise ExtractionSchemaError(
+                f"Azure claim response did not match the strict schema: {diagnostic}",
+                usage=usage,
+            ) from exc
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ExtractionSchemaError(
                 "Azure claim response did not match the strict schema", usage=usage
             ) from exc
@@ -197,6 +234,77 @@ def get_claim_provider(settings: Settings) -> CatalogueClaimProvider:
     if not settings.catalogue_ai_ingestion_enabled:
         return UnavailableClaimProvider(settings.catalogue_ai_model or "disabled")
     return AzureOpenAIClaimProvider(settings)
+
+
+def _normalize_claim_output(
+    output: ClaimExtractionOutput, source_text: str
+) -> ClaimExtractionOutput:
+    claims = [_bind_unique_evidence_span(item, source_text) for item in output.claims]
+    selected_indices: list[int] = []
+
+    def select_first(predicate: Callable[[ExtractedClaim], bool]) -> None:
+        for index, claim in enumerate(claims):
+            if index not in selected_indices and predicate(claim):
+                selected_indices.append(index)
+                return
+
+    core_objectives = (
+        lambda item: item.entity_type is ClaimEntityType.SCHOLARSHIP and item.field_path == "name",
+        lambda item: (
+            item.entity_type is ClaimEntityType.SCHOLARSHIP and item.field_path == "provider_name"
+        ),
+        lambda item: (
+            item.entity_type is ClaimEntityType.SCHOLARSHIP and item.field_path == "country_code"
+        ),
+        lambda item: (
+            item.entity_type is ClaimEntityType.SCHOLARSHIP and item.field_path == "degree_levels"
+        ),
+        lambda item: item.entity_type is ClaimEntityType.CYCLE and item.field_path == "intake_year",
+        lambda item: (
+            item.entity_type is ClaimEntityType.TRACK
+            and item.entity_key == "embassy_recommendation"
+            and item.field_path == "name"
+        ),
+        lambda item: (
+            item.entity_type is ClaimEntityType.TRACK
+            and item.entity_key == "university_recommendation"
+            and item.field_path == "name"
+        ),
+        lambda item: item.entity_type is ClaimEntityType.FUNDING,
+        lambda item: item.entity_type is ClaimEntityType.DOCUMENT,
+        lambda item: item.entity_type is ClaimEntityType.STEP,
+    )
+    for objective in core_objectives:
+        select_first(objective)
+    for index in range(len(claims)):
+        if len(selected_indices) >= 12:
+            break
+        if index not in selected_indices:
+            selected_indices.append(index)
+
+    warnings = list(output.warnings)
+    if len(claims) > len(selected_indices):
+        warnings.append(f"claim_limit_applied:{len(claims)}:12")
+    return output.model_copy(
+        update={
+            "claims": [claims[index] for index in selected_indices],
+            "warnings": warnings,
+        }
+    )
+
+
+def _bind_unique_evidence_span(claim: ExtractedClaim, source_text: str) -> ExtractedClaim:
+    if (
+        claim.excerpt_end <= len(source_text)
+        and source_text[claim.excerpt_start : claim.excerpt_end] == claim.excerpt
+    ):
+        return claim
+    start = source_text.find(claim.excerpt)
+    if start < 0 or source_text.find(claim.excerpt, start + 1) >= 0:
+        return claim
+    return claim.model_copy(
+        update={"excerpt_start": start, "excerpt_end": start + len(claim.excerpt)}
+    )
 
 
 def _azure_schema(model: type[BaseModel]) -> dict[str, Any]:

@@ -48,9 +48,12 @@ Claim extraction is performed independently for every official artifact under
 - cycle, track, institution, and programme scope;
 - exact excerpt, start offset, end offset, and evidence basis.
 
-The resolver verifies `text[start:end] == excerpt`. Invalid spans are rejected. For the same entity,
-field, and scope, the best trust tier wins. Differing values at the same best tier are conflicts;
-claim counts never break a tie.
+The provider normalizes only explicit entity-qualified field paths such as
+`funding.component_type`. The resolver verifies `text[start:end] == excerpt`. If the model supplied
+incorrect offsets, the provider may rebind them only when the verbatim excerpt occurs exactly once
+in the source; ambiguous or missing excerpts remain rejected. For the same entity, field, and scope,
+the best trust tier wins. Differing values at the same best tier are conflicts; claim counts never
+break a tie. Intake years and the two recommendation-route names also pass semantic context checks.
 
 ## MEXT gates
 
@@ -91,8 +94,13 @@ excerpt, and validator status.
 ## Operational invariants
 
 - Only HTTPS public URLs accepted by the existing URL policy enter acquisition.
+- Restricted Japanese government `.go.jp` domains are recognized as government sources.
 - `SafeSourceFetcher` remains the network-security boundary.
+- Same-host downgrade redirects are rewritten to HTTPS without issuing a plaintext request;
+  cross-host and explicit-port downgrades remain blocked.
 - `BoundedOfficialSiteCrawler` enforces page, depth, byte, and host-rate budgets.
+- For a MEXT root, crawled child pages without a MEXT/Monbukagakusho identity marker are recorded
+  for review but excluded from artifacts and model extraction.
 - Model call, token, output, and estimated-cost budgets remain enforced per run.
 - Unchanged source content reuses a compatible extraction attempt by URL, hash, schema, provider,
   and model.
