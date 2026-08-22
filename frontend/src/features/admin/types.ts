@@ -121,6 +121,14 @@ export interface IngestionCandidate {
   validation_errors: string[];
   conflicts: string[];
   opportunity_id: string | null;
+  sources: {
+    id: string;
+    url: string;
+    final_url: string | null;
+    source_role: "discovered" | "primary" | "supporting" | "crawled";
+    is_official: boolean;
+    failure_code: string | null;
+  }[];
 }
 
 export interface IngestionCandidateResponse {

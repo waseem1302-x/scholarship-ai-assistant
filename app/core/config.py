@@ -81,9 +81,11 @@ class Settings(BaseSettings):
     catalogue_ai_token_scope: str = "https://cognitiveservices.azure.com/.default"
     catalogue_ai_timeout_seconds: int = Field(default=30, ge=1, le=120)
     catalogue_ai_max_retries: int = Field(default=2, ge=0, le=5)
+    catalogue_ai_max_retry_delay_seconds: int = Field(default=60, ge=1, le=300)
     catalogue_ai_max_response_bytes: int = Field(default=1_000_000, ge=10_000, le=5_000_000)
     catalogue_ai_max_candidates_per_run: int = Field(default=500, ge=1, le=5_000)
     catalogue_ai_max_pages_per_candidate: int = Field(default=3, ge=1, le=10)
+    catalogue_source_max_bytes_per_page: int = Field(default=5_000_000, ge=100_000, le=20_000_000)
     catalogue_ai_max_calls_per_run: int = Field(default=500, ge=0, le=5_000)
     catalogue_ai_max_input_characters: int = Field(default=80_000, ge=1_000, le=500_000)
     catalogue_ai_max_output_tokens: int = Field(default=4_000, ge=256, le=16_000)

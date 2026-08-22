@@ -166,6 +166,7 @@ class CatalogueIngestionRepository:
         canonical_url: str,
         content_hash: str,
         schema_version: str,
+        prompt_hash: str,
         provider: str,
         model: str,
     ) -> CatalogueExtractionAttempt | None:
@@ -176,6 +177,7 @@ class CatalogueIngestionRepository:
                 CatalogueCandidateSource.canonical_url == canonical_url,
                 CatalogueExtractionAttempt.content_hash == content_hash,
                 CatalogueExtractionAttempt.schema_version == schema_version,
+                CatalogueExtractionAttempt.prompt_hash == prompt_hash,
                 CatalogueExtractionAttempt.provider == provider,
                 CatalogueExtractionAttempt.model == model,
                 CatalogueExtractionAttempt.status == ExtractionAttemptStatus.SUCCEEDED,

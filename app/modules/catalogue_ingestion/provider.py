@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from datetime import UTC, datetime
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -122,6 +125,10 @@ class ExtractionProviderError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.usage = usage
+
+
+class ExtractionProviderRateLimited(ExtractionProviderError):
+    code = "ai_rate_limited"
 
 
 class ExtractionProviderUnavailable(ExtractionProviderError):
@@ -261,9 +268,19 @@ class AzureOpenAIExtractionProvider:
             except (TimeoutError, urllib.error.URLError) as exc:
                 last_error = exc
             if attempt < self.settings.catalogue_ai_max_retries:
-                self.sleeper(min(2**attempt, 4))
+                self.sleeper(
+                    extraction_retry_delay(
+                        last_error,
+                        attempt=attempt,
+                        maximum=self.settings.catalogue_ai_max_retry_delay_seconds,
+                    )
+                )
         if isinstance(last_error, TimeoutError):
             raise ExtractionProviderTimeout("Azure extraction timed out") from last_error
+        if isinstance(last_error, urllib.error.HTTPError) and last_error.code == 429:
+            raise ExtractionProviderRateLimited("Azure extraction rate limit was exhausted") from (
+                last_error
+            )
         raise ExtractionProviderError("Azure extraction request failed") from last_error
 
     def _parse_response(self, raw: bytes, started: float) -> ExtractionResult:
@@ -402,6 +419,37 @@ def estimate_cost(
         Decimal(input_tokens) * input_per_million + Decimal(output_tokens) * output_per_million
     ) / Decimal(1_000_000)
     return cost.quantize(Decimal("0.000001"))
+
+
+def extraction_retry_delay(
+    error: BaseException | None,
+    *,
+    attempt: int,
+    maximum: float,
+    now: Callable[[], datetime] | None = None,
+) -> float:
+    """Honor provider Retry-After guidance while keeping worker waits bounded."""
+
+    fallback = min(2**attempt, 4)
+    if not isinstance(error, urllib.error.HTTPError) or error.headers is None:
+        return min(float(fallback), maximum)
+    raw = error.headers.get("Retry-After")
+    if not raw:
+        return min(float(fallback), maximum)
+    try:
+        delay = float(raw)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=UTC)
+            current = (now or (lambda: datetime.now(UTC)))()
+            delay = (retry_at - current).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return min(float(fallback), maximum)
+    if not math.isfinite(delay):
+        return min(float(fallback), maximum)
+    return min(max(delay, 0.0), maximum)
 
 
 def extraction_prompt_hash() -> str:

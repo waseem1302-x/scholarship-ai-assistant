@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.error
@@ -19,10 +20,12 @@ from app.modules.catalogue_ingestion.claim_schemas import (
 )
 from app.modules.catalogue_ingestion.provider import (
     ExtractionProviderError,
+    ExtractionProviderRateLimited,
     ExtractionProviderTimeout,
     ExtractionProviderUnavailable,
     ExtractionSchemaError,
     estimate_cost,
+    extraction_retry_delay,
 )
 from app.modules.catalogue_ingestion.schemas import ExtractionUsage
 
@@ -44,7 +47,11 @@ deadline_type, timezone, label, notes; funding component_type, coverage_status, 
 frequency, description; document name, required, notes, display_order; step title, description,
 application_url, display_order. Do not emit eligibility or narrative fields outside this list.
 Put cycle, track, institution, and programme keys in scope. Unknown required facts belong in
-unknown_objectives. Report contradictions; do not reconcile them."""
+unknown_objectives. Each claim's value object must have exactly one non-null field: use string_value
+for text and enums, decimal_value for monetary amounts, integer_value for years and display order,
+boolean_value for true/false facts, and string_list_value only for lists such as degree levels. Set
+the other four value fields to null and never encode the same fact in two value fields. Report
+contradictions; do not reconcile them."""
 
 
 class ClaimOutputTruncated(ExtractionSchemaError):
@@ -182,9 +189,19 @@ class AzureOpenAIClaimProvider:
             except (TimeoutError, urllib.error.URLError) as exc:
                 last_error = exc
             if attempt < self.settings.catalogue_ai_max_retries:
-                self.sleeper(min(2**attempt, 4))
+                self.sleeper(
+                    extraction_retry_delay(
+                        last_error,
+                        attempt=attempt,
+                        maximum=self.settings.catalogue_ai_max_retry_delay_seconds,
+                    )
+                )
         if isinstance(last_error, TimeoutError):
             raise ExtractionProviderTimeout("Azure claim extraction timed out") from last_error
+        if isinstance(last_error, urllib.error.HTTPError) and last_error.code == 429:
+            raise ExtractionProviderRateLimited(
+                "Azure claim extraction rate limit was exhausted"
+            ) from last_error
         raise ExtractionProviderError("Azure claim extraction request failed") from last_error
 
     def _parse(self, raw: bytes, started: float) -> ClaimExtractionResult:
@@ -228,6 +245,10 @@ class AzureOpenAIClaimProvider:
                 "Azure claim response did not match the strict schema", usage=usage
             ) from exc
         return ClaimExtractionResult(output=output, usage=usage)
+
+
+def claim_extraction_prompt_hash() -> str:
+    return hashlib.sha256(CLAIM_SYSTEM_INSTRUCTION.encode()).hexdigest()
 
 
 def get_claim_provider(settings: Settings) -> CatalogueClaimProvider:

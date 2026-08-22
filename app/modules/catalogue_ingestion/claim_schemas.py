@@ -125,11 +125,12 @@ class ExtractedClaim(StrictClaimModel):
     @model_validator(mode="after")
     def valid_span(self) -> ExtractedClaim:
         field_path = self.field_path.strip().casefold()
-        for separator in (".", " "):
-            prefix = f"{self.entity_type.value}{separator}"
-            if field_path.startswith(prefix):
-                field_path = field_path[len(prefix) :]
-                break
+        if field_path not in SUPPORTED_CLAIM_FIELDS[self.entity_type]:
+            for separator in (".", " ", "_"):
+                prefix = f"{self.entity_type.value}{separator}"
+                if field_path.startswith(prefix):
+                    field_path = field_path[len(prefix) :]
+                    break
         self.field_path = field_path.replace(" ", "_").replace("-", "_")
         if self.excerpt_end <= self.excerpt_start:
             raise ValueError("Claim evidence span must be non-empty")
