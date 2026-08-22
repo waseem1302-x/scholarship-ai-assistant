@@ -17,15 +17,20 @@ from app.core.errors import AppError
 from app.modules.auth.models import AuditLog, User
 from app.modules.catalogue_ingestion.claim_provider import (
     CatalogueClaimProvider,
+    _normalize_claim_output,
     claim_extraction_prompt_hash,
     get_claim_provider,
 )
 from app.modules.catalogue_ingestion.claim_resolution import resolve_claims
 from app.modules.catalogue_ingestion.claim_schemas import (
     CLAIM_SCHEMA_VERSION,
+    CLAIM_SCHEMA_VERSIONS,
+    ClaimEntityType,
     ClaimExtractionOutput,
+    ClaimObjective,
     ClaimResolution,
     ExtractedClaim,
+    ObjectiveCoverageState,
 )
 from app.modules.catalogue_ingestion.crawler import (
     BoundedOfficialSiteCrawler,
@@ -847,8 +852,15 @@ class CatalogueIngestionService:
             raise AppError(
                 "catalogue_candidate_not_ready", "Candidate has not passed review gates", 409
             )
-        if candidate.proposed_payload.get("schema_version") == CLAIM_SCHEMA_VERSION:
+        if candidate.proposed_payload.get("schema_version") in CLAIM_SCHEMA_VERSIONS:
             resolution = ClaimResolution.model_validate(candidate.proposed_payload)
+            if not _legacy_graph_compatible(resolution):
+                raise AppError(
+                    "catalogue_detail_extraction_review_only",
+                    "Expanded programme-scoped extraction is review-only until graph "
+                    "architecture is added",
+                    409,
+                )
             created = MextGraphMaterializer(self.session).materialize(resolution)
             candidate.opportunity_id = created.id
             candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
@@ -880,6 +892,9 @@ class CatalogueIngestionService:
         extracted: list[tuple[CatalogueSourceArtifact, int, list[ExtractedClaim]]] = []
         unknown_objectives: set[str] = set()
         warnings: set[str] = set()
+        coverage_by_objective: dict[ClaimObjective, list[ObjectiveCoverageState]] = {
+            objective: [] for objective in ClaimObjective
+        }
         persisted_sources = self.session.scalars(
             select(CatalogueCandidateSource)
             .where(CatalogueCandidateSource.candidate_id == candidate.id)
@@ -907,102 +922,132 @@ class CatalogueIngestionService:
         )
         for source in sources:
             artifact = max(source.artifacts, key=lambda item: item.created_at)
-            reused = self.repository.reusable_attempt(
-                canonical_url=source.canonical_url,
-                content_hash=artifact.content_hash,
-                schema_version=CLAIM_SCHEMA_VERSION,
-                prompt_hash=claim_extraction_prompt_hash(),
-                provider=self.claim_extractor.name,
-                model=self.claim_extractor.model,
-            )
-            if reused is not None and reused.output_json is not None:
-                output = ClaimExtractionOutput.model_validate(reused.output_json)
-                status = ExtractionAttemptStatus.REUSED
-                usage = None
-                reuse_is_current = (
-                    reused.candidate_id == candidate.id and reused.source_id == source.id
+            raw_links = artifact.fetch_metadata.get("links", [])
+            source_links = raw_links if isinstance(raw_links, list) else []
+            for objective in ClaimObjective:
+                attempt_schema = _claim_attempt_schema(objective)
+                reused = self.repository.reusable_attempt(
+                    canonical_url=source.canonical_url,
+                    content_hash=artifact.content_hash,
+                    schema_version=attempt_schema,
+                    prompt_hash=claim_extraction_prompt_hash(objective),
+                    provider=self.claim_extractor.name,
+                    model=self.claim_extractor.model,
                 )
-            else:
-                self._check_budget(run, artifact.normalized_text)
-                try:
-                    result = self.claim_extractor.extract_claims(
-                        source_url=artifact.final_url,
-                        source_text=artifact.normalized_text,
+                if reused is not None and reused.output_json is not None:
+                    output = _normalize_claim_output(
+                        ClaimExtractionOutput.model_validate(reused.output_json),
+                        artifact.normalized_text,
+                        objective=objective,
                     )
-                except ExtractionSchemaError as exc:
-                    self.metrics.add("ai_schema_failures")
-                    if exc.usage is not None:
-                        self._record_claim_usage(run, exc.usage)
-                    self.session.add(
-                        self._claim_attempt(
-                            candidate,
-                            source,
-                            artifact,
-                            ExtractionAttemptStatus.SCHEMA_FAILED,
-                            exc.code,
-                            usage=exc.usage,
+                    status = ExtractionAttemptStatus.REUSED
+                    usage = None
+                    reuse_is_current = (
+                        reused.candidate_id == candidate.id and reused.source_id == source.id
+                    )
+                else:
+                    self._check_budget(run, artifact.normalized_text)
+                    try:
+                        result = self.claim_extractor.extract_claims(
+                            source_url=artifact.final_url,
+                            source_text=artifact.normalized_text,
+                            objective=objective,
+                            source_links=source_links,
                         )
-                    )
-                    self._manual_review(candidate, exc.code)
-                    if run.estimated_cost > run.max_estimated_cost:
-                        raise RunBudgetExhausted from None
-                    return
-                except ExtractionProviderError as exc:
-                    self.metrics.add("ai_extraction_failures")
-                    if exc.usage is not None:
-                        self._record_claim_usage(run, exc.usage)
-                    self.session.add(
-                        self._claim_attempt(
-                            candidate,
-                            source,
-                            artifact,
-                            ExtractionAttemptStatus.PROVIDER_FAILED,
-                            exc.code,
-                            usage=exc.usage,
+                    except ExtractionSchemaError as exc:
+                        self.metrics.add("ai_schema_failures")
+                        if exc.usage is not None:
+                            self._record_claim_usage(run, exc.usage)
+                        self.session.add(
+                            self._claim_attempt(
+                                candidate,
+                                source,
+                                artifact,
+                                ExtractionAttemptStatus.SCHEMA_FAILED,
+                                exc.code,
+                                objective=objective,
+                                usage=exc.usage,
+                            )
                         )
-                    )
-                    self._manual_review(candidate, exc.code)
+                        self._manual_review(candidate, exc.code)
+                        if run.estimated_cost > run.max_estimated_cost:
+                            raise RunBudgetExhausted from None
+                        return
+                    except ExtractionProviderError as exc:
+                        self.metrics.add("ai_extraction_failures")
+                        if exc.usage is not None:
+                            self._record_claim_usage(run, exc.usage)
+                        self.session.add(
+                            self._claim_attempt(
+                                candidate,
+                                source,
+                                artifact,
+                                ExtractionAttemptStatus.PROVIDER_FAILED,
+                                exc.code,
+                                objective=objective,
+                                usage=exc.usage,
+                            )
+                        )
+                        self._manual_review(candidate, exc.code)
+                        if run.estimated_cost > run.max_estimated_cost:
+                            raise RunBudgetExhausted from None
+                        return
+                    output = result.output
+                    usage = result.usage
+                    status = ExtractionAttemptStatus.SUCCEEDED
+                    reuse_is_current = False
+                    self._record_claim_usage(run, usage)
                     if run.estimated_cost > run.max_estimated_cost:
-                        raise RunBudgetExhausted from None
-                    return
-                output = result.output
-                usage = result.usage
-                status = ExtractionAttemptStatus.SUCCEEDED
-                reuse_is_current = False
-                self._record_claim_usage(run, usage)
-                if run.estimated_cost > run.max_estimated_cost:
+                        self.session.add(
+                            self._claim_attempt(
+                                candidate,
+                                source,
+                                artifact,
+                                ExtractionAttemptStatus.SUCCEEDED,
+                                None,
+                                objective=objective,
+                                output=output,
+                                usage=usage,
+                            )
+                        )
+                        raise RunBudgetExhausted
+                if not reuse_is_current:
                     self.session.add(
                         self._claim_attempt(
                             candidate,
                             source,
                             artifact,
-                            ExtractionAttemptStatus.SUCCEEDED,
+                            status,
                             None,
+                            objective=objective,
                             output=output,
                             usage=usage,
                         )
                     )
-                    raise RunBudgetExhausted
-            if not reuse_is_current:
-                self.session.add(
-                    self._claim_attempt(
-                        candidate,
-                        source,
-                        artifact,
-                        status,
-                        None,
-                        output=output,
-                        usage=usage,
-                    )
+                if output.conflicts:
+                    candidate.conflicts.extend(output.conflicts)
+                unknown_objectives.update(
+                    f"{artifact.id}:{objective.value}:{item}" for item in output.unknown_objectives
                 )
-            if output.conflicts:
-                candidate.conflicts.extend(output.conflicts)
-            unknown_objectives.update(f"{artifact.id}:{item}" for item in output.unknown_objectives)
-            warnings.update(f"{artifact.id}:{item}" for item in output.warnings)
-            extracted.append((artifact, source.trust_tier or 999, output.claims))
+                warnings.update(
+                    f"{artifact.id}:{objective.value}:{item}" for item in output.warnings
+                )
+                coverage_by_objective[objective].append(output.coverage_state)
+                effective_trust_tier = (source.trust_tier or 99) * 10 + role_order[
+                    source.source_role
+                ]
+                extracted.append((artifact, effective_trust_tier, output.claims))
 
         candidate.status = CandidateStatus.EXTRACTED
-        resolution = resolve_claims(extracted).model_copy(
+        aggregate_coverage = {
+            objective.value: _aggregate_coverage(states).value
+            for objective, states in coverage_by_objective.items()
+        }
+        resolution = resolve_claims(
+            extracted,
+            require_detail=True,
+            objective_coverage=aggregate_coverage,
+        ).model_copy(
             update={
                 "unknown_objectives": sorted(unknown_objectives),
                 "warnings": sorted(warnings),
@@ -1029,7 +1074,11 @@ class CatalogueIngestionService:
             else:
                 candidate.status = CandidateStatus.READY_FOR_REVIEW
                 self.metrics.add("candidates_ready_for_review")
-                if run.mode is IngestionMode.REVIEW_QUEUE and not run.dry_run:
+                if (
+                    run.mode is IngestionMode.REVIEW_QUEUE
+                    and not run.dry_run
+                    and _legacy_graph_compatible(resolution)
+                ):
                     created = MextGraphMaterializer(self.session).materialize(resolution)
                     candidate.opportunity_id = created.id
                     candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
@@ -1171,6 +1220,10 @@ class CatalogueIngestionService:
                 fetch_metadata={
                     "operator_host": urlsplit(source.url).hostname,
                     "source_role": source.source_role.value,
+                    "links": [
+                        {"url": item.url, "text": item.text, "title": item.title}
+                        for item in fetched.links[:500]
+                    ],
                 },
             )
         )
@@ -1246,6 +1299,7 @@ class CatalogueIngestionService:
         status: ExtractionAttemptStatus,
         error_code: str | None,
         *,
+        objective: ClaimObjective = ClaimObjective.IDENTITY,
         output: ClaimExtractionOutput | None = None,
         usage: object | None = None,
     ) -> CatalogueExtractionAttempt:
@@ -1254,9 +1308,9 @@ class CatalogueIngestionService:
             source_id=source.id,
             provider=self.claim_extractor.name,
             model=self.claim_extractor.model,
-            schema_version=CLAIM_SCHEMA_VERSION,
+            schema_version=_claim_attempt_schema(objective),
             content_hash=artifact.content_hash,
-            prompt_hash=claim_extraction_prompt_hash(),
+            prompt_hash=claim_extraction_prompt_hash(objective),
             status=status,
             output_json=output.model_dump(mode="json") if output else None,
             error_code=error_code,
@@ -1286,6 +1340,30 @@ class CatalogueIngestionService:
 
 def _safe_failure_code(message: str) -> str:
     return message.split(":", 1)[0].strip().replace(" ", "_")[:100] or "source_fetch_failed"
+
+
+def _claim_attempt_schema(objective: ClaimObjective) -> str:
+    return f"{CLAIM_SCHEMA_VERSION}.{objective.value}"
+
+
+def _aggregate_coverage(states: list[ObjectiveCoverageState]) -> ObjectiveCoverageState:
+    if ObjectiveCoverageState.PARTIAL in states:
+        return ObjectiveCoverageState.PARTIAL
+    if ObjectiveCoverageState.COMPLETE in states:
+        return ObjectiveCoverageState.COMPLETE
+    if ObjectiveCoverageState.NOT_STATED in states:
+        return ObjectiveCoverageState.NOT_STATED
+    return ObjectiveCoverageState.NOT_APPLICABLE
+
+
+def _legacy_graph_compatible(resolution: ClaimResolution) -> bool:
+    expanded_entities = {
+        ClaimEntityType.PROGRAMME,
+        ClaimEntityType.ELIGIBILITY,
+        ClaimEntityType.EVENT,
+        ClaimEntityType.RESOURCE,
+    }
+    return not any(item.claim.entity_type in expanded_entities for item in resolution.resolved)
 
 
 def _identity_resolution_errors(

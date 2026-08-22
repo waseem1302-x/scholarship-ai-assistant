@@ -8,18 +8,46 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CLAIM_SCHEMA_VERSION = "catalogue-claims.v2"
+CLAIM_SCHEMA_VERSION = "catalogue-claims.v3"
+LEGACY_CLAIM_SCHEMA_VERSION = "catalogue-claims.v2"
+CLAIM_SCHEMA_VERSIONS = frozenset({LEGACY_CLAIM_SCHEMA_VERSION, CLAIM_SCHEMA_VERSION})
+
+
+class ClaimObjective(StrEnum):
+    IDENTITY = "identity"
+    PROGRAMMES = "programmes"
+    PROGRAMME_DETAILS = "programme_details"
+    ROUTES = "routes"
+    ELIGIBILITY = "eligibility"
+    ELIGIBILITY_CONTEXT = "eligibility_context"
+    DOCUMENTS_CORE = "documents_core"
+    DOCUMENTS_REQUIREMENTS = "documents_requirements"
+    DOCUMENTS_COUNTS = "documents_counts"
+    DOCUMENTS_FORMAT = "documents_format"
+    FUNDING = "funding"
+    APPLICATION_TIMELINE = "application_timeline"
+
+
+class ObjectiveCoverageState(StrEnum):
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    NOT_STATED = "not_stated"
+    NOT_APPLICABLE = "not_applicable"
 
 
 class ClaimEntityType(StrEnum):
     SCHOLARSHIP = "scholarship"
     CYCLE = "cycle"
+    PROGRAMME = "programme"
     TRACK = "track"
     INSTITUTION = "institution"
+    ELIGIBILITY = "eligibility"
     DEADLINE = "deadline"
+    EVENT = "event"
     FUNDING = "funding"
     DOCUMENT = "document"
     STEP = "step"
+    RESOURCE = "resource"
 
 
 SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
@@ -27,6 +55,18 @@ SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
         {"name", "provider_name", "country_code", "degree_levels", "alias"}
     ),
     ClaimEntityType.CYCLE: frozenset({"intake_year"}),
+    ClaimEntityType.PROGRAMME: frozenset(
+        {
+            "name",
+            "programme_type",
+            "degree_levels",
+            "fields_of_study",
+            "duration",
+            "description",
+            "application_route_keys",
+            "display_order",
+        }
+    ),
     ClaimEntityType.TRACK: frozenset(
         {
             "name",
@@ -47,8 +87,43 @@ SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
             "application_url",
         }
     ),
+    ClaimEntityType.ELIGIBILITY: frozenset(
+        {
+            "rule_type",
+            "operator",
+            "value",
+            "unit",
+            "required",
+            "condition",
+            "is_exclusion",
+            "notes",
+            "display_order",
+        }
+    ),
     ClaimEntityType.DEADLINE: frozenset(
-        {"deadline_at", "deadline_type", "timezone", "label", "notes"}
+        {
+            "deadline_at",
+            "deadline_text",
+            "deadline_type",
+            "precision",
+            "timezone",
+            "varies_by",
+            "label",
+            "notes",
+        }
+    ),
+    ClaimEntityType.EVENT: frozenset(
+        {
+            "event_type",
+            "starts_at",
+            "ends_at",
+            "date_text",
+            "precision",
+            "timezone",
+            "label",
+            "notes",
+            "display_order",
+        }
     ),
     ClaimEntityType.FUNDING: frozenset(
         {
@@ -60,8 +135,53 @@ SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
             "description",
         }
     ),
-    ClaimEntityType.DOCUMENT: frozenset({"name", "required", "notes", "display_order"}),
+    ClaimEntityType.DOCUMENT: frozenset(
+        {
+            "name",
+            "required",
+            "condition",
+            "submission_stage",
+            "original_count",
+            "copy_count",
+            "translation_requirement",
+            "certification_requirement",
+            "form_year",
+            "notes",
+            "display_order",
+        }
+    ),
     ClaimEntityType.STEP: frozenset({"title", "description", "application_url", "display_order"}),
+    ClaimEntityType.RESOURCE: frozenset(
+        {"title", "resource_type", "url", "required", "notes", "display_order"}
+    ),
+}
+
+CLAIM_FIELD_ALIASES: dict[ClaimEntityType, dict[str, str]] = {
+    ClaimEntityType.SCHOLARSHIP: {
+        "aliases": "alias",
+        "canonical_name": "name",
+        "destination_country_code": "country_code",
+        "scholarship": "name",
+    },
+    ClaimEntityType.PROGRAMME: {"fields_of_study_list": "fields_of_study"},
+    ClaimEntityType.TRACK: {
+        "method": "application_method",
+        "order": "display_order",
+        "parent_route": "parent_track_key",
+        "route_type": "track_type",
+    },
+    ClaimEntityType.INSTITUTION: {
+        "administering_body": "canonical_name",
+        "administering_bodies": "canonical_name",
+        "name": "canonical_name",
+    },
+    ClaimEntityType.FUNDING: {
+        "component_amount": "amount",
+        "component_description": "description",
+        "component_frequency": "frequency",
+    },
+    ClaimEntityType.STEP: {"label": "title", "order": "display_order"},
+    ClaimEntityType.RESOURCE: {"label": "title", "link": "url"},
 }
 
 
@@ -126,18 +246,21 @@ class ExtractedClaim(StrictClaimModel):
     def valid_span(self) -> ExtractedClaim:
         field_path = self.field_path.strip().casefold()
         if field_path not in SUPPORTED_CLAIM_FIELDS[self.entity_type]:
-            for separator in (".", " ", "_"):
+            for separator in (".", " ", "_", "/"):
                 prefix = f"{self.entity_type.value}{separator}"
                 if field_path.startswith(prefix):
                     field_path = field_path[len(prefix) :]
                     break
-        self.field_path = field_path.replace(" ", "_").replace("-", "_")
+        field_path = field_path.replace(" ", "_").replace("-", "_")
+        self.field_path = CLAIM_FIELD_ALIASES.get(self.entity_type, {}).get(field_path, field_path)
         if self.excerpt_end <= self.excerpt_start:
             raise ValueError("Claim evidence span must be non-empty")
         return self
 
 
 class ClaimExtractionOutput(StrictClaimModel):
+    objective: ClaimObjective = ClaimObjective.IDENTITY
+    coverage_state: ObjectiveCoverageState = ObjectiveCoverageState.COMPLETE
     claims: list[ExtractedClaim]
     unknown_objectives: list[str]
     conflicts: list[str]
@@ -154,13 +277,14 @@ class ResolvedClaim(StrictClaimModel):
 
 
 class ClaimResolution(StrictClaimModel):
-    schema_version: Literal["catalogue-claims.v2"] = CLAIM_SCHEMA_VERSION
+    schema_version: Literal["catalogue-claims.v2", "catalogue-claims.v3"] = CLAIM_SCHEMA_VERSION
     resolved: list[ResolvedClaim]
     conflicts: list[str]
     rejected: list[str]
     completeness_errors: list[str]
     unknown_objectives: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    objective_coverage: dict[str, str] = Field(default_factory=dict)
 
     @property
     def is_materializable(self) -> bool:

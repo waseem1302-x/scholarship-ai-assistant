@@ -17,9 +17,16 @@ from app.modules.catalogue_ingestion.claim_provider import (
     FakeClaimProvider,
     _azure_schema,
     _normalize_claim_output,
+    _objective_azure_schema,
+    _objective_source_text,
 )
 from app.modules.catalogue_ingestion.claim_resolution import resolve_claims
-from app.modules.catalogue_ingestion.claim_schemas import ClaimExtractionOutput, ClaimValue
+from app.modules.catalogue_ingestion.claim_schemas import (
+    ClaimEntityType,
+    ClaimExtractionOutput,
+    ClaimObjective,
+    ClaimValue,
+)
 from app.modules.catalogue_ingestion.evaluation import GoldItem, evaluate
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceRole,
@@ -28,6 +35,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidate,
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
+    CatalogueIngestionRun,
     CatalogueSourceArtifact,
     IngestionInputKind,
     IngestionMode,
@@ -56,6 +64,7 @@ from app.modules.catalogue_ingestion.seed_parser import (
 )
 from app.modules.catalogue_ingestion.service import (
     CatalogueIngestionService,
+    _aggregate_coverage,
     _canonical_identity_name,
     _crawler_child_matches_root,
     _identity_name_matches,
@@ -98,7 +107,8 @@ MEXT_TEXT = (
     "2027 intake. Embassy Recommendation. University Recommendation. Tuition is covered. "
     "Research Students follow Embassy Recommendation. Embassy of Japan accepts applications. "
     "Passport is required. Submit the application."
-    " Deadline 2026-05-15."
+    " Deadline 2026-05-15. Research Students support masters and doctoral degrees."
+    " Applicants must hold a bachelor's degree."
 )
 
 
@@ -112,6 +122,7 @@ def claim_output() -> ClaimExtractionOutput:
         *,
         track_key=None,
         institution_key=None,
+        programme_key=None,
     ):
         start = MEXT_TEXT.index(excerpt)
         typed = {
@@ -138,7 +149,7 @@ def claim_output() -> ClaimExtractionOutput:
                 "cycle_key": "2027",
                 "track_key": track_key,
                 "institution_key": institution_key,
-                "programme_key": None,
+                "programme_key": programme_key,
             },
             "excerpt": excerpt,
             "excerpt_start": start,
@@ -235,6 +246,61 @@ def claim_output() -> ClaimExtractionOutput:
                     "Deadline 2026-05-15",
                     track_key="embassy_recommendation",
                 ),
+                claim(
+                    "deadline",
+                    "embassy_deadline",
+                    "deadline_type",
+                    "application_submission",
+                    "Deadline 2026-05-15",
+                    track_key="embassy_recommendation",
+                ),
+                claim(
+                    "programme",
+                    "research_students",
+                    "name",
+                    "Research Students",
+                    "Research Students",
+                    programme_key="research_students",
+                ),
+                claim(
+                    "programme",
+                    "research_students",
+                    "degree_levels",
+                    ["masters", "phd"],
+                    "Research Students support masters and doctoral degrees",
+                    programme_key="research_students",
+                ),
+                claim(
+                    "eligibility",
+                    "prior_bachelors_degree",
+                    "rule_type",
+                    "academic_background",
+                    "Applicants must hold a bachelor's degree",
+                    programme_key="research_students",
+                ),
+                claim(
+                    "eligibility",
+                    "prior_bachelors_degree",
+                    "operator",
+                    "equals",
+                    "Applicants must hold a bachelor's degree",
+                    programme_key="research_students",
+                ),
+                claim(
+                    "eligibility",
+                    "prior_bachelors_degree",
+                    "value",
+                    "bachelors",
+                    "Applicants must hold a bachelor's degree",
+                    programme_key="research_students",
+                ),
+                claim(
+                    "funding",
+                    "tuition",
+                    "component_type",
+                    "tuition",
+                    "Tuition is covered",
+                ),
             ],
             "unknown_objectives": [],
             "conflicts": [],
@@ -266,22 +332,69 @@ def test_claim_output_normalizes_paths_offsets_and_core_priority() -> None:
         update={"excerpt_start": 1, "excerpt_end": 1 + len("MEXT Scholarship")}
     )
 
-    normalized = _normalize_claim_output(output, MEXT_TEXT)
+    identity = _normalize_claim_output(output, MEXT_TEXT, objective=ClaimObjective.IDENTITY)
+    programmes = _normalize_claim_output(output, MEXT_TEXT, objective=ClaimObjective.PROGRAMMES)
+    routes = _normalize_claim_output(output, MEXT_TEXT, objective=ClaimObjective.ROUTES)
+    application = _normalize_claim_output(
+        output, MEXT_TEXT, objective=ClaimObjective.APPLICATION_TIMELINE
+    )
 
-    assert len(normalized.claims) == 12
-    assert normalized.claims[0].excerpt_start == 0
+    assert identity.claims[0].excerpt_start == 0
     assert output.claims[11].field_path == "coverage_status"
     assert output.claims[5].field_path == "name"
     assert any(item.field_path == "track_type" for item in output.claims)
-    assert any(item.field_path == "deadline_at" for item in output.claims)
+    assert any(item.field_path == "deadline_at" for item in application.claims)
     present = {
-        (item.entity_type.value, item.entity_key, item.field_path) for item in normalized.claims
+        (item.entity_type.value, item.entity_key, item.field_path)
+        for item in programmes.claims + routes.claims
     }
-    assert ("scholarship", "mext", "name") in present
+    assert any(item.field_path == "name" for item in identity.claims)
     assert ("track", "embassy_recommendation", "name") in present
     assert ("track", "university_recommendation", "name") in present
-    assert ("funding", "tuition", "coverage_status") in present
-    assert any(item.startswith("claim_limit_applied:") for item in normalized.warnings)
+    assert ("programme", "research_students", "degree_levels") in present
+    assert not any(item.startswith("claim_limit_applied:") for item in programmes.warnings)
+
+
+def test_requirements_objective_retains_more_than_twelve_documents() -> None:
+    template = claim_output().claims[12]
+    documents = []
+    for index in range(15):
+        item = template.model_copy(deep=True)
+        item.entity_key = f"document_{index + 1}"
+        item.value.string_value = f"Required document {index + 1}"
+        documents.append(item)
+    output = ClaimExtractionOutput(
+        objective=ClaimObjective.DOCUMENTS_CORE,
+        claims=documents,
+        unknown_objectives=[],
+        conflicts=[],
+        warnings=[],
+    )
+
+    normalized = _normalize_claim_output(
+        output,
+        MEXT_TEXT,
+        objective=ClaimObjective.DOCUMENTS_CORE,
+    )
+
+    assert len(normalized.claims) == 15
+    assert {item.entity_key for item in normalized.claims} == {
+        f"document_{index + 1}" for index in range(15)
+    }
+
+
+def test_objective_source_mask_reduces_tokens_without_changing_evidence_offsets() -> None:
+    prefix = "Overview " + ("irrelevant material " * 700)
+    evidence = "Documents to be submitted include an Academic Transcript."
+    source_text = prefix + evidence + (" unrelated appendix" * 700)
+
+    masked = _objective_source_text(source_text, ClaimObjective.DOCUMENTS_CORE)
+
+    evidence_start = source_text.index(evidence)
+    assert len(masked) == len(source_text)
+    assert masked[evidence_start : evidence_start + len(evidence)] == evidence
+    assert masked.index(evidence) == evidence_start
+    assert len(masked.replace(" ", "")) < len(source_text.replace(" ", ""))
 
 
 def extraction_output(
@@ -561,7 +674,7 @@ def test_direct_url_run_rejects_non_https_and_reuses_unchanged_extraction(db_ses
         )
         service.process_run(run.id, worker_id="direct-url-rerun")
 
-    assert extractor.calls == 1
+    assert extractor.calls == 12
     assert db_session.scalar(select(func.count()).select_from(CatalogueCandidate)) == 2
     assert db_session.scalar(select(func.count()).select_from(CatalogueSourceArtifact)) == 2
 
@@ -592,10 +705,12 @@ def test_direct_url_run_does_not_reuse_an_attempt_from_a_different_prompt(db_ses
     )
     service.process_run(second.id, worker_id="direct-url-new-prompt")
 
-    assert extractor.calls == 2
+    assert extractor.calls == 13
 
 
-def test_direct_source_bundle_materializes_claims_from_three_explicit_sources(db_session) -> None:
+def test_direct_source_bundle_stages_expanded_claims_from_three_explicit_sources(
+    db_session,
+) -> None:
     embassy_url = "https://scholarships.gov.uk/aaa-mext-embassy"
     university_url = "https://scholarships.gov.uk/mext-university"
     outputs = {
@@ -637,10 +752,10 @@ def test_direct_source_bundle_materializes_claims_from_three_explicit_sources(db
         .order_by(CatalogueCandidateSource.url)
     ).all()
     assert candidate is not None
-    assert candidate.status is CandidateStatus.SUBMITTED_FOR_REVIEW
-    assert result.model_calls == 3
+    assert candidate.status is CandidateStatus.READY_FOR_REVIEW
+    assert result.model_calls == 36
     assert fetcher.calls == [OFFICIAL_URL, embassy_url, university_url]
-    assert extraction_order == [OFFICIAL_URL, embassy_url, university_url]
+    assert extraction_order == [OFFICIAL_URL] * 12 + [embassy_url] * 12 + [university_url] * 12
     assert {item.source_role for item in sources} == {
         CandidateSourceRole.PRIMARY,
         CandidateSourceRole.SUPPORTING,
@@ -650,8 +765,22 @@ def test_direct_source_bundle_materializes_claims_from_three_explicit_sources(db
         item.artifacts[0].fetch_metadata["source_role"] == item.source_role for item in sources
     )
     assert db_session.scalar(select(func.count()).select_from(CatalogueSourceArtifact)) == 3
-    assert db_session.scalar(select(func.count()).select_from(SourceSnapshot)) == 3
-    assert db_session.scalar(select(func.count()).select_from(GraphFieldEvidence)) == 16
+    assert db_session.scalar(select(func.count()).select_from(SourceSnapshot)) == 0
+    assert db_session.scalar(select(func.count()).select_from(GraphFieldEvidence)) == 0
+    assert candidate.proposed_payload["objective_coverage"] == {
+        "identity": "complete",
+        "programmes": "complete",
+        "programme_details": "complete",
+        "routes": "complete",
+        "eligibility": "complete",
+        "eligibility_context": "complete",
+        "documents_core": "complete",
+        "documents_requirements": "complete",
+        "documents_counts": "complete",
+        "documents_format": "complete",
+        "funding": "complete",
+        "application_timeline": "complete",
+    }
 
 
 def test_direct_source_bundle_rejects_duplicates_and_page_budget_overflow(db_session) -> None:
@@ -809,7 +938,9 @@ def test_retry_clears_stale_direct_url_review_state(db_session) -> None:
     assert retried.proposed_payload is None
 
 
-def test_direct_url_materializes_one_review_only_mext_graph_with_citations(db_session) -> None:
+def test_expanded_direct_url_stays_in_cited_staging_until_graph_support_exists(
+    db_session,
+) -> None:
     db_session.add(
         Institution(
             canonical_name="Embassy of Japan",
@@ -837,42 +968,35 @@ def test_direct_url_materializes_one_review_only_mext_graph_with_citations(db_se
     candidate = db_session.scalar(
         select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
     )
-    opportunity = db_session.scalar(select(Opportunity))
     assert candidate is not None
-    assert candidate.status is CandidateStatus.SUBMITTED_FOR_REVIEW
-    assert opportunity is not None
-    assert opportunity.status is OpportunityStatus.DRAFT
-    assert opportunity.name == "MEXT Scholarship"
-    assert opportunity.degree_levels == ["bachelors", "masters", "phd"]
-    assert db_session.scalar(select(func.count()).select_from(Opportunity)) == 1
-    assert db_session.scalar(select(func.count()).select_from(ApplicationTrack)) == 3
+    assert candidate.status is CandidateStatus.READY_FOR_REVIEW
+    assert candidate.opportunity_id is None
+    assert db_session.scalar(select(func.count()).select_from(Opportunity)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ApplicationTrack)) == 0
     assert db_session.scalar(select(func.count()).select_from(Institution)) == 1
-    assert db_session.scalar(select(func.count()).select_from(InstitutionParticipation)) == 1
-    assert db_session.scalar(select(func.count()).select_from(FundingComponent)) == 1
-    assert db_session.scalar(select(func.count()).select_from(RequiredDocument)) == 1
-    assert db_session.scalar(select(func.count()).select_from(ApplicationStep)) == 1
-    deadline = db_session.scalar(select(ScopedDeadline))
-    assert deadline is not None
-    assert deadline.deadline_precision == "date"
-    assert deadline.local_date.isoformat() == "2026-05-15"
-    assert db_session.scalar(select(func.count()).select_from(SourceSnapshot)) == 1
-    assert db_session.scalar(select(func.count()).select_from(GraphFieldEvidence)) == 16
-    graph = OpportunityService(db_session).get_admin_graph(opportunity.id)
-    assert [track.code for track in graph.tracks] == [
-        "embassy_recommendation",
-        "research_students",
-        "university_recommendation",
-    ]
-    research_track = next(track for track in graph.tracks if track.code == "research_students")
-    embassy_track = next(track for track in graph.tracks if track.code == "embassy_recommendation")
-    assert research_track.parent_track_id == embassy_track.id
-    assert [item.canonical_name for item in graph.institutions] == ["Embassy of Japan"]
-    assert len(graph.institution_participations) == 1
-    assert graph.institution_participations[0].track_id == embassy_track.id
-    assert graph.institution_participations[0].institution_id == graph.institutions[0].id
-    assert graph.degree_levels == ["bachelors", "masters", "phd"]
-    assert len(graph.citations) == 16
-    assert any(item.entity_type == "institution_participation" for item in graph.citations)
+    assert db_session.scalar(select(func.count()).select_from(InstitutionParticipation)) == 0
+    assert db_session.scalar(select(func.count()).select_from(FundingComponent)) == 0
+    assert db_session.scalar(select(func.count()).select_from(RequiredDocument)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ApplicationStep)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ScopedDeadline)) == 0
+    assert db_session.scalar(select(func.count()).select_from(SourceSnapshot)) == 0
+    assert db_session.scalar(select(func.count()).select_from(GraphFieldEvidence)) == 0
+    resolved = candidate.proposed_payload["resolved"]
+    assert any(item["claim"]["entity_type"] == "programme" for item in resolved)
+    assert any(item["claim"]["entity_type"] == "eligibility" for item in resolved)
+    reviewer = User(
+        email="expanded-staging-reviewer@example.test",
+        password_hash="not-used-by-service-test",
+        role=UserRole.ADMIN,
+    )
+    db_session.add(reviewer)
+    db_session.commit()
+
+    with pytest.raises(AppError) as exc_info:
+        service.submit_candidate(candidate.id, notes="reviewed", actor=reviewer)
+
+    assert exc_info.value.code == "catalogue_detail_extraction_review_only"
+    assert db_session.scalar(select(func.count()).select_from(Opportunity)) == 0
 
 
 def test_claim_resolution_rejects_bad_offsets_and_same_tier_conflicts() -> None:
@@ -905,7 +1029,7 @@ def test_claim_resolution_rejects_bad_offsets_and_same_tier_conflicts() -> None:
 
     resolution = resolve_claims([(artifact_one, 1, claims_one), (artifact_two, 1, conflicting)])
 
-    assert "scholarship:mext:name:same_tier_conflict" in resolution.conflicts
+    assert "scholarship:scholarship:name:same_tier_conflict" in resolution.conflicts
     assert any(item.endswith("evidence_span_invalid") for item in resolution.rejected)
     assert resolution.is_materializable is False
 
@@ -931,6 +1055,12 @@ def test_claim_resolution_fails_closed_when_one_entity_key_spans_routes() -> Non
 
     assert "funding:tuition:coverage_status:ambiguous_scope_key" in resolution.conflicts
     assert resolution.is_materializable is False
+
+    detail_resolution = resolve_claims(
+        [(artifact, 1, [embassy_funding, university_funding])],
+        require_detail=True,
+    )
+    assert not any(item.endswith("ambiguous_scope_key") for item in detail_resolution.conflicts)
 
     unsupported = claim_output().claims[5].model_copy(deep=True)
     unsupported.field_path = "eligibility.age"
@@ -1061,6 +1191,198 @@ def test_claim_resolution_rejects_a_route_inferred_from_generic_university_text(
 
     assert any(item.endswith("university_route_evidence_mismatch") for item in resolution.rejected)
     assert resolution.resolved == []
+
+
+def test_claim_resolution_separates_events_and_validates_resource_links() -> None:
+    text = (
+        "Arrival in Japan: April 2027. Application deadline: May 15, 2026. "
+        "Download the Application form."
+    )
+    form_url = "https://scholarships.gov.uk/forms/application.pdf"
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="1" * 64,
+        normalized_text=text,
+        extraction_method="normalized_text",
+        byte_count=len(text),
+        character_count=len(text),
+        fetch_metadata={"links": [{"url": form_url, "text": "Application form"}]},
+    )
+    deadline_template = claim_output().claims[14]
+    arrival_deadline = deadline_template.model_copy(deep=True)
+    arrival_deadline.entity_key = "arrival"
+    arrival_deadline.value.string_value = "2027-04"
+    arrival_deadline.excerpt = "Arrival in Japan: April 2027"
+    arrival_deadline.excerpt_start = text.index(arrival_deadline.excerpt)
+    arrival_deadline.excerpt_end = arrival_deadline.excerpt_start + len(arrival_deadline.excerpt)
+    arrival_event = arrival_deadline.model_copy(deep=True)
+    arrival_event.entity_type = ClaimEntityType.EVENT
+    arrival_event.field_path = "date_text"
+    valid_resource = arrival_deadline.model_copy(deep=True)
+    valid_resource.entity_type = ClaimEntityType.RESOURCE
+    valid_resource.entity_key = "application_form"
+    valid_resource.field_path = "url"
+    valid_resource.value.string_value = form_url
+    valid_resource.excerpt = "Application form"
+    valid_resource.excerpt_start = text.index(valid_resource.excerpt)
+    valid_resource.excerpt_end = valid_resource.excerpt_start + len(valid_resource.excerpt)
+    invented_resource = valid_resource.model_copy(deep=True)
+    invented_resource.entity_key = "invented_form"
+    invented_resource.value.string_value = "https://scholarships.gov.uk/forms/invented.pdf"
+
+    resolution = resolve_claims(
+        [(artifact, 1, [arrival_deadline, arrival_event, valid_resource, invented_resource])]
+    )
+
+    assert any(item.endswith("non_deadline_event_misclassified") for item in resolution.rejected)
+    assert any(item.endswith("resource_url_not_in_fetched_links") for item in resolution.rejected)
+    accepted = {
+        (item.claim.entity_type, item.claim.entity_key, item.claim.field_path)
+        for item in resolution.resolved
+    }
+    assert (ClaimEntityType.EVENT, "arrival", "date_text") in accepted
+    assert (ClaimEntityType.RESOURCE, "application_form", "url") in accepted
+
+
+def test_detail_completeness_requires_degree_mapping_for_every_programme() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="2" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    claims = [item for index, item in enumerate(claim_output().claims) if index != 17]
+
+    resolution = resolve_claims(
+        [(artifact, 1, claims)],
+        require_detail=True,
+        objective_coverage={
+            "identity": "complete",
+            "programmes": "complete",
+            "programme_details": "complete",
+            "routes": "complete",
+            "eligibility": "complete",
+            "eligibility_context": "complete",
+            "documents_core": "complete",
+            "documents_requirements": "complete",
+            "documents_counts": "complete",
+            "documents_format": "complete",
+            "funding": "complete",
+            "application_timeline": "complete",
+        },
+    )
+
+    assert "missing:programme.research_students.degree_levels" in resolution.completeness_errors
+    assert resolution.is_materializable is False
+
+
+def test_multi_programme_detail_requires_scoped_requirements_for_each_programme() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="4" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    claims = claim_output().model_copy(deep=True).claims
+    undergraduate_name = claims[16].model_copy(deep=True)
+    undergraduate_name.entity_key = "undergraduate_students"
+    undergraduate_name.scope.programme_key = "undergraduate_students"
+    undergraduate_name.value.string_value = "Undergraduate Students"
+    undergraduate_name.excerpt = "Undergraduate"
+    undergraduate_name.excerpt_start = MEXT_TEXT.index("Undergraduate")
+    undergraduate_name.excerpt_end = undergraduate_name.excerpt_start + len("Undergraduate")
+    undergraduate_degrees = claims[17].model_copy(deep=True)
+    undergraduate_degrees.entity_key = "undergraduate_students"
+    undergraduate_degrees.scope.programme_key = "undergraduate_students"
+    undergraduate_degrees.value.string_list_value = ["bachelors"]
+    undergraduate_degrees.excerpt = "Undergraduate"
+    undergraduate_degrees.excerpt_start = MEXT_TEXT.index("Undergraduate")
+    undergraduate_degrees.excerpt_end = undergraduate_degrees.excerpt_start + len("Undergraduate")
+    claims.extend([undergraduate_name, undergraduate_degrees])
+
+    resolution = resolve_claims(
+        [(artifact, 1, claims)],
+        require_detail=True,
+        objective_coverage={
+            "identity": "complete",
+            "programmes": "complete",
+            "programme_details": "complete",
+            "routes": "complete",
+            "eligibility": "complete",
+            "eligibility_context": "complete",
+            "documents_core": "complete",
+            "documents_requirements": "complete",
+            "documents_counts": "complete",
+            "documents_format": "complete",
+            "funding": "complete",
+            "application_timeline": "complete",
+        },
+    )
+
+    for programme_key in ("research_students", "undergraduate_students"):
+        for entity_type in ("document", "funding", "step"):
+            assert (
+                f"missing:programme.{programme_key}.{entity_type}" in resolution.completeness_errors
+            )
+    assert "missing:programme.undergraduate_students.eligibility" in (
+        resolution.completeness_errors
+    )
+
+
+def test_objective_coverage_is_partial_when_any_official_source_is_partial() -> None:
+    from app.modules.catalogue_ingestion.claim_schemas import ObjectiveCoverageState
+
+    assert (
+        _aggregate_coverage([ObjectiveCoverageState.COMPLETE, ObjectiveCoverageState.PARTIAL])
+        is ObjectiveCoverageState.PARTIAL
+    )
+
+
+def test_compatible_application_method_evidence_coexists_without_a_false_conflict() -> None:
+    text = (
+        f"{MEXT_TEXT} Apply through the Embassy of Japan. "
+        "Applications are submitted to the diplomatic mission."
+    )
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="3" * 64,
+        normalized_text=text,
+        extraction_method="normalized_text",
+        byte_count=len(text),
+        character_count=len(text),
+    )
+    first = claim_output().claims[5].model_copy(deep=True)
+    first.field_path = "application_method"
+    first.value.string_value = "Apply through the Embassy of Japan"
+    first.excerpt = "Apply through the Embassy of Japan"
+    first.excerpt_start = text.index(first.excerpt)
+    first.excerpt_end = first.excerpt_start + len(first.excerpt)
+    second = first.model_copy(deep=True)
+    second.value.string_value = "Applications are submitted to the diplomatic mission"
+    second.excerpt = "Applications are submitted to the diplomatic mission"
+    second.excerpt_start = text.index(second.excerpt)
+    second.excerpt_end = second.excerpt_start + len(second.excerpt)
+
+    resolution = resolve_claims([(artifact, 1, [first, second])])
+
+    assert resolution.conflicts == []
+    assert len(resolution.resolved) == 2
 
 
 def test_seed_parser_fails_closed_for_image_only_pdf() -> None:
@@ -1472,11 +1794,18 @@ def test_direct_claim_cost_overflow_preserves_paid_output_for_resume(db_session)
         def __init__(self) -> None:
             self.calls = 0
 
-        def extract_claims(self, *, source_url: str, source_text: str) -> ClaimExtractionResult:
-            del source_url, source_text
+        def extract_claims(
+            self,
+            *,
+            source_url: str,
+            source_text: str,
+            objective: ClaimObjective,
+            source_links: list[dict[str, str | None]],
+        ) -> ClaimExtractionResult:
+            del source_url, source_text, source_links
             self.calls += 1
             return ClaimExtractionResult(
-                output=claim_output(),
+                output=_normalize_claim_output(claim_output(), MEXT_TEXT, objective=objective),
                 usage=ExtractionUsage(
                     input_tokens=100,
                     output_tokens=50,
@@ -1515,10 +1844,15 @@ def test_direct_claim_cost_overflow_preserves_paid_output_for_resume(db_session)
     assert attempt is not None
     assert attempt.output_json is not None
 
+    run_row = db_session.get(CatalogueIngestionRun, run.id)
+    assert run_row is not None
+    run_row.max_estimated_cost = Decimal("0.030")
+    db_session.commit()
     resumed = service.process_run(run.id, worker_id="direct-cost-resume", batch_size=1)
 
     assert resumed.status is IngestionRunStatus.COMPLETED
-    assert extractor.calls == 1
+    assert extractor.calls == 12
+    assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == 12
     assert candidate.status is CandidateStatus.READY_FOR_REVIEW
 
 
@@ -1682,6 +2016,10 @@ def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_us
                 assert_objects_are_strict(item)
 
     assert_objects_are_strict(schema)
+    programme_schema = _objective_azure_schema(ClaimObjective.PROGRAMMES)
+    assert programme_schema["$defs"]["ClaimEntityType"]["enum"] == ["programme"]
+    assert programme_schema["$defs"]["ClaimObjective"]["enum"] == ["programmes"]
+    assert "name" in programme_schema["$defs"]["ExtractedClaim"]["properties"]["field_path"]["enum"]
     provider = AzureOpenAIClaimProvider(enabled_settings(), credential=object())
     response_body = json.dumps(
         {
@@ -1691,8 +2029,45 @@ def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_us
     ).encode()
     result = provider._parse(response_body, time.perf_counter())
 
-    assert len(result.output.claims) == 15
+    assert len(result.output.claims) == len(claim_output().claims)
+    assert len(result.output.claims) > 12
     assert result.usage.estimated_cost == Decimal("0.000200")
+
+    salvageable = claim_output().model_dump(mode="json")
+    salvageable["claims"].append(
+        {
+            "entity_type": "scholarship",
+            "entity_key": "blank",
+            "field_path": "alias",
+            "value": {
+                "string_value": None,
+                "decimal_value": None,
+                "integer_value": None,
+                "boolean_value": None,
+                "string_list_value": None,
+            },
+            "scope": {
+                "cycle_key": None,
+                "track_key": None,
+                "institution_key": None,
+                "programme_key": None,
+            },
+            "excerpt": "",
+            "excerpt_start": 0,
+            "excerpt_end": 0,
+            "basis": "explicit",
+        }
+    )
+    salvaged_response = json.dumps(
+        {
+            "choices": [{"message": {"content": json.dumps(salvageable)}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+    ).encode()
+    salvaged = provider._parse(salvaged_response, time.perf_counter())
+    assert len(salvaged.output.claims) == len(claim_output().claims)
+    assert salvaged.output.coverage_state.value == "complete"
+    assert "provider_null_placeholders_dropped:1" in salvaged.output.warnings
 
     invalid_response = json.dumps(
         {
