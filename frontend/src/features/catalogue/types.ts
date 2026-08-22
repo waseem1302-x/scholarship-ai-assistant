@@ -18,6 +18,7 @@ export interface OpportunitySummary {
   university_name: string | null;
   country: string;
   degree_level: DegreeLevel;
+  degree_levels?: DegreeLevel[];
   application_deadline: string | null;
   application_opening_date: string | null;
   application_timezone: string;

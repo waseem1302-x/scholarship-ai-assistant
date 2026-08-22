@@ -546,8 +546,9 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
 
     expect(page.get_by_role("heading", name="Keep scholarships trustworthy.")).to_be_visible()
     expect(page.get_by_role("heading", name="Admin Review Test Scholarship")).to_be_visible()
+    expect(page.get_by_role("heading", name="Build a cited scholarship record.")).to_be_visible()
     expect(page.get_by_text("source requires review").first).to_be_visible()
-    assert page.get_by_label("Administrator password").count() == 2
+    assert page.get_by_label("Administrator password").count() == 3
     expect(page.get_by_role("button", name="Record source check")).to_be_visible()
     expect(page.get_by_role("button", name="Reverify selected source")).to_be_visible()
     page.get_by_label("Upload opportunity import file").set_input_files(

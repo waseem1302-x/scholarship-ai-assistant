@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from app.modules.catalogue_ingestion.models import (
     CandidateStatus,
+    IngestionInputKind,
     IngestionMode,
     IngestionRunStatus,
 )
@@ -131,6 +132,18 @@ class SeedCandidate(BaseModel):
     keywords: list[str] = Field(default_factory=list, max_length=20)
 
 
+class DirectUrlIngestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: HttpUrl
+    target_name: str | None = Field(default=None, min_length=3, max_length=255)
+    provider: str | None = Field(default=None, max_length=255)
+    country: str | None = Field(default=None, max_length=100)
+    mode: IngestionMode = IngestionMode.CANDIDATE_ONLY
+    dry_run: bool = True
+    process_now: bool = True
+
+
 class ExtractionUsage(BaseModel):
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
@@ -149,6 +162,8 @@ class IngestionRunResponse(BaseModel):
     id: uuid.UUID
     source_label: str
     source_fingerprint: str
+    input_kind: IngestionInputKind
+    operator_url: str | None
     mode: IngestionMode
     status: IngestionRunStatus
     dry_run: bool
@@ -165,6 +180,19 @@ class IngestionRunResponse(BaseModel):
     completed_at: datetime | None
 
 
+class SourceArtifactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    final_url: str
+    content_type: str
+    content_hash: str
+    extraction_method: str
+    byte_count: int
+    character_count: int
+    created_at: datetime
+
+
 class CandidateSourceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -178,6 +206,7 @@ class CandidateSourceResponse(BaseModel):
     content_hash: str | None
     relevant_excerpt: str | None
     failure_code: str | None
+    artifacts: list[SourceArtifactResponse] = Field(default_factory=list)
 
 
 class CandidateResponse(BaseModel):
@@ -193,6 +222,7 @@ class CandidateResponse(BaseModel):
     seed_cycle: str | None
     seed_intake_year: int | None
     seed_official_url: str | None
+    identity_hint_is_asserted: bool
     seed_keywords: list[str]
     status: CandidateStatus
     proposed_payload: dict[str, object] | None

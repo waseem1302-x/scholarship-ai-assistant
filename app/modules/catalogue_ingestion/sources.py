@@ -17,7 +17,7 @@ THIRD_PARTY_DIRECTORY_DOMAINS = {
     "opportunitiescorners.com",
     "wemakescholars.com",
 }
-GOVERNMENT_SUFFIXES = (".gov", ".gov.uk", ".gov.au", ".gc.ca", ".gov.cn")
+GOVERNMENT_SUFFIXES = (".gov", ".gov.uk", ".gov.au", ".gc.ca", ".gov.cn", ".go.jp")
 UNIVERSITY_HINT = re.compile(r"(?:^|\.)(?:edu|ac)\.[a-z]{2,}$|\.edu$")
 
 

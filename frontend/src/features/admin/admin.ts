@@ -7,6 +7,9 @@ import type {
   ImportResponse,
   ReviewAction,
   ReviewQueueResponse,
+  IngestionCandidateResponse,
+  IngestionRun,
+  OpportunityGraph,
 } from "./types";
 
 export const reviewActions: { value: ReviewAction; label: string; needsNotes: boolean }[] = [
@@ -172,4 +175,27 @@ export async function importOpportunities(
     throw new Error("Paste CSV content before importing.");
   }
   return adminMutation<ImportResponse>("/admin/opportunities/import", body, password);
+}
+
+export async function acquireOfficialUrl(
+  url: string,
+  targetName: string,
+  dryRun: boolean,
+  password: string,
+): Promise<{ run: IngestionRun; candidate: IngestionCandidateResponse["items"][number] | null; graph: OpportunityGraph | null }> {
+  const run = await adminMutation<IngestionRun>("/admin/catalogue-ingestion/runs/url", {
+    url,
+    target_name: targetName.trim() || null,
+    mode: dryRun ? "extraction" : "review_queue",
+    dry_run: dryRun,
+    process_now: true,
+  }, password);
+  const candidates = await apiClient.request<IngestionCandidateResponse>(
+    `/admin/catalogue-ingestion/candidates?run_id=${encodeURIComponent(run.id)}&limit=1&offset=0`,
+  );
+  const candidate = candidates.items[0] ?? null;
+  const graph = candidate?.opportunity_id
+    ? await apiClient.request<OpportunityGraph>(`/admin/opportunities/${candidate.opportunity_id}/graph`)
+    : null;
+  return { run, candidate, graph };
 }

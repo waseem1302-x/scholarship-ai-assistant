@@ -635,6 +635,23 @@ h2 { letter-spacing: -.035em; }
 .admin-summary span { margin-top: 5px; color: var(--muted); font-size: .82rem; }
 .admin-layout { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); gap: 18px; }
 .admin-panel, .review-card { padding: 24px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); }
+.direct-url-panel { margin: 22px 0; }
+.direct-url-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: end; }
+.direct-url-form label { display: grid; gap: 7px; color: #3a4b63; font-size: .82rem; font-weight: 750; }
+.direct-url-form .wide { grid-column: 1 / -1; }
+.direct-url-form input:not([type="checkbox"]) { width: 100%; min-height: 42px; border: 1px solid #bdcada; border-radius: 8px; padding: 10px 11px; }
+.direct-url-toggle { display: flex !important; grid-template-columns: 18px 1fr; align-items: center; min-height: 42px; }
+.direct-url-toggle input { width: 16px; height: 16px; }
+.acquisition-result { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; padding: 14px; border-left: 3px solid #d7951b; background: #fffaf0; }
+.acquisition-result p { flex-basis: 100%; margin: 0; color: #795112; font-size: .82rem; }
+.graph-review { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.graph-review > div { padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
+.graph-review > div strong, .graph-review > div span { display: block; }
+.graph-review > div strong { font-size: 1.35rem; }.graph-review > div span { color: var(--muted); font-size: .75rem; }
+.graph-review > ul, .graph-review > section { grid-column: 1 / -1; margin: 0; }
+.graph-degree-scope { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .84rem; }
+.graph-review > ul { display: grid; gap: 7px; padding: 0; list-style: none; }.graph-review > ul li { display: flex; justify-content: space-between; padding: 9px 0; border-top: 1px solid var(--line); }
+.graph-review article { padding: 11px 0; border-top: 1px solid var(--line); }.graph-review article p { margin: 5px 0; color: #40536b; }.graph-review article a { color: var(--teal); font-size: .8rem; font-weight: 700; }
 .admin-panel h2, .review-section h2 { margin-bottom: 16px; font-size: 1.28rem; }
 .admin-panel > p:not(.eyebrow) { color: var(--muted); font-size: .88rem; line-height: 1.55; }
 .issue-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -729,7 +746,8 @@ h2 { letter-spacing: -.035em; }
   .detail-tags { justify-content: start; }
   .detail-summary { background: var(--line); }
   .tool-header, .match-card-header, .tracker-card-header, .verification-notice, .guest-save-cta { align-items: start; flex-direction: column; }
-  .form-grid, .tracker-fields, .explanation-grid, .admin-layout, .import-fields, .review-controls, .admin-filters, .source-check-controls { grid-template-columns: 1fr; }
+  .form-grid, .tracker-fields, .explanation-grid, .admin-layout, .import-fields, .review-controls, .admin-filters, .source-check-controls, .direct-url-form, .graph-review { grid-template-columns: 1fr; }
+  .direct-url-form .wide { grid-column: auto; }
   .form-grid .wide, .tracker-fields .wide, .import-fields .wide, .review-controls .wide { grid-column: auto; }
   .admin-summary, .command-summary, .dashboard-sections { grid-template-columns: 1fr; }
   .review-card-header { align-items: start; flex-direction: column; }

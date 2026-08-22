@@ -16,7 +16,9 @@ from app.modules.catalogue_ingestion.schemas import (
     CandidateResponse,
     CandidateRetryRequest,
     CandidateSubmitRequest,
+    DirectUrlIngestionRequest,
     IngestionRunListResponse,
+    IngestionRunResponse,
 )
 from app.modules.catalogue_ingestion.service import CatalogueIngestionService
 
@@ -30,6 +32,25 @@ def get_service(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> CatalogueIngestionService:
     return CatalogueIngestionService(session, settings)
+
+
+@router.post("/runs/url", response_model=IngestionRunResponse)
+def create_url_run(
+    payload: DirectUrlIngestionRequest,
+    _admin: AdminUser,
+    service: Annotated[CatalogueIngestionService, Depends(get_service)],
+) -> IngestionRunResponse:
+    run = service.create_run_from_url(
+        str(payload.url),
+        mode=payload.mode,
+        dry_run=payload.dry_run,
+        target_name=payload.target_name,
+        provider=payload.provider,
+        country=payload.country,
+    )
+    if payload.process_now:
+        return service.process_run(run.id, worker_id=f"admin-api:{run.id}", batch_size=1)
+    return run
 
 
 @router.get("/runs", response_model=IngestionRunListResponse)

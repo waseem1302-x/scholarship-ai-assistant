@@ -1,6 +1,7 @@
 import hashlib
 import json
 import urllib.error
+import uuid
 from decimal import Decimal
 
 import pytest
@@ -8,18 +9,31 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.core.config import Settings
+from app.core.errors import AppError
 from app.modules.auth.models import User, UserRole
+from app.modules.catalogue_ingestion.claim_provider import (
+    AzureOpenAIClaimProvider,
+    ClaimExtractionResult,
+    FakeClaimProvider,
+    _azure_schema,
+    _normalize_claim_output,
+)
+from app.modules.catalogue_ingestion.claim_resolution import resolve_claims
+from app.modules.catalogue_ingestion.claim_schemas import ClaimExtractionOutput, ClaimValue
 from app.modules.catalogue_ingestion.evaluation import GoldItem, evaluate
 from app.modules.catalogue_ingestion.models import (
     CandidateStatus,
     CatalogueCandidate,
     CatalogueExtractionAttempt,
+    CatalogueSourceArtifact,
+    IngestionInputKind,
     IngestionMode,
     IngestionRunStatus,
 )
 from app.modules.catalogue_ingestion.provider import (
     AzureOpenAIExtractionProvider,
     ExtractionProviderError,
+    ExtractionSchemaError,
     FakeExtractionProvider,
     azure_structured_output_schema,
     estimate_cost,
@@ -38,10 +52,26 @@ from app.modules.catalogue_ingestion.seed_parser import (
 from app.modules.catalogue_ingestion.service import (
     CatalogueIngestionService,
     _canonical_identity_name,
+    _crawler_child_matches_root,
     _identity_name_matches,
 )
 from app.modules.catalogue_ingestion.sources import OfficialSourceClassifier
 from app.modules.catalogue_ingestion.validation import validate_and_build_proposal
+from app.modules.opportunities.evidence_models import (
+    ApplicationStep,
+    FundingComponent,
+    RequiredDocument,
+    ScopedDeadline,
+    SourceSnapshot,
+)
+from app.modules.opportunities.evidence_models import (
+    FieldEvidence as GraphFieldEvidence,
+)
+from app.modules.opportunities.graph_models import (
+    ApplicationTrack,
+    Institution,
+    InstitutionParticipation,
+)
 from app.modules.opportunities.models import Opportunity, OpportunityStatus, VerificationStatus
 from app.modules.opportunities.schemas import ReviewAction, ReviewActionRequest
 from app.modules.opportunities.service import OpportunityService
@@ -52,6 +82,191 @@ SOURCE_TEXT = (
     "Example Scholarship offers awards. Official Provider administers the award. "
     "Applicants study in the United Kingdom. Masters programmes are eligible."
 )
+MEXT_TEXT = (
+    "MEXT Scholarship. Ministry of Education provides the award. Study in Japan. "
+    "Undergraduate, masters and doctoral categories. "
+    "2027 intake. Embassy Recommendation. University Recommendation. Tuition is covered. "
+    "Research Students follow Embassy Recommendation. Embassy of Japan accepts applications. "
+    "Passport is required. Submit the application."
+    " Deadline 2026-05-15."
+)
+
+
+def claim_output() -> ClaimExtractionOutput:
+    def claim(
+        entity_type,
+        entity_key,
+        field_path,
+        value,
+        excerpt,
+        *,
+        track_key=None,
+        institution_key=None,
+    ):
+        start = MEXT_TEXT.index(excerpt)
+        typed = {
+            "string_value": None,
+            "decimal_value": None,
+            "integer_value": None,
+            "boolean_value": None,
+            "string_list_value": None,
+        }
+        if isinstance(value, bool):
+            typed["boolean_value"] = value
+        elif isinstance(value, int):
+            typed["integer_value"] = value
+        elif isinstance(value, list):
+            typed["string_list_value"] = value
+        else:
+            typed["string_value"] = value
+        return {
+            "entity_type": entity_type,
+            "entity_key": entity_key,
+            "field_path": field_path,
+            "value": typed,
+            "scope": {
+                "cycle_key": "2027",
+                "track_key": track_key,
+                "institution_key": institution_key,
+                "programme_key": None,
+            },
+            "excerpt": excerpt,
+            "excerpt_start": start,
+            "excerpt_end": start + len(excerpt),
+            "basis": "explicit",
+        }
+
+    return ClaimExtractionOutput.model_validate(
+        {
+            "claims": [
+                claim("scholarship", "mext", "name", "MEXT Scholarship", "MEXT Scholarship"),
+                claim(
+                    "scholarship",
+                    "mext",
+                    "provider_name",
+                    "Ministry of Education",
+                    "Ministry of Education",
+                ),
+                claim("scholarship", "mext", "country_code", "JP", "Study in Japan"),
+                claim(
+                    "scholarship",
+                    "mext",
+                    "degree_levels",
+                    ["bachelors", "masters", "phd"],
+                    "Undergraduate, masters and doctoral categories",
+                ),
+                claim("cycle", "2027", "intake_year", 2027, "2027 intake"),
+                claim(
+                    "track",
+                    "embassy_recommendation",
+                    "name",
+                    "Embassy Recommendation",
+                    "Embassy Recommendation",
+                    track_key="embassy_recommendation",
+                ),
+                claim(
+                    "track",
+                    "university_recommendation",
+                    "name",
+                    "University Recommendation",
+                    "University Recommendation",
+                    track_key="university_recommendation",
+                ),
+                claim(
+                    "track",
+                    "research_students",
+                    "name",
+                    "Research Students",
+                    "Research Students",
+                    track_key="research_students",
+                ),
+                claim(
+                    "track",
+                    "research_students",
+                    "parent_track_key",
+                    "embassy_recommendation",
+                    "Embassy Recommendation",
+                    track_key="research_students",
+                ),
+                claim(
+                    "institution",
+                    "embassy_of_japan",
+                    "canonical_name",
+                    "Embassy of Japan",
+                    "Embassy of Japan accepts applications",
+                    track_key="embassy_recommendation",
+                    institution_key="embassy_of_japan",
+                ),
+                claim(
+                    "institution",
+                    "embassy_of_japan",
+                    "institution_type",
+                    "embassy",
+                    "Embassy of Japan accepts applications",
+                    track_key="embassy_recommendation",
+                    institution_key="embassy_of_japan",
+                ),
+                claim(
+                    "funding",
+                    "tuition",
+                    "coverage_status",
+                    "confirmed",
+                    "Tuition is covered",
+                ),
+                claim("document", "passport", "name", "Passport", "Passport is required"),
+                claim(
+                    "step", "submit", "title", "Submit the application", "Submit the application"
+                ),
+                claim(
+                    "deadline",
+                    "embassy_deadline",
+                    "deadline_at",
+                    "2026-05-15",
+                    "Deadline 2026-05-15",
+                    track_key="embassy_recommendation",
+                ),
+            ],
+            "unknown_objectives": [],
+            "conflicts": [],
+            "warnings": [],
+        }
+    )
+
+
+def test_claim_value_treats_an_unused_empty_list_as_unset() -> None:
+    value = ClaimValue(
+        string_value="Embassy Recommendation",
+        decimal_value=None,
+        integer_value=None,
+        boolean_value=None,
+        string_list_value=[],
+    )
+
+    assert value.primitive() == "Embassy Recommendation"
+    assert value.string_list_value is None
+
+
+def test_claim_output_normalizes_paths_offsets_and_core_priority() -> None:
+    raw = claim_output().model_dump(mode="json")
+    raw["claims"][11]["field_path"] = "funding.coverage_status"
+    output = ClaimExtractionOutput.model_validate(raw)
+    output.claims[0] = output.claims[0].model_copy(
+        update={"excerpt_start": 1, "excerpt_end": 1 + len("MEXT Scholarship")}
+    )
+
+    normalized = _normalize_claim_output(output, MEXT_TEXT)
+
+    assert len(normalized.claims) == 12
+    assert normalized.claims[0].excerpt_start == 0
+    assert output.claims[11].field_path == "coverage_status"
+    present = {
+        (item.entity_type.value, item.entity_key, item.field_path) for item in normalized.claims
+    }
+    assert ("scholarship", "mext", "name") in present
+    assert ("track", "embassy_recommendation", "name") in present
+    assert ("track", "university_recommendation", "name") in present
+    assert ("funding", "tuition", "coverage_status") in present
+    assert any(item.startswith("claim_limit_applied:") for item in normalized.warnings)
 
 
 def extraction_output(
@@ -228,6 +443,269 @@ def test_catalogue_ingestion_admin_api_is_not_public(client) -> None:
         "/api/v1/admin/catalogue-ingestion/candidates",
     ):
         assert client.get(path).status_code == 401
+    assert (
+        client.post(
+            "/api/v1/admin/catalogue-ingestion/runs/url",
+            json={"url": OFFICIAL_URL},
+        ).status_code
+        == 401
+    )
+
+
+def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_session) -> None:
+    extractor = FakeClaimProvider(claim_output())
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=extractor,
+    )
+
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    result = service.process_run(run.id, worker_id="direct-url-test")
+
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    artifact = db_session.scalar(select(CatalogueSourceArtifact))
+    assert result.input_kind is IngestionInputKind.DIRECT_URL
+    assert result.operator_url == OFFICIAL_URL
+    assert candidate is not None
+    assert candidate.identity_hint_is_asserted is False
+    assert candidate.status is CandidateStatus.READY_FOR_REVIEW, (
+        candidate.validation_errors,
+        candidate.failure_code,
+        [
+            (source.status, source.is_official, len(source.artifacts))
+            for source in candidate.sources
+        ],
+    )
+    assert artifact is not None
+    assert artifact.normalized_text == MEXT_TEXT
+    assert artifact.content_hash == hashlib.sha256(MEXT_TEXT.encode()).hexdigest()
+
+
+def test_direct_url_run_rejects_non_https_and_reuses_unchanged_extraction(db_session) -> None:
+    extractor = FakeClaimProvider(claim_output())
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=extractor,
+    )
+
+    with pytest.raises(AppError, match="not permitted"):
+        service.create_run_from_url(
+            "http://scholarships.gov.uk/example",
+            mode=IngestionMode.EXTRACTION,
+            dry_run=True,
+        )
+
+    for _ in range(2):
+        run = service.create_run_from_url(
+            OFFICIAL_URL,
+            mode=IngestionMode.EXTRACTION,
+            dry_run=True,
+        )
+        service.process_run(run.id, worker_id="direct-url-rerun")
+
+    assert extractor.calls == 1
+    assert db_session.scalar(select(func.count()).select_from(CatalogueCandidate)) == 2
+    assert db_session.scalar(select(func.count()).select_from(CatalogueSourceArtifact)) == 2
+
+
+def test_retry_clears_stale_direct_url_review_state(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    service.process_run(run.id, worker_id="direct-url-retry")
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert candidate is not None
+    candidate.status = CandidateStatus.CONFLICT_DETECTED
+    candidate.conflicts = ["stale conflict"]
+    candidate.validation_errors = ["stale validation error"]
+    candidate.duplicate_opportunity_ids = [str(uuid.uuid4())]
+    db_session.commit()
+    reviewer = User(
+        email="direct-url-reviewer@example.test",
+        password_hash="not-used-by-service-test",
+        role=UserRole.ADMIN,
+    )
+    db_session.add(reviewer)
+    db_session.commit()
+
+    retried = service.retry_candidate(
+        candidate.id, reason="official source changed", actor=reviewer
+    )
+
+    assert retried.status is CandidateStatus.DISCOVERED
+    assert retried.conflicts == []
+    assert retried.validation_errors == []
+    assert retried.duplicate_opportunity_ids == []
+    assert retried.proposed_payload is None
+
+
+def test_direct_url_materializes_one_review_only_mext_graph_with_citations(db_session) -> None:
+    db_session.add(
+        Institution(
+            canonical_name="Embassy of Japan",
+            slug="embassy-of-japan",
+            institution_type="embassy",
+            country_code="JP",
+            identity_status="verified",
+        )
+    )
+    db_session.commit()
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.REVIEW_QUEUE,
+        dry_run=False,
+    )
+
+    service.process_run(run.id, worker_id="mext-graph")
+
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    opportunity = db_session.scalar(select(Opportunity))
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.SUBMITTED_FOR_REVIEW
+    assert opportunity is not None
+    assert opportunity.status is OpportunityStatus.DRAFT
+    assert opportunity.name == "MEXT Scholarship"
+    assert opportunity.degree_levels == ["bachelors", "masters", "phd"]
+    assert db_session.scalar(select(func.count()).select_from(Opportunity)) == 1
+    assert db_session.scalar(select(func.count()).select_from(ApplicationTrack)) == 3
+    assert db_session.scalar(select(func.count()).select_from(Institution)) == 1
+    assert db_session.scalar(select(func.count()).select_from(InstitutionParticipation)) == 1
+    assert db_session.scalar(select(func.count()).select_from(FundingComponent)) == 1
+    assert db_session.scalar(select(func.count()).select_from(RequiredDocument)) == 1
+    assert db_session.scalar(select(func.count()).select_from(ApplicationStep)) == 1
+    deadline = db_session.scalar(select(ScopedDeadline))
+    assert deadline is not None
+    assert deadline.deadline_precision == "date"
+    assert deadline.local_date.isoformat() == "2026-05-15"
+    assert db_session.scalar(select(func.count()).select_from(SourceSnapshot)) == 1
+    assert db_session.scalar(select(func.count()).select_from(GraphFieldEvidence)) == 16
+    graph = OpportunityService(db_session).get_admin_graph(opportunity.id)
+    assert [track.code for track in graph.tracks] == [
+        "embassy_recommendation",
+        "research_students",
+        "university_recommendation",
+    ]
+    research_track = next(track for track in graph.tracks if track.code == "research_students")
+    embassy_track = next(track for track in graph.tracks if track.code == "embassy_recommendation")
+    assert research_track.parent_track_id == embassy_track.id
+    assert [item.canonical_name for item in graph.institutions] == ["Embassy of Japan"]
+    assert len(graph.institution_participations) == 1
+    assert graph.institution_participations[0].track_id == embassy_track.id
+    assert graph.institution_participations[0].institution_id == graph.institutions[0].id
+    assert graph.degree_levels == ["bachelors", "masters", "phd"]
+    assert len(graph.citations) == 16
+    assert any(item.entity_type == "institution_participation" for item in graph.citations)
+
+
+def test_claim_resolution_rejects_bad_offsets_and_same_tier_conflicts() -> None:
+    artifact_one = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="a" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    artifact_two = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url="https://scholarships.gov.uk/second",
+        content_type="text/html",
+        content_hash="b" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    claims_one = claim_output().claims
+    conflicting = claim_output().model_copy(deep=True).claims
+    conflicting[0].value.string_value = "Different Scholarship"
+    conflicting[-1].excerpt_start += 1
+
+    resolution = resolve_claims([(artifact_one, 1, claims_one), (artifact_two, 1, conflicting)])
+
+    assert "scholarship:mext:name:same_tier_conflict" in resolution.conflicts
+    assert any(item.endswith("evidence_span_invalid") for item in resolution.rejected)
+    assert resolution.is_materializable is False
+
+
+def test_claim_resolution_fails_closed_when_one_entity_key_spans_routes() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="c" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    embassy_funding = claim_output().claims[11].model_copy(deep=True)
+    university_funding = claim_output().claims[11].model_copy(deep=True)
+    embassy_funding.scope.track_key = "embassy_recommendation"
+    university_funding.scope.track_key = "university_recommendation"
+
+    resolution = resolve_claims([(artifact, 1, [embassy_funding, university_funding])])
+
+    assert "funding:tuition:coverage_status:ambiguous_scope_key" in resolution.conflicts
+    assert resolution.is_materializable is False
+
+    unsupported = claim_output().claims[5].model_copy(deep=True)
+    unsupported.field_path = "eligibility.age"
+    unsupported_resolution = resolve_claims([(artifact, 1, [unsupported])])
+    assert any(
+        item.endswith("eligibility.age:unsupported_field_path")
+        for item in unsupported_resolution.rejected
+    )
+
+    contextless_year = claim_output().claims[4].model_copy(deep=True)
+    contextless_year.excerpt = "2027"
+    contextless_year.excerpt_end = contextless_year.excerpt_start + 4
+    wrong_route = claim_output().claims[5].model_copy(deep=True)
+    wrong_route.excerpt = "University Recommendation"
+    wrong_route.excerpt_start = MEXT_TEXT.index(wrong_route.excerpt)
+    wrong_route.excerpt_end = wrong_route.excerpt_start + len(wrong_route.excerpt)
+    semantic_resolution = resolve_claims([(artifact, 1, [contextless_year, wrong_route])])
+    assert any(
+        item.endswith("intake_year:intake_year_context_missing")
+        for item in semantic_resolution.rejected
+    )
+    assert any(
+        item.endswith("name:embassy_route_evidence_mismatch")
+        for item in semantic_resolution.rejected
+    )
 
 
 def test_seed_parser_fails_closed_for_image_only_pdf() -> None:
@@ -285,12 +763,33 @@ def test_remote_seed_redirect_cannot_leave_private_blob_boundary(monkeypatch) ->
 def test_official_source_classification_is_deterministic() -> None:
     classifier = OfficialSourceClassifier()
     assert classifier.classify(OFFICIAL_URL).trust_tier == 2
+    assert (
+        classifier.classify(
+            "https://www.studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/"
+        ).trust_tier
+        == 2
+    )
     assert not classifier.classify("https://scholarshipportal.com/example").is_official
     assert classifier.classify(
         "https://funding.example.edu/program",
         university_website_url="https://example.edu",
     ).is_official
     assert not classifier.classify("https://unknown.example/program").is_official
+
+
+def test_mext_crawl_rejects_official_but_topic_unrelated_children() -> None:
+    root = FakeFetcher("Japanese Government MEXT Scholarship").fetch(
+        "https://www.studyinjapan.go.jp/en/mext"
+    )
+    relevant = FakeFetcher("MEXT Embassy Recommendation application").fetch(
+        "https://www.studyinjapan.go.jp/en/mext-application"
+    )
+    unrelated = FakeFetcher("Yamagata privately financed student scholarship").fetch(
+        "https://www.studyinjapan.go.jp/en/other-scholarship"
+    )
+
+    assert _crawler_child_matches_root(root, relevant) is True
+    assert _crawler_child_matches_root(root, unrelated) is False
 
 
 def test_extraction_contract_rejects_extra_fields_and_schema_is_strict() -> None:
@@ -610,6 +1109,64 @@ def test_actual_cost_overflow_preserves_paid_output_for_resume(db_session, tmp_p
     assert candidate.status is CandidateStatus.READY_FOR_REVIEW
 
 
+def test_direct_claim_cost_overflow_preserves_paid_output_for_resume(db_session) -> None:
+    class CostlyClaimProvider:
+        name = "fake_claims"
+        model = "costly-claims-v2"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract_claims(self, *, source_url: str, source_text: str) -> ClaimExtractionResult:
+            del source_url, source_text
+            self.calls += 1
+            return ClaimExtractionResult(
+                output=claim_output(),
+                usage=ExtractionUsage(
+                    input_tokens=100,
+                    output_tokens=50,
+                    estimated_cost=Decimal("0.002"),
+                    latency_ms=1,
+                ),
+            )
+
+    extractor = CostlyClaimProvider()
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_ai_max_output_tokens=256,
+            catalogue_ai_max_estimated_cost_per_run=Decimal("0.001"),
+        ),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=extractor,
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+
+    stopped = service.process_run(run.id, worker_id="direct-cost", batch_size=1)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    attempt = db_session.scalar(select(CatalogueExtractionAttempt))
+
+    assert stopped.status is IngestionRunStatus.BUDGET_EXHAUSTED
+    assert stopped.model_calls == 1
+    assert stopped.estimated_cost == Decimal("0.002")
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.SOURCE_FETCHED
+    assert attempt is not None
+    assert attempt.output_json is not None
+
+    resumed = service.process_run(run.id, worker_id="direct-cost-resume", batch_size=1)
+
+    assert resumed.status is IngestionRunStatus.COMPLETED
+    assert extractor.calls == 1
+    assert candidate.status is CandidateStatus.READY_FOR_REVIEW
+
+
 def test_500_candidate_run_is_bounded_and_never_calls_ai(db_session, tmp_path) -> None:
     rows = [{"name": f"Scholarship {index:03d}"} for index in range(500)]
     extractor = FakeExtractionProvider(extraction_output())
@@ -751,6 +1308,61 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
     assert sent["response_format"]["json_schema"]["strict"] is True
     assert result.output.identity.name == "Example Scholarship"
     assert result.usage.estimated_cost == Decimal("0.000200")
+
+
+def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_usage() -> None:
+    import time
+
+    schema = _azure_schema(ClaimExtractionOutput)
+
+    def assert_objects_are_strict(value: object) -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object" or "properties" in value:
+                assert value["additionalProperties"] is False
+                assert set(value["required"]) == set(value.get("properties", {}))
+            for item in value.values():
+                assert_objects_are_strict(item)
+        elif isinstance(value, list):
+            for item in value:
+                assert_objects_are_strict(item)
+
+    assert_objects_are_strict(schema)
+    provider = AzureOpenAIClaimProvider(enabled_settings(), credential=object())
+    response_body = json.dumps(
+        {
+            "choices": [{"message": {"content": claim_output().model_dump_json()}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+    ).encode()
+    result = provider._parse(response_body, time.perf_counter())
+
+    assert len(result.output.claims) == 15
+    assert result.usage.estimated_cost == Decimal("0.000200")
+
+    invalid_response = json.dumps(
+        {
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+    ).encode()
+    with pytest.raises(ExtractionSchemaError) as exc_info:
+        provider._parse(invalid_response, time.perf_counter())
+
+    assert exc_info.value.usage is not None
+    assert exc_info.value.usage.estimated_cost == Decimal("0.000200")
+    assert "claims" in str(exc_info.value)
+
+    truncated_response = json.dumps(
+        {
+            "choices": [{"finish_reason": "length", "message": {"content": "{"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 4000},
+        }
+    ).encode()
+    with pytest.raises(ExtractionSchemaError) as truncated_info:
+        provider._parse(truncated_response, time.perf_counter())
+
+    assert truncated_info.value.code == "ai_output_truncated"
+    assert truncated_info.value.usage is not None
 
 
 def test_azure_provider_does_not_retry_non_retryable_http_errors() -> None:

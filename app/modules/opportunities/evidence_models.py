@@ -8,7 +8,7 @@ a second source identity.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
@@ -17,6 +17,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -220,6 +221,10 @@ class ScopedDeadline(Base):
     )
     deadline_type: Mapped[str] = mapped_column(String(64), index=True)
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    local_date: Mapped[date | None] = mapped_column(Date)
+    deadline_precision: Mapped[str] = mapped_column(
+        String(16), default="datetime", server_default="datetime"
+    )
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", server_default="UTC")
     label: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -259,6 +264,7 @@ class FundingComponent(Base):
     coverage_status: Mapped[str] = mapped_column(String(32), index=True)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     currency: Mapped[str | None] = mapped_column(String(3))
+    frequency: Mapped[str | None] = mapped_column(String(32))
     description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()

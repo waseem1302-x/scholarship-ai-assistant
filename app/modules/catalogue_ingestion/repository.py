@@ -46,10 +46,11 @@ class CatalogueIngestionRepository:
         seeds: list[SeedCandidate],
         *,
         start_index: int = 0,
+        identity_hint_is_asserted: bool = True,
     ) -> int:
         created = 0
         keyed_seeds = [
-            (index, seed, candidate_idempotency_key(seed))
+            (index, seed, candidate_idempotency_key(seed, run_id=run.id))
             for index, seed in enumerate(seeds, start=start_index)
         ]
         existing: set[str] = set()
@@ -58,7 +59,8 @@ class CatalogueIngestionRepository:
             existing.update(
                 self.session.scalars(
                     select(CatalogueCandidate.idempotency_key).where(
-                        CatalogueCandidate.idempotency_key.in_(keys)
+                        CatalogueCandidate.run_id == run.id,
+                        CatalogueCandidate.idempotency_key.in_(keys),
                     )
                 )
             )
@@ -81,6 +83,7 @@ class CatalogueIngestionRepository:
                     seed_official_url=(
                         str(seed.possible_official_url) if seed.possible_official_url else None
                     ),
+                    identity_hint_is_asserted=identity_hint_is_asserted,
                     seed_keywords=seed.keywords,
                 )
             )
@@ -114,7 +117,11 @@ class CatalogueIngestionRepository:
             )
             .order_by(CatalogueCandidate.seed_index)
             .limit(limit)
-            .options(selectinload(CatalogueCandidate.sources))
+            .options(
+                selectinload(CatalogueCandidate.sources).selectinload(
+                    CatalogueCandidateSource.artifacts
+                )
+            )
             .with_for_update(skip_locked=True)
         )
         candidates = list(self.session.scalars(statement))
@@ -130,14 +137,22 @@ class CatalogueIngestionRepository:
         return self.session.scalar(
             select(CatalogueCandidate)
             .where(CatalogueCandidate.id == candidate_id)
-            .options(selectinload(CatalogueCandidate.sources))
+            .options(
+                selectinload(CatalogueCandidate.sources).selectinload(
+                    CatalogueCandidateSource.artifacts
+                )
+            )
         )
 
     def get_candidate_for_update(self, candidate_id: uuid.UUID) -> CatalogueCandidate | None:
         return self.session.scalar(
             select(CatalogueCandidate)
             .where(CatalogueCandidate.id == candidate_id)
-            .options(selectinload(CatalogueCandidate.sources))
+            .options(
+                selectinload(CatalogueCandidate.sources).selectinload(
+                    CatalogueCandidateSource.artifacts
+                )
+            )
             .with_for_update()
         )
 
@@ -197,7 +212,11 @@ class CatalogueIngestionRepository:
         base = select(CatalogueCandidate).where(*filters)
         items = list(
             self.session.scalars(
-                base.options(selectinload(CatalogueCandidate.sources))
+                base.options(
+                    selectinload(CatalogueCandidate.sources).selectinload(
+                        CatalogueCandidateSource.artifacts
+                    )
+                )
                 .order_by(CatalogueCandidate.created_at.desc())
                 .offset(offset)
                 .limit(limit)
@@ -226,10 +245,11 @@ class CatalogueIngestionRepository:
             run.completed_at = datetime.now(UTC)
 
 
-def candidate_idempotency_key(seed: SeedCandidate) -> str:
+def candidate_idempotency_key(seed: SeedCandidate, *, run_id: uuid.UUID | None = None) -> str:
     normalized = "|".join(
         _normalize(value)
         for value in (
+            str(run_id) if run_id is not None else None,
             seed.name,
             seed.provider,
             seed.university,

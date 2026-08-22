@@ -184,8 +184,22 @@ class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     max_redirections = 5
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        validate_monitor_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        target = urllib.parse.urljoin(req.full_url, newurl)
+        source_url = urllib.parse.urlparse(req.full_url)
+        target_url = urllib.parse.urlparse(target)
+        try:
+            target_port = target_url.port
+        except ValueError as exc:
+            raise SourceFetchError("unsafe_source_url: invalid redirect port") from exc
+        if (
+            source_url.scheme == "https"
+            and target_url.scheme == "http"
+            and source_url.hostname == target_url.hostname
+            and target_port is None
+        ):
+            target = urllib.parse.urlunparse(target_url._replace(scheme="https"))
+        validate_monitor_url(target)
+        return super().redirect_request(req, fp, code, msg, headers, target)
 
 
 class SafeSourceFetcher:

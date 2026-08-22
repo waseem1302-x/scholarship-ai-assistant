@@ -11,7 +11,24 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError
 from app.modules.auth.models import AuditLog, User
+from app.modules.opportunities.evidence_models import (
+    ApplicationStep,
+    FieldEvidence,
+    FundingComponent,
+    RequiredDocument,
+    ScopedDeadline,
+    SourceSnapshot,
+)
 from app.modules.opportunities.evidence_policy import EvidencePolicy
+from app.modules.opportunities.graph_models import (
+    ApplicationTrack,
+    Institution,
+    InstitutionParticipation,
+)
+from app.modules.opportunities.graph_schemas import (
+    GraphCitationResponse,
+    OpportunityGraphResponse,
+)
 from app.modules.opportunities.lifecycle import (
     SOURCE_FRESHNESS_DAYS,
     effective_application_window,
@@ -98,6 +115,143 @@ class OpportunityService:
                 "duplicate_opportunity",
                 "An opportunity with the same provider, name, country, and intake already exists",
             ) from exc
+
+    def get_admin_graph(self, opportunity_id: uuid.UUID) -> OpportunityGraphResponse:
+        opportunity = self.repository.get_opportunity(opportunity_id)
+        if opportunity is None:
+            raise AppError("opportunity_not_found", "Opportunity was not found", 404)
+        cycle = self.session.scalar(
+            select(OpportunityCycle)
+            .where(OpportunityCycle.opportunity_id == opportunity_id)
+            .order_by(OpportunityCycle.intake_year.desc().nullslast(), OpportunityCycle.created_at)
+        )
+        if cycle is None:
+            raise AppError("opportunity_graph_missing", "Opportunity has no graph cycle", 404)
+        tracks = list(
+            self.session.scalars(
+                select(ApplicationTrack)
+                .where(ApplicationTrack.cycle_id == cycle.id)
+                .order_by(ApplicationTrack.display_order, ApplicationTrack.name)
+            ).all()
+        )
+        deadlines = list(
+            self.session.scalars(
+                select(ScopedDeadline)
+                .where(ScopedDeadline.cycle_id == cycle.id)
+                .order_by(ScopedDeadline.deadline_at)
+            ).all()
+        )
+        funding = list(
+            self.session.scalars(
+                select(FundingComponent)
+                .where(FundingComponent.cycle_id == cycle.id)
+                .order_by(FundingComponent.component_type)
+            ).all()
+        )
+        documents = list(
+            self.session.scalars(
+                select(RequiredDocument)
+                .where(RequiredDocument.cycle_id == cycle.id)
+                .order_by(RequiredDocument.display_order, RequiredDocument.name)
+            ).all()
+        )
+        steps = list(
+            self.session.scalars(
+                select(ApplicationStep)
+                .where(ApplicationStep.cycle_id == cycle.id)
+                .order_by(ApplicationStep.display_order, ApplicationStep.title)
+            ).all()
+        )
+        institution_ids = {
+            item.institution_id
+            for item in [*deadlines, *funding, *documents, *steps]
+            if item.institution_id is not None
+        }
+        institution_ids.update(
+            self.session.scalars(
+                select(FieldEvidence.entity_id)
+                .join(SourceSnapshot, SourceSnapshot.id == FieldEvidence.source_snapshot_id)
+                .join(Source, Source.id == SourceSnapshot.source_id)
+                .where(
+                    Source.opportunity_id == opportunity_id,
+                    FieldEvidence.entity_type == "institution",
+                )
+            ).all()
+        )
+        institutions = (
+            list(
+                self.session.scalars(
+                    select(Institution)
+                    .where(Institution.id.in_(institution_ids))
+                    .order_by(Institution.canonical_name)
+                ).all()
+            )
+            if institution_ids
+            else []
+        )
+        institution_participations = list(
+            self.session.scalars(
+                select(InstitutionParticipation)
+                .where(InstitutionParticipation.cycle_id == cycle.id)
+                .order_by(
+                    InstitutionParticipation.track_id,
+                    InstitutionParticipation.institution_id,
+                    InstitutionParticipation.role,
+                )
+            ).all()
+        )
+        entity_ids = {
+            opportunity.id,
+            cycle.id,
+            *(item.id for item in tracks),
+            *(item.id for item in deadlines),
+            *(item.id for item in funding),
+            *(item.id for item in documents),
+            *(item.id for item in steps),
+            *(item.id for item in institutions),
+            *(item.id for item in institution_participations),
+        }
+        evidence_rows = self.session.execute(
+            select(FieldEvidence, SourceSnapshot, Source)
+            .join(SourceSnapshot, SourceSnapshot.id == FieldEvidence.source_snapshot_id)
+            .join(Source, Source.id == SourceSnapshot.source_id)
+            .where(
+                FieldEvidence.entity_id.in_(entity_ids),
+                Source.opportunity_id == opportunity_id,
+            )
+            .order_by(FieldEvidence.entity_type, FieldEvidence.field_path, Source.url)
+        ).all()
+        citations = [
+            GraphCitationResponse(
+                id=evidence.id,
+                entity_type=evidence.entity_type,
+                entity_id=evidence.entity_id,
+                field_path=evidence.field_path,
+                source_snapshot_id=snapshot.id,
+                source_title=source.title,
+                source_url=source.url,
+                content_hash=snapshot.content_hash,
+                excerpt=evidence.excerpt,
+                excerpt_start=evidence.excerpt_start,
+                excerpt_end=evidence.excerpt_end,
+                validator_status=evidence.validator_status.value,
+            )
+            for evidence, snapshot, source in evidence_rows
+        ]
+        return OpportunityGraphResponse(
+            opportunity_id=opportunity.id,
+            cycle_id=cycle.id,
+            intake_year=cycle.intake_year,
+            degree_levels=opportunity.degree_levels,
+            tracks=tracks,
+            institutions=institutions,
+            institution_participations=institution_participations,
+            deadlines=deadlines,
+            funding=funding,
+            documents=documents,
+            steps=steps,
+            citations=citations,
+        )
 
     def _create_opportunity(
         self, payload: OpportunityCreate, *, created_by: User | None, commit: bool
@@ -268,10 +422,12 @@ class OpportunityService:
         self.session.refresh(opportunity)
         return self.to_admin_response(opportunity)
 
-    def stage_opportunity_for_review(self, payload: OpportunityCreate) -> AdminOpportunityResponse:
+    def stage_opportunity_for_review(
+        self, payload: OpportunityCreate, *, commit: bool = True
+    ) -> AdminOpportunityResponse:
         """Internal worker boundary: create only a draft in the existing review workflow."""
 
-        return self._create_opportunity(payload, created_by=None, commit=True)
+        return self._create_opportunity(payload, created_by=None, commit=commit)
 
     def import_opportunities(
         self, payload: OpportunityImportRequest, *, created_by: User
@@ -748,6 +904,7 @@ class OpportunityService:
             university_name=opportunity.university.name if opportunity.university else None,
             country=opportunity.country,
             degree_level=opportunity.degree_level,
+            degree_levels=opportunity.degree_levels or [opportunity.degree_level],
             application_deadline=window.application_deadline,
             application_opening_date=window.application_opening_date,
             application_timezone=window.timezone,

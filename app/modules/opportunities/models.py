@@ -276,6 +276,7 @@ class Opportunity(Base):
         ),
         index=True,
     )
+    degree_levels: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     field_eligibility: Mapped[str | None] = mapped_column(Text)
     nationality_eligibility: Mapped[str | None] = mapped_column(Text)
     application_opening_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
