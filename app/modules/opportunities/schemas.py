@@ -435,6 +435,7 @@ class OpportunitySummaryResponse(BaseModel):
     university_name: str | None
     country: str
     degree_level: DegreeLevel
+    degree_levels: list[DegreeLevel]
     application_deadline: datetime | None
     application_opening_date: datetime | None = None
     application_timezone: str = "UTC"

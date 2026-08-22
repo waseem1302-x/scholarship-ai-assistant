@@ -26,6 +26,7 @@ export interface AdminOpportunity {
   university_name: string | null;
   country: string;
   degree_level: string;
+  degree_levels?: string[];
   application_deadline: string | null;
   funding_type: string;
   funding_summary: string;
@@ -103,4 +104,59 @@ export interface ImportResponse {
   duplicate_count: number;
   failed_count: number;
   results: ImportResult[];
+}
+
+export interface IngestionRun {
+  id: string;
+  status: string;
+  input_kind: string;
+  operator_url: string | null;
+  aggregate_summary: Record<string, number>;
+}
+
+export interface IngestionCandidate {
+  id: string;
+  status: string;
+  proposed_payload: Record<string, unknown> | null;
+  validation_errors: string[];
+  conflicts: string[];
+  opportunity_id: string | null;
+}
+
+export interface IngestionCandidateResponse {
+  items: IngestionCandidate[];
+  total: number;
+}
+
+export interface GraphCitation {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  field_path: string;
+  source_title: string;
+  source_url: string;
+  content_hash: string;
+  excerpt: string;
+  validator_status: string;
+}
+
+export interface OpportunityGraph {
+  opportunity_id: string;
+  intake_year: number | null;
+  degree_levels: string[];
+  tracks: { id: string; code: string; name: string; track_type: string }[];
+  institutions: { id: string; canonical_name: string; institution_type: string }[];
+  institution_participations: {
+    id: string;
+    track_id: string;
+    institution_id: string;
+    role: string;
+    participation_status: string | null;
+    application_url: string | null;
+    source_id: string | null;
+  }[];
+  funding: { id: string; component_type: string; coverage_status: string; description: string | null }[];
+  documents: { id: string; name: string; required: boolean }[];
+  steps: { id: string; title: string; description: string | null }[];
+  citations: GraphCitation[];
 }

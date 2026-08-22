@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -41,6 +42,11 @@ class IngestionMode(StrEnum):
     EXTRACTION = "extraction"
     VALIDATION = "validation"
     REVIEW_QUEUE = "review_queue"
+
+
+class IngestionInputKind(StrEnum):
+    SEED_SOURCE = "seed_source"
+    DIRECT_URL = "direct_url"
 
 
 class CandidateStatus(StrEnum):
@@ -95,6 +101,19 @@ class CatalogueIngestionRun(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     source_label: Mapped[str] = mapped_column(String(255))
     source_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    input_kind: Mapped[IngestionInputKind] = mapped_column(
+        Enum(
+            IngestionInputKind,
+            name="catalogue_ingestion_input_kind",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        default=IngestionInputKind.SEED_SOURCE,
+        server_default=IngestionInputKind.SEED_SOURCE.value,
+        index=True,
+    )
+    operator_url: Mapped[str | None] = mapped_column(String(2048))
     mode: Mapped[IngestionMode] = mapped_column(
         Enum(
             IngestionMode,
@@ -167,6 +186,9 @@ class CatalogueCandidate(Base):
     seed_cycle: Mapped[str | None] = mapped_column(String(120))
     seed_intake_year: Mapped[int | None] = mapped_column(Integer)
     seed_official_url: Mapped[str | None] = mapped_column(String(2048))
+    identity_hint_is_asserted: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1"
+    )
     seed_keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[CandidateStatus] = mapped_column(
         Enum(
@@ -265,6 +287,47 @@ class CatalogueCandidateSource(Base):
     extraction_attempts: Mapped[list["CatalogueExtractionAttempt"]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
     )
+    artifacts: Mapped[list["CatalogueSourceArtifact"]] = relationship(
+        back_populates="source", cascade="all, delete-orphan"
+    )
+
+
+class CatalogueSourceArtifact(Base):
+    """Immutable fetched text used as the pre-canonical evidence boundary."""
+
+    __tablename__ = "catalogue_source_artifacts"
+    __table_args__ = (
+        UniqueConstraint("source_id", "content_hash", name="uq_catalogue_source_artifact_hash"),
+        Index("ix_catalogue_source_artifacts_hash_created", "content_hash", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalogue_candidate_sources.id", ondelete="RESTRICT"), index=True
+    )
+    final_url: Mapped[str] = mapped_column(String(2048))
+    content_type: Mapped[str] = mapped_column(String(255))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    normalized_text: Mapped[str] = mapped_column(Text)
+    extraction_method: Mapped[str] = mapped_column(String(64))
+    byte_count: Mapped[int] = mapped_column(Integer)
+    character_count: Mapped[int] = mapped_column(Integer)
+    fetch_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    source: Mapped[CatalogueCandidateSource] = relationship(back_populates="artifacts")
+
+
+@event.listens_for(CatalogueSourceArtifact, "before_update", propagate=True)
+def _prevent_source_artifact_update(*_: object) -> None:
+    raise RuntimeError("catalogue source artifacts are immutable; create a new artifact")
+
+
+@event.listens_for(CatalogueSourceArtifact, "before_delete", propagate=True)
+def _prevent_source_artifact_delete(*_: object) -> None:
+    raise RuntimeError("catalogue source artifacts cannot be deleted")
 
 
 class CatalogueExtractionAttempt(Base):

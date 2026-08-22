@@ -46,7 +46,7 @@ function OpportunityDetailContent({ opportunity }: { opportunity: OpportunityDet
         </div>
         <div className="tag-list detail-tags" aria-label="Opportunity snapshot">
           <span>{opportunity.country}</span>
-          <span>{readableValue(opportunity.degree_level)}</span>
+          <span>{(opportunity.degree_levels?.length ? opportunity.degree_levels : [opportunity.degree_level]).map(readableValue).join(", ")}</span>
           <span>{opportunity.funding_display_label}</span>
           <span>{deadlineLabel(opportunity.application_deadline)}</span>
         </div>

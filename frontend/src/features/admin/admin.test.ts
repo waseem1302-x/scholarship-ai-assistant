@@ -9,7 +9,13 @@ vi.mock("../../api/client", () => ({
   apiClient: apiMocks,
 }));
 
-import { importFormatForFile, importTemplates, recordSourceCheck, reverifySource } from "./admin";
+import {
+  acquireOfficialUrl,
+  importFormatForFile,
+  importTemplates,
+  recordSourceCheck,
+  reverifySource,
+} from "./admin";
 
 describe("import templates", () => {
   it("provides JSON and CSV templates and detects supported file names", () => {
@@ -42,5 +48,42 @@ describe("administrator source operations", () => {
       headers: { "X-Admin-Step-Up": "step-up-token" },
       body: JSON.stringify({ source_id: "source-id", verification_status: "officially_verified", notes: "Confirmed unchanged." }),
     });
+  });
+
+  it("processes a direct official URL and loads its review graph", async () => {
+    apiMocks.request
+      .mockResolvedValueOnce({ id: "run-id", status: "completed" })
+      .mockResolvedValueOnce({
+        total: 1,
+        items: [{ id: "candidate-id", opportunity_id: "opportunity-id" }],
+      })
+      .mockResolvedValueOnce({ opportunity_id: "opportunity-id", tracks: [], citations: [] });
+
+    const result = await acquireOfficialUrl(
+      "https://www.mext.go.jp/example",
+      "MEXT Scholarship",
+      false,
+      "AdminPassword2026",
+    );
+
+    expect(result.graph?.opportunity_id).toBe("opportunity-id");
+    expect(apiMocks.request).toHaveBeenNthCalledWith(
+      1,
+      "/admin/catalogue-ingestion/runs/url",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          url: "https://www.mext.go.jp/example",
+          target_name: "MEXT Scholarship",
+          mode: "review_queue",
+          dry_run: false,
+          process_now: true,
+        }),
+      }),
+    );
+    expect(apiMocks.request).toHaveBeenNthCalledWith(
+      3,
+      "/admin/opportunities/opportunity-id/graph",
+    );
   });
 });

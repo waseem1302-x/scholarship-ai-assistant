@@ -7,13 +7,26 @@ import re
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.models import AuditLog, User
+from app.modules.catalogue_ingestion.claim_provider import (
+    CLAIM_SYSTEM_INSTRUCTION,
+    CatalogueClaimProvider,
+    get_claim_provider,
+)
+from app.modules.catalogue_ingestion.claim_resolution import resolve_claims
+from app.modules.catalogue_ingestion.claim_schemas import (
+    CLAIM_SCHEMA_VERSION,
+    ClaimExtractionOutput,
+    ClaimResolution,
+    ExtractedClaim,
+)
 from app.modules.catalogue_ingestion.crawler import (
     BoundedOfficialSiteCrawler,
     CrawlBudget,
@@ -23,6 +36,7 @@ from app.modules.catalogue_ingestion.discovery_promotion import (
     CatalogueDiscoveryPromotionService,
     DiscoveryPromotionResult,
 )
+from app.modules.catalogue_ingestion.graph_materializer import MextGraphMaterializer
 from app.modules.catalogue_ingestion.metrics import get_catalogue_metrics
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
@@ -31,7 +45,9 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
+    CatalogueSourceArtifact,
     ExtractionAttemptStatus,
+    IngestionInputKind,
     IngestionMode,
     IngestionRunStatus,
 )
@@ -62,11 +78,13 @@ from app.modules.catalogue_ingestion.sources import (
     SeedUrlDiscoveryProvider,
     WebDiscoveryProvider,
 )
+from app.modules.catalogue_ingestion.url_policy import normalize_discovery_lead_url
 from app.modules.catalogue_ingestion.validation import validate_and_build_proposal
 from app.modules.opportunities.models import Provider, University
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.service import OpportunityService
 from app.modules.opportunities.source_monitor import (
+    FetchedSource,
     SafeSourceFetcher,
     SourceFetcher,
     SourceFetchError,
@@ -88,6 +106,7 @@ class CatalogueIngestionService:
         discovery: WebDiscoveryProvider | None = None,
         fetcher: SourceFetcher | None = None,
         extractor: CatalogueExtractionProvider | None = None,
+        claim_extractor: CatalogueClaimProvider | None = None,
         classifier: OfficialSourceClassifier | None = None,
     ) -> None:
         self.session = session
@@ -101,6 +120,7 @@ class CatalogueIngestionService:
             max_bytes=min(settings.catalogue_ai_max_input_characters * 4, 5_000_000),
         )
         self.extractor = extractor or get_extraction_provider(settings)
+        self.claim_extractor = claim_extractor or get_claim_provider(settings)
         self.classifier = classifier or OfficialSourceClassifier()
         self.metrics = get_catalogue_metrics(settings)
 
@@ -121,6 +141,7 @@ class CatalogueIngestionService:
         run = CatalogueIngestionRun(
             source_label=loaded.label,
             source_fingerprint=loaded.fingerprint,
+            input_kind=IngestionInputKind.SEED_SOURCE,
             mode=mode,
             status=IngestionRunStatus.PENDING,
             dry_run=dry_run,
@@ -135,6 +156,58 @@ class CatalogueIngestionService:
         self.repository.add_seed_candidates(run, seeds[:maximum])
         self.metrics.add("ingestion_runs_total")
         self.metrics.add("candidates_discovered", min(len(seeds), maximum))
+        self.repository.refresh_run_summary(run)
+        self.session.commit()
+        return IngestionRunResponse.model_validate(run)
+
+    def create_run_from_url(
+        self,
+        url: str,
+        *,
+        mode: IngestionMode,
+        dry_run: bool,
+        target_name: str | None = None,
+        provider: str | None = None,
+        country: str | None = None,
+    ) -> IngestionRunResponse:
+        normalized = normalize_discovery_lead_url(url)
+        if normalized.normalized is None:
+            code = normalized.rejection_code.value if normalized.rejection_code else "url_invalid"
+            raise AppError(code, "The direct catalogue URL is not permitted", 422)
+
+        canonical_url = normalized.normalized.value
+        display_name = target_name.strip() if target_name else normalized.normalized.host
+        fingerprint = hashlib.sha256(canonical_url.encode()).hexdigest()
+        run = CatalogueIngestionRun(
+            source_label=f"direct-url:{normalized.normalized.host}",
+            source_fingerprint=fingerprint,
+            input_kind=IngestionInputKind.DIRECT_URL,
+            operator_url=canonical_url,
+            mode=mode,
+            status=IngestionRunStatus.PENDING,
+            dry_run=dry_run,
+            max_candidates=1,
+            max_pages_per_candidate=self.settings.catalogue_ai_max_pages_per_candidate,
+            max_model_calls=self.settings.catalogue_ai_max_calls_per_run,
+            max_input_characters=self.settings.catalogue_ai_max_input_characters,
+            max_output_tokens=self.settings.catalogue_ai_max_output_tokens,
+            max_estimated_cost=self.settings.catalogue_ai_max_estimated_cost_per_run,
+        )
+        self.repository.add_run(run)
+        self.repository.add_seed_candidates(
+            run,
+            [
+                SeedCandidate(
+                    name=display_name,
+                    provider=provider,
+                    country=country,
+                    possible_official_url=canonical_url,
+                )
+            ],
+            identity_hint_is_asserted=target_name is not None,
+        )
+        self.metrics.add("ingestion_runs_total")
+        self.metrics.add("candidates_discovered")
         self.repository.refresh_run_summary(run)
         self.session.commit()
         return IngestionRunResponse.model_validate(run)
@@ -309,6 +382,7 @@ class CatalogueIngestionService:
         source.relevant_excerpt = fetched.excerpt_text
         source.bytes_read = fetched.bytes_read
         source.fetched_at = datetime.now(UTC)
+        self._persist_source_artifact(source, fetched)
         if crawl_result is not None:
             self._persist_crawled_sources(
                 candidate,
@@ -329,6 +403,9 @@ class CatalogueIngestionService:
             return
         if not self.settings.catalogue_ai_ingestion_enabled:
             self._manual_review(candidate, "ai_ingestion_disabled")
+            return
+        if run.input_kind is IngestionInputKind.DIRECT_URL:
+            self._process_direct_claims(run, candidate)
             return
         source_text = fetched.normalized_text or fetched.excerpt_text or ""
         reused = self.repository.reusable_attempt(
@@ -461,6 +538,9 @@ class CatalogueIngestionService:
         candidate.failure_code = None
         candidate.failure_reason = None
         candidate.validation_errors = []
+        candidate.conflicts = []
+        candidate.proposed_payload = None
+        candidate.duplicate_opportunity_ids = []
         candidate.next_attempt_at = datetime.now(UTC)
         candidate.claimed_by = None
         candidate.claimed_until = None
@@ -489,6 +569,23 @@ class CatalogueIngestionService:
             raise AppError(
                 "catalogue_candidate_not_ready", "Candidate has not passed review gates", 409
             )
+        if candidate.proposed_payload.get("schema_version") == CLAIM_SCHEMA_VERSION:
+            resolution = ClaimResolution.model_validate(candidate.proposed_payload)
+            created = MextGraphMaterializer(self.session).materialize(resolution)
+            candidate.opportunity_id = created.id
+            candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
+            self.session.add(
+                AuditLog(
+                    actor_user_id=actor.id,
+                    action="catalogue_mext_graph_submitted",
+                    entity_type="catalogue_candidate",
+                    entity_id=str(candidate.id),
+                    metadata_json={"notes": notes[:1000]},
+                )
+            )
+            self.session.commit()
+            return self._candidate_response(candidate)
+
         from app.modules.opportunities.schemas import OpportunityCreate
 
         payload = OpportunityCreate.model_validate(candidate.proposed_payload)
@@ -498,6 +595,155 @@ class CatalogueIngestionService:
         candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
         self.session.commit()
         return self._candidate_response(candidate)
+
+    def _process_direct_claims(
+        self, run: CatalogueIngestionRun, candidate: CatalogueCandidate
+    ) -> None:
+        extracted: list[tuple[CatalogueSourceArtifact, int, list[ExtractedClaim]]] = []
+        unknown_objectives: set[str] = set()
+        warnings: set[str] = set()
+        persisted_sources = self.session.scalars(
+            select(CatalogueCandidateSource)
+            .where(CatalogueCandidateSource.candidate_id == candidate.id)
+            .options(selectinload(CatalogueCandidateSource.artifacts))
+        ).all()
+        sources = [
+            source
+            for source in persisted_sources
+            if source.is_official
+            and source.status is CandidateSourceStatus.FETCHED
+            and source.artifacts
+        ]
+        sources.sort(key=lambda item: (item.trust_tier or 999, item.canonical_url))
+        for source in sources:
+            artifact = max(source.artifacts, key=lambda item: item.created_at)
+            reused = self.repository.reusable_attempt(
+                canonical_url=source.canonical_url,
+                content_hash=artifact.content_hash,
+                schema_version=CLAIM_SCHEMA_VERSION,
+                provider=self.claim_extractor.name,
+                model=self.claim_extractor.model,
+            )
+            if reused is not None and reused.output_json is not None:
+                output = ClaimExtractionOutput.model_validate(reused.output_json)
+                status = ExtractionAttemptStatus.REUSED
+                usage = None
+                reuse_is_current = (
+                    reused.candidate_id == candidate.id and reused.source_id == source.id
+                )
+            else:
+                self._check_budget(run, artifact.normalized_text)
+                try:
+                    result = self.claim_extractor.extract_claims(
+                        source_url=artifact.final_url,
+                        source_text=artifact.normalized_text,
+                    )
+                except ExtractionSchemaError as exc:
+                    self.metrics.add("ai_schema_failures")
+                    if exc.usage is not None:
+                        self._record_claim_usage(run, exc.usage)
+                    self.session.add(
+                        self._claim_attempt(
+                            candidate,
+                            source,
+                            artifact,
+                            ExtractionAttemptStatus.SCHEMA_FAILED,
+                            exc.code,
+                            usage=exc.usage,
+                        )
+                    )
+                    self._manual_review(candidate, exc.code)
+                    if run.estimated_cost > run.max_estimated_cost:
+                        raise RunBudgetExhausted from None
+                    return
+                except ExtractionProviderError as exc:
+                    self.metrics.add("ai_extraction_failures")
+                    if exc.usage is not None:
+                        self._record_claim_usage(run, exc.usage)
+                    self.session.add(
+                        self._claim_attempt(
+                            candidate,
+                            source,
+                            artifact,
+                            ExtractionAttemptStatus.PROVIDER_FAILED,
+                            exc.code,
+                            usage=exc.usage,
+                        )
+                    )
+                    self._manual_review(candidate, exc.code)
+                    if run.estimated_cost > run.max_estimated_cost:
+                        raise RunBudgetExhausted from None
+                    return
+                output = result.output
+                usage = result.usage
+                status = ExtractionAttemptStatus.SUCCEEDED
+                reuse_is_current = False
+                self._record_claim_usage(run, usage)
+                if run.estimated_cost > run.max_estimated_cost:
+                    self.session.add(
+                        self._claim_attempt(
+                            candidate,
+                            source,
+                            artifact,
+                            ExtractionAttemptStatus.SUCCEEDED,
+                            None,
+                            output=output,
+                            usage=usage,
+                        )
+                    )
+                    raise RunBudgetExhausted
+            if not reuse_is_current:
+                self.session.add(
+                    self._claim_attempt(
+                        candidate,
+                        source,
+                        artifact,
+                        status,
+                        None,
+                        output=output,
+                        usage=usage,
+                    )
+                )
+            if output.conflicts:
+                candidate.conflicts.extend(output.conflicts)
+            unknown_objectives.update(f"{artifact.id}:{item}" for item in output.unknown_objectives)
+            warnings.update(f"{artifact.id}:{item}" for item in output.warnings)
+            extracted.append((artifact, source.trust_tier or 999, output.claims))
+
+        candidate.status = CandidateStatus.EXTRACTED
+        resolution = resolve_claims(extracted).model_copy(
+            update={
+                "unknown_objectives": sorted(unknown_objectives),
+                "warnings": sorted(warnings),
+            }
+        )
+        candidate.proposed_payload = resolution.model_dump(mode="json")
+        candidate.validation_errors = resolution.rejected + resolution.completeness_errors
+        candidate.conflicts = sorted(set(candidate.conflicts + resolution.conflicts))
+        if candidate.conflicts:
+            candidate.status = CandidateStatus.CONFLICT_DETECTED
+        elif candidate.validation_errors:
+            candidate.status = CandidateStatus.VALIDATION_FAILED
+        else:
+            duplicate_ids = {
+                str(item.id)
+                for source in sources
+                for item in self.opportunities.find_opportunities_by_canonical_url(
+                    source.canonical_url
+                )
+            }
+            if duplicate_ids:
+                candidate.status = CandidateStatus.DUPLICATE_CANDIDATE
+                candidate.duplicate_opportunity_ids = sorted(duplicate_ids)
+            else:
+                candidate.status = CandidateStatus.READY_FOR_REVIEW
+                self.metrics.add("candidates_ready_for_review")
+                if run.mode is IngestionMode.REVIEW_QUEUE and not run.dry_run:
+                    created = MextGraphMaterializer(self.session).materialize(resolution)
+                    candidate.opportunity_id = created.id
+                    candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
+        self.repository.release_candidate(candidate)
+        self.session.commit()
 
     def list_runs(self, *, limit: int, offset: int) -> IngestionRunListResponse:
         items, total = self.repository.list_runs(limit=limit, offset=offset)
@@ -590,6 +836,39 @@ class CatalogueIngestionService:
             child_source.failure_reason = (
                 None if classification.is_official else classification.reason[:1000]
             )
+            if classification.is_official:
+                self.session.flush()
+                self._persist_source_artifact(child_source, fetched)
+
+    def _persist_source_artifact(
+        self, source: CatalogueCandidateSource, fetched: FetchedSource
+    ) -> None:
+        normalized_text = fetched.normalized_text or fetched.excerpt_text
+        if not normalized_text:
+            raise SourceFetchError("source_normalized_text_missing")
+        content_hash = fetched.normalized_content_hash or fetched.content_hash
+        existing = self.session.scalar(
+            select(CatalogueSourceArtifact).where(
+                CatalogueSourceArtifact.source_id == source.id,
+                CatalogueSourceArtifact.content_hash == content_hash,
+            )
+        )
+        if existing is not None:
+            return
+        content_type = fetched.content_type
+        extraction_method = "pdf_text" if content_type == "application/pdf" else "normalized_text"
+        source.artifacts.append(
+            CatalogueSourceArtifact(
+                final_url=fetched.final_url,
+                content_type=content_type,
+                content_hash=content_hash,
+                normalized_text=normalized_text,
+                extraction_method=extraction_method,
+                byte_count=fetched.bytes_read,
+                character_count=len(normalized_text),
+                fetch_metadata={"operator_host": urlsplit(source.url).hostname},
+            )
+        )
 
     def _manual_review(self, candidate: CatalogueCandidate, code: str) -> None:
         candidate.status = CandidateStatus.NEEDS_REVIEW
@@ -654,6 +933,47 @@ class CatalogueIngestionService:
             latency_ms=getattr(usage, "latency_ms", 0),
         )
 
+    def _claim_attempt(
+        self,
+        candidate: CatalogueCandidate,
+        source: CatalogueCandidateSource,
+        artifact: CatalogueSourceArtifact,
+        status: ExtractionAttemptStatus,
+        error_code: str | None,
+        *,
+        output: ClaimExtractionOutput | None = None,
+        usage: object | None = None,
+    ) -> CatalogueExtractionAttempt:
+        return CatalogueExtractionAttempt(
+            candidate_id=candidate.id,
+            source_id=source.id,
+            provider=self.claim_extractor.name,
+            model=self.claim_extractor.model,
+            schema_version=CLAIM_SCHEMA_VERSION,
+            content_hash=artifact.content_hash,
+            prompt_hash=hashlib.sha256(CLAIM_SYSTEM_INSTRUCTION.encode()).hexdigest(),
+            status=status,
+            output_json=output.model_dump(mode="json") if output else None,
+            error_code=error_code,
+            input_tokens=getattr(usage, "input_tokens", 0),
+            output_tokens=getattr(usage, "output_tokens", 0),
+            estimated_cost=getattr(usage, "estimated_cost", Decimal("0")),
+            latency_ms=getattr(usage, "latency_ms", 0),
+        )
+
+    def _record_claim_usage(self, run: CatalogueIngestionRun, usage: object) -> None:
+        input_tokens = int(getattr(usage, "input_tokens", 0))
+        output_tokens = int(getattr(usage, "output_tokens", 0))
+        estimated_cost = Decimal(str(getattr(usage, "estimated_cost", 0)))
+        run.model_calls += 1
+        run.input_tokens += input_tokens
+        run.output_tokens += output_tokens
+        run.estimated_cost += estimated_cost
+        self.metrics.add("ai_extraction_calls")
+        self.metrics.add("model_input_tokens", input_tokens)
+        self.metrics.add("model_output_tokens", output_tokens)
+        self.metrics.observe("estimated_ai_cost", float(estimated_cost))
+
     @staticmethod
     def _candidate_response(candidate: CatalogueCandidate) -> CandidateResponse:
         return CandidateResponse.model_validate(candidate)
@@ -668,7 +988,9 @@ def _identity_resolution_errors(
 ) -> list[str]:
     errors: list[str] = []
     identity = output.identity
-    if not _identity_name_matches(candidate.seed_name, identity.name):
+    if candidate.identity_hint_is_asserted and not _identity_name_matches(
+        candidate.seed_name, identity.name
+    ):
         errors.append("extracted programme identity does not match the seed candidate")
     if candidate.seed_provider and not _identity_name_matches(
         candidate.seed_provider, identity.provider_name

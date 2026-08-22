@@ -9,6 +9,7 @@ from app.core.errors import ErrorResponse
 from app.db.session import get_db
 from app.modules.auth.dependencies import require_admin_step_up, require_roles
 from app.modules.auth.models import User, UserRole
+from app.modules.opportunities.graph_schemas import OpportunityGraphResponse
 from app.modules.opportunities.models import (
     ApplicationWindowState,
     DegreeLevel,
@@ -122,6 +123,19 @@ def list_admin_opportunities(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/admin/opportunities/{opportunity_id}/graph",
+    response_model=OpportunityGraphResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE, 404: NOT_FOUND_RESPONSE},
+)
+def get_admin_opportunity_graph(
+    opportunity_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> OpportunityGraphResponse:
+    return service.get_admin_graph(opportunity_id)
 
 
 @router.get(
