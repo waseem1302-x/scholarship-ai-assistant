@@ -22,8 +22,11 @@ from app.modules.catalogue_ingestion.claim_resolution import resolve_claims
 from app.modules.catalogue_ingestion.claim_schemas import ClaimExtractionOutput, ClaimValue
 from app.modules.catalogue_ingestion.evaluation import GoldItem, evaluate
 from app.modules.catalogue_ingestion.models import (
+    CandidateSourceRole,
+    CandidateSourceStatus,
     CandidateStatus,
     CatalogueCandidate,
+    CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueSourceArtifact,
     IngestionInputKind,
@@ -33,10 +36,12 @@ from app.modules.catalogue_ingestion.models import (
 from app.modules.catalogue_ingestion.provider import (
     AzureOpenAIExtractionProvider,
     ExtractionProviderError,
+    ExtractionProviderRateLimited,
     ExtractionSchemaError,
     FakeExtractionProvider,
     azure_structured_output_schema,
     estimate_cost,
+    extraction_retry_delay,
 )
 from app.modules.catalogue_ingestion.schemas import (
     CatalogueExtractionOutput,
@@ -72,10 +77,15 @@ from app.modules.opportunities.graph_models import (
     Institution,
     InstitutionParticipation,
 )
-from app.modules.opportunities.models import Opportunity, OpportunityStatus, VerificationStatus
+from app.modules.opportunities.models import (
+    Opportunity,
+    OpportunityStatus,
+    University,
+    VerificationStatus,
+)
 from app.modules.opportunities.schemas import ReviewAction, ReviewActionRequest
 from app.modules.opportunities.service import OpportunityService
-from app.modules.opportunities.source_monitor import FetchedSource
+from app.modules.opportunities.source_monitor import FetchedSource, SafeSourceFetcher
 
 OFFICIAL_URL = "https://scholarships.gov.uk/example"
 SOURCE_TEXT = (
@@ -248,6 +258,8 @@ def test_claim_value_treats_an_unused_empty_list_as_unset() -> None:
 
 def test_claim_output_normalizes_paths_offsets_and_core_priority() -> None:
     raw = claim_output().model_dump(mode="json")
+    raw["claims"][5]["field_path"] = "track_name"
+    raw["claims"][7]["field_path"] = "track_type"
     raw["claims"][11]["field_path"] = "funding.coverage_status"
     output = ClaimExtractionOutput.model_validate(raw)
     output.claims[0] = output.claims[0].model_copy(
@@ -259,6 +271,9 @@ def test_claim_output_normalizes_paths_offsets_and_core_priority() -> None:
     assert len(normalized.claims) == 12
     assert normalized.claims[0].excerpt_start == 0
     assert output.claims[11].field_path == "coverage_status"
+    assert output.claims[5].field_path == "name"
+    assert any(item.field_path == "track_type" for item in output.claims)
+    assert any(item.field_path == "deadline_at" for item in output.claims)
     present = {
         (item.entity_type.value, item.entity_key, item.field_path) for item in normalized.claims
     }
@@ -404,6 +419,26 @@ class FakeFetcher:
         )
 
 
+class MappingFetcher:
+    def __init__(self, sources: dict[str, str]) -> None:
+        self.sources = sources
+        self.calls: list[str] = []
+
+    def fetch(self, url: str) -> FetchedSource:
+        self.calls.append(url)
+        text = self.sources[url]
+        return FetchedSource(
+            url=url,
+            final_url=url,
+            content_hash=hashlib.sha256(text.encode()).hexdigest(),
+            excerpt_text=text,
+            section_label="Official page",
+            bytes_read=len(text.encode()),
+            normalized_text=text,
+            content_type="text/html",
+        )
+
+
 def write_seed(tmp_path, rows: list[dict[str, object]]):
     path = tmp_path / "seeds.json"
     path.write_text(json.dumps(rows), encoding="utf-8")
@@ -489,6 +524,19 @@ def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_
     assert artifact.content_hash == hashlib.sha256(MEXT_TEXT.encode()).hexdigest()
 
 
+def test_catalogue_source_byte_limit_is_independent_from_model_text_limit(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_ai_max_input_characters=1_000,
+            catalogue_source_max_bytes_per_page=750_000,
+        ),
+    )
+
+    assert isinstance(service.fetcher, SafeSourceFetcher)
+    assert service.fetcher.max_bytes == 750_000
+
+
 def test_direct_url_run_rejects_non_https_and_reuses_unchanged_extraction(db_session) -> None:
     extractor = FakeClaimProvider(claim_output())
     service = CatalogueIngestionService(
@@ -516,6 +564,208 @@ def test_direct_url_run_rejects_non_https_and_reuses_unchanged_extraction(db_ses
     assert extractor.calls == 1
     assert db_session.scalar(select(func.count()).select_from(CatalogueCandidate)) == 2
     assert db_session.scalar(select(func.count()).select_from(CatalogueSourceArtifact)) == 2
+
+
+def test_direct_url_run_does_not_reuse_an_attempt_from_a_different_prompt(db_session) -> None:
+    extractor = FakeClaimProvider(claim_output())
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=extractor,
+    )
+    first = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    service.process_run(first.id, worker_id="direct-url-first-prompt")
+    attempt = db_session.scalar(select(CatalogueExtractionAttempt))
+    assert attempt is not None
+    attempt.prompt_hash = "0" * 64
+    db_session.commit()
+
+    second = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    service.process_run(second.id, worker_id="direct-url-new-prompt")
+
+    assert extractor.calls == 2
+
+
+def test_direct_source_bundle_materializes_claims_from_three_explicit_sources(db_session) -> None:
+    embassy_url = "https://scholarships.gov.uk/aaa-mext-embassy"
+    university_url = "https://scholarships.gov.uk/mext-university"
+    outputs = {
+        OFFICIAL_URL: claim_output().model_copy(update={"claims": claim_output().claims[:7]}),
+        embassy_url: claim_output().model_copy(
+            update={"claims": claim_output().claims[7:12] + claim_output().claims[14:]}
+        ),
+        university_url: claim_output().model_copy(update={"claims": claim_output().claims[12:14]}),
+    }
+    extraction_order: list[str] = []
+
+    def extract(source_url: str, _source_text: str) -> ClaimExtractionOutput:
+        extraction_order.append(source_url)
+        return outputs[source_url]
+
+    extractor = FakeClaimProvider(extract)
+    fetcher = MappingFetcher({item: MEXT_TEXT for item in outputs})
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(catalogue_ai_max_pages_per_candidate=3),
+        fetcher=fetcher,
+        claim_extractor=extractor,
+    )
+
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        supporting_urls=[embassy_url, university_url],
+        mode=IngestionMode.REVIEW_QUEUE,
+        dry_run=False,
+    )
+    result = service.process_run(run.id, worker_id="direct-bundle")
+
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    sources = db_session.scalars(
+        select(CatalogueCandidateSource)
+        .where(CatalogueCandidateSource.candidate_id == candidate.id)
+        .order_by(CatalogueCandidateSource.url)
+    ).all()
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.SUBMITTED_FOR_REVIEW
+    assert result.model_calls == 3
+    assert fetcher.calls == [OFFICIAL_URL, embassy_url, university_url]
+    assert extraction_order == [OFFICIAL_URL, embassy_url, university_url]
+    assert {item.source_role for item in sources} == {
+        CandidateSourceRole.PRIMARY,
+        CandidateSourceRole.SUPPORTING,
+    }
+    assert all(item.status is CandidateSourceStatus.FETCHED for item in sources)
+    assert all(
+        item.artifacts[0].fetch_metadata["source_role"] == item.source_role for item in sources
+    )
+    assert db_session.scalar(select(func.count()).select_from(CatalogueSourceArtifact)) == 3
+    assert db_session.scalar(select(func.count()).select_from(SourceSnapshot)) == 3
+    assert db_session.scalar(select(func.count()).select_from(GraphFieldEvidence)) == 16
+
+
+def test_direct_source_bundle_rejects_duplicates_and_page_budget_overflow(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(catalogue_ai_max_pages_per_candidate=2),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+
+    with pytest.raises(AppError, match="duplicate URL"):
+        service.create_run_from_url(
+            OFFICIAL_URL,
+            supporting_urls=[f"{OFFICIAL_URL}#same-source"],
+            mode=IngestionMode.EXTRACTION,
+            dry_run=True,
+        )
+    with pytest.raises(AppError, match="page budget"):
+        service.create_run_from_url(
+            OFFICIAL_URL,
+            supporting_urls=[
+                "https://scholarships.gov.uk/mext-embassy",
+                "https://scholarships.gov.uk/mext-university",
+            ],
+            mode=IngestionMode.EXTRACTION,
+            dry_run=True,
+        )
+
+
+def test_direct_source_bundle_blocks_off_topic_support_before_extraction(db_session) -> None:
+    supporting_url = "https://scholarships.gov.uk/general-funding"
+    fetcher = MappingFetcher(
+        {
+            OFFICIAL_URL: MEXT_TEXT,
+            supporting_url: "General government funding information for local students.",
+        }
+    )
+    extractor = FakeClaimProvider(claim_output())
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(catalogue_ai_max_pages_per_candidate=2),
+        fetcher=fetcher,
+        claim_extractor=extractor,
+    )
+
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        supporting_urls=[supporting_url],
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    result = service.process_run(run.id, worker_id="off-topic-bundle")
+
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    support = db_session.scalar(
+        select(CatalogueCandidateSource).where(
+            CatalogueCandidateSource.candidate_id == candidate.id,
+            CatalogueCandidateSource.source_role == CandidateSourceRole.SUPPORTING,
+        )
+    )
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.NEEDS_REVIEW
+    assert candidate.failure_code == "direct_source_bundle_incomplete"
+    assert support is not None
+    assert support.failure_code == "operator_source_topic_mismatch"
+    assert support.artifacts == []
+    assert result.model_calls == 0
+    assert extractor.calls == 0
+
+
+def test_direct_source_bundle_resolves_an_expected_university_domain(db_session) -> None:
+    university_url = "https://www.example.ac.jp/mext-recommendation"
+    db_session.add(
+        University(
+            name="Example University",
+            country="Japan",
+            website_url="https://www.example.ac.jp/",
+        )
+    )
+    db_session.commit()
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(catalogue_ai_max_pages_per_candidate=2),
+        fetcher=MappingFetcher({OFFICIAL_URL: MEXT_TEXT, university_url: MEXT_TEXT}),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        supporting_urls=[university_url],
+        university="Example University",
+        mode=IngestionMode.CANDIDATE_ONLY,
+        dry_run=True,
+    )
+    service.process_run(run.id, worker_id="university-source")
+
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    support = db_session.scalar(
+        select(CatalogueCandidateSource).where(
+            CatalogueCandidateSource.candidate_id == candidate.id,
+            CatalogueCandidateSource.source_role == CandidateSourceRole.SUPPORTING,
+        )
+    )
+    assert candidate is not None
+    assert candidate.seed_university == "Example University"
+    assert candidate.status is CandidateStatus.NEEDS_REVIEW
+    assert support is not None
+    assert support.is_official is True
+    assert support.trust_tier == 3
+    assert support.classification_reason == "domain matches the university's canonical website"
 
 
 def test_retry_clears_stale_direct_url_review_state(db_session) -> None:
@@ -706,6 +956,111 @@ def test_claim_resolution_fails_closed_when_one_entity_key_spans_routes() -> Non
         item.endswith("name:embassy_route_evidence_mismatch")
         for item in semantic_resolution.rejected
     )
+
+
+def test_claim_resolution_blocks_a_bundle_that_mixes_intake_cycles() -> None:
+    first_artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="d" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    prior_text = MEXT_TEXT.replace("2027 intake", "2026 intake")
+    prior_artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url="https://scholarships.gov.uk/mext-2026",
+        content_type="text/html",
+        content_hash="e" * 64,
+        normalized_text=prior_text,
+        extraction_method="normalized_text",
+        byte_count=len(prior_text),
+        character_count=len(prior_text),
+    )
+    current_cycle = claim_output().claims[4]
+    prior_cycle = current_cycle.model_copy(deep=True)
+    prior_cycle.entity_key = "2026"
+    prior_cycle.scope.cycle_key = "2026"
+    prior_cycle.value.integer_value = 2026
+    prior_cycle.excerpt = "2026 intake"
+    prior_cycle.excerpt_end = prior_cycle.excerpt_start + len(prior_cycle.excerpt)
+
+    resolution = resolve_claims(
+        [(first_artifact, 1, [current_cycle]), (prior_artifact, 1, [prior_cycle])]
+    )
+
+    assert "cycle:intake_year:multiple_cycles" in resolution.conflicts
+    assert "cycle:scope:multiple_cycles" in resolution.conflicts
+    assert resolution.is_materializable is False
+
+
+def test_claim_resolution_canonicalizes_same_year_cycle_aliases() -> None:
+    first_artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="d" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    second_artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url="https://scholarships.gov.uk/mext-2027",
+        content_type="text/html",
+        content_hash="e" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    first_cycle = claim_output().claims[4]
+    second_cycle = first_cycle.model_copy(deep=True)
+    second_cycle.entity_key = "arrival_2027_cycle"
+    second_cycle.scope.cycle_key = "arrival_2027_cycle"
+
+    resolution = resolve_claims(
+        [(first_artifact, 1, [first_cycle]), (second_artifact, 1, [second_cycle])]
+    )
+
+    assert "cycle:intake_year:multiple_cycles" not in resolution.conflicts
+    assert "cycle:scope:multiple_cycles" not in resolution.conflicts
+    assert {item.claim.entity_key for item in resolution.resolved} == {"intake_2027"}
+    assert {item.claim.scope.cycle_key for item in resolution.resolved} == {"intake_2027"}
+
+
+def test_claim_resolution_rejects_a_route_inferred_from_generic_university_text() -> None:
+    text = f"{MEXT_TEXT} Study at Japanese universities."
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="f" * 64,
+        normalized_text=text,
+        extraction_method="normalized_text",
+        byte_count=len(text),
+        character_count=len(text),
+    )
+    claim = claim_output().claims[6].model_copy(deep=True)
+    claim.field_path = "track_type"
+    claim.value.string_value = "university_recommendation"
+    claim.excerpt = "Study at Japanese universities."
+    claim.excerpt_start = text.index(claim.excerpt)
+    claim.excerpt_end = claim.excerpt_start + len(claim.excerpt)
+
+    resolution = resolve_claims([(artifact, 1, [claim])])
+
+    assert any(item.endswith("university_route_evidence_mismatch") for item in resolution.rejected)
+    assert resolution.resolved == []
 
 
 def test_seed_parser_fails_closed_for_image_only_pdf() -> None:
@@ -1391,6 +1746,52 @@ def test_azure_provider_does_not_retry_non_retryable_http_errors() -> None:
 
     assert opener.calls == 1
     assert waits == []
+
+
+def test_catalogue_ai_retry_delay_honors_retry_after_and_cap() -> None:
+    error = urllib.error.HTTPError(
+        OFFICIAL_URL,
+        429,
+        "Too Many Requests",
+        {"Retry-After": "30"},
+        None,
+    )
+
+    assert extraction_retry_delay(error, attempt=0, maximum=60) == 30
+    assert extraction_retry_delay(error, attempt=0, maximum=10) == 10
+    error.headers["Retry-After"] = "invalid"
+    assert extraction_retry_delay(error, attempt=1, maximum=60) == 2
+    error.headers["Retry-After"] = "NaN"
+    assert extraction_retry_delay(error, attempt=2, maximum=60) == 4
+
+
+def test_azure_claim_provider_surfaces_exhausted_rate_limit() -> None:
+    class Credential:
+        def get_token(self, scope: str):
+            del scope
+            return type("Token", (), {"token": "entra-token"})()
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del timeout
+            raise urllib.error.HTTPError(
+                request.full_url,
+                429,
+                "Too Many Requests",
+                {"Retry-After": "30"},
+                None,
+            )
+
+    provider = AzureOpenAIClaimProvider(
+        enabled_settings(catalogue_ai_max_retries=0),
+        credential=Credential(),
+        opener=Opener(),
+    )
+
+    with pytest.raises(ExtractionProviderRateLimited) as exc_info:
+        provider.extract_claims(source_url=OFFICIAL_URL, source_text=SOURCE_TEXT)
+
+    assert exc_info.value.code == "ai_rate_limited"
 
 
 def test_semantic_validation_rejects_country_inferred_from_university() -> None:
@@ -2095,3 +2496,10 @@ def test_catalogue_system_instruction_locks_conservative_semantics() -> None:
     assert "overall scholarship value" in SYSTEM_INSTRUCTION
     assert "participation costs" in SYSTEM_INSTRUCTION
     assert "Do not append" in SYSTEM_INSTRUCTION
+
+
+def test_claim_instruction_requires_exactly_one_typed_value() -> None:
+    from app.modules.catalogue_ingestion.claim_provider import CLAIM_SYSTEM_INSTRUCTION
+
+    assert "exactly one non-null field" in CLAIM_SYSTEM_INSTRUCTION
+    assert "the other four value fields to null" in CLAIM_SYSTEM_INSTRUCTION

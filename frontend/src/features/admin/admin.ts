@@ -182,10 +182,14 @@ export async function acquireOfficialUrl(
   targetName: string,
   dryRun: boolean,
   password: string,
+  supportingUrls: string[] = [],
+  university = "",
 ): Promise<{ run: IngestionRun; candidate: IngestionCandidateResponse["items"][number] | null; graph: OpportunityGraph | null }> {
   const run = await adminMutation<IngestionRun>("/admin/catalogue-ingestion/runs/url", {
     url,
+    supporting_urls: supportingUrls,
     target_name: targetName.trim() || null,
+    university: university.trim() || null,
     mode: dryRun ? "extraction" : "review_queue",
     dry_run: dryRun,
     process_now: true,

@@ -20,9 +20,11 @@ from app.modules.catalogue_ingestion.models import CatalogueSourceArtifact
 def resolve_claims(
     extracted: Iterable[tuple[CatalogueSourceArtifact, int, list[ExtractedClaim]]],
 ) -> ClaimResolution:
+    extracted_items = list(extracted)
+    cycle_aliases = _cycle_aliases(extracted_items)
     candidates: dict[tuple[str, str, str, str], list[ResolvedClaim]] = defaultdict(list)
     rejected: list[str] = []
-    for artifact, trust_tier, claims in extracted:
+    for artifact, trust_tier, claims in extracted_items:
         for claim in claims:
             if claim.field_path not in SUPPORTED_CLAIM_FIELDS[claim.entity_type]:
                 rejected.append(
@@ -43,6 +45,7 @@ def resolve_claims(
                     f"{claim.field_path}:{semantic_error}"
                 )
                 continue
+            claim = _canonicalize_cycle_aliases(claim, cycle_aliases)
             scope_key = json.dumps(claim.scope.model_dump(), sort_keys=True)
             key = (claim.entity_type.value, claim.entity_key, claim.field_path, scope_key)
             candidates[key].append(
@@ -101,13 +104,59 @@ def resolve_claims(
         if len(scopes) > 1:
             conflicts.append(f"{key[0].value}:{key[1]}:{key[2]}:ambiguous_scope_key")
 
+    intake_years = {
+        str(item.claim.value.primitive())
+        for item in resolved
+        if item.claim.entity_type is ClaimEntityType.CYCLE
+        and item.claim.field_path == "intake_year"
+    }
+    scoped_cycles = {
+        item.claim.scope.cycle_key for item in resolved if item.claim.scope.cycle_key is not None
+    }
+    if len(intake_years) > 1:
+        conflicts.append("cycle:intake_year:multiple_cycles")
+    if len(scoped_cycles) > 1:
+        conflicts.append("cycle:scope:multiple_cycles")
+
     completeness = mext_completeness_errors(resolved)
     return ClaimResolution(
         resolved=resolved,
-        conflicts=conflicts,
+        conflicts=sorted(set(conflicts)),
         rejected=rejected,
         completeness_errors=completeness,
     )
+
+
+def _cycle_aliases(
+    extracted: list[tuple[CatalogueSourceArtifact, int, list[ExtractedClaim]]],
+) -> dict[str, int]:
+    years_by_alias: dict[str, set[int]] = defaultdict(set)
+    for artifact, _trust_tier, claims in extracted:
+        for claim in claims:
+            if (
+                claim.entity_type is ClaimEntityType.CYCLE
+                and claim.field_path == "intake_year"
+                and _valid_evidence_span(artifact.normalized_text, claim)
+                and _semantic_claim_error(claim) is None
+            ):
+                value = claim.value.primitive()
+                if isinstance(value, int):
+                    years_by_alias[claim.entity_key].add(value)
+    return {alias: next(iter(years)) for alias, years in years_by_alias.items() if len(years) == 1}
+
+
+def _canonicalize_cycle_aliases(
+    claim: ExtractedClaim, cycle_aliases: dict[str, int]
+) -> ExtractedClaim:
+    entity_key = claim.entity_key
+    if claim.entity_type is ClaimEntityType.CYCLE and entity_key in cycle_aliases:
+        entity_key = f"intake_{cycle_aliases[entity_key]}"
+    scope = claim.scope
+    if scope.cycle_key in cycle_aliases:
+        scope = scope.model_copy(update={"cycle_key": f"intake_{cycle_aliases[scope.cycle_key]}"})
+    if entity_key == claim.entity_key and scope is claim.scope:
+        return claim
+    return claim.model_copy(update={"entity_key": entity_key, "scope": scope})
 
 
 def mext_completeness_errors(claims: list[ResolvedClaim]) -> list[str]:
@@ -164,6 +213,15 @@ def _semantic_claim_error(claim: ExtractedClaim) -> str | None:
     if claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "name":
         if claim.entity_key == "embassy_recommendation" and not (
             "embassy" in excerpt and "recommend" in excerpt
+        ):
+            return "embassy_route_evidence_mismatch"
+        if claim.entity_key == "university_recommendation" and not (
+            "university" in excerpt and "recommend" in excerpt
+        ):
+            return "university_route_evidence_mismatch"
+    if claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "track_type":
+        if claim.entity_key == "embassy_recommendation" and not (
+            ("embassy" in excerpt and "recommend" in excerpt) or "diplomatic mission" in excerpt
         ):
             return "embassy_route_evidence_mismatch"
         if claim.entity_key == "university_recommendation" and not (

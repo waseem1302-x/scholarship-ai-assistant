@@ -73,6 +73,13 @@ class CandidateSourceStatus(StrEnum):
     MANUAL_REVIEW = "manual_review"
 
 
+class CandidateSourceRole(StrEnum):
+    DISCOVERED = "discovered"
+    PRIMARY = "primary"
+    SUPPORTING = "supporting"
+    CRAWLED = "crawled"
+
+
 class ExtractionAttemptStatus(StrEnum):
     SUCCEEDED = "succeeded"
     PROVIDER_FAILED = "provider_failed"
@@ -259,6 +266,17 @@ class CatalogueCandidateSource(Base):
     url: Mapped[str] = mapped_column(String(2048))
     canonical_url: Mapped[str] = mapped_column(String(2048))
     final_url: Mapped[str | None] = mapped_column(String(2048))
+    source_role: Mapped[CandidateSourceRole] = mapped_column(
+        Enum(
+            CandidateSourceRole,
+            name="catalogue_candidate_source_role",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        default=CandidateSourceRole.DISCOVERED,
+        server_default=CandidateSourceRole.DISCOVERED.value,
+    )
     status: Mapped[CandidateSourceStatus] = mapped_column(
         Enum(
             CandidateSourceStatus,

@@ -17,8 +17,15 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--source", help="Local seed path or private Azure Blob HTTPS URI")
     result.add_argument("--url", help="One public HTTPS official-source lead")
+    result.add_argument(
+        "--supporting-url",
+        action="append",
+        default=[],
+        help="Additional authoritative HTTPS source; repeat within the configured page budget",
+    )
     result.add_argument("--name", help="Optional expected scholarship name for --url")
     result.add_argument("--provider", help="Optional expected provider name for --url")
+    result.add_argument("--university", help="Optional canonical university name for --url")
     result.add_argument("--country", help="Optional expected study country for --url")
     result.add_argument("--resume", type=uuid.UUID, help="Existing ingestion run UUID")
     result.add_argument("--dry-run", action="store_true")
@@ -46,10 +53,15 @@ def main(argv: list[str] | None = None) -> None:
     args = parser().parse_args(argv)
     if sum(value is not None for value in (args.source, args.url, args.resume)) != 1:
         parser().error("provide exactly one of --source, --url, or --resume")
-    if args.url is None and any(
-        value is not None for value in (args.name, args.provider, args.country)
+    if args.url is None and (
+        args.supporting_url
+        or any(
+            value is not None for value in (args.name, args.provider, args.university, args.country)
+        )
     ):
-        parser().error("--name, --provider, and --country require --url")
+        parser().error(
+            "--supporting-url, --name, --provider, --university, and --country require --url"
+        )
     if args.max_candidates is not None and args.max_candidates < 1:
         parser().error("--max-candidates must be positive")
     if not 1 <= args.batch_size <= 100:
@@ -69,8 +81,10 @@ def main(argv: list[str] | None = None) -> None:
                     args.url,
                     mode=IngestionMode(args.mode),
                     dry_run=args.dry_run,
+                    supporting_urls=args.supporting_url,
                     target_name=args.name,
                     provider=args.provider,
+                    university=args.university,
                     country=args.country,
                 )
                 run_id = run.id

@@ -5,7 +5,9 @@ import type { IngestionCandidate, IngestionRun, OpportunityGraph } from "./types
 
 export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }) {
   const [url, setUrl] = useState("");
+  const [supportingUrls, setSupportingUrls] = useState<string[]>([]);
   const [targetName, setTargetName] = useState("");
+  const [university, setUniversity] = useState("");
   const [password, setPassword] = useState("");
   const [dryRun, setDryRun] = useState(true);
   const [run, setRun] = useState<IngestionRun | null>(null);
@@ -19,7 +21,14 @@ export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }
     setLoading(true);
     setError(null);
     try {
-      const result = await acquireOfficialUrl(url, targetName, dryRun, password);
+      const result = await acquireOfficialUrl(
+        url,
+        targetName,
+        dryRun,
+        password,
+        supportingUrls.filter((item) => item.trim()).map((item) => item.trim()),
+        university,
+      );
       setRun(result.run);
       setCandidate(result.candidate);
       setGraph(result.graph);
@@ -37,7 +46,19 @@ export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }
     <h2>Build a cited scholarship record.</h2>
     <form className="direct-url-form" onSubmit={submit}>
       <label className="wide">Official HTTPS URL<input type="url" required value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.mext.go.jp/..." /></label>
+      <fieldset className="wide supporting-url-fieldset">
+        <legend>Supporting official URLs</legend>
+        <div className="supporting-url-list">
+          {supportingUrls.map((item, index) => <div key={index}>
+            <label className="sr-only" htmlFor={`supporting-url-${index}`}>Supporting official URL {index + 1}</label>
+            <input id={`supporting-url-${index}`} type="url" required value={item} onChange={(event) => setSupportingUrls((current) => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} placeholder="https://www.mext.go.jp/...pdf" />
+            <button className="button button-quiet" type="button" onClick={() => setSupportingUrls((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+          </div>)}
+          {supportingUrls.length < 9 ? <button className="button button-quiet supporting-url-add" type="button" onClick={() => setSupportingUrls((current) => [...current, ""])}>Add supporting URL</button> : null}
+        </div>
+      </fieldset>
       <label>Expected name (optional)<input value={targetName} onChange={(event) => setTargetName(event.target.value)} placeholder="MEXT Scholarship" /></label>
+      <label>Expected university (optional)<input value={university} onChange={(event) => setUniversity(event.target.value)} placeholder="Canonical university name" /></label>
       <label>Administrator password<input type="password" required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
       <label className="direct-url-toggle"><input type="checkbox" checked={dryRun} onChange={(event) => setDryRun(event.target.checked)} /> Validate without creating a draft</label>
       <button className="button button-primary" disabled={loading}>{loading ? "Acquiring..." : "Acquire official record"}</button>
@@ -48,6 +69,11 @@ export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }
       <span>Run {run.status.replaceAll("_", " ")}</span>
       {candidate.validation_errors.map((item) => <p key={item}>{item.replaceAll("_", " ")}</p>)}
       {candidate.conflicts.map((item) => <p key={item}>{item.replaceAll("_", " ")}</p>)}
+      {candidate.sources?.length ? <ul className="source-bundle-result">{candidate.sources.map((source) => <li key={source.id}>
+        <strong>{source.source_role}</strong>
+        <span>{source.failure_code?.replaceAll("_", " ") ?? (source.is_official ? "official" : "unverified")}</span>
+        <a href={source.final_url ?? source.url} target="_blank" rel="noreferrer">{new URL(source.final_url ?? source.url).hostname}</a>
+      </li>)}</ul> : null}
     </div> : null}
     {graph ? <div className="graph-review">
       <div><strong>{graph.tracks.length}</strong><span>routes</span></div>

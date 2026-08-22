@@ -640,10 +640,20 @@ h2 { letter-spacing: -.035em; }
 .direct-url-form label { display: grid; gap: 7px; color: #3a4b63; font-size: .82rem; font-weight: 750; }
 .direct-url-form .wide { grid-column: 1 / -1; }
 .direct-url-form input:not([type="checkbox"]) { width: 100%; min-height: 42px; border: 1px solid #bdcada; border-radius: 8px; padding: 10px 11px; }
+.supporting-url-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.supporting-url-fieldset legend { margin-bottom: 7px; color: #3a4b63; font-size: .82rem; font-weight: 750; }
+.supporting-url-list { display: grid; gap: 9px; }
+.supporting-url-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: center; }
+.supporting-url-list .button { min-height: 42px; }
+.supporting-url-add { justify-self: start; }
 .direct-url-toggle { display: flex !important; grid-template-columns: 18px 1fr; align-items: center; min-height: 42px; }
 .direct-url-toggle input { width: 16px; height: 16px; }
 .acquisition-result { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; padding: 14px; border-left: 3px solid #d7951b; background: #fffaf0; }
 .acquisition-result p { flex-basis: 100%; margin: 0; color: #795112; font-size: .82rem; }
+.source-bundle-result { display: grid; flex-basis: 100%; gap: 7px; margin: 4px 0 0; padding: 0; list-style: none; }
+.source-bundle-result li { display: grid; grid-template-columns: 90px minmax(100px, .6fr) minmax(0, 1fr); gap: 10px; align-items: center; }
+.source-bundle-result strong { text-transform: capitalize; }
+.source-bundle-result a { min-width: 0; overflow: hidden; color: var(--teal); text-overflow: ellipsis; white-space: nowrap; }
 .graph-review { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .graph-review > div { padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
 .graph-review > div strong, .graph-review > div span { display: block; }
@@ -748,6 +758,7 @@ h2 { letter-spacing: -.035em; }
   .tool-header, .match-card-header, .tracker-card-header, .verification-notice, .guest-save-cta { align-items: start; flex-direction: column; }
   .form-grid, .tracker-fields, .explanation-grid, .admin-layout, .import-fields, .review-controls, .admin-filters, .source-check-controls, .direct-url-form, .graph-review { grid-template-columns: 1fr; }
   .direct-url-form .wide { grid-column: auto; }
+  .source-bundle-result li { grid-template-columns: 1fr; gap: 3px; }
   .form-grid .wide, .tracker-fields .wide, .import-fields .wide, .review-controls .wide { grid-column: auto; }
   .admin-summary, .command-summary, .dashboard-sections { grid-template-columns: 1fr; }
   .review-card-header { align-items: start; flex-direction: column; }

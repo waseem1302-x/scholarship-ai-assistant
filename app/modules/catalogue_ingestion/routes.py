@@ -44,8 +44,10 @@ def create_url_run(
         str(payload.url),
         mode=payload.mode,
         dry_run=payload.dry_run,
+        supporting_urls=[str(item) for item in payload.supporting_urls],
         target_name=payload.target_name,
         provider=payload.provider,
+        university=payload.university,
         country=payload.country,
     )
     if payload.process_now:

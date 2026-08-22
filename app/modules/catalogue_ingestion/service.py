@@ -16,8 +16,8 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.models import AuditLog, User
 from app.modules.catalogue_ingestion.claim_provider import (
-    CLAIM_SYSTEM_INSTRUCTION,
     CatalogueClaimProvider,
+    claim_extraction_prompt_hash,
     get_claim_provider,
 )
 from app.modules.catalogue_ingestion.claim_resolution import resolve_claims
@@ -39,6 +39,7 @@ from app.modules.catalogue_ingestion.discovery_promotion import (
 from app.modules.catalogue_ingestion.graph_materializer import MextGraphMaterializer
 from app.modules.catalogue_ingestion.metrics import get_catalogue_metrics
 from app.modules.catalogue_ingestion.models import (
+    CandidateSourceRole,
     CandidateSourceStatus,
     CandidateStatus,
     CatalogueCandidate,
@@ -120,7 +121,7 @@ class CatalogueIngestionService:
         self.discovery = discovery or SeedUrlDiscoveryProvider()
         self.fetcher = fetcher or SafeSourceFetcher(
             timeout_seconds=settings.catalogue_ai_timeout_seconds,
-            max_bytes=min(settings.catalogue_ai_max_input_characters * 4, 5_000_000),
+            max_bytes=settings.catalogue_source_max_bytes_per_page,
         )
         self.extractor = extractor or get_extraction_provider(settings)
         self.claim_extractor = claim_extractor or get_claim_provider(settings)
@@ -169,20 +170,42 @@ class CatalogueIngestionService:
         *,
         mode: IngestionMode,
         dry_run: bool,
+        supporting_urls: list[str] | None = None,
         target_name: str | None = None,
         provider: str | None = None,
+        university: str | None = None,
         country: str | None = None,
     ) -> IngestionRunResponse:
-        normalized = normalize_discovery_lead_url(url)
-        if normalized.normalized is None:
-            code = normalized.rejection_code.value if normalized.rejection_code else "url_invalid"
-            raise AppError(code, "The direct catalogue URL is not permitted", 422)
+        canonical_urls: list[str] = []
+        hosts: list[str] = []
+        for raw_url in [url, *(supporting_urls or [])]:
+            normalized = normalize_discovery_lead_url(raw_url)
+            if normalized.normalized is None:
+                code = (
+                    normalized.rejection_code.value if normalized.rejection_code else "url_invalid"
+                )
+                raise AppError(code, "A direct catalogue source URL is not permitted", 422)
+            canonical_url = normalized.normalized.value
+            if canonical_url in canonical_urls:
+                raise AppError(
+                    "duplicate_direct_source_url",
+                    "The direct source bundle contains a duplicate URL",
+                    422,
+                )
+            canonical_urls.append(canonical_url)
+            hosts.append(normalized.normalized.host)
+        if len(canonical_urls) > self.settings.catalogue_ai_max_pages_per_candidate:
+            raise AppError(
+                "direct_source_budget_exceeded",
+                "The direct source bundle exceeds the configured page budget",
+                422,
+            )
 
-        canonical_url = normalized.normalized.value
-        display_name = target_name.strip() if target_name else normalized.normalized.host
-        fingerprint = hashlib.sha256(canonical_url.encode()).hexdigest()
+        canonical_url = canonical_urls[0]
+        display_name = target_name.strip() if target_name else hosts[0]
+        fingerprint = hashlib.sha256("\n".join(canonical_urls).encode()).hexdigest()
         run = CatalogueIngestionRun(
-            source_label=f"direct-url:{normalized.normalized.host}",
+            source_label=f"direct-url:{hosts[0]}",
             source_fingerprint=fingerprint,
             input_kind=IngestionInputKind.DIRECT_URL,
             operator_url=canonical_url,
@@ -203,12 +226,36 @@ class CatalogueIngestionService:
                 SeedCandidate(
                     name=display_name,
                     provider=provider,
+                    university=university,
                     country=country,
                     possible_official_url=canonical_url,
                 )
             ],
             identity_hint_is_asserted=target_name is not None,
         )
+        candidate = self.session.scalar(
+            select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+        )
+        assert candidate is not None
+        for index, source_url in enumerate(canonical_urls):
+            classification = self.classifier.classify(
+                source_url,
+                reviewed_official_domains=self.settings.catalogue_reviewed_official_domain_set,
+            )
+            candidate.sources.append(
+                CatalogueCandidateSource(
+                    url=source_url,
+                    canonical_url=self.opportunities.canonicalize_url(source_url),
+                    source_role=(
+                        CandidateSourceRole.PRIMARY
+                        if index == 0
+                        else CandidateSourceRole.SUPPORTING
+                    ),
+                    is_official=classification.is_official,
+                    trust_tier=classification.trust_tier,
+                    classification_reason=classification.reason,
+                )
+            )
         self.metrics.add("ingestion_runs_total")
         self.metrics.add("candidates_discovered")
         self.repository.refresh_run_summary(run)
@@ -284,6 +331,10 @@ class CatalogueIngestionService:
         )
 
     def _process_candidate(self, run: CatalogueIngestionRun, candidate: CatalogueCandidate) -> None:
+        if run.input_kind is IngestionInputKind.DIRECT_URL:
+            self._process_direct_candidate(run, candidate)
+            return
+
         discovered = self.discovery.discover(
             self._seed(candidate), limit=run.max_pages_per_candidate
         )
@@ -333,10 +384,7 @@ class CatalogueIngestionService:
         crawl_result: CrawlResult | None = None
         try:
             if self.settings.catalogue_bounded_crawling_enabled:
-                per_page_bytes = min(
-                    self.settings.catalogue_ai_max_input_characters * 4,
-                    5_000_000,
-                )
+                per_page_bytes = self.settings.catalogue_source_max_bytes_per_page
                 crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
                     source.url,
                     budget=CrawlBudget(
@@ -415,6 +463,7 @@ class CatalogueIngestionService:
             canonical_url=source.canonical_url,
             content_hash=source.content_hash,
             schema_version=EXTRACTION_SCHEMA_VERSION,
+            prompt_hash=extraction_prompt_hash(),
             provider=self.extractor.name,
             model=self.extractor.model,
         )
@@ -529,6 +578,232 @@ class CatalogueIngestionService:
         self.repository.release_candidate(candidate)
         self.session.commit()
 
+    def _process_direct_candidate(
+        self, run: CatalogueIngestionRun, candidate: CatalogueCandidate
+    ) -> None:
+        explicit_sources = [
+            source
+            for source in candidate.sources
+            if source.source_role in {CandidateSourceRole.PRIMARY, CandidateSourceRole.SUPPORTING}
+        ]
+        explicit_sources.sort(
+            key=lambda item: (
+                0 if item.source_role is CandidateSourceRole.PRIMARY else 1,
+                item.canonical_url,
+            )
+        )
+        if (
+            len(
+                [
+                    item
+                    for item in explicit_sources
+                    if item.source_role is CandidateSourceRole.PRIMARY
+                ]
+            )
+            != 1
+            or not explicit_sources
+            or len(explicit_sources) > run.max_pages_per_candidate
+        ):
+            self._manual_review(candidate, "direct_source_bundle_invalid")
+            return
+
+        provider_url, university_url = self._known_identity_urls(candidate)
+        candidate.status = CandidateStatus.OFFICIAL_SOURCE_CANDIDATE
+        failures = False
+        root_fetched: FetchedSource | None = None
+
+        if len(explicit_sources) == 1 and self.settings.catalogue_bounded_crawling_enabled:
+            source = explicit_sources[0]
+            classification = self._classify_direct_source(
+                source,
+                provider_url=provider_url,
+                university_url=university_url,
+            )
+            if not classification:
+                self._manual_review(candidate, "direct_source_bundle_incomplete")
+                return
+            try:
+                per_page_bytes = self.settings.catalogue_source_max_bytes_per_page
+                crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
+                    source.url,
+                    budget=CrawlBudget(
+                        max_pages=run.max_pages_per_candidate,
+                        max_depth=2,
+                        max_total_bytes=min(
+                            per_page_bytes * run.max_pages_per_candidate,
+                            20_000_000,
+                        ),
+                        per_host_interval_seconds=float(
+                            self.settings.source_monitor_per_host_interval_seconds
+                        ),
+                    ),
+                )
+                if not crawl_result.pages:
+                    raise SourceFetchError("crawler_returned_no_pages")
+                root_fetched = crawl_result.pages[0].fetched
+            except SourceFetchError as exc:
+                self._record_direct_fetch_failure(source, exc)
+                self._manual_review(candidate, "direct_source_bundle_incomplete")
+                return
+            if not self._accept_direct_source(
+                candidate,
+                source,
+                root_fetched,
+                provider_url=provider_url,
+                university_url=university_url,
+            ):
+                self._manual_review(candidate, "direct_source_bundle_incomplete")
+                return
+            self._persist_crawled_sources(
+                candidate,
+                crawl_result,
+                provider_url=provider_url,
+                university_url=university_url,
+            )
+            if len(crawl_result.pages) > 1:
+                self.metrics.add("source_fetch_success", len(crawl_result.pages) - 1)
+            if crawl_result.failures:
+                self.metrics.add("source_fetch_failure", len(crawl_result.failures))
+        else:
+            for source in explicit_sources:
+                classification = self._classify_direct_source(
+                    source,
+                    provider_url=provider_url,
+                    university_url=university_url,
+                )
+                if not classification:
+                    failures = True
+                    continue
+                try:
+                    fetched = self.fetcher.fetch(source.url)
+                except SourceFetchError as exc:
+                    self._record_direct_fetch_failure(source, exc)
+                    failures = True
+                    continue
+                if source.source_role is CandidateSourceRole.PRIMARY:
+                    root_fetched = fetched
+                if root_fetched is None or not self._accept_direct_source(
+                    candidate,
+                    source,
+                    fetched,
+                    provider_url=provider_url,
+                    university_url=university_url,
+                    root_fetched=root_fetched,
+                ):
+                    failures = True
+
+        if failures:
+            self._manual_review(candidate, "direct_source_bundle_incomplete")
+            return
+        candidate.status = CandidateStatus.SOURCE_FETCHED
+        self.session.commit()
+        if run.mode is IngestionMode.CANDIDATE_ONLY:
+            self._manual_review(candidate, "candidate_only_complete")
+            return
+        if not self.settings.catalogue_ai_ingestion_enabled:
+            self._manual_review(candidate, "ai_ingestion_disabled")
+            return
+        self._process_direct_claims(run, candidate)
+
+    def _classify_direct_source(
+        self,
+        source: CatalogueCandidateSource,
+        *,
+        provider_url: str | None,
+        university_url: str | None,
+    ) -> bool:
+        classification = self.classifier.classify(
+            source.url,
+            provider_website_url=provider_url,
+            university_website_url=university_url,
+            reviewed_official_domains=self.settings.catalogue_reviewed_official_domain_set,
+        )
+        source.is_official = classification.is_official
+        source.trust_tier = classification.trust_tier
+        source.classification_reason = classification.reason
+        if classification.is_official:
+            return True
+        source.status = CandidateSourceStatus.MANUAL_REVIEW
+        source.failure_code = "operator_source_not_official"
+        source.failure_reason = classification.reason[:1000]
+        self.metrics.add("official_sources_missing")
+        return False
+
+    def _accept_direct_source(
+        self,
+        candidate: CatalogueCandidate,
+        source: CatalogueCandidateSource,
+        fetched: FetchedSource,
+        *,
+        provider_url: str | None,
+        university_url: str | None,
+        root_fetched: FetchedSource | None = None,
+    ) -> bool:
+        classification = self.classifier.classify(
+            fetched.final_url,
+            provider_website_url=provider_url,
+            university_website_url=university_url,
+            reviewed_official_domains=self.settings.catalogue_reviewed_official_domain_set,
+        )
+        source.final_url = fetched.final_url
+        source.is_official = classification.is_official
+        source.trust_tier = classification.trust_tier
+        source.classification_reason = classification.reason
+        if not classification.is_official:
+            source.status = CandidateSourceStatus.MANUAL_REVIEW
+            source.failure_code = "redirected_to_unofficial_source"
+            source.failure_reason = classification.reason[:1000]
+            self.metrics.add("official_sources_missing")
+            return False
+
+        final_canonical = self.opportunities.canonicalize_url(fetched.final_url)
+        if any(
+            item.id != source.id and item.canonical_url == final_canonical
+            for item in candidate.sources
+        ):
+            source.status = CandidateSourceStatus.MANUAL_REVIEW
+            source.failure_code = "direct_source_redirect_duplicate"
+            source.failure_reason = (
+                "Another source in this bundle resolves to the same canonical URL"
+            )
+            self.metrics.add("source_fetch_failure")
+            return False
+        if (
+            root_fetched is not None
+            and source.source_role is CandidateSourceRole.SUPPORTING
+            and not _crawler_child_matches_root(root_fetched, fetched)
+        ):
+            source.status = CandidateSourceStatus.MANUAL_REVIEW
+            source.failure_code = "operator_source_topic_mismatch"
+            source.failure_reason = (
+                "Supporting source does not contain the MEXT identity marker "
+                "from the primary source"
+            )
+            self.metrics.add("source_fetch_failure")
+            return False
+
+        source.canonical_url = final_canonical
+        source.status = CandidateSourceStatus.FETCHED
+        source.content_type = fetched.content_type
+        source.content_hash = fetched.normalized_content_hash or fetched.content_hash
+        source.relevant_excerpt = fetched.excerpt_text
+        source.bytes_read = fetched.bytes_read
+        source.fetched_at = datetime.now(UTC)
+        source.failure_code = None
+        source.failure_reason = None
+        self._persist_source_artifact(source, fetched)
+        self.metrics.add("official_sources_found")
+        self.metrics.add("source_fetch_success")
+        return True
+
+    def _record_direct_fetch_failure(
+        self, source: CatalogueCandidateSource, exc: SourceFetchError
+    ) -> None:
+        source.status = CandidateSourceStatus.MANUAL_REVIEW
+        source.failure_code = _safe_failure_code(str(exc))
+        source.failure_reason = str(exc)[:1000]
+        self.metrics.add("source_fetch_failure")
+
     def retry_candidate(
         self, candidate_id: uuid.UUID, *, reason: str, actor: User
     ) -> CandidateResponse:
@@ -617,13 +892,26 @@ class CatalogueIngestionService:
             and source.status is CandidateSourceStatus.FETCHED
             and source.artifacts
         ]
-        sources.sort(key=lambda item: (item.trust_tier or 999, item.canonical_url))
+        role_order = {
+            CandidateSourceRole.PRIMARY: 0,
+            CandidateSourceRole.SUPPORTING: 1,
+            CandidateSourceRole.CRAWLED: 2,
+            CandidateSourceRole.DISCOVERED: 3,
+        }
+        sources.sort(
+            key=lambda item: (
+                role_order[item.source_role],
+                item.trust_tier or 999,
+                item.canonical_url,
+            )
+        )
         for source in sources:
             artifact = max(source.artifacts, key=lambda item: item.created_at)
             reused = self.repository.reusable_attempt(
                 canonical_url=source.canonical_url,
                 content_hash=artifact.content_hash,
                 schema_version=CLAIM_SCHEMA_VERSION,
+                prompt_hash=claim_extraction_prompt_hash(),
                 provider=self.claim_extractor.name,
                 model=self.claim_extractor.model,
             )
@@ -813,6 +1101,7 @@ class CatalogueIngestionService:
                 child_source = CatalogueCandidateSource(
                     url=fetched.url,
                     canonical_url=canonical_url,
+                    source_role=CandidateSourceRole.CRAWLED,
                     is_official=classification.is_official,
                     trust_tier=classification.trust_tier,
                     classification_reason=classification.reason,
@@ -879,7 +1168,10 @@ class CatalogueIngestionService:
                 extraction_method=extraction_method,
                 byte_count=fetched.bytes_read,
                 character_count=len(normalized_text),
-                fetch_metadata={"operator_host": urlsplit(source.url).hostname},
+                fetch_metadata={
+                    "operator_host": urlsplit(source.url).hostname,
+                    "source_role": source.source_role.value,
+                },
             )
         )
 
@@ -964,7 +1256,7 @@ class CatalogueIngestionService:
             model=self.claim_extractor.model,
             schema_version=CLAIM_SCHEMA_VERSION,
             content_hash=artifact.content_hash,
-            prompt_hash=hashlib.sha256(CLAIM_SYSTEM_INSTRUCTION.encode()).hexdigest(),
+            prompt_hash=claim_extraction_prompt_hash(),
             status=status,
             output_json=output.model_dump(mode="json") if output else None,
             error_code=error_code,

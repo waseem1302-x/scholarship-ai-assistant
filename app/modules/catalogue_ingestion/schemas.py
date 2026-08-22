@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from app.modules.catalogue_ingestion.models import (
+    CandidateSourceRole,
     CandidateStatus,
     IngestionInputKind,
     IngestionMode,
@@ -136,8 +137,10 @@ class DirectUrlIngestionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     url: HttpUrl
+    supporting_urls: list[HttpUrl] = Field(default_factory=list, max_length=9)
     target_name: str | None = Field(default=None, min_length=3, max_length=255)
     provider: str | None = Field(default=None, max_length=255)
+    university: str | None = Field(default=None, max_length=255)
     country: str | None = Field(default=None, max_length=100)
     mode: IngestionMode = IngestionMode.CANDIDATE_ONLY
     dry_run: bool = True
@@ -199,6 +202,7 @@ class CandidateSourceResponse(BaseModel):
     id: uuid.UUID
     url: str
     final_url: str | None
+    source_role: CandidateSourceRole
     is_official: bool
     trust_tier: int | None
     classification_reason: str

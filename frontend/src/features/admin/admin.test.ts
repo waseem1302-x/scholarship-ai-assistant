@@ -64,6 +64,8 @@ describe("administrator source operations", () => {
       "MEXT Scholarship",
       false,
       "AdminPassword2026",
+      ["https://www.mext.go.jp/supporting.pdf"],
+      "Example University",
     );
 
     expect(result.graph?.opportunity_id).toBe("opportunity-id");
@@ -74,7 +76,9 @@ describe("administrator source operations", () => {
         method: "POST",
         body: JSON.stringify({
           url: "https://www.mext.go.jp/example",
+          supporting_urls: ["https://www.mext.go.jp/supporting.pdf"],
           target_name: "MEXT Scholarship",
+          university: "Example University",
           mode: "review_queue",
           dry_run: false,
           process_now: true,
