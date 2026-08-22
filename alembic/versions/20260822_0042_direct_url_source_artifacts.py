@@ -34,9 +34,7 @@ def upgrade() -> None:
             )
         )
         batch_op.add_column(sa.Column("operator_url", sa.String(length=2048), nullable=True))
-        batch_op.create_index(
-            op.f("ix_catalogue_ingestion_runs_input_kind"), ["input_kind"]
-        )
+        batch_op.create_index(op.f("ix_catalogue_ingestion_runs_input_kind"), ["input_kind"])
 
     with op.batch_alter_table("catalogue_candidates") as batch_op:
         batch_op.add_column(
@@ -74,9 +72,7 @@ def upgrade() -> None:
             ["source_id"], ["catalogue_candidate_sources.id"], ondelete="RESTRICT"
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "source_id", "content_hash", name="uq_catalogue_source_artifact_hash"
-        ),
+        sa.UniqueConstraint("source_id", "content_hash", name="uq_catalogue_source_artifact_hash"),
     )
     op.create_index(
         op.f("ix_catalogue_source_artifacts_source_id"),
