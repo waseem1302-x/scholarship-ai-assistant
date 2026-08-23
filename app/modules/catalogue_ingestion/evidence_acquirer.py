@@ -17,8 +17,8 @@ from app.modules.opportunities.source_monitor import (
     FetchedLink,
     FetchedSource,
     SafeSourceFetcher,
-    SourceFetchError,
     SourceFetcher,
+    SourceFetchError,
 )
 
 EVIDENCE_ACQUIRER_CONTRACT_VERSION = "evidence-acquirer.v1"
