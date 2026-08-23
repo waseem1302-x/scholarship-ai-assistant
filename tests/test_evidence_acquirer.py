@@ -53,9 +53,7 @@ def _sample_fetched(*, url: str = "https://example.gov/scholarship") -> FetchedS
 def test_legacy_acquirer_returns_static_http_artifact() -> None:
     fetched = _sample_fetched()
     acquirer = LegacySafeEvidenceAcquirer(fetcher=_FakeFetcher(result=fetched))
-    result = acquirer.acquire(
-        AcquisitionRequest(url=fetched.url, role_hint=SourceRoleHint.PRIMARY)
-    )
+    result = acquirer.acquire(AcquisitionRequest(url=fetched.url, role_hint=SourceRoleHint.PRIMARY))
 
     assert result.fetched is fetched
     artifact = result.artifact
