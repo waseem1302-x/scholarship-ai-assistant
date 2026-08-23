@@ -67,9 +67,7 @@ def test_crawlee_acquirer_construct_fails_without_package() -> None:
 def test_crawlee_acquirer_delegates_to_safe_fetcher() -> None:
     fetched = _sample()
     acquirer = CrawleeStaticEvidenceAcquirer(fetcher=_FakeFetcher(fetched))
-    result = acquirer.acquire(
-        AcquisitionRequest(url=fetched.url, role_hint=SourceRoleHint.PRIMARY)
-    )
+    result = acquirer.acquire(AcquisitionRequest(url=fetched.url, role_hint=SourceRoleHint.PRIMARY))
     assert result.fetched is fetched
     assert result.artifact.parser_version == "crawlee-static.v1-safe-delegate"
     assert result.artifact.content_hash == "abc"

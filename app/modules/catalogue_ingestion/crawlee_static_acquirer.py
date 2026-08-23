@@ -17,7 +17,7 @@ from app.modules.catalogue_ingestion.evidence_acquirer import (
     EvidenceAcquirer,
     LegacySafeEvidenceAcquirer,
 )
-from app.modules.opportunities.source_monitor import SourceFetchError, SourceFetcher
+from app.modules.opportunities.source_monitor import SourceFetcher, SourceFetchError
 
 
 def is_crawlee_installed() -> bool:
