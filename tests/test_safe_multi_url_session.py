@@ -65,9 +65,7 @@ def test_session_acquires_all_successful_urls() -> None:
     a = "https://example.gov/a"
     b = "https://example.gov/b"
     fetcher = _ScriptedFetcher({a: _fetched(a), b: _fetched(b)})
-    session = SafeMultiUrlAcquisitionSession(
-        acquirer=LegacySafeEvidenceAcquirer(fetcher=fetcher)
-    )
+    session = SafeMultiUrlAcquisitionSession(acquirer=LegacySafeEvidenceAcquirer(fetcher=fetcher))
     outcome = session.run(MultiUrlAcquisitionPlan(urls=(a, b)))
     assert len(outcome.results) == 2
     assert outcome.failures == ()
@@ -78,12 +76,8 @@ def test_session_acquires_all_successful_urls() -> None:
 def test_session_records_failures_and_continues() -> None:
     a = "https://example.gov/a"
     b = "https://example.gov/b"
-    fetcher = _ScriptedFetcher(
-        {a: SourceFetchError("robots_disallowed"), b: _fetched(b)}
-    )
-    session = SafeMultiUrlAcquisitionSession(
-        acquirer=LegacySafeEvidenceAcquirer(fetcher=fetcher)
-    )
+    fetcher = _ScriptedFetcher({a: SourceFetchError("robots_disallowed"), b: _fetched(b)})
+    session = SafeMultiUrlAcquisitionSession(acquirer=LegacySafeEvidenceAcquirer(fetcher=fetcher))
     outcome = session.run(MultiUrlAcquisitionPlan(urls=(a, b), stop_on_error=False))
     assert len(outcome.results) == 1
     assert outcome.results[0].artifact.requested_url == b
@@ -93,12 +87,8 @@ def test_session_records_failures_and_continues() -> None:
 def test_session_stop_on_error() -> None:
     a = "https://example.gov/a"
     b = "https://example.gov/b"
-    fetcher = _ScriptedFetcher(
-        {a: SourceFetchError("unsafe_source_url"), b: _fetched(b)}
-    )
-    session = SafeMultiUrlAcquisitionSession(
-        acquirer=LegacySafeEvidenceAcquirer(fetcher=fetcher)
-    )
+    fetcher = _ScriptedFetcher({a: SourceFetchError("unsafe_source_url"), b: _fetched(b)})
+    session = SafeMultiUrlAcquisitionSession(acquirer=LegacySafeEvidenceAcquirer(fetcher=fetcher))
     outcome = session.run(MultiUrlAcquisitionPlan(urls=(a, b), stop_on_error=True))
     assert outcome.results == ()
     assert outcome.failures == ((a, "unsafe_source_url"),)
