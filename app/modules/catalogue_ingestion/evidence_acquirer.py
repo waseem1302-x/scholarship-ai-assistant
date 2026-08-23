@@ -149,7 +149,7 @@ class LegacySafeEvidenceAcquirer:
             final_url=fetched.final_url,
             content_type=fetched.content_type,
             content_hash=fetched.content_hash,
-            normalized_content_hash=fetched.normalized_text,
+            normalized_content_hash=fetched.normalized_content_hash,
             normalized_text=fetched.normalized_text,
             excerpt_text=fetched.excerpt_text,
             bytes_read=fetched.bytes_read,
