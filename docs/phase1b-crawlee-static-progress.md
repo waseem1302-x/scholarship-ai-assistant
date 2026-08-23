@@ -1,25 +1,29 @@
 # Phase 1b progress — Crawlee static adapter
 
 - Date: 2026-08-23
-- Branch: `codex/phase1b1-crawlee-clean`
-- Baseline: `codex/scholarship-detail-extraction-v3` (includes merged Phase 1a #34)
+- Baseline: `codex/scholarship-detail-extraction-v3` (1a #34 + 1b.1 #36 merged)
+- Active branch: `codex/phase1b2-crawlee-secure-bridge`
 
-## 1b.1 completed (this slice)
+## Completed
 
-| Item | Status |
+| Slice | Status |
 | --- | --- |
-| ADR 0015 | Done |
-| Optional `[crawlee]` extra | Done |
-| `select_evidence_acquirer(prefer_crawlee_static=...)` | Done |
-| Fail-closed when Crawlee missing | Done |
-| Single-URL acquire still via SafeSourceFetcher | Done |
-| Default path unchanged | Done |
-| Full Crawlee HttpClient / queue orchestration | **Deferred to 1b.2** |
+| 1a EvidenceAcquirer + LegacySafeEvidenceAcquirer | Merged #34 |
+| 1b.1 optional Crawlee factory (safe delegate) | Merged #36 |
+| 1b.2a multi-URL session via SafeSourceFetcher | **This branch** |
+| ADR 0016 security contract | **This branch** |
 
-## 1b.2 exit criteria (next)
+## Remaining
 
-- [ ] Custom security adapter or HttpClient that applies the same policy as
-      `SafeSourceFetcher` for every request Crawlee schedules.
-- [ ] SSRF / robots / byte-limit regression suite green with the adapter enabled.
-- [ ] Optional multi-page parity tests vs `BoundedOfficialSiteCrawler` fixtures.
-- [ ] Still no default switch in production without explicit configuration.
+| Slice | Status |
+| --- | --- |
+| 1b.2b custom Crawlee HttpClient calling SafeSourceFetcher | Not started |
+| Multi-page parity vs BoundedOfficialSiteCrawler fixtures | Not started |
+| Opt-in production worker using Crawlee queues | Blocked on 1b.2b |
+| Playwright / Docling / bulk 500 | Later phases |
+
+## Policy
+
+Crawlee stock HTTP clients are **not** authorised. All network I/O for acquisition
+must remain on the SafeSourceFetcher policy path until 1b.2b proves parity with
+SSRF regression tests.
