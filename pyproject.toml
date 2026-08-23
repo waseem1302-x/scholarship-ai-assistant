@@ -37,6 +37,11 @@ dev = [
   # Keep formatter output reproducible across CI/local runs; upgrade deliberately.
   "ruff==0.16.2",
 ]
+# Optional acquisition orchestration (Phase 1b). Not required for default runtime.
+# Install only when exercising the Crawlee-labelled path: uv sync --extra crawlee
+crawlee = [
+  "crawlee>=1.9,<2",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
