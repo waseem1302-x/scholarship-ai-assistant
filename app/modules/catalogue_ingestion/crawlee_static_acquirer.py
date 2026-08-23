@@ -9,6 +9,8 @@ the optional extra; full Crawlee queue orchestration is deferred to Phase 1b.2
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from app.modules.catalogue_ingestion.evidence_acquirer import (
     AcquisitionRequest,
     AcquisitionResult,
@@ -43,14 +45,9 @@ class CrawleeStaticEvidenceAcquirer:
 
     def acquire(self, request: AcquisitionRequest) -> AcquisitionResult:
         result = self._inner.acquire(request)
-        artifact = result.artifact
-        # Relabel parser identity so metrics can distinguish opt-in path without
-        # changing security semantics.
-        relabelled = type(artifact)(
-            **{
-                **{field: getattr(artifact, field) for field in artifact.__dataclass_fields__},
-                "parser_version": "crawlee-static.v1-safe-delegate",
-            }
+        relabelled = replace(
+            result.artifact,
+            parser_version="crawlee-static.v1-safe-delegate",
         )
         return AcquisitionResult(artifact=relabelled, fetched=result.fetched)
 
