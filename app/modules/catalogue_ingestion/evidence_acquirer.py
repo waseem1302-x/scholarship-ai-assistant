@@ -17,8 +17,8 @@ from app.modules.opportunities.source_monitor import (
     FetchedLink,
     FetchedSource,
     SafeSourceFetcher,
-    SourceFetchError,
     SourceFetcher,
+    SourceFetchError,
 )
 
 EVIDENCE_ACQUIRER_CONTRACT_VERSION = "evidence-acquirer.v1"
@@ -149,7 +149,7 @@ class LegacySafeEvidenceAcquirer:
             final_url=fetched.final_url,
             content_type=fetched.content_type,
             content_hash=fetched.content_hash,
-            normalized_content_hash=fetched.normalized_content_hash,
+            normalized_content_hash=fetched.normalized_text,
             normalized_text=fetched.normalized_text,
             excerpt_text=fetched.excerpt_text,
             bytes_read=fetched.bytes_read,
