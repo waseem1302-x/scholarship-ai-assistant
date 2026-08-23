@@ -25,7 +25,7 @@ EVIDENCE_ACQUIRER_CONTRACT_VERSION = "evidence-acquirer.v1"
 
 
 class AcquisitionTier(StrEnum):
-    """Cost ladder tiers from the engineering blueprint.
+    """Cost ladder tier from the engineering blueprint.
 
     Only ``CACHE`` and ``STATIC_HTTP`` are exercised by the legacy adapter in
     this phase. Browser, document, and OCR tiers are reserved for later work.
@@ -36,6 +36,10 @@ class AcquisitionTier(StrEnum):
     BROWSER = "browser"
     DOCUMENT = "document"
     OCR = "ocr"
+
+
+# Compatibility alias (older draft name)
+AcquisitionTiers = AcquisitionTier
 
 
 class SourceRoleHint(StrEnum):
@@ -94,7 +98,7 @@ class AcquiredArtifact:
     excerpt_text: str | None
     bytes_read: int
     links: tuple[FetchedLink, ...]
-    tier: AcquisitionTiers
+    tier: AcquisitionTier
     role_hint: SourceRoleHint
     retrieved_at: datetime
     acquirer_contract_version: str = EVIDENCE_ACQUIRER_CONTRACT_VERSION
@@ -150,7 +154,7 @@ class LegacySafeEvidenceAcquirer:
             excerpt_text=fetched.excerpt_text,
             bytes_read=fetched.bytes_read,
             links=fetched.links,
-            tier=AcquisitionTiers.STATIC_HTTP,
+            tier=AcquisitionTier.STATIC_HTTP,
             role_hint=request.role_hint,
             retrieved_at=now,
         )
@@ -173,8 +177,6 @@ class LegacySafeEvidenceAcquirer:
             limited.opener = original.opener
             limited._robots = original._robots
             return limited.fetch(url)
-        # Non-safe test doubles without limit support: enforce only via full fetch
-        # then reject oversized payloads deterministically.
         fetched = self.fetcher.fetch(url)
         if fetched.bytes_read > max_bytes:
             raise SourceFetchError("source_too_large")
@@ -192,6 +194,7 @@ __all__ = [
     "AcquiredArtifact",
     "AcquisitionRequest",
     "AcquisitionResult",
+    "AcquisitionTier",
     "AcquisitionTiers",
     "EvidenceAcquirer",
     "LegacySafeEvidenceAcquirer",

@@ -8,6 +8,7 @@ from app.modules.catalogue_ingestion.evidence_acquirer import (
     EVIDENCE_ACQUIRER_CONTRACT_VERSION,
     AcquiredArtifact,
     AcquisitionRequest,
+    AcquisitionTier,
     AcquisitionTiers,
     LegacySafeEvidenceAcquirer,
     SourceRoleHint,
@@ -65,6 +66,7 @@ def test_legacy_acquirer_returns_static_http_artifact() -> None:
     assert artifact.normalized_content_hash == "def456"
     assert artifact.normalized_text == fetched.normalized_text
     assert artifact.bytes_read == 1200
+    assert artifact.tier is AcquisitionTier.STATIC_HTTP
     assert artifact.tier is AcquisitionTiers.STATIC_HTTP
     assert artifact.role_hint is SourceRoleHint.PRIMARY
     assert artifact.acquirer_contract_version == EVIDENCE_ACQUIRER_CONTRACT_VERSION
@@ -141,3 +143,7 @@ def test_acquisition_request_rejects_non_positive_max_bytes() -> None:
 def test_default_factory_returns_legacy_acquirer() -> None:
     acquirer = default_evidence_acquirer()
     assert isinstance(acquirer, LegacySafeEvidenceAcquirer)
+
+
+def test_tier_alias_is_identical() -> None:
+    assert AcquisitionTiers is AcquisitionTier
