@@ -8,7 +8,7 @@ until later phases land behind this protocol.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
@@ -150,7 +150,7 @@ class LegacySafeEvidenceAcquirer:
             excerpt_text=fetched.excerpt_text,
             bytes_read=fetched.bytes_read,
             links=fetched.links,
-            tier=AcquisitionTier.STATIC_HTTP,
+            tier=AcquisitionTiers.STATIC_HTTP,
             role_hint=request.role_hint,
             retrieved_at=now,
         )
@@ -166,13 +166,7 @@ class LegacySafeEvidenceAcquirer:
                 timeout_seconds=original.timeout_seconds,
                 max_bytes=min(original.max_bytes, max_bytes),
                 crawl_policies={
-                    host: type(policy)(
-                        host=policy.host,
-                        check_interval_days=policy.check_interval_days,
-                        timeout_seconds=policy.timeout_seconds,
-                        max_bytes=min(policy.max_bytes, max_bytes),
-                        user_agent=policy.user_agent,
-                    )
+                    host: replace(policy, max_bytes=min(policy.max_bytes, max_bytes))
                     for host, policy in original.crawl_policies.items()
                 },
             )
@@ -198,7 +192,7 @@ __all__ = [
     "AcquiredArtifact",
     "AcquisitionRequest",
     "AcquisitionResult",
-    "AcquisitionTier",
+    "AcquisitionTiers",
     "EvidenceAcquirer",
     "LegacySafeEvidenceAcquirer",
     "SourceRoleHint",
