@@ -94,7 +94,7 @@ class AcquiredArtifact:
     excerpt_text: str | None
     bytes_read: int
     links: tuple[FetchedLink, ...]
-    tier: AcquisitionTier
+    tier: AcquisitionTiers
     role_hint: SourceRoleHint
     retrieved_at: datetime
     acquirer_contract_version: str = EVIDENCE_ACQUIRER_CONTRACT_VERSION
