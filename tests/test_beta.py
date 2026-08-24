@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -190,3 +191,38 @@ def test_verified_email_activates_reserved_beta_seat(db_session: Session) -> Non
         "beta_invitation_reserved",
         "beta_invitation_redeemed",
     }
+
+
+def test_bulk_expiry_deactivates_reserved_user_once(db_session: Session) -> None:
+    configuration = settings()
+    actor = admin(db_session)
+    beta = BetaService(db_session, configuration)
+    created = beta.create_invitation(
+        BetaInvitationCreate(email="expires-in-bulk@example.com"), actor
+    )
+    registered = AuthService(db_session, configuration).register(
+        "expires-in-bulk@example.com",
+        "phase9-password-42",
+        created.invitation_code,
+        accept_beta_terms=True,
+    )
+    invitation = db_session.get(BetaInvitation, created.id)
+    assert invitation is not None
+    invitation.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db_session.commit()
+
+    beta.list_invitations()
+    beta.list_invitations()
+
+    db_session.refresh(invitation)
+    user = db_session.get(User, registered.user.id)
+    expired_audits = db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.action == "beta_invitation_expired",
+            AuditLog.entity_id == str(invitation.id),
+        )
+    ).all()
+    assert invitation.status is BetaInvitationStatus.EXPIRED
+    assert user is not None
+    assert user.is_active is False
+    assert len(expired_audits) == 1

@@ -185,13 +185,7 @@ class BetaService:
             return
         now = datetime.now(UTC)
         if self._as_utc(invitation.expires_at) <= now:
-            invitation.status = BetaInvitationStatus.EXPIRED
-            user = self.session.get(User, user_id)
-            if user is not None:
-                # An expired reservation must not leave a verified account able
-                # to access an invite-only beta. Support can issue a new invite.
-                user.is_active = False
-            self._audit(user_id, "beta_invitation_expired", "beta_invitation", str(invitation.id))
+            self._expire_invitation(invitation)
             return
         invitation.redemption_count += 1
         invitation.redeemed_by_user_id = user_id
@@ -202,15 +196,36 @@ class BetaService:
         now = datetime.now(UTC)
         changed = False
         for invitation in self.session.scalars(
-            select(BetaInvitation).where(
+            select(BetaInvitation)
+            .where(
                 BetaInvitation.status == BetaInvitationStatus.PENDING,
                 BetaInvitation.expires_at <= now,
             )
+            .with_for_update()
         ):
-            invitation.status = BetaInvitationStatus.EXPIRED
-            changed = True
+            changed = self._expire_invitation(invitation) or changed
         if changed:
             self.session.commit()
+
+    def _expire_invitation(self, invitation: BetaInvitation) -> bool:
+        """Expire a pending reservation and disable its account in the same transaction."""
+
+        if invitation.status is not BetaInvitationStatus.PENDING:
+            return False
+        invitation.status = BetaInvitationStatus.EXPIRED
+        if invitation.reserved_by_user_id is not None:
+            user = self.session.get(User, invitation.reserved_by_user_id)
+            if user is not None:
+                # An expired reservation must not leave a verified account able
+                # to access an invite-only beta. Support can issue a new invite.
+                user.is_active = False
+        self._audit(
+            invitation.reserved_by_user_id,
+            "beta_invitation_expired",
+            "beta_invitation",
+            str(invitation.id),
+        )
+        return True
 
     def _audit(
         self,

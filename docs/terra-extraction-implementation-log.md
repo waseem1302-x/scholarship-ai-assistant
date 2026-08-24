@@ -483,3 +483,38 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Security/trust invariant:** claims from a prior/current/upcoming cycle are
   never combined into one resolved proposal merely because the source domain
   is official; ambiguous/unresolved deadline cycle facts remain review work.
+
+## R-01 — atomic beta invitation expiry
+
+- **Status:** local regression coverage is green; PostgreSQL concurrency proof
+  remains required for release evidence.
+- **Baseline commit:** `97cb69f`.
+- **Objective:** make bulk invitation expiry apply the same safety transition
+  as verification-time expiry: expire the invitation and deactivate its
+  reserved account in one locked, idempotent transaction.
+- **Files changed:** `app/modules/beta/service.py` and `tests/test_beta.py`.
+- **Behavior before:** `_expire_due()` changed only pending invitation status,
+  so a reserved user could remain active after a bulk-expiry pass. The
+  verification-time branch separately deactivated the user, leaving two
+  inconsistent implementations.
+- **Implementation:** `_expire_invitation()` is now the single idempotent
+  transition. Bulk expiry selects due pending invitations with row locking,
+  deactivates any reserved user, records one audit event, and commits once.
+  Email verification uses the same helper in its surrounding transaction.
+- **Tests added:** an invitation is reserved, forced past expiry, processed by
+  two bulk-expiry passes, and verified as expired with its user inactive and
+  exactly one expiry audit record.
+- **Commands and results:**
+  `uv --cache-dir .uv-cache run pytest tests/test_beta.py -q` — **8 passed, 2
+  warnings**. Targeted Ruff checks, formatting and `git diff --check` passed.
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/r01-beta tests/test_beta.py tests/test_auth.py`
+  — **27 passed, 2 warnings** (existing Starlette deprecation and local
+  pytest-cache access warnings).
+- **Security/trust invariant:** an expired pending invitation cannot retain an
+  active reserved beta account, and retrying expiry cannot generate duplicate
+  state transitions or audit records.
+- **Known limitation:** SQLite validates the idempotent state transition; the
+  row-lock/concurrent-expiry behavior still requires real PostgreSQL execution.
+- **Rollback:** deploy the prior service image. This is an in-place state
+  correction with no schema migration; already-expired reservations can be
+  safely reconciled by rerunning the bounded expiry operation.
