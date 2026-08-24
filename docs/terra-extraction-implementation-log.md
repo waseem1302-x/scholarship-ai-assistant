@@ -354,3 +354,37 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Next gate:** rerun the corrected fixture/P0-E suites, then implement P0-F
   source-role/cycle classification and routed objective work without weakening
   the open deployment gate.
+
+## P0-F — source-role, cycle, and objective routing
+
+- **Status:** deterministic classifier/routing contract implemented; durable
+  persistence and extraction-loop integration remain pending.
+- **Objective:** replace the unsafe default assumption that every official page
+  can answer every one of the twelve extraction objectives.
+- **Files changed:** `app/modules/catalogue_ingestion/source_routing.py` and
+  `tests/test_source_routing.py`.
+- **Implementation:** `source-router.v1` identifies the required role set,
+  classifies current/upcoming/historical/evergreen/ambiguous cycles from
+  deterministic signals, and maps roles to only applicable objectives. Unknown
+  and conflicting roles route no objectives and require manual review; mixed
+  cycle years are ambiguous and also route no objectives. Confidence is
+  diagnostic only.
+- **Tests added:** funding pages route only funding; document checklists exclude
+  funding/programme work; unknown/conflicting roles fail closed; mixed years
+  stop routing.
+- **Commands and results:**
+  `uv --cache-dir .uv-cache run ruff check app/modules/catalogue_ingestion/source_routing.py tests/test_source_routing.py`,
+  `ruff format --check ...`, and
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/p0f-router-green tests/test_source_routing.py`
+  — **4 passed, 2 warnings**. Warnings are existing Starlette deprecation and
+  local pytest-cache access warning.
+- **Security/trust invariants:** lexical signals are explainable diagnostics;
+  source text never authorizes a model call outside the routing matrix; unknown
+  is not silently upgraded to overview; no automatic publication is added.
+- **Known limitations:** routing decisions are not yet persisted with artifact
+  lineage, and the current extraction loop still invokes every objective. This
+  is not a P0-F completion claim.
+- **Rollback:** do not import or invoke `source_routing`; current pipeline
+  behavior remains unchanged until the durable wiring slice lands.
+- **Next gate:** add decision persistence/migration, route the extraction loop
+  through unresolved objectives, and add cache/budget/resume evidence.
