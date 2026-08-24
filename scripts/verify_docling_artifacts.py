@@ -15,7 +15,10 @@ def _bundle_entries(root: Path) -> list[dict[str, int | str]]:
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "bytes": path.stat().st_size,
         }
-        for path in sorted(root.rglob("*"))
+        # A model bundle is assembled on Windows and verified in a Linux
+        # worker.  Sort the serialized POSIX paths rather than ``Path``
+        # objects, whose comparison inherits host filesystem semantics.
+        for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix())
         if path.is_file() and ".cache" not in path.parts
     ]
 

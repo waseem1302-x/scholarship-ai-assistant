@@ -8,6 +8,8 @@ __pycache__/
 .document-lab-storage/
 .catalogue-seeds/
 .docling-models/
+# Local-only protected-fixture conversion proof material and Docker build logs.
+/tmp/p0e-*
 .pytest-tmp/
 /.w*-migration*/
 /.pytest-*/

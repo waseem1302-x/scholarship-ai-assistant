@@ -1050,3 +1050,69 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   override scope, exact evidence, conflicts, or review-only publication gates.
 - **Known limitations:** delegated facts and bundle-level per-scope completeness
   remain to be modeled durably.
+
+## P0-E follow-up — isolated real-Docling MEXT proof
+
+- **Status:** the first real offline conversion proof is green; it does not
+  close P0-E or the protected-fixture evaluation gate. The image is local-only,
+  the catalogue supervisor has no transport to it yet, and a reviewed
+  text-insufficient scan is still required to prove the automatic OCR fallback.
+- **Input provenance:** on 2026-08-24, the official MEXT 2027 Research
+  Students guidelines PDF was acquired once through `SafeSourceFetcher` and
+  staged only under `tmp/p0e-proof`. Its URL, final URL, MIME type, and
+  416,454-byte raw SHA-256 exactly match the MEXT entry in
+  `tests/fixtures/catalogue_extraction/source_snapshot_ledger.v1.json`. The
+  raw input and generated outputs are not committed, uploaded, or exposed by
+  an operator endpoint.
+- **Worker image:** `docker/docling-worker.Dockerfile` now bakes the reviewed
+  `.docling-models` bundle instead of downloading models while building or at
+  runtime. The image verifies the bundle before it drops to the `docling`
+  user. It contains no application-secret environment variables and sets
+  `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and
+  `DOCLING_ARTIFACTS_PATH=/opt/docling/models`.
+- **Integrity correction:** the original bundle hash depended on host `Path`
+  ordering, which differed between Windows lock generation and Linux worker
+  verification. `scripts/verify_docling_artifacts.py` now canonicalizes
+  relative POSIX paths before hashing. The reviewed bundle has 26 files,
+  765,212,139 bytes, and canonical SHA-256
+  `0474ee1ce69c48c8fcff5671164021892f34e8260f68da33b6c03d4180af9885`.
+  A regression test locks that ordering. The image also installs the minimal
+  headless OpenCV libraries (`libgl1`, `libglib2.0-0`, `libxcb1`, `libxext6`,
+  and `libxrender1`) required by Docling table inference.
+- **Isolation evidence:** the Compose profile and one-shot proof both use
+  `network_mode: none`, read-only root filesystem, a 512 MB `/tmp` tmpfs,
+  `cap_drop: ALL`, `no-new-privileges`, 256 PIDs, 2 CPUs, and 4 GB memory.
+  The PDF is bind-mounted read-only and only `tmp/p0e-proof/output` is
+  writable. The disposable containers were removed on completion.
+- **Real conversion result:** the restricted local image
+  `scholarship-catalogue-docling-worker:p0e-proof` completed the 11-page PDF
+  and produced 56,293 characters of Markdown (SHA-256
+  `7b0d0bbf092c44f68de61299421dcd2144ddfa3481762dd59814fc40fd1f5219`).
+  It preserved 23 ordered headings through `15. NOTES`, 130 list items, and
+  the 11-row application-documents Markdown table. This is a genuine Docling
+  layout/table conversion, not a `pypdf` fallback.
+- **OCR result:** an otherwise identical restricted run with `--enable-ocr`
+  initialized RapidOCR's detector, classifier, and recognizer from the baked
+  bundle on CPU, then produced byte-identical Markdown. This is expected for
+  the text-sufficient MEXT PDF. It proves the real offline OCR stack starts;
+  it does **not** prove the application's `text_insufficient` OCR-fallback
+  decision and must not be treated as such.
+- **Fixture discrepancy:** the live raw PDF matched the reviewed raw hash, but
+  this real worker output does not match the ledger's older normalized PDF
+  count/hash (52,169 characters / `ed069...`). No ledger was rewritten. A
+  reviewer must decide the approved expected normalization before P0-A's
+  executable fixture evaluation can pass.
+- **Evidence:** host and Linux-container bundle verification passed; focused
+  Ruff lint/format checks passed; and
+  `uv --cache-dir .uv-cache run python -m pytest -ra
+  tests/test_docling_artifacts.py tests/test_document_conversion.py -q`
+  completed **10 passed, 2 warnings**. Warnings are the existing Starlette
+  deprecation and local pytest-cache permission warning.
+- **Security/trust:** every networked acquisition still passes through
+  `SafeSourceFetcher`; the worker accepts only local paths and no credentials,
+  URLs, database access, or application settings. No feature flag, reviewer
+  decision, public opportunity, deployment, merge, or publication changed.
+- **Remaining P0-E work:** implement and prove the application-to-dedicated
+  worker transport; add a reviewed text-insufficient scan with expected
+  outcomes; demonstrate the automatic OCR fallback and persist its telemetry;
+  then execute the full protected-fixture evaluation.

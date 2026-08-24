@@ -4,5 +4,5 @@
   "models": ["layout", "tableformer", "rapidocr"],
   "file_count": 26,
   "total_bytes": 765212139,
-  "bundle_sha256": "2eb473093fb3b99176cdb10b485707400b34e22c5414021f1ad5c3e4056c81b6"
+  "bundle_sha256": "0474ee1ce69c48c8fcff5671164021892f34e8260f68da33b6c03d4180af9885"
 }
