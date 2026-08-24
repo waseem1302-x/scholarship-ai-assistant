@@ -532,6 +532,15 @@ class AssistantService:
             conversation.expires_at = None
             deleted_count += 1
         audit_cutoff = now - timedelta(days=self.settings.assistant_audit_retention_days)
+        # An answer can contain the rendered response, including optional
+        # private-progress context. Retain it only for the declared audit
+        # window, regardless of whether the user saved it to the workspace.
+        deleted_count += (
+            self.session.execute(
+                delete(AssistantAnswer).where(AssistantAnswer.created_at < audit_cutoff)
+            ).rowcount
+            or 0
+        )
         packet_ids_in_use = select(AssistantAnswer.evidence_packet_id)
         deleted_count += (
             self.session.execute(

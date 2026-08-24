@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,10 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.rate_limit import AuthRateLimitMiddleware
 from app.modules.assistant.models import (
+    AssistantAnswer,
+    AssistantCitation,
+    AssistantEvidencePacket,
+    AssistantFeedback,
     AssistantQuotaCounter,
     AssistantQuotaReservation,
     AssistantQuotaReservationStatus,
@@ -341,6 +346,59 @@ def test_assistant_quota_consumes_provider_failure_but_refunds_pre_provider_fail
     assert {
         counter.used_slots for counter in db_session.scalars(select(AssistantQuotaCounter))
     } == {1}
+
+
+def test_assistant_retention_deletes_expired_answer_evidence_and_feedback(
+    client: TestClient, db_session: Session
+) -> None:
+    verified_opportunity(client, db_session)
+    headers = student_headers(client, db_session, "assistant-retention@example.com")
+    user = db_session.scalar(select(User).where(User.email == "assistant-retention@example.com"))
+    assert user is not None
+    created = client.post(
+        "/api/v1/assistant/answers",
+        json={"question": "Malaysia masters scholarship"},
+        headers=headers,
+    )
+    assert created.status_code == 200
+    answer_id = UUID(created.json()["id"])
+    answer = db_session.get(AssistantAnswer, answer_id)
+    assert answer is not None
+    packet_id = answer.evidence_packet_id
+    db_session.add(
+        AssistantFeedback(
+            answer_id=answer.id,
+            user_id=user.id,
+            feedback_type="helpful",
+            comment="Private feedback must not outlive its answer.",
+            expires_at=datetime.now(UTC) + timedelta(days=365),
+        )
+    )
+    answer.saved_to_workspace = True
+    answer.created_at = datetime.now(UTC) - timedelta(days=31)
+    answer.evidence_packet.created_at = datetime.now(UTC) - timedelta(days=31)
+    db_session.commit()
+
+    retention_service = AssistantService(
+        db_session,
+        Settings(
+            env="test",
+            database_url="sqlite+pysqlite:///:memory:",
+            jwt_secret="assistant-retention-test-secret-at-least-32-characters",
+            assistant_audit_retention_days=30,
+        ),
+    )
+    assert retention_service.purge_expired_data() == 2
+    assert db_session.get(AssistantAnswer, answer_id) is None
+    assert db_session.get(AssistantEvidencePacket, packet_id) is None
+    assert (
+        db_session.scalar(select(AssistantCitation).where(AssistantCitation.answer_id == answer_id))
+        is None
+    )
+    assert (
+        db_session.scalar(select(AssistantFeedback).where(AssistantFeedback.answer_id == answer_id))
+        is None
+    )
 
 
 def test_profile_matching_uses_canonical_rule_evaluation(

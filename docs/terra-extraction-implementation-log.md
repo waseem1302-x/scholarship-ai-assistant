@@ -640,3 +640,35 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Rollback:** deploy the prior service image and downgrade migration
   `20260824_0048` only if no retained quota reservation data is needed. The
   migration is additive; existing answers remain untouched.
+
+## R-07 — assistant answer, evidence, and feedback retention
+
+- **Status:** local retention coverage is green; scheduled execution remains
+  dependent on the existing `app.cli.run_retention` operational job being run
+  in deployment.
+- **Baseline commit:** `28d3d93`.
+- **Objective:** ensure user prompts, rendered answers, evidence snapshots,
+  citations, and feedback do not outlive their declared retention periods.
+- **Implementation:** the existing retention job now deletes every assistant
+  answer older than `assistant_audit_retention_days`, including saved answers.
+  Database cascades remove its citations and feedback; the already-existing
+  orphan-packet pass then removes its evidence packet. Conversation messages
+  retain their shorter history policy, and standalone feedback retains its own
+  expiry rule. No saved-workspace exception prolongs a private payload.
+- **Test added:** an answer with a source-backed packet, citation, feedback,
+  and saved-workspace flag is aged beyond the 30-day audit period. Retention
+  removes the answer, packet, citation, and feedback even when the feedback's
+  own expiry would otherwise be in the future.
+- **Commands and results:** `uv --cache-dir .uv-cache run ruff check
+  app/modules/assistant/service.py tests/test_assistant.py` passed. `uv
+  --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/r07-retention-final tests/test_assistant.py` — **16 passed, 2
+  warnings** (existing Starlette deprecation and local pytest-cache access).
+- **Security/trust invariant:** a retained answer cannot indefinitely pin its
+  evidence packet or feedback, and a workspace-save flag is never an implicit
+  permanent-retention consent.
+- **Known limitation:** code-level cleanup does not prove production scheduling;
+  deployment still needs recurring `run_retention` execution and operational
+  health evidence before RC acceptance.
+- **Rollback:** deploy the prior service image. No migration is required; the
+  cleanup is irreversible for records already purged.
