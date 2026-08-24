@@ -49,9 +49,8 @@ def create_url_run(
         provider=payload.provider,
         university=payload.university,
         country=payload.country,
+        idempotency_key=payload.idempotency_key,
     )
-    if payload.process_now:
-        return service.process_run(run.id, worker_id=f"admin-api:{run.id}", batch_size=1)
     return run
 
 
@@ -63,6 +62,15 @@ def list_runs(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> IngestionRunListResponse:
     return service.list_runs(limit=limit, offset=offset)
+
+
+@router.get("/runs/{run_id}", response_model=IngestionRunResponse)
+def get_run_status(
+    run_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[CatalogueIngestionService, Depends(get_service)],
+) -> IngestionRunResponse:
+    return service.run_status(run_id)
 
 
 @router.get("/candidates", response_model=CandidateListResponse)

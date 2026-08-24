@@ -11,6 +11,8 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidate,
     CatalogueIngestionRun,
     IngestionMode,
+    IngestionRunRetryClass,
+    IngestionRunStatus,
 )
 from app.modules.catalogue_ingestion.repository import CatalogueIngestionRepository
 from app.modules.catalogue_ingestion.schemas import SeedCandidate
@@ -92,6 +94,64 @@ def test_candidate_worker_claim_skips_a_row_locked_by_another_worker(postgres_en
         locker.rollback()
         worker.close()
         locker.close()
+        with sessions() as cleanup:
+            persisted = cleanup.get(CatalogueIngestionRun, run_id)
+            if persisted is not None:
+                cleanup.delete(persisted)
+                cleanup.commit()
+
+
+def test_run_lease_reclaim_and_fencing_are_enforced_by_postgres(postgres_engine) -> None:
+    sessions = sessionmaker(bind=postgres_engine, expire_on_commit=False)
+    with sessions() as setup:
+        repository = CatalogueIngestionRepository(setup)
+        run = _run()
+        run.idempotency_key = f"postgres-fence-{uuid.uuid4().hex}"
+        run.max_attempts = 2
+        repository.add_run(run)
+        setup.commit()
+        run_id = run.id
+
+    now = datetime.now(UTC)
+    worker_one = sessions()
+    worker_two = sessions()
+    try:
+        first = CatalogueIngestionRepository(worker_one).claim_runs(
+            worker_id="postgres-worker-one", limit=1, lease_seconds=60, now=now
+        )[0]
+        first_token = first.lease_token
+        second = CatalogueIngestionRepository(worker_two).claim_runs(
+            worker_id="postgres-worker-two",
+            limit=1,
+            lease_seconds=60,
+            now=now + timedelta(seconds=61),
+        )[0]
+        assert second.lease_token != first_token
+        assert (
+            CatalogueIngestionRepository(worker_one).complete_run_claim(
+                run_id, lease_token=first_token or ""
+            )
+            is False
+        )
+        assert (
+            CatalogueIngestionRepository(worker_two).fail_run_claim(
+                run_id,
+                lease_token=second.lease_token or "",
+                error_code="postgres_transient_failure",
+                error_reason="transient source boundary failure",
+                retry_class=IngestionRunRetryClass.TRANSIENT,
+                retry_delay_seconds=30,
+                now=now + timedelta(seconds=61),
+            )
+            is True
+        )
+        worker_two.expire_all()
+        persisted = worker_two.get(CatalogueIngestionRun, run_id)
+        assert persisted is not None
+        assert persisted.status is IngestionRunStatus.PENDING
+    finally:
+        worker_one.close()
+        worker_two.close()
         with sessions() as cleanup:
             persisted = cleanup.get(CatalogueIngestionRun, run_id)
             if persisted is not None:

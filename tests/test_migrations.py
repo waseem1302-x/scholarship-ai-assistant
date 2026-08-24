@@ -465,3 +465,74 @@ def test_catalogue_ingestion_migration_is_additive_and_rolls_back(tmp_path: Path
         "monitor_failure_count",
     }.intersection({column["name"] for column in inspector.get_columns("sources")})
     engine.dispose()
+
+
+def test_catalogue_run_queue_migration_backfills_prior_runs_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    """Exercise the queue migration against its immediate production-like predecessor."""
+
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'catalogue-run-queue.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260823_0044")
+    engine = create_engine(database_url)
+    run_id = uuid.uuid4().hex
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO catalogue_ingestion_runs "
+                "(id, source_label, source_fingerprint, mode, status, dry_run, "
+                "max_candidates, max_pages_per_candidate, max_model_calls, "
+                "max_input_characters, max_output_tokens, max_estimated_cost, "
+                "model_calls, input_tokens, output_tokens, estimated_cost, aggregate_summary) "
+                "VALUES (:id, :label, :fingerprint, 'candidate_only', 'pending', 1, "
+                "1, 1, 0, 1000, 256, 0, 0, 0, 0, 0, '{}')"
+            ),
+            {"id": run_id, "label": "prior-queue-run", "fingerprint": "a" * 64},
+        )
+
+    command.upgrade(alembic_config, "20260824_0045")
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("catalogue_ingestion_runs")}
+    assert {
+        "idempotency_key",
+        "stage",
+        "max_attempts",
+        "attempt_count",
+        "next_attempt_at",
+        "claimed_until",
+        "lease_token",
+        "dead_lettered_at",
+    }.issubset(columns)
+    assert "ix_catalogue_ingestion_runs_claim" in {
+        index["name"] for index in inspector.get_indexes("catalogue_ingestion_runs")
+    }
+    with engine.connect() as connection:
+        migrated = connection.execute(
+            text(
+                "SELECT idempotency_key, stage, max_attempts, attempt_count "
+                "FROM catalogue_ingestion_runs WHERE id = :id"
+            ),
+            {"id": run_id},
+        ).one()
+    assert migrated == (f"legacy:{run_id}", "queued", 3, 0)
+
+    command.downgrade(alembic_config, "20260823_0044")
+    restored_columns = {
+        column["name"] for column in inspect(engine).get_columns("catalogue_ingestion_runs")
+    }
+    assert not {
+        "idempotency_key",
+        "stage",
+        "max_attempts",
+        "attempt_count",
+        "next_attempt_at",
+        "claimed_until",
+        "lease_token",
+        "dead_lettered_at",
+    }.intersection(restored_columns)
+    engine.dispose()

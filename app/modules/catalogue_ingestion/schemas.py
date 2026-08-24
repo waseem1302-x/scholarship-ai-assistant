@@ -14,6 +14,8 @@ from app.modules.catalogue_ingestion.models import (
     CandidateStatus,
     IngestionInputKind,
     IngestionMode,
+    IngestionRunRetryClass,
+    IngestionRunStage,
     IngestionRunStatus,
 )
 from app.modules.opportunities.models import (
@@ -144,7 +146,9 @@ class DirectUrlIngestionRequest(BaseModel):
     country: str | None = Field(default=None, max_length=100)
     mode: IngestionMode = IngestionMode.CANDIDATE_ONLY
     dry_run: bool = True
-    process_now: bool = True
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
+    # Retained only to reject callers that still expect HTTP work execution.
+    process_now: Literal[False] = False
 
 
 class ExtractionUsage(BaseModel):
@@ -165,10 +169,12 @@ class IngestionRunResponse(BaseModel):
     id: uuid.UUID
     source_label: str
     source_fingerprint: str
+    idempotency_key: str
     input_kind: IngestionInputKind
     operator_url: str | None
     mode: IngestionMode
     status: IngestionRunStatus
+    stage: IngestionRunStage
     dry_run: bool
     checkpoint_cursor: int
     max_candidates: int
@@ -178,6 +184,16 @@ class IngestionRunResponse(BaseModel):
     estimated_cost: Decimal
     aggregate_summary: dict[str, object]
     failure_code: str | None
+    last_error_reason: str | None
+    retry_class: IngestionRunRetryClass | None
+    max_attempts: int
+    attempt_count: int
+    next_attempt_at: datetime | None
+    claimed_by: str | None
+    claimed_at: datetime | None
+    claimed_until: datetime | None
+    lease_token: str | None
+    dead_lettered_at: datetime | None
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None

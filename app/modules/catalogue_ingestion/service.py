@@ -55,6 +55,8 @@ from app.modules.catalogue_ingestion.models import (
     ExtractionAttemptStatus,
     IngestionInputKind,
     IngestionMode,
+    IngestionRunRetryClass,
+    IngestionRunStage,
     IngestionRunStatus,
 )
 from app.modules.catalogue_ingestion.provider import (
@@ -150,6 +152,9 @@ class CatalogueIngestionService:
         run = CatalogueIngestionRun(
             source_label=loaded.label,
             source_fingerprint=loaded.fingerprint,
+            idempotency_key=_source_run_idempotency_key(
+                loaded.fingerprint, mode=mode, dry_run=dry_run, max_candidates=maximum
+            ),
             input_kind=IngestionInputKind.SEED_SOURCE,
             mode=mode,
             status=IngestionRunStatus.PENDING,
@@ -160,8 +165,11 @@ class CatalogueIngestionService:
             max_input_characters=self.settings.catalogue_ai_max_input_characters,
             max_output_tokens=self.settings.catalogue_ai_max_output_tokens,
             max_estimated_cost=self.settings.catalogue_ai_max_estimated_cost_per_run,
+            max_attempts=self.settings.catalogue_worker_max_attempts,
         )
-        self.repository.add_run(run)
+        run, created = self.repository.get_or_create_run(run)
+        if not created:
+            return IngestionRunResponse.model_validate(run)
         self.repository.add_seed_candidates(run, seeds[:maximum])
         self.metrics.add("ingestion_runs_total")
         self.metrics.add("candidates_discovered", min(len(seeds), maximum))
@@ -180,6 +188,7 @@ class CatalogueIngestionService:
         provider: str | None = None,
         university: str | None = None,
         country: str | None = None,
+        idempotency_key: str | None = None,
     ) -> IngestionRunResponse:
         canonical_urls: list[str] = []
         hosts: list[str] = []
@@ -209,9 +218,19 @@ class CatalogueIngestionService:
         canonical_url = canonical_urls[0]
         display_name = target_name.strip() if target_name else hosts[0]
         fingerprint = hashlib.sha256("\n".join(canonical_urls).encode()).hexdigest()
+        run_idempotency_key = idempotency_key or _direct_url_run_idempotency_key(
+            canonical_urls,
+            mode=mode,
+            dry_run=dry_run,
+            target_name=target_name,
+            provider=provider,
+            university=university,
+            country=country,
+        )
         run = CatalogueIngestionRun(
             source_label=f"direct-url:{hosts[0]}",
             source_fingerprint=fingerprint,
+            idempotency_key=run_idempotency_key,
             input_kind=IngestionInputKind.DIRECT_URL,
             operator_url=canonical_url,
             mode=mode,
@@ -223,8 +242,12 @@ class CatalogueIngestionService:
             max_input_characters=self.settings.catalogue_ai_max_input_characters,
             max_output_tokens=self.settings.catalogue_ai_max_output_tokens,
             max_estimated_cost=self.settings.catalogue_ai_max_estimated_cost_per_run,
+            max_attempts=self.settings.catalogue_worker_max_attempts,
         )
-        self.repository.add_run(run)
+        run, created = self.repository.get_or_create_run(run)
+        if not created:
+            self.session.commit()
+            return IngestionRunResponse.model_validate(run)
         self.repository.add_seed_candidates(
             run,
             [
@@ -274,48 +297,134 @@ class CatalogueIngestionService:
         worker_id: str,
         batch_size: int = 25,
     ) -> IngestionRunResponse:
+        run = self.repository.claim_run(
+            run_id,
+            worker_id=worker_id,
+            lease_seconds=self.settings.catalogue_worker_claim_seconds,
+            allow_budget_resume=True,
+        )
+        if run is None:
+            existing = self.repository.get_run(run_id)
+            if existing is None:
+                raise AppError("ingestion_run_not_found", "Ingestion run was not found", 404)
+            if existing.status in {
+                IngestionRunStatus.COMPLETED,
+                IngestionRunStatus.FAILED,
+                IngestionRunStatus.DEAD_LETTER,
+            }:
+                return IngestionRunResponse.model_validate(existing)
+            raise AppError(
+                "ingestion_run_unavailable",
+                "Ingestion run is already claimed or not due for retry",
+                409,
+            )
+        return self.process_claimed_run(run.id, worker_id=worker_id, batch_size=batch_size)
+
+    def process_next_runs(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        batch_size: int = 25,
+    ) -> list[IngestionRunResponse]:
+        """Claim queue-owned runs. HTTP entry points never call this method."""
+
+        results: list[IngestionRunResponse] = []
+        for _ in range(limit):
+            claimed = self.repository.claim_runs(
+                worker_id=worker_id,
+                limit=1,
+                lease_seconds=self.settings.catalogue_worker_claim_seconds,
+            )
+            if not claimed:
+                break
+            run = claimed[0]
+            results.append(
+                self.process_claimed_run(run.id, worker_id=worker_id, batch_size=batch_size)
+            )
+        return results
+
+    def process_claimed_run(
+        self,
+        run_id: uuid.UUID,
+        *,
+        worker_id: str,
+        batch_size: int = 25,
+    ) -> IngestionRunResponse:
         run = self.repository.get_run(run_id)
         if run is None:
             raise AppError("ingestion_run_not_found", "Ingestion run was not found", 404)
-        if run.status in {IngestionRunStatus.COMPLETED, IngestionRunStatus.FAILED}:
-            return IngestionRunResponse.model_validate(run)
-        run.status = IngestionRunStatus.RUNNING
-        run.failure_code = None
-        run.started_at = run.started_at or datetime.now(UTC)
-        self.session.commit()
+        if run.claimed_by != worker_id or not run.lease_token:
+            raise AppError("ingestion_run_lease_lost", "Worker does not own the run lease", 409)
+        lease_token = run.lease_token
 
-        while True:
-            candidates = self.repository.claim_candidates(
-                run_id=run.id,
-                worker_id=worker_id,
-                limit=min(batch_size, 100),
-                lease_seconds=self.settings.catalogue_worker_claim_seconds,
-            )
-            if not candidates:
-                break
-            for candidate in candidates:
-                try:
-                    self._process_candidate(run, candidate)
-                except RunBudgetExhausted:
-                    run.status = IngestionRunStatus.BUDGET_EXHAUSTED
-                    run.failure_code = "run_budget_exhausted"
-                    self.repository.release_candidate(candidate)
-                    self.session.commit()
-                    self.repository.refresh_run_summary(run)
-                    self.session.commit()
-                    return IngestionRunResponse.model_validate(run)
-                except Exception as exc:
-                    candidate.status = CandidateStatus.NEEDS_REVIEW
-                    candidate.failure_code = "unexpected_pipeline_failure"
-                    candidate.failure_reason = type(exc).__name__
-                    self.repository.release_candidate(candidate)
-                    self.session.commit()
-            run.checkpoint_cursor += len(candidates)
+        try:
+            while True:
+                if not self.repository.renew_run_claim(
+                    run.id,
+                    lease_token=lease_token,
+                    lease_seconds=self.settings.catalogue_worker_claim_seconds,
+                ):
+                    raise AppError("ingestion_run_lease_lost", "Run lease expired", 409)
+                candidates = self.repository.claim_candidates(
+                    run_id=run.id,
+                    worker_id=worker_id,
+                    limit=min(batch_size, 100),
+                    lease_seconds=self.settings.catalogue_worker_claim_seconds,
+                )
+                if not candidates:
+                    break
+                for candidate in candidates:
+                    try:
+                        run.stage = IngestionRunStage.ACQUIRING
+                        self._process_candidate(run, candidate)
+                    except RunBudgetExhausted:
+                        self.repository.release_candidate(candidate)
+                        self.session.commit()
+                        self.repository.refresh_run_summary(run)
+                        self.session.commit()
+                        if not self.repository.budget_exhausted_run_claim(
+                            run.id, lease_token=lease_token
+                        ):
+                            raise AppError(
+                                "ingestion_run_lease_lost", "Run lease expired", 409
+                            ) from None
+                        result = self.repository.get_run(run.id)
+                        assert result is not None
+                        return IngestionRunResponse.model_validate(result)
+                    except Exception as exc:
+                        candidate.status = CandidateStatus.NEEDS_REVIEW
+                        candidate.failure_code = "unexpected_pipeline_failure"
+                        candidate.failure_reason = type(exc).__name__
+                        self.repository.release_candidate(candidate)
+                        self.session.commit()
+                run.checkpoint_cursor += len(candidates)
+                self.session.commit()
+
+            self.repository.refresh_run_summary(run)
             self.session.commit()
-
-        self.repository.refresh_run_summary(run)
-        self.session.commit()
-        return IngestionRunResponse.model_validate(run)
+            if not self.repository.complete_run_claim(run.id, lease_token=lease_token):
+                raise AppError("ingestion_run_lease_lost", "Run lease expired", 409)
+            result = self.repository.get_run(run.id)
+            assert result is not None
+            return IngestionRunResponse.model_validate(result)
+        except AppError:
+            raise
+        except Exception as exc:
+            retry_delay = self.settings.catalogue_worker_retry_base_seconds * max(
+                1, min(run.attempt_count, 6)
+            )
+            self.repository.fail_run_claim(
+                run.id,
+                lease_token=lease_token,
+                error_code="ingestion_worker_failure",
+                error_reason=type(exc).__name__,
+                retry_class=IngestionRunRetryClass.TRANSIENT,
+                retry_delay_seconds=retry_delay,
+            )
+            result = self.repository.get_run(run.id)
+            assert result is not None
+            return IngestionRunResponse.model_validate(result)
 
     def process_bound_discovery_source(
         self,
@@ -1091,6 +1200,12 @@ class CatalogueIngestionService:
             items=[IngestionRunResponse.model_validate(item) for item in items], total=total
         )
 
+    def run_status(self, run_id: uuid.UUID) -> IngestionRunResponse:
+        run = self.repository.get_run(run_id)
+        if run is None:
+            raise AppError("ingestion_run_not_found", "Ingestion run was not found", 404)
+        return IngestionRunResponse.model_validate(run)
+
     def list_candidates(
         self,
         *,
@@ -1340,6 +1455,57 @@ class CatalogueIngestionService:
 
 def _safe_failure_code(message: str) -> str:
     return message.split(":", 1)[0].strip().replace(" ", "_")[:100] or "source_fetch_failed"
+
+
+def _direct_url_run_idempotency_key(
+    canonical_urls: list[str],
+    *,
+    mode: IngestionMode,
+    dry_run: bool,
+    target_name: str | None,
+    provider: str | None,
+    university: str | None,
+    country: str | None,
+) -> str:
+    """Bind a logical direct-input job to its canonical bundle and immutable options."""
+
+    normalized = "|".join(
+        _normalize_idempotency_value(value)
+        for value in (
+            "direct-url.v1",
+            *canonical_urls,
+            mode.value,
+            str(dry_run),
+            target_name,
+            provider,
+            university,
+            country,
+        )
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _source_run_idempotency_key(
+    source_fingerprint: str,
+    *,
+    mode: IngestionMode,
+    dry_run: bool,
+    max_candidates: int,
+) -> str:
+    normalized = "|".join(
+        (
+            "seed-source.v1",
+            source_fingerprint,
+            mode.value,
+            str(dry_run),
+            str(max_candidates),
+        )
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _normalize_idempotency_value(value: str | None) -> str:
+    return re.sub(r"\s+", " ", value or "").strip().casefold()
 
 
 def _claim_attempt_schema(objective: ClaimObjective) -> str:

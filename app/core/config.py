@@ -123,6 +123,8 @@ class Settings(BaseSettings):
     catalogue_scheduled_ingestion_enabled: bool = False
     catalogue_reviewed_official_domains: str = ""
     catalogue_worker_claim_seconds: int = Field(default=900, ge=30, le=3600)
+    catalogue_worker_max_attempts: int = Field(default=3, ge=1, le=20)
+    catalogue_worker_retry_base_seconds: int = Field(default=60, ge=1, le=3600)
     source_monitor_batch_limit: int = Field(default=100, ge=1, le=1_000)
     source_monitor_claim_seconds: int = Field(default=900, ge=30, le=3600)
     source_monitor_per_host_interval_seconds: Decimal = Field(default=Decimal("1.0"), ge=0, le=60)

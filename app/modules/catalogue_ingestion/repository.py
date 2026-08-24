@@ -7,7 +7,8 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.modules.catalogue_ingestion.models import (
@@ -17,6 +18,8 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
     ExtractionAttemptStatus,
+    IngestionRunRetryClass,
+    IngestionRunStage,
     IngestionRunStatus,
 )
 from app.modules.catalogue_ingestion.schemas import SeedCandidate
@@ -28,6 +31,11 @@ PROCESSABLE_STATUSES = {
     CandidateStatus.EXTRACTED,
 }
 
+RUNNABLE_STATUSES = {
+    IngestionRunStatus.PENDING,
+    IngestionRunStatus.RUNNING,
+}
+
 
 class CatalogueIngestionRepository:
     def __init__(self, session: Session) -> None:
@@ -37,8 +45,236 @@ class CatalogueIngestionRepository:
         self.session.add(run)
         self.session.flush()
 
+    def get_or_create_run(self, run: CatalogueIngestionRun) -> tuple[CatalogueIngestionRun, bool]:
+        """Create one logical run per idempotency key, including concurrent enqueues."""
+
+        existing = self.session.scalar(
+            select(CatalogueIngestionRun).where(
+                CatalogueIngestionRun.idempotency_key == run.idempotency_key
+            )
+        )
+        if existing is not None:
+            return existing, False
+        try:
+            with self.session.begin_nested():
+                self.session.add(run)
+                self.session.flush()
+        except IntegrityError:
+            existing = self.session.scalar(
+                select(CatalogueIngestionRun).where(
+                    CatalogueIngestionRun.idempotency_key == run.idempotency_key
+                )
+            )
+            if existing is None:
+                raise
+            return existing, False
+        return run, True
+
     def get_run(self, run_id: uuid.UUID) -> CatalogueIngestionRun | None:
         return self.session.get(CatalogueIngestionRun, run_id)
+
+    def claim_runs(
+        self,
+        *,
+        worker_id: str,
+        limit: int,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> list[CatalogueIngestionRun]:
+        """Claim due work with a fresh opaque fencing token per run."""
+
+        observed_at = now or datetime.now(UTC)
+        statement = (
+            select(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.status.in_(RUNNABLE_STATUSES),
+                or_(
+                    CatalogueIngestionRun.next_attempt_at.is_(None),
+                    CatalogueIngestionRun.next_attempt_at <= observed_at,
+                ),
+                or_(
+                    CatalogueIngestionRun.claimed_until.is_(None),
+                    CatalogueIngestionRun.claimed_until < observed_at,
+                ),
+            )
+            .order_by(CatalogueIngestionRun.created_at, CatalogueIngestionRun.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        runs = list(self.session.scalars(statement))
+        claimed_until = observed_at + timedelta(seconds=lease_seconds)
+        for run in runs:
+            run.status = IngestionRunStatus.RUNNING
+            run.stage = IngestionRunStage.ACQUIRING
+            run.claimed_by = worker_id
+            run.claimed_at = observed_at
+            run.claimed_until = claimed_until
+            run.lease_token = uuid.uuid4().hex
+            run.attempt_count += 1
+            run.failure_code = None
+            run.last_error_reason = None
+            run.retry_class = None
+            run.started_at = run.started_at or observed_at
+        self.session.commit()
+        return runs
+
+    def claim_run(
+        self,
+        run_id: uuid.UUID,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+        allow_budget_resume: bool = False,
+    ) -> CatalogueIngestionRun | None:
+        """Claim one requested run for the CLI/test resume path."""
+
+        observed_at = now or datetime.now(UTC)
+        statuses = set(RUNNABLE_STATUSES)
+        if allow_budget_resume:
+            statuses.add(IngestionRunStatus.BUDGET_EXHAUSTED)
+        run = self.session.scalar(
+            select(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.id == run_id,
+                CatalogueIngestionRun.status.in_(statuses),
+                or_(
+                    CatalogueIngestionRun.next_attempt_at.is_(None),
+                    CatalogueIngestionRun.next_attempt_at <= observed_at,
+                ),
+                or_(
+                    CatalogueIngestionRun.claimed_until.is_(None),
+                    CatalogueIngestionRun.claimed_until < observed_at,
+                ),
+            )
+            .with_for_update(skip_locked=True)
+        )
+        if run is None:
+            return None
+        run.status = IngestionRunStatus.RUNNING
+        run.stage = IngestionRunStage.ACQUIRING
+        run.claimed_by = worker_id
+        run.claimed_at = observed_at
+        run.claimed_until = observed_at + timedelta(seconds=lease_seconds)
+        run.lease_token = uuid.uuid4().hex
+        run.attempt_count += 1
+        run.failure_code = None
+        run.last_error_reason = None
+        run.retry_class = None
+        run.started_at = run.started_at or observed_at
+        self.session.commit()
+        return run
+
+    def renew_run_claim(
+        self,
+        run_id: uuid.UUID,
+        *,
+        lease_token: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> bool:
+        observed_at = now or datetime.now(UTC)
+        result = self.session.execute(
+            update(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.id == run_id,
+                CatalogueIngestionRun.status == IngestionRunStatus.RUNNING,
+                CatalogueIngestionRun.lease_token == lease_token,
+            )
+            .values(claimed_until=observed_at + timedelta(seconds=lease_seconds))
+        )
+        self.session.commit()
+        return result.rowcount == 1
+
+    def complete_run_claim(self, run_id: uuid.UUID, *, lease_token: str) -> bool:
+        completed_at = datetime.now(UTC)
+        result = self.session.execute(
+            update(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.id == run_id,
+                CatalogueIngestionRun.status == IngestionRunStatus.RUNNING,
+                CatalogueIngestionRun.lease_token == lease_token,
+            )
+            .values(
+                status=IngestionRunStatus.COMPLETED,
+                stage=IngestionRunStage.COMPLETE,
+                completed_at=completed_at,
+                claimed_by=None,
+                claimed_at=None,
+                claimed_until=None,
+                lease_token=None,
+                next_attempt_at=None,
+            )
+        )
+        self.session.commit()
+        return result.rowcount == 1
+
+    def budget_exhausted_run_claim(self, run_id: uuid.UUID, *, lease_token: str) -> bool:
+        result = self.session.execute(
+            update(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.id == run_id,
+                CatalogueIngestionRun.status == IngestionRunStatus.RUNNING,
+                CatalogueIngestionRun.lease_token == lease_token,
+            )
+            .values(
+                status=IngestionRunStatus.BUDGET_EXHAUSTED,
+                stage=IngestionRunStage.RESOLVING,
+                failure_code="run_budget_exhausted",
+                claimed_by=None,
+                claimed_at=None,
+                claimed_until=None,
+                lease_token=None,
+            )
+        )
+        self.session.commit()
+        return result.rowcount == 1
+
+    def fail_run_claim(
+        self,
+        run_id: uuid.UUID,
+        *,
+        lease_token: str,
+        error_code: str,
+        error_reason: str,
+        retry_class: IngestionRunRetryClass,
+        retry_delay_seconds: int,
+        now: datetime | None = None,
+    ) -> bool:
+        observed_at = now or datetime.now(UTC)
+        run = self.session.scalar(
+            select(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.id == run_id,
+                CatalogueIngestionRun.status == IngestionRunStatus.RUNNING,
+                CatalogueIngestionRun.lease_token == lease_token,
+            )
+            .with_for_update()
+        )
+        if run is None:
+            return False
+        terminal = retry_class is IngestionRunRetryClass.PERMANENT or (
+            run.attempt_count >= run.max_attempts
+        )
+        run.failure_code = error_code[:100]
+        run.last_error_reason = error_reason[:2000]
+        run.retry_class = retry_class
+        run.claimed_by = None
+        run.claimed_at = None
+        run.claimed_until = None
+        run.lease_token = None
+        if terminal:
+            run.status = IngestionRunStatus.DEAD_LETTER
+            run.stage = IngestionRunStage.DEAD_LETTER
+            run.dead_lettered_at = observed_at
+            run.completed_at = observed_at
+            run.next_attempt_at = None
+        else:
+            run.status = IngestionRunStatus.PENDING
+            run.stage = IngestionRunStage.QUEUED
+            run.next_attempt_at = observed_at + timedelta(seconds=retry_delay_seconds)
+        self.session.commit()
+        return True
 
     def add_seed_candidates(
         self,
@@ -239,12 +475,6 @@ class CatalogueIngestionRepository:
             .group_by(CatalogueCandidate.status)
         ).all()
         run.aggregate_summary = {status.value: count for status, count in counts}
-        if (
-            not any(status in PROCESSABLE_STATUSES and count for status, count in counts)
-            and run.status is IngestionRunStatus.RUNNING
-        ):
-            run.status = IngestionRunStatus.COMPLETED
-            run.completed_at = datetime.now(UTC)
 
 
 def candidate_idempotency_key(seed: SeedCandidate, *, run_id: uuid.UUID | None = None) -> str:

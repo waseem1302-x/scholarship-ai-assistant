@@ -675,8 +675,8 @@ def test_direct_url_run_rejects_non_https_and_reuses_unchanged_extraction(db_ses
         service.process_run(run.id, worker_id="direct-url-rerun")
 
     assert extractor.calls == 12
-    assert db_session.scalar(select(func.count()).select_from(CatalogueCandidate)) == 2
-    assert db_session.scalar(select(func.count()).select_from(CatalogueSourceArtifact)) == 2
+    assert db_session.scalar(select(func.count()).select_from(CatalogueCandidate)) == 1
+    assert db_session.scalar(select(func.count()).select_from(CatalogueSourceArtifact)) == 1
 
 
 def test_direct_url_run_does_not_reuse_an_attempt_from_a_different_prompt(db_session) -> None:
@@ -691,6 +691,7 @@ def test_direct_url_run_does_not_reuse_an_attempt_from_a_different_prompt(db_ses
         OFFICIAL_URL,
         mode=IngestionMode.EXTRACTION,
         dry_run=True,
+        idempotency_key="prompt-contract-before-change",
     )
     service.process_run(first.id, worker_id="direct-url-first-prompt")
     attempt = db_session.scalar(select(CatalogueExtractionAttempt))
@@ -702,6 +703,7 @@ def test_direct_url_run_does_not_reuse_an_attempt_from_a_different_prompt(db_ses
         OFFICIAL_URL,
         mode=IngestionMode.EXTRACTION,
         dry_run=True,
+        idempotency_key="prompt-contract-after-change",
     )
     service.process_run(second.id, worker_id="direct-url-new-prompt")
 

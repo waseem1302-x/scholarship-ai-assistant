@@ -35,6 +35,21 @@ class IngestionRunStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    DEAD_LETTER = "dead_letter"
+
+
+class IngestionRunStage(StrEnum):
+    QUEUED = "queued"
+    ACQUIRING = "acquiring"
+    EXTRACTING = "extracting"
+    RESOLVING = "resolving"
+    COMPLETE = "complete"
+    DEAD_LETTER = "dead_letter"
+
+
+class IngestionRunRetryClass(StrEnum):
+    TRANSIENT = "transient"
+    PERMANENT = "permanent"
 
 
 class IngestionMode(StrEnum):
@@ -103,11 +118,23 @@ class ClassificationDecisionStatus(StrEnum):
 
 class CatalogueIngestionRun(Base):
     __tablename__ = "catalogue_ingestion_runs"
-    __table_args__ = (Index("ix_catalogue_ingestion_runs_status_created", "status", "created_at"),)
+    __table_args__ = (
+        Index("ix_catalogue_ingestion_runs_status_created", "status", "created_at"),
+        Index(
+            "ix_catalogue_ingestion_runs_claim",
+            "status",
+            "next_attempt_at",
+            "claimed_until",
+            "created_at",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     source_label: Mapped[str] = mapped_column(String(255))
     source_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(128), unique=True, index=True, default=lambda: uuid.uuid4().hex
+    )
     input_kind: Mapped[IngestionInputKind] = mapped_column(
         Enum(
             IngestionInputKind,
@@ -141,6 +168,18 @@ class CatalogueIngestionRun(Base):
         default=IngestionRunStatus.PENDING,
         index=True,
     )
+    stage: Mapped[IngestionRunStage] = mapped_column(
+        Enum(
+            IngestionRunStage,
+            name="catalogue_ingestion_run_stage",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        default=IngestionRunStage.QUEUED,
+        server_default=IngestionRunStage.QUEUED.value,
+        index=True,
+    )
     dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
     checkpoint_cursor: Mapped[int] = mapped_column(Integer, default=0)
     max_candidates: Mapped[int] = mapped_column(Integer)
@@ -155,6 +194,24 @@ class CatalogueIngestionRun(Base):
     estimated_cost: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0"))
     aggregate_summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     failure_code: Mapped[str | None] = mapped_column(String(100))
+    last_error_reason: Mapped[str | None] = mapped_column(Text)
+    retry_class: Mapped[IngestionRunRetryClass | None] = mapped_column(
+        Enum(
+            IngestionRunRetryClass,
+            name="catalogue_ingestion_run_retry_class",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        )
+    )
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(100))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
