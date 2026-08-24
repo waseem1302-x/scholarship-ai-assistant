@@ -1295,3 +1295,29 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   MEXT/Open Doors payloads and reviewer-approved expected outcomes. The source
   ledger intentionally keeps each `raw_fixture_path` null, so this synthetic
   proof cannot be represented as a protected-fixture pass.
+
+## P0-E follow-up — approved private MEXT transport proof
+
+- **Status:** the ledger-matching MEXT PDF has now exercised the real
+  application-to-worker transport. This is partial protected-fixture evidence,
+  not a full protected-set pass.
+- **Approved capture:** one bounded `SafeSourceFetcher` capture was made into
+  non-committed temporary storage. The MEXT overview (28,825 bytes,
+  `47bbe69...99334922e`) and MEXT guidelines PDF (416,454 bytes,
+  `41121b...63f94fde`) exactly matched the frozen ledger's raw hashes. The
+  temporary raw captures were removed after verification.
+- **Real transport result:** the restricted offline worker converted the
+  admitted 11-page guidelines PDF through the bounded filesystem transport
+  without OCR. It returned 56,293 Markdown characters, 23 headings, parser
+  telemetry `document_ocr_decision=not_used` /
+  `document_ocr_reason=text_sufficient`, and Markdown SHA-256
+  `7b0d0bbf092c44f68de61299421dcd2144ddfa3481762dd59814fc40fd1f5219`.
+  The hash matches the earlier isolated Docling result, proving the transport
+  did not alter conversion output.
+- **Fail-closed full-set result:** the current Open Doors capture was 408,067
+  bytes with raw SHA-256
+  `6714721173e6f89d5c8a3cc41784e73aabb38c640d25cf0115a20ade92ab45c0`,
+  which differs from the frozen 405,564-byte ledger snapshot. The ledger was
+  not rewritten and no pass claim is made: ADR 0018 requires a new immutable
+  fixture version and reviewer-approved expected outcome before that source,
+  and therefore the full protected evaluation, can proceed.
