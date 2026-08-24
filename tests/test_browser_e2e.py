@@ -85,12 +85,12 @@ def test_public_home_can_browse_scholarships_without_an_account(
     expect(page).to_have_url(
         f"{live_base_url}/catalogue?availability=upcoming&limit=10&offset=0&application_window_state=upcoming"
     )
-    expect(page.get_by_text("Upcoming verified opportunities")).to_be_visible()
+    expect(page.get_by_text("Upcoming verified opportunities", exact=True)).to_be_visible()
 
     page.get_by_label("Availability").select_option("all")
     page.get_by_role("button", name="Apply filters").click()
     expect(page).to_have_url(f"{live_base_url}/catalogue?availability=all&limit=10&offset=0")
-    expect(page.get_by_text("All verified opportunities")).to_be_visible()
+    expect(page.get_by_text("All verified opportunities", exact=True)).to_be_visible()
 
 
 def test_react_frontend_can_register_and_sign_out(page: Page, live_base_url: str) -> None:
