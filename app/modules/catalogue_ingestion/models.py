@@ -393,6 +393,9 @@ class CatalogueSourceArtifact(Base):
     )
 
     source: Mapped[CatalogueCandidateSource] = relationship(back_populates="artifacts")
+    evidence_blocks: Mapped[list["CatalogueEvidenceBlock"]] = relationship(
+        back_populates="artifact", cascade="all, delete-orphan"
+    )
 
 
 @event.listens_for(CatalogueSourceArtifact, "before_update", propagate=True)
@@ -403,6 +406,44 @@ def _prevent_source_artifact_update(*_: object) -> None:
 @event.listens_for(CatalogueSourceArtifact, "before_delete", propagate=True)
 def _prevent_source_artifact_delete(*_: object) -> None:
     raise RuntimeError("catalogue source artifacts cannot be deleted")
+
+
+class CatalogueEvidenceBlock(Base):
+    """Versioned deterministic citation unit derived from one immutable artifact."""
+
+    __tablename__ = "catalogue_evidence_blocks"
+    __table_args__ = (
+        UniqueConstraint("artifact_id", "block_index", name="uq_catalogue_evidence_block_index"),
+        UniqueConstraint("artifact_id", "block_id", name="uq_catalogue_evidence_block_id"),
+        Index("ix_catalogue_evidence_blocks_artifact_offsets", "artifact_id", "start_offset"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    artifact_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalogue_source_artifacts.id", ondelete="RESTRICT"), index=True
+    )
+    block_id: Mapped[str] = mapped_column(String(64))
+    canonicalization_version: Mapped[str] = mapped_column(String(64))
+    block_index: Mapped[int] = mapped_column(Integer)
+    start_offset: Mapped[int] = mapped_column(Integer)
+    end_offset: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    locator: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    artifact: Mapped[CatalogueSourceArtifact] = relationship(back_populates="evidence_blocks")
+
+
+@event.listens_for(CatalogueEvidenceBlock, "before_update", propagate=True)
+def _prevent_evidence_block_update(*_: object) -> None:
+    raise RuntimeError("catalogue evidence blocks are immutable; create a new artifact")
+
+
+@event.listens_for(CatalogueEvidenceBlock, "before_delete", propagate=True)
+def _prevent_evidence_block_delete(*_: object) -> None:
+    raise RuntimeError("catalogue evidence blocks cannot be deleted")
 
 
 class CatalogueExtractionAttempt(Base):

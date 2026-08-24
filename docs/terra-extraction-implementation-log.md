@@ -205,3 +205,52 @@ contain immutable raw fixtures, so MEXT/Open Doors protected-fixture gates are
   and deploy the prior worker/API image. No schema or artifact migration is
   introduced by this slice.
 - **Next gate:** deterministic, versioned canonical evidence blocks (P0-D).
+
+## P0-D — canonical evidence blocks
+
+- **Status:** SQLite unit and migration coverage pass; PostgreSQL migration
+  execution remains environment-blocked.
+- **Objective:** turn immutable normalized source artifacts into deterministic,
+  versioned, exact-offset citation units without trusting model-authored
+  offsets.
+- **Behavior before:** `CatalogueSourceArtifact` stored immutable normalized
+  text, and claim validation checked spans against the full artifact, but no
+  canonical block identity or locator was persisted.
+- **Files changed:** `app/modules/catalogue_ingestion/evidence_blocks.py`,
+  `models.py`, `service.py`,
+  `alembic/versions/20260824_0046_catalogue_evidence_blocks.py`,
+  `tests/test_catalogue_evidence_blocks.py`, and `tests/test_migrations.py`.
+- **Migration:** additive revision `20260824_0046` creates
+  `catalogue_evidence_blocks`, with immutable artifact foreign key, block
+  identity/version/index, exact normalized-text offsets, verbatim block text,
+  JSON locator, uniqueness constraints and offset index. Downgrade removes only
+  the additive table.
+- **Implementation:** `evidence-blocks.v1` preserves the artifact text byte for
+  byte at the Python-character offset layer. It preferentially splits at a
+  paragraph, line, or space boundary before 1,200 characters, otherwise uses a
+  hard deterministic boundary. Each ID hashes version, index, offsets and block
+  text. New artifacts are flushed before blocks are generated; reused immutable
+  artifacts receive the same derived blocks if a prior deployment has not yet
+  generated them. No artifact is modified.
+- **Security/trust invariants:** blocks are derived only from existing normalized
+  artifact text; no model, crawler, browser, or remote document processor
+  chooses boundaries or writes citations. Artifact and block update/delete ORM
+  guards remain fail-closed. This adds no approval or publication path.
+- **Tests added:** repeated canonicalization yields identical IDs and offsets;
+  concatenated block text preserves all source whitespace; migration upgrade
+  from `20260824_0045` and downgrade back are asserted.
+- **Commands and results:**
+  - `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/p0d-final tests/test_catalogue_evidence_blocks.py tests/test_catalogue_ingestion.py tests/test_migrations.py::test_catalogue_evidence_block_migration_is_additive_and_rolls_back` — **77 passed, 2 warnings**. Warnings are the existing FastAPI/Starlette deprecation and local pytest cache permission warning.
+  - `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/p0d-migration tests/test_migrations.py::test_catalogue_evidence_block_migration_is_additive_and_rolls_back` — **1 passed, 2 warnings**.
+  - Targeted Ruff lint/format checks and `git diff --check` passed.
+- **Metrics/cost:** deterministic local segmentation only; zero network and zero
+  model calls. The default 1,200-character block bound limits downstream
+  evidence packet size while preserving offsets.
+- **Known limitations:** PDF layout-aware conversion/OCR and block-aware model
+  routing remain later slices. Existing persisted artifacts acquire blocks when
+  reused; a dedicated offline backfill command and PostgreSQL migration run are
+  still required before a production rollout.
+- **Rollback:** deploy the prior image; no existing artifact is changed. If
+  repository policy requires schema rollback, downgrade `20260824_0046` after
+  stopping workers that write new blocks.
+- **Next gate:** layout-aware document conversion and controlled OCR (P0-E).

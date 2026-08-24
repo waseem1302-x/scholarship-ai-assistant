@@ -536,3 +536,36 @@ def test_catalogue_run_queue_migration_backfills_prior_runs_and_rolls_back(
         "dead_lettered_at",
     }.intersection(restored_columns)
     engine.dispose()
+
+
+def test_catalogue_evidence_block_migration_is_additive_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'catalogue-evidence-blocks.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260824_0045")
+    engine = create_engine(database_url)
+    assert "catalogue_evidence_blocks" not in inspect(engine).get_table_names()
+
+    command.upgrade(alembic_config, "20260824_0046")
+    inspector = inspect(engine)
+    assert {
+        "id",
+        "artifact_id",
+        "block_id",
+        "canonicalization_version",
+        "block_index",
+        "start_offset",
+        "end_offset",
+        "text",
+        "locator",
+    }.issubset({column["name"] for column in inspector.get_columns("catalogue_evidence_blocks")})
+    assert "ix_catalogue_evidence_blocks_artifact_offsets" in {
+        index["name"] for index in inspector.get_indexes("catalogue_evidence_blocks")
+    }
+
+    command.downgrade(alembic_config, "20260824_0045")
+    assert "catalogue_evidence_blocks" not in inspect(engine).get_table_names()
+    engine.dispose()

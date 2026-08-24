@@ -43,6 +43,7 @@ from app.modules.catalogue_ingestion.discovery_promotion import (
     DiscoveryPromotionResult,
 )
 from app.modules.catalogue_ingestion.evidence_acquirer import AcquisitionRequest
+from app.modules.catalogue_ingestion.evidence_blocks import ensure_evidence_blocks
 from app.modules.catalogue_ingestion.graph_materializer import MextGraphMaterializer
 from app.modules.catalogue_ingestion.metrics import get_catalogue_metrics
 from app.modules.catalogue_ingestion.models import (
@@ -1039,6 +1040,7 @@ class CatalogueIngestionService:
         )
         for source in sources:
             artifact = max(source.artifacts, key=lambda item: item.created_at)
+            ensure_evidence_blocks(self.session, artifact)
             raw_links = artifact.fetch_metadata.get("links", [])
             source_links = raw_links if isinstance(raw_links, list) else []
             for objective in ClaimObjective:
@@ -1328,28 +1330,30 @@ class CatalogueIngestionService:
             )
         )
         if existing is not None:
+            ensure_evidence_blocks(self.session, existing)
             return
         content_type = fetched.content_type
         extraction_method = "pdf_text" if content_type == "application/pdf" else "normalized_text"
-        source.artifacts.append(
-            CatalogueSourceArtifact(
-                final_url=fetched.final_url,
-                content_type=content_type,
-                content_hash=content_hash,
-                normalized_text=normalized_text,
-                extraction_method=extraction_method,
-                byte_count=fetched.bytes_read,
-                character_count=len(normalized_text),
-                fetch_metadata={
-                    "operator_host": urlsplit(source.url).hostname,
-                    "source_role": source.source_role.value,
-                    "links": [
-                        {"url": item.url, "text": item.text, "title": item.title}
-                        for item in fetched.links[:500]
-                    ],
-                },
-            )
+        artifact = CatalogueSourceArtifact(
+            final_url=fetched.final_url,
+            content_type=content_type,
+            content_hash=content_hash,
+            normalized_text=normalized_text,
+            extraction_method=extraction_method,
+            byte_count=fetched.bytes_read,
+            character_count=len(normalized_text),
+            fetch_metadata={
+                "operator_host": urlsplit(source.url).hostname,
+                "source_role": source.source_role.value,
+                "links": [
+                    {"url": item.url, "text": item.text, "title": item.title}
+                    for item in fetched.links[:500]
+                ],
+            },
         )
+        source.artifacts.append(artifact)
+        self.session.flush()
+        ensure_evidence_blocks(self.session, artifact)
 
     def _manual_review(self, candidate: CatalogueCandidate, code: str) -> None:
         candidate.status = CandidateStatus.NEEDS_REVIEW
