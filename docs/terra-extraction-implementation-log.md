@@ -744,3 +744,27 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   formatting, and `git diff --check` passed.
 - **Known limitation:** real PostgreSQL multi-worker fencing and a real
   production object-store outage/reconciliation exercise remain RC gates.
+
+## R-05 — fail closed on Document Lab provider deadlines
+
+- **Status:** local provider-boundary regression coverage is green; a real
+  reviewed provider transport and production worker execution remain required.
+- **Baseline:** `7e6bd0f`.
+- **Implementation:** removed the `ThreadPoolExecutor` timeout fallback,
+  because cancelling a Python future cannot stop an in-flight provider call.
+  Document Lab now invokes only `analyse_with_deadline`, passing the bounded
+  configured timeout, and rejects a provider that does not implement that
+  boundary before its ordinary `analyse` method is called.
+- **Security/trust:** private extracted text is no longer handed to an
+  unbounded background thread. Provider adapters must enforce their own
+  transport deadline; no fallback silently weakens that contract.
+- **Tests:** a provider-reported deadline expiry remains a safe terminal
+  failure; a provider missing the deadline method is never executed; the
+  deadline argument reaches a compliant provider. Focused verification
+  completed **3 passed, 20 deselected, 2 warnings in 4.94s** and the related
+  analysis group completed **9 passed, 14 deselected, 1 warning in 21.67s**.
+  Targeted Ruff lint, formatting, and `git diff --check` passed.
+- **Known limitation:** this is a contract boundary, not proof that a future
+  third-party adapter correctly configures its HTTP transport deadline;
+  production adapter review and a killable isolated-worker proof remain RC
+  gates.

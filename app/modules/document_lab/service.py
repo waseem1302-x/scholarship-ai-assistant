@@ -3,7 +3,6 @@
 import hashlib
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
@@ -39,7 +38,6 @@ from app.modules.document_lab.models import (
 from app.modules.document_lab.provider import (
     DocumentProvider,
     DocumentProviderError,
-    DocumentProviderTimeout,
     ProviderAnalysisOutput,
     ProviderFeedbackItem,
     get_provider,
@@ -887,22 +885,13 @@ class DocumentLabService:
         self, text: str, analysis_type: DocumentKind
     ) -> ProviderAnalysisOutput:
         deadline_analyser = getattr(self.provider, "analyse_with_deadline", None)
-        if callable(deadline_analyser):
-            return deadline_analyser(
-                text,
-                analysis_type,
-                timeout_seconds=self.settings.document_lab_provider_timeout_seconds,
-            )
-        executor = ThreadPoolExecutor(max_workers=1)
-        try:
-            future = executor.submit(self.provider.analyse, text, analysis_type)
-            try:
-                return future.result(timeout=self.settings.document_lab_provider_timeout_seconds)
-            except TimeoutError as exc:
-                future.cancel()
-                raise DocumentProviderTimeout("Document provider timed out") from exc
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+        if not callable(deadline_analyser):
+            raise DocumentProviderError("Document provider does not enforce a transport deadline")
+        return deadline_analyser(
+            text,
+            analysis_type,
+            timeout_seconds=self.settings.document_lab_provider_timeout_seconds,
+        )
 
     def _complete_job(self, job: DocumentAnalysisJob) -> None:
         completed = self.session.execute(

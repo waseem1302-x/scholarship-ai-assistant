@@ -1,5 +1,4 @@
 import io
-import time
 import zipfile
 from datetime import timedelta
 from pathlib import Path
@@ -27,6 +26,7 @@ from app.modules.document_lab.models import (
 )
 from app.modules.document_lab.provider import (
     DocumentProviderQuotaExhausted,
+    DocumentProviderTimeout,
     ProviderAnalysisOutput,
     ProviderFeedbackItem,
 )
@@ -628,6 +628,12 @@ class GroundedProvider:
             ],
         )
 
+    def analyse_with_deadline(
+        self, text: str, analysis_type: str, *, timeout_seconds: int
+    ) -> ProviderAnalysisOutput:
+        assert timeout_seconds > 0
+        return self.analyse(text, analysis_type)
+
 
 def ready_document_service(
     db_session: Session,
@@ -851,13 +857,15 @@ def test_analysis_quota_provider_quota_and_extracted_text_limit_are_safe(
 
 
 def test_provider_timeout_is_persisted_as_safe_failure(db_session: Session, tmp_path: Path) -> None:
-    class SlowProvider(GroundedProvider):
-        def analyse(self, text: str, analysis_type: str) -> ProviderAnalysisOutput:
-            time.sleep(2)
-            return super().analyse(text, analysis_type)
+    class TimedOutProvider(GroundedProvider):
+        def analyse_with_deadline(
+            self, text: str, analysis_type: str, *, timeout_seconds: int
+        ) -> ProviderAnalysisOutput:
+            del text, analysis_type, timeout_seconds
+            raise DocumentProviderTimeout("transport deadline exceeded")
 
     timed, owner, asset = ready_document_service(
-        db_session, tmp_path, SlowProvider(), "provider-timeout@example.com"
+        db_session, tmp_path, TimedOutProvider(), "provider-timeout@example.com"
     )
     timed.settings.document_lab_provider_timeout_seconds = 1
     queued = timed.request_analysis(
@@ -871,6 +879,35 @@ def test_provider_timeout_is_persisted_as_safe_failure(db_session: Session, tmp_
     result = timed.get_analysis(queued.id, owner.id)
     assert result.status is AnalysisStatus.FAILED
     assert result.provider_status.value == "failed"
+
+
+def test_provider_without_transport_deadline_is_rejected_without_execution(
+    db_session: Session, tmp_path: Path
+) -> None:
+    class UnsafeProvider:
+        name = "unsafe-test"
+        model_version = "unsafe-test-v1"
+        called = False
+
+        def analyse(self, text: str, analysis_type: str) -> ProviderAnalysisOutput:
+            del text, analysis_type
+            self.called = True
+            return GroundedProvider().analyse("unreachable", "statement_of_purpose")
+
+    provider = UnsafeProvider()
+    document_service, owner, asset = ready_document_service(
+        db_session, tmp_path, provider, "provider-no-deadline@example.com"
+    )
+    queued = document_service.request_analysis(
+        version_id=asset.versions[0].id,
+        user=owner,
+        analysis_type="statement_of_purpose",
+        consent=True,
+        notice_version="phase7.document-data-use.v1",
+    )
+    assert document_service.process_next_job()
+    assert provider.called is False
+    assert document_service.get_analysis(queued.id, owner.id).provider_status.value == "failed"
 
 
 def test_deadline_aware_provider_receives_client_timeout(
