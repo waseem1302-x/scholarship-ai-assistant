@@ -1,9 +1,10 @@
-"""Tests for Phase 1b.1 Crawlee scaffolding (works without crawlee installed)."""
+"""Tests for the Crawlee scheduling bridge and safe fetch boundary."""
 
 from __future__ import annotations
 
 import pytest
 
+from app.core.config import Settings
 from app.modules.catalogue_ingestion.crawlee_static_acquirer import (
     CrawleeStaticEvidenceAcquirer,
     is_crawlee_installed,
@@ -14,6 +15,7 @@ from app.modules.catalogue_ingestion.evidence_acquirer import (
     LegacySafeEvidenceAcquirer,
     SourceRoleHint,
 )
+from app.modules.catalogue_ingestion.service import CatalogueIngestionService
 from app.modules.opportunities.source_monitor import (
     FetchedLink,
     FetchedSource,
@@ -24,9 +26,21 @@ from app.modules.opportunities.source_monitor import (
 class _FakeFetcher:
     def __init__(self, result: FetchedSource) -> None:
         self.result = result
+        self.calls: list[str] = []
 
     def fetch(self, url: str) -> FetchedSource:
+        self.calls.append(url)
         return self.result
+
+
+class _FailingFetcher:
+    def __init__(self, error_code: str) -> None:
+        self.error_code = error_code
+        self.calls: list[str] = []
+
+    def fetch(self, url: str) -> FetchedSource:
+        self.calls.append(url)
+        raise SourceFetchError(self.error_code)
 
 
 def _sample() -> FetchedSource:
@@ -64,13 +78,29 @@ def test_crawlee_acquirer_construct_fails_without_package() -> None:
 
 
 @pytest.mark.skipif(not is_crawlee_installed(), reason="optional crawlee not installed")
-def test_crawlee_acquirer_delegates_to_safe_fetcher() -> None:
+def test_crawlee_acquirer_schedules_one_request_through_safe_fetcher() -> None:
     fetched = _sample()
-    acquirer = CrawleeStaticEvidenceAcquirer(fetcher=_FakeFetcher(fetched))
+    fetcher = _FakeFetcher(fetched)
+    acquirer = CrawleeStaticEvidenceAcquirer(fetcher=fetcher)
     result = acquirer.acquire(AcquisitionRequest(url=fetched.url, role_hint=SourceRoleHint.PRIMARY))
+
+    # Crawlee schedules the handler, but the only source request is the injected
+    # safe boundary. No Crawlee request-context HTTP method is used.
+    assert fetcher.calls == [fetched.url]
     assert result.fetched is fetched
-    assert result.artifact.parser_version == "crawlee-static.v1-safe-delegate"
+    assert result.artifact.parser_version == "crawlee-static.v2-safe-bridge"
     assert result.artifact.content_hash == "abc"
+
+
+@pytest.mark.skipif(not is_crawlee_installed(), reason="optional crawlee not installed")
+def test_crawlee_bridge_preserves_safe_fetcher_rejection() -> None:
+    fetcher = _FailingFetcher("ssrf_private_address")
+    acquirer = CrawleeStaticEvidenceAcquirer(fetcher=fetcher)
+
+    with pytest.raises(SourceFetchError, match="ssrf_private_address"):
+        acquirer.acquire(AcquisitionRequest(url="https://example.gov/scholarship"))
+
+    assert fetcher.calls == ["https://example.gov/scholarship"]
 
 
 def test_select_default_acquire_still_works() -> None:
@@ -78,3 +108,20 @@ def test_select_default_acquire_still_works() -> None:
     acquirer = select_evidence_acquirer(fetcher=_FakeFetcher(fetched))
     result = acquirer.acquire(AcquisitionRequest(url=fetched.url))
     assert result.artifact.parser_version == "legacy-safe-fetcher.v1"
+
+
+@pytest.mark.skipif(not is_crawlee_installed(), reason="optional crawlee not installed")
+def test_service_wires_opt_in_static_requests_through_crawlee(db_session) -> None:
+    fetched = _sample()
+    fetcher = _FakeFetcher(fetched)
+    service = CatalogueIngestionService(
+        db_session,
+        Settings(catalogue_crawlee_static_enabled=True),
+        fetcher=fetcher,
+    )
+
+    result = service.evidence_acquirer.acquire(AcquisitionRequest(url=fetched.url))
+
+    assert isinstance(service.evidence_acquirer, CrawleeStaticEvidenceAcquirer)
+    assert fetcher.calls == [fetched.url]
+    assert result.artifact.parser_version == "crawlee-static.v2-safe-bridge"

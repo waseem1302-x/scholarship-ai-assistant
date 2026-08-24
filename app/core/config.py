@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     )
     catalogue_discovery_max_tool_calls_per_provider_request: int = Field(default=1, ge=0, le=5)
     catalogue_bounded_crawling_enabled: bool = False
+    # Crawlee may schedule static work, but source requests remain inside the
+    # SafeSourceFetcher boundary. Disabled until its release gate is evidenced.
+    catalogue_crawlee_static_enabled: bool = False
     catalogue_browser_fetching_enabled: bool = False
     catalogue_document_intelligence_enabled: bool = False
     catalogue_scheduled_ingestion_enabled: bool = False

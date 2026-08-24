@@ -32,6 +32,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ExtractedClaim,
     ObjectiveCoverageState,
 )
+from app.modules.catalogue_ingestion.crawlee_static_acquirer import select_evidence_acquirer
 from app.modules.catalogue_ingestion.crawler import (
     BoundedOfficialSiteCrawler,
     CrawlBudget,
@@ -41,6 +42,7 @@ from app.modules.catalogue_ingestion.discovery_promotion import (
     CatalogueDiscoveryPromotionService,
     DiscoveryPromotionResult,
 )
+from app.modules.catalogue_ingestion.evidence_acquirer import AcquisitionRequest
 from app.modules.catalogue_ingestion.graph_materializer import MextGraphMaterializer
 from app.modules.catalogue_ingestion.metrics import get_catalogue_metrics
 from app.modules.catalogue_ingestion.models import (
@@ -129,6 +131,10 @@ class CatalogueIngestionService:
         self.fetcher = fetcher or SafeSourceFetcher(
             timeout_seconds=settings.catalogue_ai_timeout_seconds,
             max_bytes=settings.catalogue_source_max_bytes_per_page,
+        )
+        self.evidence_acquirer = select_evidence_acquirer(
+            prefer_crawlee_static=settings.catalogue_crawlee_static_enabled,
+            fetcher=self.fetcher,
         )
         self.extractor = extractor or get_extraction_provider(settings)
         self.claim_extractor = claim_extractor or get_claim_provider(settings)
@@ -517,7 +523,7 @@ class CatalogueIngestionService:
                     raise SourceFetchError("crawler_returned_no_pages")
                 fetched = crawl_result.pages[0].fetched
             else:
-                fetched = self.fetcher.fetch(source.url)
+                fetched = self.evidence_acquirer.acquire(AcquisitionRequest(url=source.url)).fetched
         except SourceFetchError as exc:
             self.metrics.add("source_fetch_failure")
             source.status = CandidateSourceStatus.MANUAL_REVIEW
@@ -789,7 +795,9 @@ class CatalogueIngestionService:
                     failures = True
                     continue
                 try:
-                    fetched = self.fetcher.fetch(source.url)
+                    fetched = self.evidence_acquirer.acquire(
+                        AcquisitionRequest(url=source.url)
+                    ).fetched
                 except SourceFetchError as exc:
                     self._record_direct_fetch_failure(source, exc)
                     failures = True

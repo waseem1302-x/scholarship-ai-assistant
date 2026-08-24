@@ -1,14 +1,16 @@
-"""Optional Crawlee-labelled static acquirer (Phase 1b.1).
+"""Crawlee scheduling bridge that preserves the safe acquisition boundary.
 
-This module does **not** open a second network path. Single-URL acquisition
-still uses ``SafeSourceFetcher`` via ``LegacySafeEvidenceAcquirer``. Crawlee
-is detected only so operators can opt into a labelled adapter after installing
-the optional extra; full Crawlee queue orchestration is deferred to Phase 1b.2
-(ADR 0015).
+``BasicCrawler`` is used only to schedule an acquisition handler. The handler
+always calls ``LegacySafeEvidenceAcquirer``; it never calls Crawlee's request
+context or HTTP client. That keeps HTTPS, SSRF, DNS/IP, redirect, robots, MIME,
+and byte enforcement in ``SafeSourceFetcher``.
 """
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
+import uuid
 from dataclasses import replace
 
 from app.modules.catalogue_ingestion.evidence_acquirer import (
@@ -31,11 +33,12 @@ def is_crawlee_installed() -> bool:
 
 
 class CrawleeStaticEvidenceAcquirer:
-    """EvidenceAcquirer labelled for the future Crawlee static path.
+    """Schedule one static acquisition with Crawlee without using its HTTP stack.
 
-    Phase 1b.1: delegates to ``LegacySafeEvidenceAcquirer`` so SSRF, robots,
-    redirect, MIME, and byte limits remain unchanged. Raises if browser,
-    document, or OCR flags are set (same fail-closed rules).
+    The synchronous ``EvidenceAcquirer`` protocol is intentionally usable from
+    the worker CLI. It fails closed when called from an already-running event
+    loop instead of attempting a nested loop. Browser, document, and OCR flags
+    retain the ``LegacySafeEvidenceAcquirer`` fail-closed behaviour.
     """
 
     def __init__(self, *, fetcher: SourceFetcher | None = None) -> None:
@@ -44,12 +47,71 @@ class CrawleeStaticEvidenceAcquirer:
         self._inner = LegacySafeEvidenceAcquirer(fetcher=fetcher)
 
     def acquire(self, request: AcquisitionRequest) -> AcquisitionResult:
-        result = self._inner.acquire(request)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise SourceFetchError("crawlee_static_requires_worker_context")
+
+        result = asyncio.run(self._acquire_with_crawlee(request))
         relabelled = replace(
             result.artifact,
-            parser_version="crawlee-static.v1-safe-delegate",
+            parser_version="crawlee-static.v2-safe-bridge",
         )
         return AcquisitionResult(artifact=relabelled, fetched=result.fetched)
+
+    async def _acquire_with_crawlee(self, request: AcquisitionRequest) -> AcquisitionResult:
+        # Imports stay local so the production default remains importable
+        # without the optional Crawlee extra.
+        from crawlee import ConcurrencySettings, Request
+        from crawlee.configuration import Configuration
+        from crawlee.crawlers import BasicCrawler
+
+        results: list[AcquisitionResult] = []
+        failures: list[SourceFetchError] = []
+
+        async def acquire_from_safe_boundary(_context: object) -> None:
+            # Do not use context.send_request: that would create a second HTTP
+            # path and bypass SafeSourceFetcher policy enforcement.
+            try:
+                results.append(self._inner.acquire(request))
+            except SourceFetchError as exc:
+                failures.append(exc)
+
+        # The durable database job owns resume state. Crawlee's ephemeral
+        # scheduler metadata must not leak into the repository working tree or
+        # become a second persistence authority.
+        with tempfile.TemporaryDirectory(prefix="scholarship-crawlee-") as storage_dir:
+            crawler = BasicCrawler(
+                configuration=Configuration(storage_dir=storage_dir, purge_on_start=True),
+                request_handler=acquire_from_safe_boundary,
+                max_request_retries=0,
+                max_requests_per_crawl=1,
+                use_session_pool=False,
+                retry_on_blocked=False,
+                respect_robots_txt_file=False,
+                concurrency_settings=ConcurrencySettings(
+                    min_concurrency=1,
+                    desired_concurrency=1,
+                    max_concurrency=1,
+                ),
+                configure_logging=False,
+            )
+            # Crawlee's local queue normally de-duplicates URLs. A distinct
+            # scheduler key prevents a previously handled URL from suppressing
+            # a legitimate durable-job retry; content idempotency remains in
+            # the immutable artifact/extraction layers, not Crawlee's queue.
+            queued_request = Request.from_url(
+                request.url,
+                unique_key=f"safe-static-acquisition:{uuid.uuid4().hex}",
+            )
+            await crawler.run([queued_request])
+        if failures:
+            raise failures[0]
+        if len(results) != 1:
+            raise SourceFetchError("crawlee_static_acquisition_missing_result")
+        return results[0]
 
 
 def select_evidence_acquirer(

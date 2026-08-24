@@ -144,3 +144,64 @@ contain immutable raw fixtures, so MEXT/Open Doors protected-fixture gates are
 - **Next gate:** durable direct-URL job enqueue, idempotency, leases, fencing,
   retry and dead-letter lifecycle with PostgreSQL concurrency evidence, then
   secure Crawlee static parity (P0-C).
+
+## P0-C — secure Crawlee static bridge
+
+- **Status:** local static-bridge and safe-fetcher parity tests pass; browser
+  acquisition remains out of scope and disabled.
+- **Objective:** make Crawlee provide bounded scheduling without allowing its
+  networking, robots handling, redirects, or retries to bypass
+  `SafeSourceFetcher`.
+- **Behavior before:** `CrawleeStaticEvidenceAcquirer` only relabelled a direct
+  `LegacySafeEvidenceAcquirer` call. It imported Crawlee to detect an optional
+  installation but did not use Crawlee orchestration. The service had no
+  settings-gated way to use the adapter for a static request.
+- **Files changed:** `app/modules/catalogue_ingestion/crawlee_static_acquirer.py`,
+  `app/modules/catalogue_ingestion/service.py`, `app/core/config.py`, and
+  `tests/test_crawlee_static_acquirer.py`.
+- **Implementation:** the opt-in adapter now creates a single-concurrency
+  Crawlee `BasicCrawler` request and runs its handler through
+  `LegacySafeEvidenceAcquirer`. The handler does not use Crawlee's
+  `context.send_request`; every actual source request therefore remains the
+  injected `SafeSourceFetcher` boundary. Crawlee robots handling and retries
+  are disabled because those decisions already belong to the safe fetcher.
+  Crawlee uses a temporary per-acquisition storage directory, so it cannot
+  write queue/state files into the repository or become a second durable state
+  owner. Each scheduler request also receives a fresh key: an experiment
+  reproduced Crawlee's process-shared queue suppressing a previously handled
+  identical URL, which would otherwise return no result on a durable-job retry.
+  Artifact and extraction cache compatibility—not Crawlee queue identity—
+  continues to own content idempotency.
+  `catalogue_crawlee_static_enabled` defaults false and wires only non-crawl
+  static requests through the adapter when explicitly enabled.
+- **Security/trust invariants:** HTTPS, SSRF, private/loopback/link-local and
+  metadata rejection, DNS/peer validation, redirect validation, robots, MIME,
+  and byte limits remain in `SafeSourceFetcher`. The bridge is single
+  concurrency and fails closed from an existing async event loop. It does not
+  enable browser, document, OCR, model-selected URL, graph approval, or
+  publication paths.
+- **Tests added:** actual Crawlee scheduling calls the injected safe fetcher
+  exactly once; an `ssrf_private_address` rejection is returned unchanged; the
+  service opt-in selects the Crawlee bridge. Existing acquisition-session and
+  source-monitor tests provide legacy/security parity coverage.
+- **Commands and results:**
+  - `uv --cache-dir .uv-cache sync --frozen --extra crawlee` initially failed
+    closed with sandbox socket error `10013` while fetching a locked package;
+    the approved bounded retry installed Crawlee 1.9.2 without editing
+    `uv.lock`. Development dependencies were then restored with
+    `uv --cache-dir .uv-cache sync --frozen --extra dev --extra crawlee`.
+  - `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/p0c-final-final tests/test_crawlee_static_acquirer.py tests/test_safe_multi_url_session.py tests/test_source_monitor.py tests/test_catalogue_ingestion_queue.py` — **33 passed, 2 skipped, 2 warnings**. The two skips are intentional tests for the opposite, no-Crawlee-installed condition; the second warning is a local pytest cache permission issue.
+  - `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/p0c-storage tests/test_crawlee_static_acquirer.py` — **5 passed, 2 skipped, 2 warnings**; `Test-Path storage` returned `False`, proving the bridge no longer leaves Crawlee state in the repository.
+  - Targeted Ruff lint and formatting checks passed; `git diff --check` passed.
+- **Metrics/cost:** one Crawlee scheduler request per opted-in static source;
+  one safe-fetcher request; no model call, graph write, approval, or publication
+  change. The adapter is disabled by default, so current production call/cost
+  behavior is unchanged.
+- **Known limitations:** the durable database queue owns cross-process resume;
+  this bridge deliberately does not use Crawlee persistent request storage.
+  No local PostgreSQL, Redis, browser worker, or protected raw fixture evidence
+  is available. This P0-C evidence does not constitute browser/OCR readiness.
+- **Rollback:** set `APP_CATALOGUE_CRAWLEE_STATIC_ENABLED=false` (the default)
+  and deploy the prior worker/API image. No schema or artifact migration is
+  introduced by this slice.
+- **Next gate:** deterministic, versioned canonical evidence blocks (P0-D).
