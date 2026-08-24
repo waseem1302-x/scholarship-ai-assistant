@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from threading import Thread
+
 import pytest
 
 from app.core.config import Settings
@@ -88,7 +91,7 @@ def test_crawlee_acquirer_schedules_one_request_through_safe_fetcher() -> None:
     # safe boundary. No Crawlee request-context HTTP method is used.
     assert fetcher.calls == [fetched.url]
     assert result.fetched is fetched
-    assert result.artifact.parser_version == "crawlee-static.v2-safe-bridge"
+    assert result.artifact.parser_version == "crawlee-static.v2-safe-bridge+legacy-safe-fetcher.v1"
     assert result.artifact.content_hash == "abc"
 
 
@@ -124,4 +127,33 @@ def test_service_wires_opt_in_static_requests_through_crawlee(db_session) -> Non
 
     assert isinstance(service.evidence_acquirer, CrawleeStaticEvidenceAcquirer)
     assert fetcher.calls == [fetched.url]
-    assert result.artifact.parser_version == "crawlee-static.v2-safe-bridge"
+    assert result.artifact.parser_version == "crawlee-static.v2-safe-bridge+legacy-safe-fetcher.v1"
+
+
+@pytest.mark.skipif(not is_crawlee_installed(), reason="optional crawlee not installed")
+def test_crawlee_acquirer_isolates_an_active_caller_event_loop() -> None:
+    fetched = _sample()
+    fetcher = _FakeFetcher(fetched)
+    acquirer = CrawleeStaticEvidenceAcquirer(fetcher=fetcher)
+
+    async def acquire_from_active_loop():
+        return acquirer.acquire(AcquisitionRequest(url=fetched.url))
+
+    results = []
+    failures = []
+
+    def run_with_active_loop() -> None:
+        try:
+            results.append(asyncio.run(acquire_from_active_loop()))
+        except BaseException as exc:
+            failures.append(exc)
+
+    thread = Thread(target=run_with_active_loop)
+    thread.start()
+    thread.join()
+
+    assert failures == []
+    assert len(results) == 1
+    result = results[0]
+    assert fetcher.calls == [fetched.url]
+    assert result.fetched is fetched

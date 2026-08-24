@@ -166,6 +166,7 @@ def test_document_worker_environment_removes_application_configuration_and_force
 def test_docling_timeout_terminates_the_worker_process_tree(monkeypatch) -> None:
     launches: list[dict[str, object]] = []
     taskkill_commands: list[list[str]] = []
+    process_group_kills: list[tuple[int, int]] = []
 
     class TimedOutProcess:
         pid = 4242
@@ -193,6 +194,13 @@ def test_docling_timeout_terminates_the_worker_process_tree(monkeypatch) -> None
 
     monkeypatch.setattr(document_conversion.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(document_conversion.subprocess, "run", fake_run)
+    if document_conversion.os.name != "nt":
+        monkeypatch.setattr(document_conversion.os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(
+            document_conversion.os,
+            "killpg",
+            lambda process_group, signal: process_group_kills.append((process_group, signal)),
+        )
 
     with pytest.raises(DocumentConversionError, match="document_conversion_timeout"):
         SubprocessDoclingWorker(model_artifacts_path="C:/reviewed/docling-models").convert(
@@ -211,4 +219,8 @@ def test_docling_timeout_terminates_the_worker_process_tree(monkeypatch) -> None
     assert int(launches[0]["creationflags"]) & getattr(
         document_conversion.subprocess, "CREATE_NEW_PROCESS_GROUP", 0
     )
-    assert taskkill_commands == [["taskkill", "/PID", "4242", "/T", "/F"]]
+    if document_conversion.os.name == "nt":
+        assert taskkill_commands == [["taskkill", "/PID", "4242", "/T", "/F"]]
+    else:
+        assert taskkill_commands == []
+        assert process_group_kills == [(4242, document_conversion.signal.SIGKILL)]

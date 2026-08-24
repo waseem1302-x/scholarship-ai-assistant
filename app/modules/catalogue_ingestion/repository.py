@@ -136,13 +136,20 @@ class CatalogueIngestionRepository:
         runs = list(self.session.scalars(statement))
         claimed_until = observed_at + timedelta(seconds=lease_seconds)
         for run in runs:
+            # An expired lease means the prior worker may have died after
+            # claiming work but before it could report an outcome.  Reclaiming
+            # that lease restores availability and rotates the fencing token;
+            # it is not itself a completed failed attempt and must not drain
+            # the retry budget.
+            is_expired_lease_reclaim = run.status is IngestionRunStatus.RUNNING
             run.status = IngestionRunStatus.RUNNING
             run.stage = IngestionRunStage.ACQUIRING
             run.claimed_by = worker_id
             run.claimed_at = observed_at
             run.claimed_until = claimed_until
             run.lease_token = uuid.uuid4().hex
-            run.attempt_count += 1
+            if not is_expired_lease_reclaim:
+                run.attempt_count += 1
             run.failure_code = None
             run.last_error_reason = None
             run.retry_class = None
@@ -183,13 +190,17 @@ class CatalogueIngestionRepository:
         )
         if run is None:
             return None
+        # See claim_runs(): reclaiming an expired lease does not represent a
+        # completed failure and therefore does not consume retry budget.
+        is_expired_lease_reclaim = run.status is IngestionRunStatus.RUNNING
         run.status = IngestionRunStatus.RUNNING
         run.stage = IngestionRunStage.ACQUIRING
         run.claimed_by = worker_id
         run.claimed_at = observed_at
         run.claimed_until = observed_at + timedelta(seconds=lease_seconds)
         run.lease_token = uuid.uuid4().hex
-        run.attempt_count += 1
+        if not is_expired_lease_reclaim:
+            run.attempt_count += 1
         run.failure_code = None
         run.last_error_reason = None
         run.retry_class = None

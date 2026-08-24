@@ -12,6 +12,7 @@ import asyncio
 import tempfile
 import uuid
 from dataclasses import replace
+from threading import Thread
 
 from app.modules.catalogue_ingestion.evidence_acquirer import (
     AcquisitionRequest,
@@ -36,9 +37,10 @@ class CrawleeStaticEvidenceAcquirer:
     """Schedule one static acquisition with Crawlee without using its HTTP stack.
 
     The synchronous ``EvidenceAcquirer`` protocol is intentionally usable from
-    the worker CLI. It fails closed when called from an already-running event
-    loop instead of attempting a nested loop. Browser, document, and OCR flags
-    retain the ``LegacySafeEvidenceAcquirer`` fail-closed behaviour.
+    the worker CLI. When a host has an active event loop, Crawlee scheduling is
+    isolated in a short-lived worker thread instead of attempting a nested
+    loop. Browser, document, and OCR flags retain the
+    ``LegacySafeEvidenceAcquirer`` fail-closed behaviour.
     """
 
     def __init__(self, *, fetcher: SourceFetcher | None = None) -> None:
@@ -50,16 +52,37 @@ class CrawleeStaticEvidenceAcquirer:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            pass
+            result = asyncio.run(self._acquire_with_crawlee(request))
         else:
-            raise SourceFetchError("crawlee_static_requires_worker_context")
-
-        result = asyncio.run(self._acquire_with_crawlee(request))
+            # Crawlee can own an event loop in a long-lived worker host.  This
+            # synchronous protocol cannot nest ``asyncio.run`` there, so keep
+            # its scheduler lifetime in a dedicated thread.  The underlying
+            # fetch remains the synchronous, policy-enforcing safe boundary.
+            result = self._acquire_in_isolated_thread(request)
         relabelled = replace(
             result.artifact,
             parser_version=f"crawlee-static.v2-safe-bridge+{result.artifact.parser_version}",
         )
         return AcquisitionResult(artifact=relabelled, fetched=result.fetched)
+
+    def _acquire_in_isolated_thread(self, request: AcquisitionRequest) -> AcquisitionResult:
+        results: list[AcquisitionResult] = []
+        failures: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                results.append(asyncio.run(self._acquire_with_crawlee(request)))
+            except BaseException as exc:  # Preserve the safe-boundary error exactly.
+                failures.append(exc)
+
+        thread = Thread(target=run, name="crawlee-static-acquisition", daemon=True)
+        thread.start()
+        thread.join()
+        if failures:
+            raise failures[0]
+        if len(results) != 1:
+            raise SourceFetchError("crawlee_static_acquisition_missing_result")
+        return results[0]
 
     async def _acquire_with_crawlee(self, request: AcquisitionRequest) -> AcquisitionResult:
         # Imports stay local so the production default remains importable

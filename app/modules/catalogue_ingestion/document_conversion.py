@@ -163,21 +163,35 @@ def _terminate_worker_process_tree(process: subprocess.Popen[str]) -> None:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if completed.returncode != 0:
-                process.kill()
+                _kill_worker_process(process)
         except (OSError, subprocess.TimeoutExpired):
             # A direct kill is still better than leaving the main converter
             # alive when taskkill is unavailable or constrained by policy.
-            process.kill()
+            _kill_worker_process(process)
     else:
         try:
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
         except (OSError, ProcessLookupError):
-            process.kill()
+            _kill_worker_process(process)
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        process.kill()
+        _kill_worker_process(process)
         process.wait(timeout=5)
+
+
+def _kill_worker_process(process: subprocess.Popen[str]) -> None:
+    """Use Popen's direct-kill backstop when one is available.
+
+    Real ``subprocess.Popen`` instances always implement ``kill``.  Keeping the
+    fallback defensive also lets timeout handling retain its primary
+    process-group cleanup behavior when a narrow process-like test double is
+    used by an embedding application.
+    """
+
+    kill = getattr(process, "kill", None)
+    if callable(kill):
+        kill()
 
 
 class LayoutAwareDocumentConverter:

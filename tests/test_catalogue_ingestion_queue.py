@@ -76,6 +76,7 @@ def test_expired_run_lease_is_reclaimed_with_a_new_fencing_token(db_session) -> 
     assert [item.id for item in second] == [run.id]
     assert second[0].lease_token and second[0].lease_token != first_token
     assert second[0].stage is IngestionRunStage.ACQUIRING
+    assert second[0].attempt_count == 1
 
 
 def test_stale_worker_cannot_complete_a_reclaimed_run(db_session) -> None:

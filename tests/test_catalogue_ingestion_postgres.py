@@ -127,6 +127,7 @@ def test_run_lease_reclaim_and_fencing_are_enforced_by_postgres(postgres_engine)
             now=now + timedelta(seconds=61),
         )[0]
         assert second.lease_token != first_token
+        assert second.attempt_count == 1
         assert (
             CatalogueIngestionRepository(worker_one).complete_run_claim(
                 run_id, lease_token=first_token or ""

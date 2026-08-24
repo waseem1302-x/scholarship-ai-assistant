@@ -1137,3 +1137,56 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Next evidence:** push the corrective commit and require hosted CI to
   complete its full lint and test stages before treating this as a closed CI
   gate.
+
+## CI follow-up — reclaimed lease accounting and release preflight
+
+- **Status:** repaired the remaining hosted-CI regressions identified after
+  the PostgreSQL quota migration fix. No deployment, merge, release, feature
+  enablement, review decision, or publication was performed.
+- **Lease accounting:** an expired `RUNNING` lease is now reclaimed with a
+  fresh fencing token without incrementing `attempt_count`. It is an
+  availability recovery, not a reported failed execution, so it cannot drain
+  the retry budget before the reclaiming worker reports its outcome. Ordinary
+  pending claims still increment the count and the existing two transient
+  failure dead-letter behavior is unchanged. SQLite and PostgreSQL regressions
+  assert the reclaimed run remains at one attempt.
+- **Timeout cleanup:** process-tree termination retains the native
+  process-group/task-tree path and uses a guarded direct-process fallback.
+  The cross-platform regression explicitly verifies `taskkill` on Windows and
+  `killpg` on POSIX, without relying on a fake process having the full
+  `subprocess.Popen` interface.
+- **Release policy:** the declared Alembic head is now `20260824_0053` and
+  the review date is `2026-08-24`; the existing expand-only, rolling-safe,
+  deferred-contract policy is unchanged.
+- **Evidence:** focused Ruff check/format and
+  `tests/test_document_conversion.py tests/test_catalogue_ingestion_queue.py
+  tests/test_release_policy.py` completed **16 passed, 2 known warnings**.
+  The PostgreSQL lease-reclaim/fencing/failure transition was also executed in
+  a disposable read-only application container against the isolated
+  `p0e_migration_proof` database and passed. The proof creates and removes its
+  sole test row; it does not access the running application database.
+- **Next evidence:** run the full suite and push the repair before rechecking
+  hosted CI. P0-E remains open for its separate worker-transport and reviewed
+  OCR-fixture gates.
+
+## CI follow-up — Crawlee bridge lifecycle
+
+- **Status:** repaired optional-Crawlee regressions exposed by the local
+  environment where the extra is installed. No default acquisition path,
+  network policy, feature flag, deployment, merge, release, or publication was
+  changed.
+- **Fix:** Crawlee-labelled artifact versions now retain the inner safe-fetcher
+  parser version (`crawlee-static.v2-safe-bridge+legacy-safe-fetcher.v1`), so
+  provenance accurately identifies both the scheduler and parser. When a host
+  already owns an active event loop, the synchronous bridge runs Crawlee in a
+  short-lived thread instead of nesting `asyncio.run`; its handler still calls
+  only `LegacySafeEvidenceAcquirer` and never Crawlee HTTP APIs.
+- **Tests:** added active-event-loop coverage. The focused optional-Crawlee
+  suite completed **6 passed, 2 expected skips, 2 known warnings**. The final
+  local suite completed **711 passed, 33 skipped, 5 warnings in 190.25s**.
+  Skips are the intentionally unconfigured browser, PostgreSQL, and Redis
+  integration environments; the catalogue lease PostgreSQL contract was
+  separately proven against the isolated disposable database above.
+- **Security/trust:** the thread changes scheduler lifetime only; DNS/IP,
+  redirect, robots, MIME, byte, and SSRF controls remain exclusively in
+  `SafeSourceFetcher`.
