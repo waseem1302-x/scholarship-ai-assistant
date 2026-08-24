@@ -1253,3 +1253,45 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   default) or remove the worker profile; pending jobs are bounded and carry no
   database state. Deploying the prior application image restores the previous
   disabled behavior.
+
+## P0-E follow-up — self-authored scanned-PDF OCR fallback proof
+
+- **Status:** the automatic OCR-fallback decision and its persisted telemetry
+  are proven end to end with an original synthetic scan. This is a technical
+  runtime proof only; it is not an approved protected MEXT/Open Doors fixture
+  evaluation and does not close that external gate.
+- **Input:** a one-page, raster-only PDF was generated locally from original
+  text: eligibility, a deadline, and one required document. It contains no
+  third-party source material and was never committed, uploaded, or served.
+  Its temporary raw SHA-256 was
+  `6a4758ec46204c2ce8bf72bc95723311b0800a059503411205431e1461dbae9e`.
+- **Runtime path:** the existing reviewed offline Docling image ran as a
+  disposable worker with `network_mode=none`, read-only root filesystem,
+  `cap_drop=ALL`, `no-new-privileges`, 256 PIDs, 4 GB memory, and two CPUs.
+  Current application source was mounted read-only only because the existing
+  image predated the transport commit; the model bundle remained the reviewed,
+  baked offline bundle. The host application submitted the PDF through the
+  same bounded filesystem transport and no application feature flag was
+  enabled.
+- **Result:** the non-OCR conversion was text-insufficient, so the application
+  atomically submitted the OCR retry. The worker returned 135 characters of
+  Markdown, including the original deadline, citizenship criterion, and
+  passport requirement. `CatalogueDocumentPayloadNormalizer` returned
+  `document_page_count=1`, `document_ocr_decision=used`, and
+  `document_ocr_reason=text_insufficient_ocr_succeeded`. The returned text
+  SHA-256 was
+  `d61e98b267ba911a2c02556e76c101630d3cd92317e2e551a8e30de7a922563e`.
+- **Regression evidence:**
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/p0e-ocr-synthetic tests/test_document_conversion.py
+  tests/test_document_conversion_transport.py
+  tests/test_catalogue_source_snapshot_ledger.py
+  tests/test_catalogue_ingestion.py::test_service_enables_layout_document_normalizer_only_behind_feature_gate
+  tests/test_operations.py::test_aggregate_readiness_fails_closed_when_catalogue_docling_is_enabled_without_worker
+  tests/test_operations.py::test_aggregate_readiness_accepts_a_fresh_catalogue_docling_worker_heartbeat`
+  completed **23 passed, 1 existing Starlette TestClient deprecation warning
+  in 3.82s**. `git diff --check` passed.
+- **Remaining external gate:** ADR 0018 still requires immutable, approved raw
+  MEXT/Open Doors payloads and reviewer-approved expected outcomes. The source
+  ledger intentionally keeps each `raw_fixture_path` null, so this synthetic
+  proof cannot be represented as a protected-fixture pass.
