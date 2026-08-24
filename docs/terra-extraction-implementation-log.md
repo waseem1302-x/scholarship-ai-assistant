@@ -888,6 +888,75 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Rollback:** deploy the prior API image; no migration or stored data rewrite
   is required.
 
+## P0-E/P0-H follow-up — durable PDF conversion telemetry
+
+- **Status:** local provenance and safe operator-status coverage is green; this
+  records conversion outcomes only and does not close the real-Docling,
+  protected-fixture, dedicated-worker, restricted-egress, cgroup, or real OCR
+  operational gates.
+- **Baseline commit:** `112765c`.
+- **Objective:** retain per-fetch Docling page count, parser version, and
+  measured OCR outcome without shared mutable normalizer state, then expose
+  only that persisted lineage through the review-only operator run status.
+- **Files changed:** `app/modules/opportunities/source_monitor.py`,
+  `app/modules/catalogue_ingestion/document_conversion.py`,
+  `app/modules/catalogue_ingestion/service.py`,
+  `app/modules/catalogue_ingestion/schemas.py`, and focused conversion,
+  fetcher, and ingestion tests.
+- **Data/migrations:** none. New immutable catalogue artifacts store a closed
+  `document_conversion` metadata object in their existing `fetch_metadata`
+  JSON field. Existing PDF artifacts correctly remain `not_recorded` because
+  their historical conversion outcome cannot be inferred.
+- **Verified behavior before:** `ConvertedDocument` contained `page_count` and
+  `used_ocr`, but `CatalogueDocumentPayloadNormalizer` returned only text;
+  `SafeSourceFetcher` therefore dropped conversion facts and operator status
+  necessarily reported PDF OCR as `not_recorded`.
+- **Implementation:** the fetch boundary now accepts both legacy string
+  normalizers and a typed `NormalizedSourcePayload`. The Docling normalizer
+  returns text plus its own parser version, page count, and one of the measured
+  outcomes `not_used/text_sufficient` or
+  `used/text_insufficient_ocr_succeeded`. Ingestion whitelists and validates
+  the complete three-field record before persisting it. Operator status reads
+  the same validated record, includes `page_count`, and never exposes arbitrary
+  metadata. No mutable `last_conversion` state is retained on the shared
+  normalizer.
+- **Security/trust invariant:** all acquisition still enters through
+  `SafeSourceFetcher`; PDF bytes and normalized text are still omitted from
+  operator status. Only a bounded closed vocabulary of conversion facts is
+  persisted, so worker secrets, configuration, and arbitrary fetcher metadata
+  cannot enter immutable artifacts or the status response. OCR remains an
+  explicit feature-gated fallback after measured text insufficiency; no
+  publication or reviewer write behavior changed.
+- **Tests added:** non-OCR PDF conversion records page count and
+  `text_sufficient`; the fake OCR-success regression records the fallback
+  reason; the safe fetcher preserves typed per-call telemetry while ordinary
+  string normalizers remain covered by the monitor suite; a queued PDF
+  ingestion persists and projects OCR/page lineage while proving an injected
+  `worker_secret` is not serialized.
+- **Commands and results:** targeted Ruff lint and formatting passed;
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/p0h-document-telemetry-source tests/test_document_conversion.py
+  tests/test_source_monitor.py` — **29 passed, 1 warning in 9.49s**;
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/p0h-document-telemetry-focused tests/test_document_conversion.py
+  tests/test_source_monitor.py::test_safe_fetcher_keeps_per_fetch_normalization_telemetry
+  tests/test_catalogue_ingestion.py::test_operator_run_status_exposes_safe_lineage_without_source_content_or_lease_token
+  tests/test_catalogue_ingestion.py::test_operator_run_status_reports_persisted_pdf_conversion_telemetry
+  tests/test_catalogue_ingestion.py::test_candidate_review_projection_cites_exact_blocks_and_preserves_audit_history`
+  — **13 passed, 2 warnings in 3.39s** (existing Starlette deprecation and
+  local pytest-cache permission warnings); `git diff --check` passed before
+  this log update.
+- **Skipped/environment-blocked:** a complete `tests/test_catalogue_ingestion.py`
+  attempt did not return a final summary within the local 30-second command
+  window, so it is not counted as passing. The real Docling/MEXT/OCR execution
+  and dedicated worker runtime evidence remain unavailable.
+- **Rollback:** deploy the prior application image; no migration or data
+  backfill is involved. New artifacts retain immutable conversion provenance;
+  legacy artifacts remain readable.
+- **Next gate:** execute a real approved complex PDF with pre-baked Docling
+  artifacts in a dedicated restricted worker, then verify persisted telemetry
+  against protected MEXT/Open Doors fixture evaluations.
+
 ## P0-H follow-up — cited candidate review projection
 
 - **Status:** local read-only review projection is green; it closes neither the

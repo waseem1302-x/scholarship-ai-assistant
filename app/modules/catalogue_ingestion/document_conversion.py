@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from app.modules.opportunities.source_monitor import SourceFetchError
+from app.modules.opportunities.source_monitor import NormalizedSourcePayload, SourceFetchError
 
 DOCUMENT_CONVERTER_VERSION = "catalogue-docling-layout.v1"
 DEFAULT_DOCUMENT_MODEL_ARTIFACTS_PATH = "/opt/docling/models"
@@ -261,9 +261,22 @@ class CatalogueDocumentPayloadNormalizer:
         self.converter = converter
         self.allow_ocr = allow_ocr
 
-    def __call__(self, payload: bytes, content_type: str) -> str:
+    def __call__(self, payload: bytes, content_type: str) -> str | NormalizedSourcePayload:
         if content_type == "application/pdf":
-            return self.converter.normalize(payload, content_type, allow_ocr=self.allow_ocr)
+            converted = self.converter.convert_pdf(payload, allow_ocr=self.allow_ocr)
+            return NormalizedSourcePayload(
+                text=converted.text,
+                parser_version=converted.converter_version,
+                conversion_metadata={
+                    "document_page_count": converted.page_count,
+                    "document_ocr_decision": "used" if converted.used_ocr else "not_used",
+                    "document_ocr_reason": (
+                        "text_insufficient_ocr_succeeded"
+                        if converted.used_ocr
+                        else "text_sufficient"
+                    ),
+                },
+            )
         # Non-document content remains under the existing deterministic HTML/
         # text normalizer; Docling is never a general web-content parser.
         from app.modules.opportunities.source_monitor import normalize_source_payload

@@ -683,6 +683,47 @@ def test_operator_run_status_exposes_safe_lineage_without_source_content_or_leas
     assert status.reused_objective_count == 0
 
 
+def test_operator_run_status_reports_persisted_pdf_conversion_telemetry(db_session) -> None:
+    class PdfTelemetryFetcher(FakeFetcher):
+        def fetch(self, url: str) -> FetchedSource:
+            self.calls += 1
+            return FetchedSource(
+                url=url,
+                final_url=url,
+                content_hash=hashlib.sha256(self.text.encode()).hexdigest(),
+                excerpt_text=self.text,
+                section_label="Official guideline",
+                bytes_read=7_200,
+                normalized_text=self.text,
+                content_type="application/pdf",
+                parser_version="catalogue-docling-layout.v1",
+                conversion_metadata={
+                    "document_page_count": 18,
+                    "document_ocr_decision": "used",
+                    "document_ocr_reason": "text_insufficient_ocr_succeeded",
+                    "worker_secret": "must-not-be-persisted",
+                },
+            )
+
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=PdfTelemetryFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(OFFICIAL_URL, mode=IngestionMode.EXTRACTION, dry_run=True)
+    service.process_run(run.id, worker_id="operator-pdf-telemetry")
+
+    artifact = service.run_status(run.id).candidates[0].sources[0].artifacts[0]
+
+    assert artifact.extraction_method == "pdf_text"
+    assert artifact.parser_version == "catalogue-docling-layout.v1"
+    assert artifact.page_count == 18
+    assert artifact.ocr_decision == "used"
+    assert artifact.ocr_reason == "text_insufficient_ocr_succeeded"
+    assert "must-not-be-persisted" not in service.run_status(run.id).model_dump_json()
+
+
 def test_candidate_review_projection_cites_exact_blocks_and_preserves_audit_history(
     db_session,
 ) -> None:

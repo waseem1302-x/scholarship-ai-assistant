@@ -18,6 +18,7 @@ from app.modules.catalogue_ingestion.document_conversion import (
     SubprocessDoclingWorker,
     _document_worker_environment,
 )
+from app.modules.opportunities.source_monitor import NormalizedSourcePayload
 
 
 def _pdf(*, encrypted: bool = False) -> bytes:
@@ -116,9 +117,36 @@ def test_catalogue_normalizer_uses_docling_only_for_pdf() -> None:
         allow_ocr=False,
     )
 
-    assert normalizer(_pdf(), "application/pdf").startswith("A sufficiently")
+    normalized = normalizer(_pdf(), "application/pdf")
+
+    assert isinstance(normalized, NormalizedSourcePayload)
+    assert normalized.text.startswith("A sufficiently")
     assert normalizer.parser_version == DOCUMENT_CONVERTER_VERSION
+    assert normalized.parser_version == DOCUMENT_CONVERTER_VERSION
+    assert normalized.conversion_metadata == {
+        "document_page_count": 1,
+        "document_ocr_decision": "not_used",
+        "document_ocr_reason": "text_sufficient",
+    }
     assert worker.calls == [False]
+
+
+def test_catalogue_normalizer_records_a_successful_ocr_fallback_per_call() -> None:
+    worker = _Worker(["scan", "OCR eligibility requires citizenship and an application form."])
+    normalizer = CatalogueDocumentPayloadNormalizer(
+        converter=_converter(worker),
+        allow_ocr=True,
+    )
+
+    normalized = normalizer(_pdf(), "application/pdf")
+
+    assert isinstance(normalized, NormalizedSourcePayload)
+    assert normalized.conversion_metadata == {
+        "document_page_count": 1,
+        "document_ocr_decision": "used",
+        "document_ocr_reason": "text_insufficient_ocr_succeeded",
+    }
+    assert worker.calls == [False, True]
 
 
 def test_document_worker_environment_removes_application_configuration_and_forces_offline_models(

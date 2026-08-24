@@ -1515,6 +1515,7 @@ class CatalogueIngestionService:
             return
         content_type = fetched.content_type
         extraction_method = "pdf_text" if content_type == "application/pdf" else "normalized_text"
+        conversion_metadata = _safe_document_conversion_metadata(fetched.conversion_metadata)
         artifact = CatalogueSourceArtifact(
             final_url=fetched.final_url,
             content_type=content_type,
@@ -1527,6 +1528,7 @@ class CatalogueIngestionService:
                 "operator_host": urlsplit(source.url).hostname,
                 "source_role": source.source_role.value,
                 "parser_version": fetched.parser_version,
+                **({"document_conversion": conversion_metadata} if conversion_metadata else {}),
                 "links": [
                     {"url": item.url, "text": item.text, "title": item.title}
                     for item in fetched.links[:500]
@@ -1742,6 +1744,12 @@ class CatalogueIngestionService:
     def _operator_artifact_status(artifact: CatalogueSourceArtifact) -> OperatorArtifactStatus:
         metadata = artifact.fetch_metadata if isinstance(artifact.fetch_metadata, dict) else {}
         is_pdf = artifact.content_type == "application/pdf"
+        conversion_metadata = _safe_document_conversion_metadata(
+            metadata.get("document_conversion")
+        )
+        page_count = conversion_metadata.get("document_page_count")
+        ocr_decision = conversion_metadata.get("document_ocr_decision")
+        ocr_reason = conversion_metadata.get("document_ocr_reason")
         return OperatorArtifactStatus(
             id=artifact.id,
             final_url=artifact.final_url,
@@ -1753,17 +1761,26 @@ class CatalogueIngestionService:
                 if isinstance(metadata.get("parser_version"), str)
                 else None
             ),
+            page_count=page_count if isinstance(page_count, int) else None,
             byte_count=artifact.byte_count,
             character_count=artifact.character_count,
             evidence_block_count=len(artifact.evidence_blocks),
             canonicalization_versions=sorted(
                 {block.canonicalization_version for block in artifact.evidence_blocks}
             ),
-            ocr_decision="not_recorded" if is_pdf else "not_applicable",
+            ocr_decision=(
+                ocr_decision
+                if isinstance(ocr_decision, str)
+                else ("not_recorded" if is_pdf else "not_applicable")
+            ),
             ocr_reason=(
-                "artifact_metadata_does_not_record_ocr_outcome"
-                if is_pdf
-                else "content_type_not_pdf"
+                ocr_reason
+                if isinstance(ocr_reason, str)
+                else (
+                    "artifact_metadata_does_not_record_ocr_outcome"
+                    if is_pdf
+                    else "content_type_not_pdf"
+                )
             ),
             browser_decision="not_used",
             browser_reason="browser_acquisition_not_enabled",
@@ -1988,6 +2005,37 @@ def _routing_cycle_identity(decision: CatalogueSourceRoutingDecision) -> str | N
         if signal.startswith("year:")
     )
     return years[0] if len(years) == 1 else None
+
+
+def _safe_document_conversion_metadata(value: object) -> dict[str, str | int]:
+    """Return only the bounded conversion facts safe for immutable lineage.
+
+    Fetcher implementations are pluggable, so ingestion must not persist an
+    arbitrary metadata object supplied alongside normalized evidence.  These
+    fields are intentionally a small closed vocabulary and contain neither
+    source text nor worker configuration.
+    """
+
+    if not isinstance(value, dict):
+        return {}
+    page_count = value.get("document_page_count")
+    ocr_decision = value.get("document_ocr_decision")
+    ocr_reason = value.get("document_ocr_reason")
+    if (
+        isinstance(page_count, bool)
+        or not isinstance(page_count, int)
+        or not 1 <= page_count <= 10_000
+        or ocr_decision not in {"not_used", "used"}
+        or ocr_reason not in {"text_sufficient", "text_insufficient_ocr_succeeded"}
+    ):
+        return {}
+    if (ocr_decision == "not_used") != (ocr_reason == "text_sufficient"):
+        return {}
+    return {
+        "document_page_count": page_count,
+        "document_ocr_decision": ocr_decision,
+        "document_ocr_reason": ocr_reason,
+    }
 
 
 def _crawler_child_matches_root(root: FetchedSource, child: FetchedSource) -> bool:

@@ -53,6 +53,20 @@ class SourceFetchError(Exception):
 
 
 @dataclass(frozen=True)
+class NormalizedSourcePayload:
+    """Normalized source text plus bounded, per-fetch parser lineage.
+
+    String-returning normalizers remain supported for monitor callers.  A
+    document normalizer can use this value to carry facts about just this
+    conversion without keeping mutable state on a shared normalizer instance.
+    """
+
+    text: str
+    parser_version: str
+    conversion_metadata: dict[str, str | int | bool] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class FetchedLink:
     """One link discovered in bounded HTML fetched through the safe source boundary."""
 
@@ -74,6 +88,7 @@ class FetchedSource:
     content_type: str = "text/html"
     links: tuple[FetchedLink, ...] = ()
     parser_version: str = "legacy-safe-fetcher.v1"
+    conversion_metadata: dict[str, str | int | bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -211,7 +226,7 @@ class SafeSourceFetcher:
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         max_bytes: int = DEFAULT_MAX_BYTES,
         crawl_policies: dict[str, SourceCrawlPolicy] | None = None,
-        payload_normalizer: Callable[[bytes, str], str] | None = None,
+        payload_normalizer: Callable[[bytes, str], str | NormalizedSourcePayload] | None = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_bytes = max_bytes
@@ -255,7 +270,19 @@ class SafeSourceFetcher:
         if len(payload) > policy.max_bytes:
             raise SourceFetchError(f"source_too_large: exceeded {policy.max_bytes} bytes")
 
-        evidence_text = self.payload_normalizer(payload, content_type)
+        normalized_payload = self.payload_normalizer(payload, content_type)
+        if isinstance(normalized_payload, NormalizedSourcePayload):
+            evidence_text = normalized_payload.text
+            parser_version = normalized_payload.parser_version
+            conversion_metadata = dict(normalized_payload.conversion_metadata)
+        elif isinstance(normalized_payload, str):
+            evidence_text = normalized_payload
+            parser_version = getattr(
+                self.payload_normalizer, "parser_version", "legacy-safe-fetcher.v1"
+            )
+            conversion_metadata = {}
+        else:
+            raise SourceFetchError("source_payload_normalization_invalid")
         if len(evidence_text) < 20:
             raise SourceFetchError("source_has_no_extractable_evidence")
         if is_low_information_source_text(evidence_text):
@@ -281,9 +308,8 @@ class SafeSourceFetcher:
             normalized_content_hash=hashlib.sha256(evidence_text.encode()).hexdigest(),
             content_type=content_type,
             links=links,
-            parser_version=getattr(
-                self.payload_normalizer, "parser_version", "legacy-safe-fetcher.v1"
-            ),
+            parser_version=parser_version,
+            conversion_metadata=conversion_metadata,
         )
 
     def policy_for(self, url: str) -> SourceCrawlPolicy:

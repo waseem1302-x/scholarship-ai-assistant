@@ -21,6 +21,7 @@ from app.modules.opportunities.schemas import SourceCheckRequest
 from app.modules.opportunities.service import OpportunityService
 from app.modules.opportunities.source_monitor import (
     FetchedSource,
+    NormalizedSourcePayload,
     SafeSourceFetcher,
     SourceFetchError,
     SourceMonitor,
@@ -317,6 +318,68 @@ def test_safe_fetcher_allows_ordinary_public_redirect(monkeypatch) -> None:
 
     assert result.final_url == ("https://www.example.edu/scholarships/programme")
     assert "Official public scholarship" in (result.normalized_text or "")
+
+
+def test_safe_fetcher_keeps_per_fetch_normalization_telemetry(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "application/pdf"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/guideline.pdf"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return b"%PDF-telemetry-test"
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    def normalizer(payload: bytes, content_type: str) -> NormalizedSourcePayload:
+        assert payload == b"%PDF-telemetry-test"
+        assert content_type == "application/pdf"
+        return NormalizedSourcePayload(
+            text="Official document contains sufficient scholarship eligibility evidence.",
+            parser_version="test-document-converter.v1",
+            conversion_metadata={
+                "document_page_count": 4,
+                "document_ocr_decision": "not_used",
+                "document_ocr_reason": "text_sufficient",
+            },
+        )
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url",
+        lambda url: None,
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher(payload_normalizer=normalizer)
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    result = fetcher.fetch("https://example.edu/guideline.pdf")
+
+    assert result.parser_version == "test-document-converter.v1"
+    assert result.conversion_metadata == {
+        "document_page_count": 4,
+        "document_ocr_decision": "not_used",
+        "document_ocr_reason": "text_sufficient",
+    }
 
 
 def test_safe_fetcher_rejects_loading_shell(monkeypatch) -> None:

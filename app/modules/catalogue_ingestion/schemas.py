@@ -206,6 +206,7 @@ class OperatorArtifactStatus(StrictExtractionModel):
     content_hash: str
     extraction_method: str
     parser_version: str | None
+    page_count: int | None
     byte_count: int
     character_count: int
     evidence_block_count: int
