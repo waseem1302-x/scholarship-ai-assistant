@@ -92,6 +92,7 @@ from app.modules.catalogue_ingestion.seed_parser import (
 )
 from app.modules.catalogue_ingestion.source_routing import (
     SOURCE_ROUTER_VERSION,
+    SourceCycle,
     classify_source,
 )
 from app.modules.catalogue_ingestion.sources import (
@@ -1040,6 +1041,7 @@ class CatalogueIngestionService:
         unknown_objectives: set[str] = set()
         warnings: set[str] = set()
         unresolved_objectives: set[ClaimObjective] = set(ClaimObjective)
+        selected_cycle: tuple[SourceCycle, str | None] | None = None
         coverage_by_objective: dict[ClaimObjective, list[ObjectiveCoverageState]] = {
             objective: [] for objective in ClaimObjective
         }
@@ -1105,6 +1107,20 @@ class CatalogueIngestionService:
                         f"source_routing_manual_review:{source.id}:{routing_reason}",
                     )
                     return
+                source_cycle = SourceCycle(decision.cycle)
+                source_cycle_identity = _routing_cycle_identity(decision)
+                if source_cycle is not SourceCycle.EVERGREEN:
+                    current_cycle = (source_cycle, source_cycle_identity)
+                    if selected_cycle is not None and selected_cycle != current_cycle:
+                        self._manual_review(
+                            candidate,
+                            "source_routing_cycle_conflict:"
+                            f"{source.id}:{selected_cycle[0].value}:"
+                            f"{selected_cycle[1] or 'unspecified'}:"
+                            f"{source_cycle.value}:{source_cycle_identity or 'unspecified'}",
+                        )
+                        return
+                    selected_cycle = current_cycle
                 objectives = tuple(
                     objective
                     for objective in (
@@ -1654,6 +1670,17 @@ def _identity_resolution_errors(
     ):
         errors.append("extracted intake year conflicts with the seed candidate")
     return errors
+
+
+def _routing_cycle_identity(decision: CatalogueSourceRoutingDecision) -> str | None:
+    """Return one persisted explicit cycle year, if deterministic routing found one."""
+
+    years = sorted(
+        signal.removeprefix("year:")
+        for signal in decision.deterministic_signals
+        if signal.startswith("year:")
+    )
+    return years[0] if len(years) == 1 else None
 
 
 def _crawler_child_matches_root(root: FetchedSource, child: FetchedSource) -> bool:

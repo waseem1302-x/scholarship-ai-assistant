@@ -455,3 +455,31 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Security/trust invariant:** only source-role-permitted objectives can
   consume model budget; an incomplete source cannot claim completion or block
   a later relevant source from addressing the same objective.
+
+### P0-F follow-up — cross-cycle merge prevention
+
+- **Status:** enabled routing now prevents a direct-source bundle from merging
+  explicit facts drawn from different cycle identities.
+- **Baseline commit:** `b473df6`.
+- **Files changed:** `source_routing.py`, `service.py`,
+  `tests/test_source_routing.py`, and `tests/test_catalogue_ingestion.py`.
+- **Implementation:** source decisions retain deterministic `year:<year>`
+  signals. The routed extraction loop accepts one explicit non-evergreen cycle
+  identity per bundle and immediately sends the candidate to manual review when
+  a later source has a different cycle state or year. An evergreen deadline
+  notice is also manual-review-only (`deadline_cycle_unresolved`), so it cannot
+  establish a universal current-cycle deadline. Evergreen non-deadline sources
+  retain their existing role-limited behavior.
+- **Tests added:** an evergreen deadline receives no routeable objective; a
+  current funding source followed by an otherwise compatible historical funding
+  source produces one model call, no proposed payload, persisted `current` and
+  `historical` decisions, and a `needs_review` candidate.
+- **Commands and results:**
+  `uv --cache-dir .uv-cache run pytest tests/test_source_routing.py tests/test_catalogue_ingestion.py -k "evergreen_deadline_source_requires_cycle_resolution or source_routing_blocks_current_and_historical_cycle_merge" -q`
+  — **2 passed, 2 warnings**. Targeted Ruff checks, formatting and
+  `git diff --check` passed. The focused router/service/migration suite using
+  `.pytest-tmp/p0f-cycle-current` completed with **84 passed, 2 warnings**
+  (existing Starlette deprecation and local pytest-cache access warnings).
+- **Security/trust invariant:** claims from a prior/current/upcoming cycle are
+  never combined into one resolved proposal merely because the source domain
+  is official; ambiguous/unresolved deadline cycle facts remain review work.

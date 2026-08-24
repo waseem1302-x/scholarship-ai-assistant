@@ -67,3 +67,17 @@ def test_cycle_mixing_requires_manual_review() -> None:
     assert decision.cycle is SourceCycle.AMBIGUOUS
     assert decision.requires_manual_review is True
     assert routed_objectives(decision, unresolved=set(ClaimObjective)) == ()
+
+
+def test_evergreen_deadline_source_requires_cycle_resolution() -> None:
+    decision = classify_source(
+        source_url="https://example.edu/application-deadline",
+        source_text="The application deadline is published on this page.",
+        observed_on=date(2026, 8, 24),
+    )
+
+    assert decision.role is SourceContentRole.DEADLINE_TIMELINE
+    assert decision.cycle is SourceCycle.EVERGREEN
+    assert decision.requires_manual_review is True
+    assert decision.ambiguity_reason == "deadline_cycle_unresolved"
+    assert routed_objectives(decision, unresolved=set(ClaimObjective)) == ()

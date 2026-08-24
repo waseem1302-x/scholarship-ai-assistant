@@ -162,14 +162,19 @@ def classify_source(
         )
 
     role = next(iter(roles))
+    deadline_cycle_unresolved = (
+        role is SourceContentRole.DEADLINE_TIMELINE and cycle is SourceCycle.EVERGREEN
+    )
     return SourceRoutingDecision(
         classifier_version=SOURCE_ROUTER_VERSION,
         role=role,
         cycle=cycle,
         deterministic_signals=signals + cycle_signals,
         confidence=1.0,
-        ambiguity_reason=cycle_reason,
-        requires_manual_review=cycle is SourceCycle.AMBIGUOUS,
+        ambiguity_reason=(
+            cycle_reason if not deadline_cycle_unresolved else "deadline_cycle_unresolved"
+        ),
+        requires_manual_review=(cycle is SourceCycle.AMBIGUOUS or deadline_cycle_unresolved),
         applicable_objectives=_ROLE_OBJECTIVES[role],
     )
 
