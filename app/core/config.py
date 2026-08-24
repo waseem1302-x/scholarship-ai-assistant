@@ -231,6 +231,8 @@ class Settings(BaseSettings):
     document_lab_model: str = "unconfigured"
     document_lab_api_key: SecretStr | None = Field(default=None, repr=False)
     document_lab_provider_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    document_lab_job_claim_seconds: int = Field(default=300, ge=30, le=3600)
+    document_lab_job_max_attempts: int = Field(default=3, ge=1, le=20)
     document_lab_provider_config_version: str = "phase7.provider.v1"
     document_lab_rubric_version: str = "phase7.editorial.v1"
     document_lab_notice_version: str = "phase7.document-data-use.v1"

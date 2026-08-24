@@ -668,3 +668,26 @@ def test_source_monitor_fencing_migration_is_additive_and_rolls_back(tmp_path: P
         column["name"] for column in inspect(engine).get_columns("sources")
     }
     engine.dispose()
+
+
+def test_document_job_lease_migration_is_additive_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'document-job-lease.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260824_0049")
+    engine = create_engine(database_url)
+    assert "claim_token" not in {
+        column["name"] for column in inspect(engine).get_columns("document_analysis_jobs")
+    }
+    command.upgrade(alembic_config, "20260824_0050")
+    assert {"claim_token", "claimed_until"}.issubset(
+        {column["name"] for column in inspect(engine).get_columns("document_analysis_jobs")}
+    )
+    command.downgrade(alembic_config, "20260824_0049")
+    assert "claim_token" not in {
+        column["name"] for column in inspect(engine).get_columns("document_analysis_jobs")
+    }
+    engine.dispose()

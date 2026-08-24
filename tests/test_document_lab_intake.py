@@ -3,6 +3,7 @@ import time
 import zipfile
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -183,6 +184,48 @@ def test_document_lab_claims_jobs_atomically(db_session: Session, tmp_path: Path
 
     second_worker = service(db_session, tmp_path)
     assert second_worker._claim_next_job() is None
+
+
+def test_document_lab_reclaims_expired_running_job_with_bounded_attempts(
+    db_session: Session, tmp_path: Path
+) -> None:
+    owner = user(db_session, "document-reclaim@example.com")
+    document_service = service(db_session, tmp_path)
+    document_service.settings.document_lab_job_max_attempts = 2
+    document_service.create_asset(
+        user=owner,
+        document_kind="cv_resume",
+        filename="reclaim.pdf",
+        declared_content_type=PDF_CONTENT_TYPE,
+        content=pdf(),
+    )
+    job = document_service._claim_next_job()
+    assert job is not None
+    first_claim_token = job.claim_token
+    assert first_claim_token is not None
+    job.claimed_until = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+
+    reclaimed = document_service._claim_next_job()
+    assert reclaimed is not None
+    assert reclaimed.id == job.id
+    assert reclaimed.attempt_count == 2
+    assert reclaimed.claim_token != first_claim_token
+
+    document_service._fail_job(
+        SimpleNamespace(id=reclaimed.id, claim_token=first_claim_token),
+        "stale_worker_failure",
+    )
+    db_session.refresh(reclaimed)
+    assert reclaimed.status is AnalysisStatus.RUNNING
+    assert reclaimed.claim_token != first_claim_token
+
+    reclaimed.claimed_until = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+    assert document_service._claim_next_job() is None
+    db_session.refresh(reclaimed)
+    assert reclaimed.status is AnalysisStatus.FAILED
+    assert reclaimed.failure_code == "document_job_lease_exhausted"
 
 
 def test_upload_compensates_storage_when_database_commit_fails(

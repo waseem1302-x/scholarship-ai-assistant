@@ -691,3 +691,25 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   — **20 passed, 2 warnings**. Targeted Ruff lint and formatting passed.
 - **Known limitation:** SQLite does not prove concurrent PostgreSQL row-lock
   behavior; a two-session PostgreSQL fencing test remains an RC gate.
+
+## R-04 — bounded Document Lab job leases
+
+- **Status:** local reclaim and migration coverage is green; PostgreSQL
+  competing-worker proof remains required.
+- **Baseline:** `934ec87`.
+- **Implementation:** preparation jobs now carry an opaque claim token and
+  expiry. Expired jobs are requeued until their bounded attempt count is
+  reached, then become terminal `document_job_lease_exhausted`; completion and
+  failure updates are fenced on the active token so late workers cannot replace
+  newer state.
+- **Migration:** `20260824_0050_document_job_leases` is additive and reversible.
+- **Evidence:** reclaim now also proves that a late failure carrying the prior
+  token cannot overwrite a newer running claim. The focused reclaim/migration
+  run completed **2 passed, 2 warnings**. The complete Document Lab suite was
+  split because the local runner did not return a final summary within its
+  per-process window: the intake/deletion group completed **12 passed, 10
+  deselected, 1 warning in 15.23s**, and the retention/analysis group completed
+  **10 passed, 12 deselected, 1 warning in 18.85s**. Targeted Ruff lint and
+  formatting passed.
+- **Known limitation:** real PostgreSQL lease-reclaim/fencing execution and
+  production worker health evidence remain RC gates.

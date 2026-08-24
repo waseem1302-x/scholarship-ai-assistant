@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -469,6 +469,46 @@ class DocumentLabService:
         return True
 
     def _claim_next_job(self) -> DocumentAnalysisJob | None:
+        now = utc_now()
+        expired = self.session.execute(
+            update(DocumentAnalysisJob)
+            .where(
+                DocumentAnalysisJob.status == AnalysisStatus.RUNNING,
+                DocumentAnalysisJob.claimed_until.is_not(None),
+                DocumentAnalysisJob.claimed_until < now,
+            )
+            .values(
+                status=case(
+                    (
+                        DocumentAnalysisJob.attempt_count
+                        >= self.settings.document_lab_job_max_attempts,
+                        AnalysisStatus.FAILED,
+                    ),
+                    else_=AnalysisStatus.QUEUED,
+                ),
+                failure_code=case(
+                    (
+                        DocumentAnalysisJob.attempt_count
+                        >= self.settings.document_lab_job_max_attempts,
+                        "document_job_lease_exhausted",
+                    ),
+                    else_=None,
+                ),
+                completed_at=case(
+                    (
+                        DocumentAnalysisJob.attempt_count
+                        >= self.settings.document_lab_job_max_attempts,
+                        now,
+                    ),
+                    else_=None,
+                ),
+                claim_token=None,
+                claimed_until=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if expired.rowcount:
+            self.session.commit()
         queued_job_id = (
             select(DocumentAnalysisJob.id)
             .where(DocumentAnalysisJob.status == AnalysisStatus.QUEUED)
@@ -476,6 +516,7 @@ class DocumentLabService:
             .limit(1)
             .scalar_subquery()
         )
+        claim_token = uuid.uuid4().hex
         claimed_id = self.session.scalar(
             update(DocumentAnalysisJob)
             .where(
@@ -484,8 +525,10 @@ class DocumentLabService:
             )
             .values(
                 status=AnalysisStatus.RUNNING,
-                started_at=utc_now(),
+                started_at=now,
                 attempt_count=DocumentAnalysisJob.attempt_count + 1,
+                claim_token=claim_token,
+                claimed_until=now + timedelta(seconds=self.settings.document_lab_job_claim_seconds),
             )
             .returning(DocumentAnalysisJob.id)
             .execution_options(synchronize_session=False)
@@ -494,6 +537,7 @@ class DocumentLabService:
             self.session.rollback()
             return None
         self.session.commit()
+        self.session.expire_all()
         return self.session.get(DocumentAnalysisJob, claimed_id)
 
     def _create_version(
@@ -841,14 +885,40 @@ class DocumentLabService:
             executor.shutdown(wait=False, cancel_futures=True)
 
     def _complete_job(self, job: DocumentAnalysisJob) -> None:
-        job.status = AnalysisStatus.COMPLETED
-        job.completed_at = utc_now()
+        completed = self.session.execute(
+            update(DocumentAnalysisJob)
+            .where(
+                DocumentAnalysisJob.id == job.id, DocumentAnalysisJob.claim_token == job.claim_token
+            )
+            .values(
+                status=AnalysisStatus.COMPLETED,
+                completed_at=utc_now(),
+                claim_token=None,
+                claimed_until=None,
+            )
+        )
+        if not completed.rowcount:
+            self.session.rollback()
+            return
         self.session.commit()
 
     def _fail_job(self, job: DocumentAnalysisJob, code: str) -> None:
-        job.status = AnalysisStatus.FAILED
-        job.failure_code = code
-        job.completed_at = utc_now()
+        completed = self.session.execute(
+            update(DocumentAnalysisJob)
+            .where(
+                DocumentAnalysisJob.id == job.id, DocumentAnalysisJob.claim_token == job.claim_token
+            )
+            .values(
+                status=AnalysisStatus.FAILED,
+                failure_code=code,
+                completed_at=utc_now(),
+                claim_token=None,
+                claimed_until=None,
+            )
+        )
+        if not completed.rowcount:
+            self.session.rollback()
+            return
         self.session.commit()
 
     def _validate(

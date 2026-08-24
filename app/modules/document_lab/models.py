@@ -358,6 +358,8 @@ class DocumentAnalysisJob(Base):
     )
     idempotency_key: Mapped[str] = mapped_column(String(100))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    claim_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     failure_code: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
