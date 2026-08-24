@@ -1018,3 +1018,18 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   without immutable evidence blocks. No publication path was added.
 - **Known limitations:** this records submission, not a final accept/reject
   decision, and does not implement universal graph approval or UI rendering.
+
+## P0-H follow-up — review-decision projection
+
+- **Status:** local read-only decision lineage projection is green.
+- **Baseline:** `4a98d75`.
+- **Implementation:** the candidate review projection now includes each
+  persisted submission action with the immutable proposal hash/schema version,
+  actor, reason, prior candidate state, and timestamp. It remains read-only
+  and returns no raw source HTML.
+- **Evidence:** focused submission and cited-projection coverage completed
+  **2 passed, 2 warnings**; targeted Ruff checks and `git diff --check` passed.
+- **Security/trust:** the projection reads only persisted proposal/decision
+  lineage; it cannot create approvals or publication records.
+- **Known limitations:** final accept/reject actions, universal graph approval,
+  browser UI escaping, and operational RC evidence remain open.
