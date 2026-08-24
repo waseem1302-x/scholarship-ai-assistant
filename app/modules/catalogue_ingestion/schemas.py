@@ -318,6 +318,16 @@ class ReviewAuditHistoryItem(StrictExtractionModel):
     integrity_hash: str
 
 
+class ReviewDecisionHistoryItem(StrictExtractionModel):
+    proposal_hash: str
+    schema_version: str
+    action: str
+    actor_user_id: uuid.UUID
+    reason: str
+    prior_candidate_status: str
+    created_at: datetime
+
+
 class CandidateReviewProjectionResponse(StrictExtractionModel):
     candidate_id: uuid.UUID
     candidate_status: CandidateStatus
@@ -325,6 +335,7 @@ class CandidateReviewProjectionResponse(StrictExtractionModel):
     conflicts: list[str]
     rejected_claims: list[str]
     missing_mandatory_objectives: list[str]
+    decision_history: list[ReviewDecisionHistoryItem]
     audit_history: list[ReviewAuditHistoryItem]
 
 

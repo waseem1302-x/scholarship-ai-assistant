@@ -763,6 +763,10 @@ def test_review_submission_records_immutable_payload_and_evidence_version(db_ses
     assert decision.actor_user_id == reviewer.id
     assert decision.reason == "Reviewed cited proposal."
     assert decision.prior_candidate_status == CandidateStatus.READY_FOR_REVIEW.value
+    projection = service.candidate_review_projection(candidate.id)
+    assert len(projection.decision_history) == 1
+    assert projection.decision_history[0].proposal_hash == proposal.proposal_hash
+    assert projection.decision_history[0].actor_user_id == reviewer.id
 
 
 def test_candidate_review_projection_cites_exact_blocks_and_preserves_audit_history(

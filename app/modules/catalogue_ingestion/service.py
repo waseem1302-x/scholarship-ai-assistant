@@ -96,6 +96,7 @@ from app.modules.catalogue_ingestion.schemas import (
     OperatorSourceRoutingStatus,
     OperatorSourceStatus,
     ReviewAuditHistoryItem,
+    ReviewDecisionHistoryItem,
     ReviewEvidenceBlock,
     ReviewFactScope,
     ReviewProposedFact,
@@ -1487,6 +1488,12 @@ class CatalogueIngestionService:
             )
             .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
         ).all()
+        decisions = self.session.scalars(
+            select(CatalogueReviewDecision)
+            .join(CatalogueReviewProposal)
+            .where(CatalogueReviewProposal.candidate_id == candidate.id)
+            .order_by(CatalogueReviewDecision.created_at.asc(), CatalogueReviewDecision.id.asc())
+        ).all()
         return CandidateReviewProjectionResponse(
             candidate_id=candidate.id,
             candidate_status=candidate.status,
@@ -1498,6 +1505,18 @@ class CatalogueIngestionService:
                 if resolution is not None
                 else []
             ),
+            decision_history=[
+                ReviewDecisionHistoryItem(
+                    proposal_hash=item.proposal.proposal_hash,
+                    schema_version=item.proposal.schema_version,
+                    action=item.action.value,
+                    actor_user_id=item.actor_user_id,
+                    reason=item.reason,
+                    prior_candidate_status=item.prior_candidate_status,
+                    created_at=item.created_at,
+                )
+                for item in decisions
+            ],
             audit_history=[
                 ReviewAuditHistoryItem(
                     action=item.action,
