@@ -735,9 +735,10 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   unavailable through asset, version, analysis, list, and export paths; no
   filename or document text is stored in the deletion job or emitted as a
   failure reason.
-- **Tests:** a storage outage requeues then idempotently completes; bounded
-  repeated failures become terminal and reconciliation does not duplicate a
-  job. Document Lab verification completed **12 passed, 10 deselected, 1
+- **Tests:** a storage outage requeues then idempotently completes, with safe
+  aggregate queued/retry/completed metrics; bounded repeated failures become
+  terminal and reconciliation does not duplicate a job. Document Lab
+  verification completed **12 passed, 10 deselected, 1
   warning in 19.29s**, **5 passed, 17 deselected, 1 warning in 9.73s**, and
   **5 passed, 17 deselected, 1 warning in 16.16s**. The deletion migration
   test completed **1 passed, 1 warning in 4.27s**. Targeted Ruff lint,

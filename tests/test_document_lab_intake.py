@@ -490,6 +490,7 @@ def test_document_delete_is_durable_retried_and_reconciled(
     )
     assert queued is not None
     assert queued.status is DocumentDeletionJobStatus.QUEUED
+    assert document_service.deletion_job_metrics()["queued"] == 1
     assert db_session.get(DocumentVersion, version_id) is not None
     assert list((tmp_path / "private-store").rglob("*.bin"))
     with pytest.raises(AppError):
@@ -507,6 +508,7 @@ def test_document_delete_is_durable_retried_and_reconciled(
     db_session.refresh(queued)
     assert queued.status is DocumentDeletionJobStatus.RETRY
     assert queued.failure_code == "document_storage_delete_failed"
+    assert document_service.deletion_job_metrics()["retry"] == 1
     assert db_session.get(DocumentAsset, asset.id) is not None
 
     queued.next_attempt_at = utc_now() - timedelta(seconds=1)
@@ -516,6 +518,7 @@ def test_document_delete_is_durable_retried_and_reconciled(
     db_session.refresh(queued)
     assert queued.status is DocumentDeletionJobStatus.COMPLETED
     assert queued.storage_keys == []
+    assert document_service.deletion_job_metrics()["completed"] == 1
     assert db_session.get(DocumentVersion, version_id) is None
     assert not list((tmp_path / "private-store").rglob("*.bin"))
 
