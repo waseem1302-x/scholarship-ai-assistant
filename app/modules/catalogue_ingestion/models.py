@@ -396,6 +396,9 @@ class CatalogueSourceArtifact(Base):
     evidence_blocks: Mapped[list["CatalogueEvidenceBlock"]] = relationship(
         back_populates="artifact", cascade="all, delete-orphan"
     )
+    routing_decisions: Mapped[list["CatalogueSourceRoutingDecision"]] = relationship(
+        back_populates="artifact", cascade="all, delete-orphan"
+    )
 
 
 @event.listens_for(CatalogueSourceArtifact, "before_update", propagate=True)
@@ -494,6 +497,38 @@ class CatalogueExtractionAttempt(Base):
 
     candidate: Mapped[CatalogueCandidate] = relationship(back_populates="extraction_attempts")
     source: Mapped[CatalogueCandidateSource] = relationship(back_populates="extraction_attempts")
+
+
+class CatalogueSourceRoutingDecision(Base):
+    """Versioned deterministic role/cycle decision for one immutable artifact."""
+
+    __tablename__ = "catalogue_source_routing_decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_id",
+            "classifier_version",
+            name="uq_catalogue_source_routing_artifact_version",
+        ),
+        Index("ix_catalogue_source_routing_role_cycle", "role", "cycle"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    artifact_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalogue_source_artifacts.id", ondelete="RESTRICT"), index=True
+    )
+    classifier_version: Mapped[str] = mapped_column(String(64))
+    role: Mapped[str] = mapped_column(String(64))
+    cycle: Mapped[str] = mapped_column(String(32))
+    deterministic_signals: Mapped[list[str]] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    ambiguity_reason: Mapped[str | None] = mapped_column(String(255))
+    requires_manual_review: Mapped[bool] = mapped_column(Boolean, default=True)
+    applicable_objectives: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    artifact: Mapped[CatalogueSourceArtifact] = relationship(back_populates="routing_decisions")
 
 
 class ClassificationDecision(Base):

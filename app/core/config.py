@@ -134,6 +134,9 @@ class Settings(BaseSettings):
     catalogue_document_max_runtime_seconds: int = Field(default=30, ge=1, le=300)
     catalogue_document_max_output_characters: int = Field(default=500_000, ge=1_000, le=2_000_000)
     catalogue_document_min_text_characters: int = Field(default=200, ge=20, le=10_000)
+    # Source-role/cycle routing remains opt-in until its durable decision and
+    # objective-resume migration has PostgreSQL evidence.
+    catalogue_source_routing_enabled: bool = False
     catalogue_scheduled_ingestion_enabled: bool = False
     catalogue_reviewed_official_domains: str = ""
     catalogue_worker_claim_seconds: int = Field(default=900, ge=30, le=3600)

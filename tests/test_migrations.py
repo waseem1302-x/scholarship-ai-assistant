@@ -569,3 +569,36 @@ def test_catalogue_evidence_block_migration_is_additive_and_rolls_back(tmp_path:
     command.downgrade(alembic_config, "20260824_0045")
     assert "catalogue_evidence_blocks" not in inspect(engine).get_table_names()
     engine.dispose()
+
+
+def test_catalogue_source_routing_migration_is_additive_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'catalogue-source-routing.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260824_0046")
+    engine = create_engine(database_url)
+    assert "catalogue_source_routing_decisions" not in inspect(engine).get_table_names()
+
+    command.upgrade(alembic_config, "20260824_0047")
+    inspector = inspect(engine)
+    assert {
+        "artifact_id",
+        "classifier_version",
+        "role",
+        "cycle",
+        "deterministic_signals",
+        "applicable_objectives",
+        "requires_manual_review",
+    }.issubset(
+        {column["name"] for column in inspector.get_columns("catalogue_source_routing_decisions")}
+    )
+    assert "ix_catalogue_source_routing_role_cycle" in {
+        index["name"] for index in inspector.get_indexes("catalogue_source_routing_decisions")
+    }
+
+    command.downgrade(alembic_config, "20260824_0046")
+    assert "catalogue_source_routing_decisions" not in inspect(engine).get_table_names()
+    engine.dispose()

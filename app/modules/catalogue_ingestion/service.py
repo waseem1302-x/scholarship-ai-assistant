@@ -60,6 +60,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
     CatalogueSourceArtifact,
+    CatalogueSourceRoutingDecision,
     ExtractionAttemptStatus,
     IngestionInputKind,
     IngestionMode,
@@ -88,6 +89,10 @@ from app.modules.catalogue_ingestion.seed_parser import (
     LocalSeedDocumentParser,
     SeedDocumentParser,
     SeedSourceLoader,
+)
+from app.modules.catalogue_ingestion.source_routing import (
+    SOURCE_ROUTER_VERSION,
+    classify_source,
 )
 from app.modules.catalogue_ingestion.sources import (
     OfficialSourceClassifier,
@@ -1067,7 +1072,42 @@ class CatalogueIngestionService:
             ensure_evidence_blocks(self.session, artifact)
             raw_links = artifact.fetch_metadata.get("links", [])
             source_links = raw_links if isinstance(raw_links, list) else []
-            for objective in ClaimObjective:
+            objectives: tuple[ClaimObjective, ...] = tuple(ClaimObjective)
+            if self.settings.catalogue_source_routing_enabled:
+                decision = self.repository.routing_decision(
+                    artifact=artifact, classifier_version=SOURCE_ROUTER_VERSION
+                )
+                if decision is None:
+                    classified = classify_source(
+                        source_url=artifact.final_url,
+                        source_text=artifact.normalized_text,
+                    )
+                    decision = CatalogueSourceRoutingDecision(
+                        artifact_id=artifact.id,
+                        classifier_version=classified.classifier_version,
+                        role=classified.role.value,
+                        cycle=classified.cycle.value,
+                        deterministic_signals=list(classified.deterministic_signals),
+                        confidence=classified.confidence,
+                        ambiguity_reason=classified.ambiguity_reason,
+                        requires_manual_review=classified.requires_manual_review,
+                        applicable_objectives=[
+                            objective.value for objective in classified.applicable_objectives
+                        ],
+                    )
+                    self.session.add(decision)
+                    self.session.flush()
+                if decision.requires_manual_review:
+                    routing_reason = decision.ambiguity_reason or decision.role
+                    self._manual_review(
+                        candidate,
+                        f"source_routing_manual_review:{source.id}:{routing_reason}",
+                    )
+                    continue
+                objectives = tuple(
+                    ClaimObjective(objective) for objective in decision.applicable_objectives
+                )
+            for objective in objectives:
                 attempt_schema = _claim_attempt_schema(objective)
                 reused = self.repository.reusable_attempt(
                     canonical_url=source.canonical_url,

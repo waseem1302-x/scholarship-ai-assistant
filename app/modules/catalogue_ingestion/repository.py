@@ -17,6 +17,8 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
+    CatalogueSourceArtifact,
+    CatalogueSourceRoutingDecision,
     ExtractionAttemptStatus,
     IngestionRunRetryClass,
     IngestionRunStage,
@@ -44,6 +46,16 @@ class CatalogueIngestionRepository:
     def add_run(self, run: CatalogueIngestionRun) -> None:
         self.session.add(run)
         self.session.flush()
+
+    def routing_decision(
+        self, *, artifact: CatalogueSourceArtifact, classifier_version: str
+    ) -> CatalogueSourceRoutingDecision | None:
+        return self.session.scalar(
+            select(CatalogueSourceRoutingDecision).where(
+                CatalogueSourceRoutingDecision.artifact_id == artifact.id,
+                CatalogueSourceRoutingDecision.classifier_version == classifier_version,
+            )
+        )
 
     def get_or_create_run(self, run: CatalogueIngestionRun) -> tuple[CatalogueIngestionRun, bool]:
         """Create one logical run per idempotency key, including concurrent enqueues."""

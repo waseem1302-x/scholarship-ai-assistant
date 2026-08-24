@@ -357,12 +357,15 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 
 ## P0-F — source-role, cycle, and objective routing
 
-- **Status:** deterministic classifier/routing contract implemented; durable
-  persistence and extraction-loop integration remain pending.
+- **Status:** deterministic classifier/routing contract and opt-in durable
+  extraction-loop wiring implemented; full routed-run and PostgreSQL evidence
+  remain pending.
 - **Objective:** replace the unsafe default assumption that every official page
   can answer every one of the twelve extraction objectives.
-- **Files changed:** `app/modules/catalogue_ingestion/source_routing.py` and
-  `tests/test_source_routing.py`.
+- **Files changed:** `source_routing.py`, `models.py`, `repository.py`,
+  `service.py`, `app/core/config.py`, additive migration
+  `20260824_0047_catalogue_source_routing.py`, and focused router/migration
+  tests.
 - **Implementation:** `source-router.v1` identifies the required role set,
   classifies current/upcoming/historical/evergreen/ambiguous cycles from
   deterministic signals, and maps roles to only applicable objectives. Unknown
@@ -381,10 +384,23 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Security/trust invariants:** lexical signals are explainable diagnostics;
   source text never authorizes a model call outside the routing matrix; unknown
   is not silently upgraded to overview; no automatic publication is added.
-- **Known limitations:** routing decisions are not yet persisted with artifact
-  lineage, and the current extraction loop still invokes every objective. This
-  is not a P0-F completion claim.
-- **Rollback:** do not import or invoke `source_routing`; current pipeline
-  behavior remains unchanged until the durable wiring slice lands.
-- **Next gate:** add decision persistence/migration, route the extraction loop
-  through unresolved objectives, and add cache/budget/resume evidence.
+- **Persistence/wiring:** each enabled run stores one immutable-artifact and
+  classifier-version keyed decision containing role, cycle, deterministic
+  signals, diagnostic confidence, ambiguity/manual-review state and applicable
+  objectives. The extraction loop reuses that stored decision; ambiguous or
+  unknown decisions record a manual-review reason and make no model call.
+  `catalogue_source_routing_enabled` defaults false pending production-shaped
+  evidence, so current behavior is unchanged until an operator enables it.
+- **Additional tests:** additive migration upgrade from `0046`, schema/index
+  inspection and downgrade back to `0046`.
+- **Additional commands/results:**
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/p0f-routing-final tests/test_source_routing.py tests/test_migrations.py::test_catalogue_source_routing_migration_is_additive_and_rolls_back`
+  — **5 passed, 2 warnings**.
+- **Known limitations:** the router currently receives all objectives as
+  unresolved because P0-G bundle completeness has not yet supplied a scoped
+  unresolved set. Full routed-run, attempt reuse, budget-resume and PostgreSQL
+  concurrency evidence are still required; this is not a P0-F completion claim.
+- **Rollback:** keep `APP_CATALOGUE_SOURCE_ROUTING_ENABLED=false` (default),
+  stop workers using the new path and downgrade `0047` only after they stop.
+- **Next gate:** supply scoped unresolved objectives, add routed service tests,
+  then demonstrate cache/budget/resume behavior and PostgreSQL execution.
