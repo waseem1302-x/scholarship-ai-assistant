@@ -17,6 +17,8 @@ from app.modules.document_lab.models import (
     DocumentAnalysis,
     DocumentAnalysisJob,
     DocumentAsset,
+    DocumentDeletionJob,
+    DocumentDeletionJobStatus,
     DocumentDeletionStatus,
     DocumentVersion,
     DocumentVersionStatus,
@@ -469,8 +471,8 @@ def test_extract_failure_is_persisted_without_text_in_job_metadata(
     assert "Ignore" not in (job.failure_code or "")
 
 
-def test_document_delete_removes_encrypted_storage_and_records(
-    db_session: Session, tmp_path: Path
+def test_document_delete_is_durable_retried_and_reconciled(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = user(db_session, "document-delete@example.com")
     document_service = service(db_session, tmp_path)
@@ -483,11 +485,42 @@ def test_document_delete_removes_encrypted_storage_and_records(
     )
     version_id = asset.versions[0].id
     document_service.delete_asset(asset.id, owner.id)
+    queued = db_session.scalar(
+        select(DocumentDeletionJob).where(DocumentDeletionJob.asset_id == asset.id)
+    )
+    assert queued is not None
+    assert queued.status is DocumentDeletionJobStatus.QUEUED
+    assert db_session.get(DocumentVersion, version_id) is not None
+    assert list((tmp_path / "private-store").rglob("*.bin"))
+    with pytest.raises(AppError):
+        document_service.get_asset(asset.id, owner.id)
+    with pytest.raises(AppError):
+        document_service.download_version(version_id, owner.id)
+
+    real_delete = document_service.storage.delete
+
+    def unavailable_storage(_key: str) -> None:
+        raise RuntimeError("private object store unavailable")
+
+    monkeypatch.setattr(document_service.storage, "delete", unavailable_storage)
+    assert document_service.process_next_deletion_job()
+    db_session.refresh(queued)
+    assert queued.status is DocumentDeletionJobStatus.RETRY
+    assert queued.failure_code == "document_storage_delete_failed"
+    assert db_session.get(DocumentAsset, asset.id) is not None
+
+    queued.next_attempt_at = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+    monkeypatch.setattr(document_service.storage, "delete", real_delete)
+    assert document_service.process_next_deletion_job()
+    db_session.refresh(queued)
+    assert queued.status is DocumentDeletionJobStatus.COMPLETED
+    assert queued.storage_keys == []
     assert db_session.get(DocumentVersion, version_id) is None
     assert not list((tmp_path / "private-store").rglob("*.bin"))
 
 
-def test_delete_records_object_deleted_state_if_metadata_commit_fails(
+def test_document_deletion_exhaustion_is_terminal_and_reconciliation_is_idempotent(
     db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = user(db_session, "document-delete-state@example.com")
@@ -499,30 +532,30 @@ def test_delete_records_object_deleted_state_if_metadata_commit_fails(
         declared_content_type=DOCX_CONTENT_TYPE,
         content=docx(),
     )
-    version_id = asset.versions[0].id
-    real_commit = db_session.commit
-    calls = 0
+    document_service.settings.document_lab_deletion_max_attempts = 2
+    document_service.delete_asset(asset.id, owner.id)
+    queued = db_session.scalar(
+        select(DocumentDeletionJob).where(DocumentDeletionJob.asset_id == asset.id)
+    )
+    assert queued is not None
 
-    def flaky_commit() -> None:
-        nonlocal calls
-        calls += 1
-        if calls == 3:
-            raise RuntimeError("metadata commit failed")
-        real_commit()
+    def unavailable_storage(_key: str) -> None:
+        raise RuntimeError("private object store unavailable")
 
-    monkeypatch.setattr(db_session, "commit", flaky_commit)
-    with pytest.raises(RuntimeError, match="metadata commit failed"):
-        document_service.delete_asset(asset.id, owner.id)
-    db_session.rollback()
+    monkeypatch.setattr(document_service.storage, "delete", unavailable_storage)
+    assert document_service.process_next_deletion_job()
+    queued.next_attempt_at = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+    assert document_service.process_next_deletion_job()
+    db_session.refresh(queued)
+    assert queued.status is DocumentDeletionJobStatus.FAILED
+    assert queued.failure_code == "document_storage_delete_exhausted"
 
     remaining_asset = db_session.get(DocumentAsset, asset.id)
-    remaining_version = db_session.get(DocumentVersion, version_id)
     assert remaining_asset is not None
     assert remaining_asset.deleted_at is not None
-    assert remaining_asset.deletion_status == DocumentDeletionStatus.OBJECT_DELETED.value
-    assert remaining_version is not None
-    assert remaining_version.status is DocumentVersionStatus.DELETED
-    assert not list((tmp_path / "private-store").rglob("*.bin"))
+    assert remaining_asset.deletion_status == DocumentDeletionStatus.FAILED.value
+    assert document_service.reconcile_deletion_jobs() == 0
     with pytest.raises(AppError):
         document_service.get_asset(asset.id, owner.id)
 
@@ -566,6 +599,7 @@ def test_retention_expiry_removes_private_storage(db_session: Session, tmp_path:
     record.retention_expires_at = utc_now() - timedelta(seconds=1)
     db_session.commit()
     assert document_service.list_assets(owner.id) == []
+    assert document_service.process_next_deletion_job()
     assert not list((tmp_path / "private-store").rglob("*.bin"))
 
 
@@ -749,6 +783,7 @@ def test_delete_after_analysis_removes_private_storage_and_analysis_data(
     )
     assert document_service.process_next_job()
     document_service.delete_asset(asset.id, owner.id)
+    assert document_service.process_next_deletion_job()
     assert db_session.get(DocumentVersion, asset.versions[0].id) is None
     assert db_session.get(DocumentAnalysis, analysis.id) is None
     assert document_service.export_data(owner.id).assets == []

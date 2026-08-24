@@ -691,3 +691,22 @@ def test_document_job_lease_migration_is_additive_and_rolls_back(tmp_path: Path)
         column["name"] for column in inspect(engine).get_columns("document_analysis_jobs")
     }
     engine.dispose()
+
+
+def test_document_deletion_job_migration_is_additive_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'document-deletion-job.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260824_0050")
+    engine = create_engine(database_url)
+    assert "document_deletion_jobs" not in inspect(engine).get_table_names()
+    command.upgrade(alembic_config, "20260824_0051")
+    assert {"asset_id", "storage_keys", "next_attempt_at"}.issubset(
+        {column["name"] for column in inspect(engine).get_columns("document_deletion_jobs")}
+    )
+    command.downgrade(alembic_config, "20260824_0050")
+    assert "document_deletion_jobs" not in inspect(engine).get_table_names()
+    engine.dispose()

@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Enum,
@@ -40,6 +41,15 @@ class DocumentVersionStatus(StrEnum):
 class DocumentDeletionStatus(StrEnum):
     PENDING_DELETE = "pending_delete"
     OBJECT_DELETED = "object_deleted"
+    FAILED = "failed"
+
+
+class DocumentDeletionJobStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    RETRY = "retry"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class ScanStatus(StrEnum):
@@ -365,6 +375,47 @@ class DocumentAnalysisJob(Base):
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DocumentDeletionJob(Base):
+    """Durable private-object deletion work, deliberately independent of asset FKs.
+
+    The asset can be hard-deleted once its objects are gone while this compact,
+    opaque job record remains available for operational reconciliation.
+    """
+
+    __tablename__ = "document_deletion_jobs"
+    __table_args__ = (
+        UniqueConstraint("asset_id", name="uq_document_deletion_jobs_asset"),
+        Index("ix_document_deletion_jobs_status_next", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    asset_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    status: Mapped[DocumentDeletionJobStatus] = mapped_column(
+        Enum(
+            DocumentDeletionJobStatus,
+            name="document_deletion_job_status",
+            native_enum=False,
+            values_callable=enum_values,
+        ),
+        default=DocumentDeletionJobStatus.QUEUED,
+        index=True,
+    )
+    # Keys are opaque HMAC-scoped identifiers; never store a filename or document text here.
+    storage_keys: Mapped[list[str]] = mapped_column(JSON, default=list)
+    object_count: Mapped[int] = mapped_column(Integer, default=0)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    claim_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

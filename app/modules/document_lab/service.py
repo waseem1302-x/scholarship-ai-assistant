@@ -23,6 +23,8 @@ from app.modules.document_lab.models import (
     DocumentAnalysisJob,
     DocumentAsset,
     DocumentConsent,
+    DocumentDeletionJob,
+    DocumentDeletionJobStatus,
     DocumentDeletionStatus,
     DocumentExtraction,
     DocumentFeedbackItem,
@@ -240,7 +242,7 @@ class DocumentLabService:
     def delete_asset(self, asset_id: uuid.UUID, user_id: uuid.UUID) -> None:
         self._require_enabled()
         asset = self._owned_asset(asset_id, user_id)
-        self._delete_asset_private_data(asset)
+        self._enqueue_asset_deletion(asset)
 
     def retry_preparation(
         self, version_id: uuid.UUID, user_id: uuid.UUID
@@ -344,8 +346,17 @@ class DocumentLabService:
 
     def get_analysis(self, analysis_id: uuid.UUID, user_id: uuid.UUID) -> DocumentAnalysisResponse:
         self._require_enabled()
-        analysis = self.session.get(DocumentAnalysis, analysis_id)
-        if analysis is None or analysis.user_id != user_id:
+        analysis = self.session.scalar(
+            select(DocumentAnalysis)
+            .join(DocumentVersion, DocumentVersion.id == DocumentAnalysis.version_id)
+            .join(DocumentAsset, DocumentAsset.id == DocumentVersion.asset_id)
+            .where(
+                DocumentAnalysis.id == analysis_id,
+                DocumentAnalysis.user_id == user_id,
+                DocumentAsset.deleted_at.is_(None),
+            )
+        )
+        if analysis is None:
             raise AppError(
                 "document_analysis_not_found",
                 "Document analysis was not found.",
@@ -360,9 +371,12 @@ class DocumentLabService:
         self._owned_version(version_id, user_id)
         analyses = self.session.scalars(
             select(DocumentAnalysis)
+            .join(DocumentVersion, DocumentVersion.id == DocumentAnalysis.version_id)
+            .join(DocumentAsset, DocumentAsset.id == DocumentVersion.asset_id)
             .where(
                 DocumentAnalysis.version_id == version_id,
                 DocumentAnalysis.user_id == user_id,
+                DocumentAsset.deleted_at.is_(None),
             )
             .order_by(DocumentAnalysis.created_at.desc())
         ).all()
@@ -374,7 +388,9 @@ class DocumentLabService:
         assets = self.list_assets(user_id)
         analyses = self.session.scalars(
             select(DocumentAnalysis)
-            .where(DocumentAnalysis.user_id == user_id)
+            .join(DocumentVersion, DocumentVersion.id == DocumentAnalysis.version_id)
+            .join(DocumentAsset, DocumentAsset.id == DocumentVersion.asset_id)
+            .where(DocumentAnalysis.user_id == user_id, DocumentAsset.deleted_at.is_(None))
             .order_by(DocumentAnalysis.created_at)
         ).all()
         return DocumentExportResponse(
@@ -385,11 +401,15 @@ class DocumentLabService:
 
     def delete_all_data(self, user_id: uuid.UUID) -> None:
         # A kill switch must not strand private storage objects or prevent a
-        # student from exercising deletion rights.
+        # student from exercising deletion rights. Requests become invisible
+        # immediately and a dedicated worker completes object deletion.
         for asset in self.session.scalars(
-            select(DocumentAsset).where(DocumentAsset.user_id == user_id)
+            select(DocumentAsset).where(
+                DocumentAsset.user_id == user_id,
+                DocumentAsset.deleted_at.is_(None),
+            )
         ).all():
-            self._delete_asset_private_data(asset)
+            self._enqueue_asset_deletion(asset)
 
     def link_application_document(
         self,
@@ -457,7 +477,7 @@ class DocumentLabService:
         """
         job = self._claim_next_job()
         if job is None:
-            return False
+            return self.process_next_deletion_job()
         if job.job_kind is DocumentJobKind.SCAN:
             self._process_scan(job)
         elif job.job_kind is DocumentJobKind.EXTRACT:
@@ -980,8 +1000,16 @@ class DocumentLabService:
         return asset
 
     def _owned_version(self, version_id: uuid.UUID, user_id: uuid.UUID) -> DocumentVersion:
-        version = self.session.get(DocumentVersion, version_id)
-        if version is None or version.user_id != user_id:
+        version = self.session.scalar(
+            select(DocumentVersion)
+            .join(DocumentAsset, DocumentAsset.id == DocumentVersion.asset_id)
+            .where(
+                DocumentVersion.id == version_id,
+                DocumentVersion.user_id == user_id,
+                DocumentAsset.deleted_at.is_(None),
+            )
+        )
+        if version is None:
             raise AppError(
                 "document_version_not_found",
                 "Document version was not found.",
@@ -1038,8 +1066,8 @@ class DocumentLabService:
             )
         ).all()
         for asset in expired:
-            self._delete_asset_private_data(asset)
-        return processed + len(expired)
+            self._enqueue_asset_deletion(asset)
+        return processed + len(expired) + self.reconcile_deletion_jobs()
 
     def _purge_expired_analyses(self) -> int:
         cutoff = utc_now() - timedelta(days=self.settings.document_lab_analysis_retention_days)
@@ -1063,27 +1091,214 @@ class DocumentLabService:
         self.session.commit()
         return len(analysis_ids)
 
-    def _delete_asset_private_data(self, asset: DocumentAsset) -> None:
+    def _enqueue_asset_deletion(self, asset: DocumentAsset) -> DocumentDeletionJob:
+        """Persist an idempotent erasure request before any storage operation."""
+
+        existing = self.session.scalar(
+            select(DocumentDeletionJob).where(DocumentDeletionJob.asset_id == asset.id)
+        )
+        if existing is not None:
+            return existing
         versions = self._versions_for_asset(asset.id)
-        version_ids = [version.id for version in versions]
         now = utc_now()
         asset.deleted_at = asset.deleted_at or now
         asset.deletion_requested_at = asset.deletion_requested_at or now
         asset.deletion_status = DocumentDeletionStatus.PENDING_DELETE.value
+        job = DocumentDeletionJob(
+            asset_id=asset.id,
+            storage_keys=[version.storage_key for version in versions],
+            object_count=len(versions),
+            next_attempt_at=now,
+        )
+        self.session.add(job)
         self.session.commit()
-        for version in versions:
-            self.storage.delete(version.storage_key)
-        for version in versions:
-            version.status = DocumentVersionStatus.DELETED
-        asset.deletion_status = DocumentDeletionStatus.OBJECT_DELETED.value
-        self.session.commit()
-        self._delete_analysis_records(version_ids)
-        self.session.delete(asset)
+        return job
+
+    def process_next_deletion_job(self) -> bool:
+        """Run one durable private-object erasure job without exposing document data."""
+
+        job = self._claim_next_deletion_job()
+        if job is None:
+            return False
         try:
-            self.session.commit()
+            for key in job.storage_keys:
+                self.storage.delete(key)
         except Exception:
+            self._retry_or_fail_deletion_job(job)
+            return True
+        self._complete_deletion_job(job)
+        return True
+
+    def reconcile_deletion_jobs(self) -> int:
+        """Recover marked assets that predate a job or whose enqueue transaction failed."""
+
+        assets = self.session.scalars(
+            select(DocumentAsset).where(
+                DocumentAsset.deleted_at.is_not(None),
+                DocumentAsset.deletion_status == DocumentDeletionStatus.PENDING_DELETE.value,
+                ~DocumentAsset.id.in_(select(DocumentDeletionJob.asset_id)),
+            )
+        ).all()
+        for asset in assets:
+            self._enqueue_asset_deletion(asset)
+        return len(assets)
+
+    def deletion_job_metrics(self) -> dict[str, int]:
+        """Safe aggregate states for operators; no filenames, keys, or document data."""
+
+        rows = self.session.execute(
+            select(DocumentDeletionJob.status, func.count(DocumentDeletionJob.id)).group_by(
+                DocumentDeletionJob.status
+            )
+        ).all()
+        metrics = {status.value: 0 for status in DocumentDeletionJobStatus}
+        metrics.update({status.value: count for status, count in rows})
+        return metrics
+
+    def _claim_next_deletion_job(self) -> DocumentDeletionJob | None:
+        now = utc_now()
+        self.session.execute(
+            update(DocumentDeletionJob)
+            .where(
+                DocumentDeletionJob.status == DocumentDeletionJobStatus.RUNNING,
+                DocumentDeletionJob.claimed_until.is_not(None),
+                DocumentDeletionJob.claimed_until < now,
+            )
+            .values(
+                status=case(
+                    (
+                        DocumentDeletionJob.attempt_count
+                        >= self.settings.document_lab_deletion_max_attempts,
+                        DocumentDeletionJobStatus.FAILED,
+                    ),
+                    else_=DocumentDeletionJobStatus.RETRY,
+                ),
+                failure_code=case(
+                    (
+                        DocumentDeletionJob.attempt_count
+                        >= self.settings.document_lab_deletion_max_attempts,
+                        "document_deletion_lease_exhausted",
+                    ),
+                    else_="document_deletion_lease_expired",
+                ),
+                claimed_until=None,
+                claim_token=None,
+                next_attempt_at=now,
+                completed_at=case(
+                    (
+                        DocumentDeletionJob.attempt_count
+                        >= self.settings.document_lab_deletion_max_attempts,
+                        now,
+                    ),
+                    else_=None,
+                ),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.commit()
+        queued_job_id = (
+            select(DocumentDeletionJob.id)
+            .where(
+                DocumentDeletionJob.status.in_(
+                    [DocumentDeletionJobStatus.QUEUED, DocumentDeletionJobStatus.RETRY]
+                ),
+                DocumentDeletionJob.next_attempt_at <= now,
+            )
+            .order_by(DocumentDeletionJob.next_attempt_at, DocumentDeletionJob.created_at)
+            .limit(1)
+            .scalar_subquery()
+        )
+        claim_token = uuid.uuid4().hex
+        claimed_id = self.session.scalar(
+            update(DocumentDeletionJob)
+            .where(
+                DocumentDeletionJob.id == queued_job_id,
+                DocumentDeletionJob.status.in_(
+                    [DocumentDeletionJobStatus.QUEUED, DocumentDeletionJobStatus.RETRY]
+                ),
+            )
+            .values(
+                status=DocumentDeletionJobStatus.RUNNING,
+                attempt_count=DocumentDeletionJob.attempt_count + 1,
+                claim_token=claim_token,
+                claimed_until=now
+                + timedelta(seconds=self.settings.document_lab_deletion_claim_seconds),
+                failure_code=None,
+            )
+            .returning(DocumentDeletionJob.id)
+            .execution_options(synchronize_session=False)
+        )
+        if claimed_id is None:
             self.session.rollback()
-            raise
+            return None
+        self.session.commit()
+        self.session.expire_all()
+        return self.session.get(DocumentDeletionJob, claimed_id)
+
+    def _retry_or_fail_deletion_job(self, job: DocumentDeletionJob) -> None:
+        terminal = job.attempt_count >= self.settings.document_lab_deletion_max_attempts
+        updated = self.session.execute(
+            update(DocumentDeletionJob)
+            .where(
+                DocumentDeletionJob.id == job.id,
+                DocumentDeletionJob.claim_token == job.claim_token,
+            )
+            .values(
+                status=(
+                    DocumentDeletionJobStatus.FAILED
+                    if terminal
+                    else DocumentDeletionJobStatus.RETRY
+                ),
+                failure_code=(
+                    "document_storage_delete_exhausted"
+                    if terminal
+                    else "document_storage_delete_failed"
+                ),
+                claim_token=None,
+                claimed_until=None,
+                next_attempt_at=utc_now()
+                + timedelta(seconds=self.settings.document_lab_deletion_retry_seconds),
+                completed_at=utc_now() if terminal else None,
+            )
+        )
+        if not updated.rowcount:
+            self.session.rollback()
+            return
+        if terminal:
+            self.session.execute(
+                update(DocumentAsset)
+                .where(DocumentAsset.id == job.asset_id)
+                .values(deletion_status=DocumentDeletionStatus.FAILED.value)
+            )
+        self.session.commit()
+
+    def _complete_deletion_job(self, job: DocumentDeletionJob) -> None:
+        """Hard-delete private relational data only after every object delete succeeded."""
+
+        still_claimed = self.session.execute(
+            update(DocumentDeletionJob)
+            .where(
+                DocumentDeletionJob.id == job.id,
+                DocumentDeletionJob.claim_token == job.claim_token,
+            )
+            .values(
+                status=DocumentDeletionJobStatus.COMPLETED,
+                failure_code=None,
+                claim_token=None,
+                claimed_until=None,
+                storage_keys=[],
+                completed_at=utc_now(),
+            )
+        )
+        if not still_claimed.rowcount:
+            self.session.rollback()
+            return
+        asset = self.session.get(DocumentAsset, job.asset_id)
+        if asset is not None:
+            version_ids = [version.id for version in self._versions_for_asset(asset.id)]
+            self._delete_analysis_records(version_ids)
+            self.session.delete(asset)
+        self.session.commit()
 
     def _commit_with_storage_compensation(self, storage_keys: list[str]) -> None:
         try:

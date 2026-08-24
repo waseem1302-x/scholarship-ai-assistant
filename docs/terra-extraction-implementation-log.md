@@ -713,3 +713,34 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   formatting passed.
 - **Known limitation:** real PostgreSQL lease-reclaim/fencing execution and
   production worker health evidence remain RC gates.
+
+## R-03 — durable private Document Lab deletion
+
+- **Status:** local durable deletion, retry, reconciliation, terminal state,
+  and aggregate metric coverage is green; production object-store and
+  PostgreSQL evidence remain required.
+- **Baseline:** `39bf336`.
+- **Implementation:** deletion requests now make an asset inaccessible and
+  durably enqueue an idempotent job before any object-store call. Each job
+  retains only opaque scoped storage keys while pending, has bounded attempts,
+  lease/token fencing, retry scheduling, a terminal failure code, and safe
+  aggregate status metrics. A successful job deletes private objects first,
+  then atomically hard-deletes relational private data and clears its retained
+  keys; the compact completed job remains for operator reconciliation. The
+  existing preparation worker drains deletion work when no preparation job is
+  queued. Expiry now enqueues deletion rather than performing synchronous I/O.
+- **Migration:** `20260824_0051_document_deletion_jobs` is additive and
+  reversible.
+- **Security/trust:** a pending or terminally failed asset is immediately
+  unavailable through asset, version, analysis, list, and export paths; no
+  filename or document text is stored in the deletion job or emitted as a
+  failure reason.
+- **Tests:** a storage outage requeues then idempotently completes; bounded
+  repeated failures become terminal and reconciliation does not duplicate a
+  job. Document Lab verification completed **12 passed, 10 deselected, 1
+  warning in 19.29s**, **5 passed, 17 deselected, 1 warning in 9.73s**, and
+  **5 passed, 17 deselected, 1 warning in 16.16s**. The deletion migration
+  test completed **1 passed, 1 warning in 4.27s**. Targeted Ruff lint,
+  formatting, and `git diff --check` passed.
+- **Known limitation:** real PostgreSQL multi-worker fencing and a real
+  production object-store outage/reconciliation exercise remain RC gates.
