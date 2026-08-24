@@ -887,3 +887,43 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   runtime/readiness gates stay open.
 - **Rollback:** deploy the prior API image; no migration or stored data rewrite
   is required.
+
+## P0-H follow-up — cited candidate review projection
+
+- **Status:** local read-only review projection is green; it closes neither the
+  universal-graph approval gate nor the remaining P0-H runtime/deployment gates.
+- **Baseline commit:** `a4c0d28`.
+- **Implementation:** `GET /admin/catalogue-ingestion/candidates/{candidate_id}/review-projection`
+  now turns a validated claim-resolution payload into proposed facts with the
+  typed value, cycle/route/institution/programme scope, source URL/role,
+  mapped T0–T3 provenance tier, and the single immutable canonical evidence
+  block containing the exact claim span. It fails closed if a resolved claim
+  cannot be joined to its stored artifact/block. The projection includes
+  resolved conflicts, rejected claims, missing mandatory objectives, and the
+  append-only candidate audit history with actor, action, reason, timestamp,
+  and integrity hash. Evidence is declared `plain_text`; this JSON endpoint
+  never returns source HTML, and any future UI must render the supplied text
+  as escaped plain text.
+- **Data/migrations:** none. The view reads existing immutable artifacts,
+  evidence blocks, routing decisions, claim resolutions, and audit logs.
+- **Tests added:** a local queued extraction is projected into a cited
+  scholarship fact; the test verifies its normalized scope, T0 authority,
+  exact block offsets/text, and a preserved append-only reviewer audit event.
+- **Commands and results:** targeted Ruff lint and format checks passed;
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/p0h-review-projection-evidence
+  tests/test_catalogue_ingestion.py::test_operator_run_status_exposes_safe_lineage_without_source_content_or_lease_token
+  tests/test_catalogue_ingestion.py::test_candidate_review_projection_cites_exact_blocks_and_preserves_audit_history
+  tests/test_source_routing.py -q` — **7 passed, 2 warnings in 10.4s**
+  (existing Starlette deprecation and local pytest-cache permission warnings);
+  `git diff --check` passed.
+- **Security/trust invariant:** the view cannot turn a claim into a reviewable
+  fact without a persisted exact evidence block. It has no write path, cannot
+  publish, and provides normalized plain text rather than raw HTML.
+- **Known limitations:** authority mapping is a projection over the current
+  source classifier (provider/government T0, route T1, institution T2, portal
+  T3); durable universal authority/delegation state still requires P0-G. There
+  is no reviewer decision write model/version yet, and no browser UI exists to
+  enforce escaped rendering at the presentation layer.
+- **Rollback:** deploy the prior API image; no migration or stored data rewrite
+  is required.

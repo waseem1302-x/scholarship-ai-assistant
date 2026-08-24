@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.modules.auth.models import User, UserRole
+from app.modules.auth.models import AuditLog, User, UserRole
 from app.modules.catalogue_ingestion.claim_provider import (
     AzureOpenAIClaimProvider,
     ClaimExtractionResult,
@@ -681,6 +681,59 @@ def test_operator_run_status_exposes_safe_lineage_without_source_content_or_leas
     assert len(candidate.attempts) == 12
     assert status.executed_objective_count == 12
     assert status.reused_objective_count == 0
+
+
+def test_candidate_review_projection_cites_exact_blocks_and_preserves_audit_history(
+    db_session,
+) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    service.process_run(run.id, worker_id="review-projection")
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert candidate is not None
+    reviewer_id = uuid.uuid4()
+    db_session.add(
+        AuditLog(
+            actor_user_id=reviewer_id,
+            action="catalogue_candidate_hold_for_review",
+            entity_type="catalogue_candidate",
+            entity_id=str(candidate.id),
+            metadata_json={"reason": "Verify the delegated university deadline."},
+        )
+    )
+    db_session.commit()
+
+    projection = service.candidate_review_projection(candidate.id)
+    scholarship_name = next(
+        fact
+        for fact in projection.proposed_facts
+        if fact.entity_type == "scholarship" and fact.field_path == "name"
+    )
+
+    assert scholarship_name.value["string_value"] == "MEXT Scholarship"
+    assert scholarship_name.scope.cycle_key == "intake_2027"
+    assert scholarship_name.authority_tier == "T0"
+    assert scholarship_name.evidence.text == MEXT_TEXT
+    assert scholarship_name.evidence.start_offset == 0
+    assert scholarship_name.evidence.end_offset == len(MEXT_TEXT)
+    assert scholarship_name.evidence.text_format == "plain_text"
+    assert projection.conflicts == []
+    assert projection.rejected_claims == []
+    assert projection.missing_mandatory_objectives == []
+    assert projection.audit_history[0].action == "catalogue_candidate_hold_for_review"
+    assert projection.audit_history[0].actor_user_id == reviewer_id
+    assert projection.audit_history[0].reason == "Verify the delegated university deadline."
 
 
 def test_source_routing_blocks_ambiguous_artifact_without_model_calls(db_session) -> None:

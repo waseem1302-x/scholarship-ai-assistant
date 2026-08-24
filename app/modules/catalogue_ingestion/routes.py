@@ -15,6 +15,7 @@ from app.modules.catalogue_ingestion.schemas import (
     CandidateListResponse,
     CandidateResponse,
     CandidateRetryRequest,
+    CandidateReviewProjectionResponse,
     CandidateSubmitRequest,
     DirectUrlIngestionRequest,
     IngestionRunListResponse,
@@ -93,6 +94,18 @@ def get_candidate(
     service: Annotated[CatalogueIngestionService, Depends(get_service)],
 ) -> CandidateResponse:
     return service.candidate(candidate_id)
+
+
+@router.get(
+    "/candidates/{candidate_id}/review-projection",
+    response_model=CandidateReviewProjectionResponse,
+)
+def get_candidate_review_projection(
+    candidate_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[CatalogueIngestionService, Depends(get_service)],
+) -> CandidateReviewProjectionResponse:
+    return service.candidate_review_projection(candidate_id)
 
 
 @router.post("/candidates/{candidate_id}/retry", response_model=CandidateResponse)

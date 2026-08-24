@@ -412,6 +412,19 @@ class CatalogueIngestionRepository:
             )
         )
 
+    def get_candidate_review_projection(self, candidate_id: uuid.UUID) -> CatalogueCandidate | None:
+        artifact_options = selectinload(CatalogueCandidate.sources).selectinload(
+            CatalogueCandidateSource.artifacts
+        )
+        return self.session.scalar(
+            select(CatalogueCandidate)
+            .where(CatalogueCandidate.id == candidate_id)
+            .options(
+                artifact_options.selectinload(CatalogueSourceArtifact.evidence_blocks),
+                artifact_options.selectinload(CatalogueSourceArtifact.routing_decisions),
+            )
+        )
+
     def get_candidate_for_update(self, candidate_id: uuid.UUID) -> CatalogueCandidate | None:
         return self.session.scalar(
             select(CatalogueCandidate)

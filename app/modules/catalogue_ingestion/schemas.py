@@ -278,6 +278,55 @@ class OperatorRunStatusResponse(IngestionRunResponse):
     reused_objective_count: int
 
 
+class ReviewFactScope(StrictExtractionModel):
+    cycle_key: str | None
+    track_key: str | None
+    institution_key: str | None
+    programme_key: str | None
+
+
+class ReviewEvidenceBlock(StrictExtractionModel):
+    artifact_id: uuid.UUID
+    block_id: str
+    canonicalization_version: str
+    start_offset: int
+    end_offset: int
+    locator: dict[str, int]
+    text: str
+    text_format: Literal["plain_text"] = "plain_text"
+
+
+class ReviewProposedFact(StrictExtractionModel):
+    entity_type: str
+    entity_key: str
+    field_path: str
+    value: dict[str, object]
+    scope: ReviewFactScope
+    source_url: str
+    source_role: CandidateSourceRole
+    source_content_role: str | None
+    authority_tier: Literal["T0", "T1", "T2", "T3", "unresolved"]
+    evidence: ReviewEvidenceBlock
+
+
+class ReviewAuditHistoryItem(StrictExtractionModel):
+    action: str
+    actor_user_id: uuid.UUID | None
+    reason: str | None
+    created_at: datetime
+    integrity_hash: str
+
+
+class CandidateReviewProjectionResponse(StrictExtractionModel):
+    candidate_id: uuid.UUID
+    candidate_status: CandidateStatus
+    proposed_facts: list[ReviewProposedFact]
+    conflicts: list[str]
+    rejected_claims: list[str]
+    missing_mandatory_objectives: list[str]
+    audit_history: list[ReviewAuditHistoryItem]
+
+
 class SourceArtifactResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

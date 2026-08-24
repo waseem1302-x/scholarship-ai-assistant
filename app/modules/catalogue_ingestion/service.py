@@ -31,6 +31,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimResolution,
     ExtractedClaim,
     ObjectiveCoverageState,
+    ResolvedClaim,
 )
 from app.modules.catalogue_ingestion.crawlee_static_acquirer import select_evidence_acquirer
 from app.modules.catalogue_ingestion.crawler import (
@@ -80,6 +81,7 @@ from app.modules.catalogue_ingestion.schemas import (
     EXTRACTION_SCHEMA_VERSION,
     CandidateListResponse,
     CandidateResponse,
+    CandidateReviewProjectionResponse,
     CatalogueExtractionOutput,
     IngestionRunListResponse,
     IngestionRunResponse,
@@ -89,6 +91,10 @@ from app.modules.catalogue_ingestion.schemas import (
     OperatorRunStatusResponse,
     OperatorSourceRoutingStatus,
     OperatorSourceStatus,
+    ReviewAuditHistoryItem,
+    ReviewEvidenceBlock,
+    ReviewFactScope,
+    ReviewProposedFact,
     SeedCandidate,
 )
 from app.modules.catalogue_ingestion.seed_parser import (
@@ -1346,6 +1352,72 @@ class CatalogueIngestionService:
             raise AppError("catalogue_candidate_not_found", "Candidate was not found", 404)
         return self._candidate_response(candidate)
 
+    def candidate_review_projection(
+        self, candidate_id: uuid.UUID
+    ) -> CandidateReviewProjectionResponse:
+        """Return validated proposal facts with immutable, exact block citations.
+
+        This is deliberately a read-only projection. It never executes a review
+        transition and keeps source text as plain text rather than HTML.
+        """
+
+        candidate = self.repository.get_candidate_review_projection(candidate_id)
+        if candidate is None:
+            raise AppError("catalogue_candidate_not_found", "Candidate was not found", 404)
+        payload = candidate.proposed_payload if isinstance(candidate.proposed_payload, dict) else {}
+        if payload.get("schema_version") not in CLAIM_SCHEMA_VERSIONS:
+            resolution = None
+        else:
+            try:
+                resolution = ClaimResolution.model_validate(payload)
+            except ValueError as exc:
+                raise AppError(
+                    "catalogue_review_projection_invalid",
+                    "Candidate proposal cannot be safely projected for review",
+                    409,
+                ) from exc
+
+        artifacts = {
+            str(artifact.id): (source, artifact)
+            for source in candidate.sources
+            for artifact in source.artifacts
+        }
+        proposed_facts = (
+            [self._review_proposed_fact(item, artifacts) for item in resolution.resolved]
+            if resolution is not None
+            else []
+        )
+        audit_history = self.session.scalars(
+            select(AuditLog)
+            .where(
+                AuditLog.entity_type == "catalogue_candidate",
+                AuditLog.entity_id == str(candidate.id),
+            )
+            .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        ).all()
+        return CandidateReviewProjectionResponse(
+            candidate_id=candidate.id,
+            candidate_status=candidate.status,
+            proposed_facts=proposed_facts,
+            conflicts=resolution.conflicts if resolution is not None else list(candidate.conflicts),
+            rejected_claims=resolution.rejected if resolution is not None else [],
+            missing_mandatory_objectives=(
+                _missing_mandatory_objectives(resolution.completeness_errors)
+                if resolution is not None
+                else []
+            ),
+            audit_history=[
+                ReviewAuditHistoryItem(
+                    action=item.action,
+                    actor_user_id=item.actor_user_id,
+                    reason=_audit_reason(item.metadata_json),
+                    created_at=item.created_at,
+                    integrity_hash=item.integrity_hash,
+                )
+                for item in audit_history
+            ],
+        )
+
     def _check_budget(self, run: CatalogueIngestionRun, source_text: str) -> None:
         if run.model_calls >= run.max_model_calls:
             raise RunBudgetExhausted
@@ -1696,6 +1768,98 @@ class CatalogueIngestionService:
             browser_decision="not_used",
             browser_reason="browser_acquisition_not_enabled",
         )
+
+    @staticmethod
+    def _review_proposed_fact(
+        item: ResolvedClaim,
+        artifacts: dict[str, tuple[CatalogueCandidateSource, CatalogueSourceArtifact]],
+    ) -> ReviewProposedFact:
+        source_and_artifact = artifacts.get(item.artifact_id)
+        if source_and_artifact is None:
+            raise AppError(
+                "catalogue_review_evidence_missing",
+                "Accepted claim references an unavailable source artifact",
+                409,
+            )
+        source, artifact = source_and_artifact
+        block = next(
+            (
+                candidate
+                for candidate in artifact.evidence_blocks
+                if candidate.start_offset <= item.claim.excerpt_start
+                and candidate.end_offset >= item.claim.excerpt_end
+            ),
+            None,
+        )
+        if block is None:
+            raise AppError(
+                "catalogue_review_evidence_missing",
+                "Accepted claim does not have an exact immutable evidence block",
+                409,
+            )
+        decision = max(
+            artifact.routing_decisions, key=lambda current: current.created_at, default=None
+        )
+        return ReviewProposedFact(
+            entity_type=item.claim.entity_type.value,
+            entity_key=item.claim.entity_key,
+            field_path=item.claim.field_path,
+            value=item.claim.value.model_dump(mode="json"),
+            scope=ReviewFactScope(**item.claim.scope.model_dump()),
+            source_url=artifact.final_url,
+            source_role=source.source_role,
+            source_content_role=decision.role if decision is not None else None,
+            authority_tier=_review_authority_tier(source, decision.role if decision else None),
+            evidence=ReviewEvidenceBlock(
+                artifact_id=artifact.id,
+                block_id=block.block_id,
+                canonicalization_version=block.canonicalization_version,
+                start_offset=block.start_offset,
+                end_offset=block.end_offset,
+                locator={
+                    str(key): value
+                    for key, value in block.locator.items()
+                    if isinstance(key, str) and isinstance(value, int)
+                },
+                text=block.text,
+            ),
+        )
+
+
+def _review_authority_tier(
+    source: CatalogueCandidateSource, source_content_role: str | None
+) -> str:
+    """Map existing source provenance into the v3 review authority vocabulary."""
+
+    if source_content_role == "application_portal":
+        return "T3"
+    if source_content_role == "application_route":
+        return "T1"
+    if source.trust_tier == 3:
+        return "T2"
+    if source.trust_tier in {1, 2}:
+        return "T0"
+    return "unresolved"
+
+
+def _missing_mandatory_objectives(completeness_errors: list[str]) -> list[str]:
+    return sorted(
+        {
+            error.removeprefix("incomplete_objective:")
+            for error in completeness_errors
+            if error.startswith(("incomplete_objective:", "missing:"))
+        }
+    )
+
+
+def _audit_reason(metadata: object) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("reason", "notes"):
+        value = metadata.get(key)
+        if isinstance(value, str):
+            return value
+    return None
 
 
 def _safe_failure_code(message: str) -> str:
