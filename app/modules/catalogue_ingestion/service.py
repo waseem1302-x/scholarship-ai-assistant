@@ -1195,6 +1195,7 @@ class CatalogueIngestionService:
                         classifier_version=classified.classifier_version,
                         role=classified.role.value,
                         cycle=classified.cycle.value,
+                        authority_tier=_routing_authority_tier(source, classified.role.value),
                         deterministic_signals=list(classified.deterministic_signals),
                         confidence=classified.confidence,
                         ambiguity_reason=classified.ambiguity_reason,
@@ -1838,6 +1839,7 @@ class CatalogueIngestionService:
                 OperatorSourceRoutingStatus(
                     role=decision.role,
                     cycle=decision.cycle,
+                    authority_tier=decision.authority_tier,
                     classifier_version=decision.classifier_version,
                     deterministic_signals=list(decision.deterministic_signals),
                     ambiguity_reason=decision.ambiguity_reason,
@@ -1962,6 +1964,20 @@ def _review_authority_tier(
     if source_content_role == "application_portal":
         return "T3"
     if source_content_role == "application_route":
+        return "T1"
+    if source.trust_tier == 3:
+        return "T2"
+    if source.trust_tier in {1, 2}:
+        return "T0"
+    return "unresolved"
+
+
+def _routing_authority_tier(source: CatalogueCandidateSource, role: str) -> str:
+    """Persist the explicit authority vocabulary alongside routing lineage."""
+
+    if role == "application_portal":
+        return "T3"
+    if role == "application_route":
         return "T1"
     if source.trust_tier == 3:
         return "T2"

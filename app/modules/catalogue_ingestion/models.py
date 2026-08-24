@@ -526,6 +526,7 @@ class CatalogueSourceRoutingDecision(Base):
     classifier_version: Mapped[str] = mapped_column(String(64))
     role: Mapped[str] = mapped_column(String(64))
     cycle: Mapped[str] = mapped_column(String(32))
+    authority_tier: Mapped[str] = mapped_column(String(16), default="unresolved")
     deterministic_signals: Mapped[list[str]] = mapped_column(JSON, default=list)
     confidence: Mapped[float] = mapped_column(default=0.0)
     ambiguity_reason: Mapped[str | None] = mapped_column(String(255))

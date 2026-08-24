@@ -1033,3 +1033,20 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   lineage; it cannot create approvals or publication records.
 - **Known limitations:** final accept/reject actions, universal graph approval,
   browser UI escaping, and operational RC evidence remain open.
+
+## P0-G follow-up — durable routed authority tier
+
+- **Status:** local authority lineage is green; this is not complete scoped
+  delegation/completeness enforcement.
+- **Implementation:** each versioned immutable source-routing decision now
+  persists T0 provider/government, T1 route, T2 institution, T3 portal, or
+  unresolved authority. Safe operator status exposes that stored value.
+- **Migration:** `20260824_0053_catalogue_routing_authority`, additive and
+  reversible.
+- **Evidence:** focused authority mapping and migration upgrade/downgrade tests
+  completed **2 passed, 2 warnings in 7.36s**; targeted Ruff and diff checks
+  passed. Warnings are existing Starlette deprecation and pytest-cache access.
+- **Security/trust:** unresolved sources remain unresolved; the tier does not
+  override scope, exact evidence, conflicts, or review-only publication gates.
+- **Known limitations:** delegated facts and bundle-level per-scope completeness
+  remain to be modeled durably.

@@ -72,6 +72,7 @@ from app.modules.catalogue_ingestion.service import (
     _canonical_identity_name,
     _crawler_child_matches_root,
     _identity_name_matches,
+    _routing_authority_tier,
 )
 from app.modules.catalogue_ingestion.sources import OfficialSourceClassifier
 from app.modules.catalogue_ingestion.validation import validate_and_build_proposal
@@ -324,6 +325,17 @@ def test_claim_value_treats_an_unused_empty_list_as_unset() -> None:
 
     assert value.primitive() == "Embassy Recommendation"
     assert value.string_list_value is None
+
+
+def test_routing_authority_tier_is_explicit_and_fail_closed() -> None:
+    source = CatalogueCandidateSource(trust_tier=1)
+    assert _routing_authority_tier(source, "provider_overview") == "T0"
+    assert _routing_authority_tier(source, "application_route") == "T1"
+    source.trust_tier = 3
+    assert _routing_authority_tier(source, "institution") == "T2"
+    assert _routing_authority_tier(source, "application_portal") == "T3"
+    source.trust_tier = None
+    assert _routing_authority_tier(source, "unknown") == "unresolved"
 
 
 def test_claim_output_normalizes_paths_offsets_and_core_priority() -> None:

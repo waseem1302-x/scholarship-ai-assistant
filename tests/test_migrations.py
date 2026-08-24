@@ -735,3 +735,29 @@ def test_catalogue_review_proposal_migration_is_additive_and_rolls_back(tmp_path
         inspect(engine).get_table_names()
     )
     engine.dispose()
+
+
+def test_catalogue_routing_authority_migration_is_additive_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'catalogue-routing-authority.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260824_0052")
+    engine = create_engine(database_url)
+    assert "authority_tier" not in {
+        column["name"]
+        for column in inspect(engine).get_columns("catalogue_source_routing_decisions")
+    }
+    command.upgrade(alembic_config, "20260824_0053")
+    assert "authority_tier" in {
+        column["name"]
+        for column in inspect(engine).get_columns("catalogue_source_routing_decisions")
+    }
+    command.downgrade(alembic_config, "20260824_0052")
+    assert "authority_tier" not in {
+        column["name"]
+        for column in inspect(engine).get_columns("catalogue_source_routing_decisions")
+    }
+    engine.dispose()

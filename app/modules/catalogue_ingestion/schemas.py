@@ -220,6 +220,7 @@ class OperatorArtifactStatus(StrictExtractionModel):
 class OperatorSourceRoutingStatus(StrictExtractionModel):
     role: str
     cycle: str
+    authority_tier: str
     classifier_version: str
     deterministic_signals: list[str]
     ambiguity_reason: str | None
