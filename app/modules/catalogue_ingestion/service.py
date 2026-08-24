@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import uuid
 from datetime import UTC, datetime
@@ -60,6 +61,8 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
+    CatalogueReviewDecision,
+    CatalogueReviewProposal,
     CatalogueSourceArtifact,
     CatalogueSourceRoutingDecision,
     ExtractionAttemptStatus,
@@ -68,6 +71,7 @@ from app.modules.catalogue_ingestion.models import (
     IngestionRunRetryClass,
     IngestionRunStage,
     IngestionRunStatus,
+    ReviewDecisionAction,
 )
 from app.modules.catalogue_ingestion.provider import (
     CatalogueExtractionProvider,
@@ -1015,15 +1019,41 @@ class CatalogueIngestionService:
         if candidate.proposed_payload.get("schema_version") in CLAIM_SCHEMA_VERSIONS:
             resolution = ClaimResolution.model_validate(candidate.proposed_payload)
             if not _legacy_graph_compatible(resolution):
-                raise AppError(
-                    "catalogue_detail_extraction_review_only",
-                    "Expanded programme-scoped extraction is review-only until graph "
-                    "architecture is added",
-                    409,
+                proposal = self._review_proposal(candidate)
+                candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
+                self.session.add(
+                    CatalogueReviewDecision(
+                        proposal=proposal,
+                        action=ReviewDecisionAction.SUBMITTED,
+                        actor_user_id=actor.id,
+                        reason=notes[:2000],
+                        prior_candidate_status=CandidateStatus.READY_FOR_REVIEW.value,
+                    )
                 )
+                self.session.add(
+                    AuditLog(
+                        actor_user_id=actor.id,
+                        action="catalogue_detail_review_submitted",
+                        entity_type="catalogue_candidate",
+                        entity_id=str(candidate.id),
+                        metadata_json={"proposal_hash": proposal.proposal_hash},
+                    )
+                )
+                self.session.commit()
+                return self._candidate_response(candidate)
             created = MextGraphMaterializer(self.session).materialize(resolution)
+            proposal = self._review_proposal(candidate)
             candidate.opportunity_id = created.id
             candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
+            self.session.add(
+                CatalogueReviewDecision(
+                    proposal=proposal,
+                    action=ReviewDecisionAction.SUBMITTED,
+                    actor_user_id=actor.id,
+                    reason=notes[:2000],
+                    prior_candidate_status=CandidateStatus.READY_FOR_REVIEW.value,
+                )
+            )
             self.session.add(
                 AuditLog(
                     actor_user_id=actor.id,
@@ -1041,10 +1071,72 @@ class CatalogueIngestionService:
         payload = OpportunityCreate.model_validate(candidate.proposed_payload)
         payload.notes = f"{payload.notes or ''}\nReviewer submission note: {notes}".strip()
         created = OpportunityService(self.session).create_opportunity(payload, created_by=actor)
+        proposal = self._review_proposal(candidate)
         candidate.opportunity_id = created.id
         candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
+        self.session.add(
+            CatalogueReviewDecision(
+                proposal=proposal,
+                action=ReviewDecisionAction.SUBMITTED,
+                actor_user_id=actor.id,
+                reason=notes[:2000],
+                prior_candidate_status=CandidateStatus.READY_FOR_REVIEW.value,
+            )
+        )
         self.session.commit()
         return self._candidate_response(candidate)
+
+    def _review_proposal(self, candidate: CatalogueCandidate) -> CatalogueReviewProposal:
+        """Bind one review action to a stable payload and exact evidence identities."""
+
+        assert candidate.proposed_payload is not None
+        evidence_versions = sorted(
+            {
+                (str(artifact.id), artifact.content_hash, block.canonicalization_version)
+                for source in candidate.sources
+                for artifact in source.artifacts
+                for block in artifact.evidence_blocks
+            }
+        )
+        if not evidence_versions:
+            raise AppError(
+                "catalogue_review_evidence_missing",
+                "Candidate cannot be submitted without immutable evidence blocks",
+                409,
+            )
+        snapshot = candidate.proposed_payload
+        proposal_hash = hashlib.sha256(
+            json.dumps(
+                {"payload": snapshot, "evidence_versions": evidence_versions},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        proposal = self.session.scalar(
+            select(CatalogueReviewProposal).where(
+                CatalogueReviewProposal.candidate_id == candidate.id,
+                CatalogueReviewProposal.proposal_hash == proposal_hash,
+            )
+        )
+        if proposal is not None:
+            return proposal
+        proposal = CatalogueReviewProposal(
+            candidate_id=candidate.id,
+            proposal_hash=proposal_hash,
+            schema_version=str(snapshot.get("schema_version", "legacy-proposal.v1")),
+            payload_snapshot=snapshot,
+            evidence_versions=[
+                {
+                    "artifact_id": artifact_id,
+                    "content_hash": content_hash,
+                    "canonicalization_version": version,
+                }
+                for artifact_id, content_hash, version in evidence_versions
+            ],
+        )
+        self.session.add(proposal)
+        self.session.flush()
+        return proposal
 
     def _process_direct_claims(
         self, run: CatalogueIngestionRun, candidate: CatalogueCandidate

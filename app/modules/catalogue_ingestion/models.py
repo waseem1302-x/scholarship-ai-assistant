@@ -116,6 +116,10 @@ class ClassificationDecisionStatus(StrEnum):
     SUPERSEDED = "superseded"
 
 
+class ReviewDecisionAction(StrEnum):
+    SUBMITTED = "submitted"
+
+
 class CatalogueIngestionRun(Base):
     __tablename__ = "catalogue_ingestion_runs"
     __table_args__ = (
@@ -296,6 +300,9 @@ class CatalogueCandidate(Base):
         back_populates="candidate", cascade="all, delete-orphan"
     )
     classification_decisions: Mapped[list["ClassificationDecision"]] = relationship(
+        back_populates="candidate", cascade="all, delete-orphan"
+    )
+    review_proposals: Mapped[list["CatalogueReviewProposal"]] = relationship(
         back_populates="candidate", cascade="all, delete-orphan"
     )
 
@@ -600,3 +607,62 @@ class ClassificationDecision(Base):
     )
 
     candidate: Mapped[CatalogueCandidate] = relationship(back_populates="classification_decisions")
+
+
+class CatalogueReviewProposal(Base):
+    """Immutable snapshot of the candidate payload and cited evidence at review time."""
+
+    __tablename__ = "catalogue_review_proposals"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "proposal_hash", name="uq_catalogue_review_proposal_hash"),
+        Index("ix_catalogue_review_proposals_candidate_created", "candidate_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalogue_candidates.id", ondelete="CASCADE"), index=True
+    )
+    proposal_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    evidence_versions: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    candidate: Mapped[CatalogueCandidate] = relationship(back_populates="review_proposals")
+    decisions: Mapped[list["CatalogueReviewDecision"]] = relationship(
+        back_populates="proposal", cascade="all, delete-orphan"
+    )
+
+
+class CatalogueReviewDecision(Base):
+    """Append-only human action referring to one immutable review proposal."""
+
+    __tablename__ = "catalogue_review_decisions"
+    __table_args__ = (
+        Index("ix_catalogue_review_decisions_proposal_created", "proposal_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalogue_review_proposals.id", ondelete="RESTRICT"), index=True
+    )
+    action: Mapped[ReviewDecisionAction] = mapped_column(
+        Enum(
+            ReviewDecisionAction,
+            name="catalogue_review_decision_action",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        nullable=False,
+    )
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+    prior_candidate_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+
+    proposal: Mapped[CatalogueReviewProposal] = relationship(back_populates="decisions")

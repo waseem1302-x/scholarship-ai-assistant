@@ -996,3 +996,25 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   enforce escaped rendering at the presentation layer.
 - **Rollback:** deploy the prior API image; no migration or stored data rewrite
   is required.
+
+## P0-H/P0-G follow-up — immutable review submission lineage
+
+- **Status:** local review-only proposal/decision lineage is green; universal
+  graph approval and durable accept/reject semantics remain open.
+- **Baseline:** `a6adfaa`.
+- **Implementation:** additive proposal and decision tables snapshot the exact
+  candidate payload, cited artifact hashes, and evidence-block canonicalization
+  versions under a deterministic proposal hash. A reviewer submission records
+  actor, reason, timestamp, and prior candidate state against that proposal.
+  Scoped v3 candidates can now enter `submitted_for_review` without legacy
+  graph materialization; this remains review-only and writes no public record.
+- **Migration:** `20260824_0052_catalogue_review_proposals`, additive and
+  reversible.
+- **Evidence:** focused Ruff checks passed; proposal/submission, scoped staging,
+  and migration upgrade/downgrade coverage completed **3 passed, 2 warnings in
+  9.29s**. Warnings are existing Starlette deprecation and local pytest-cache
+  permissions.
+- **Security/trust:** exact evidence is mandatory; no decision can be recorded
+  without immutable evidence blocks. No publication path was added.
+- **Known limitations:** this records submission, not a final accept/reject
+  decision, and does not implement universal graph approval or UI rendering.

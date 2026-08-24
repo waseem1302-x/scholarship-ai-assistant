@@ -37,6 +37,8 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
+    CatalogueReviewDecision,
+    CatalogueReviewProposal,
     CatalogueSourceArtifact,
     CatalogueSourceRoutingDecision,
     IngestionInputKind,
@@ -724,6 +726,45 @@ def test_operator_run_status_reports_persisted_pdf_conversion_telemetry(db_sessi
     assert "must-not-be-persisted" not in service.run_status(run.id).model_dump_json()
 
 
+def test_review_submission_records_immutable_payload_and_evidence_version(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(OFFICIAL_URL, mode=IngestionMode.EXTRACTION, dry_run=True)
+    service.process_run(run.id, worker_id="review-proposal")
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert candidate is not None
+    reviewer = User(
+        email="immutable-reviewer@example.test",
+        password_hash="not-used-by-service-test",
+        role=UserRole.ADMIN,
+    )
+    db_session.add(reviewer)
+    db_session.commit()
+
+    submitted = service.submit_candidate(
+        candidate.id, notes="Reviewed cited proposal.", actor=reviewer
+    )
+
+    proposal = db_session.scalar(select(CatalogueReviewProposal))
+    decision = db_session.scalar(select(CatalogueReviewDecision))
+    assert submitted.status is CandidateStatus.SUBMITTED_FOR_REVIEW
+    assert proposal is not None
+    assert proposal.payload_snapshot == candidate.proposed_payload
+    assert proposal.proposal_hash
+    assert proposal.evidence_versions
+    assert decision is not None
+    assert decision.proposal_id == proposal.id
+    assert decision.actor_user_id == reviewer.id
+    assert decision.reason == "Reviewed cited proposal."
+    assert decision.prior_candidate_status == CandidateStatus.READY_FOR_REVIEW.value
+
+
 def test_candidate_review_projection_cites_exact_blocks_and_preserves_audit_history(
     db_session,
 ) -> None:
@@ -1259,10 +1300,9 @@ def test_expanded_direct_url_stays_in_cited_staging_until_graph_support_exists(
     db_session.add(reviewer)
     db_session.commit()
 
-    with pytest.raises(AppError) as exc_info:
-        service.submit_candidate(candidate.id, notes="reviewed", actor=reviewer)
+    submitted = service.submit_candidate(candidate.id, notes="reviewed", actor=reviewer)
 
-    assert exc_info.value.code == "catalogue_detail_extraction_review_only"
+    assert submitted.status is CandidateStatus.SUBMITTED_FOR_REVIEW
     assert db_session.scalar(select(func.count()).select_from(Opportunity)) == 0
 
 

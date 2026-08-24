@@ -710,3 +710,28 @@ def test_document_deletion_job_migration_is_additive_and_rolls_back(tmp_path: Pa
     command.downgrade(alembic_config, "20260824_0050")
     assert "document_deletion_jobs" not in inspect(engine).get_table_names()
     engine.dispose()
+
+
+def test_catalogue_review_proposal_migration_is_additive_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'catalogue-review-proposal.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260824_0051")
+    engine = create_engine(database_url)
+    assert "catalogue_review_proposals" not in inspect(engine).get_table_names()
+    command.upgrade(alembic_config, "20260824_0052")
+    inspector = inspect(engine)
+    assert {"proposal_hash", "payload_snapshot", "evidence_versions"}.issubset(
+        {column["name"] for column in inspector.get_columns("catalogue_review_proposals")}
+    )
+    assert {"proposal_id", "actor_user_id", "prior_candidate_status"}.issubset(
+        {column["name"] for column in inspector.get_columns("catalogue_review_decisions")}
+    )
+    command.downgrade(alembic_config, "20260824_0051")
+    assert not {"catalogue_review_proposals", "catalogue_review_decisions"}.intersection(
+        inspect(engine).get_table_names()
+    )
+    engine.dispose()
