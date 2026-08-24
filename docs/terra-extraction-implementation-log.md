@@ -769,3 +769,53 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   third-party adapter correctly configures its HTTP transport deadline;
   production adapter review and a killable isolated-worker proof remain RC
   gates.
+
+### P0-E follow-up â€” terminate timed-out Docling process trees
+
+- **Status:** local deadline enforcement is green; this does not close the
+  dedicated-worker, restricted-egress, cgroup, offline-image, protected-fixture,
+  or real OCR-success gates.
+- **Baseline commit:** `99aba4f`.
+- **Objective:** ensure an application-side catalogue document-conversion
+  timeout cannot leave Docling helper processes consuming CPU after the parent
+  worker has returned a terminal failure.
+- **Files changed:** `app/modules/catalogue_ingestion/document_conversion.py`
+  and `tests/test_document_conversion.py`.
+- **Behavior before:** `subprocess.run(..., timeout=...)` only terminated its
+  direct Python child. Docling can create native/model helper descendants, so a
+  timeout did not provide a process-tree termination guarantee.
+- **Implementation:** the converter now starts the child in a dedicated Windows
+  process group or POSIX session. On timeout it recursively calls `taskkill
+  /T` on Windows or `killpg` on POSIX, waits for termination, and falls back to
+  a direct kill only when the group operation is unavailable. The sanitized,
+  offline-only worker environment and stable `document_conversion_timeout`
+  error remain unchanged.
+- **Tests added:** a timed-out fake worker proves the Windows launch uses
+  `CREATE_NEW_PROCESS_GROUP` and issues one recursive `taskkill /PID <pid> /T
+  /F` before the stable timeout error is raised.
+- **Commands and results:**
+  `uv --cache-dir .uv-cache run ruff check
+  app/modules/catalogue_ingestion/document_conversion.py
+  tests/test_document_conversion.py` â€” passed;
+  `uv --cache-dir .uv-cache run ruff format --check
+  app/modules/catalogue_ingestion/document_conversion.py
+  tests/test_document_conversion.py` â€” passed;
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/p0e-process-tree-doc-evidence-final
+  tests/test_document_conversion.py tests/test_evidence_acquirer.py` â€” **17
+  passed, 2 warnings in 4.62s**; `git diff --check` â€” passed.
+- **Security/trust invariant:** the process tree still receives no application
+  secrets, cannot select or fetch a URL, and remains subject to the existing
+  file/page/byte/output limits. No model, approval, or publication behavior was
+  changed.
+- **Known limitations:** Windows `taskkill` and POSIX `killpg` behavior are
+  mocked regression coverage, not a live child-tree experiment. Docker and
+  Poppler are absent locally, so the reference Docling image, its cgroup/egress
+  envelope, and visual blueprint review are not claimed as executed. Azure
+  deployment still has no dedicated Docling job wired to the restricted image;
+  `APP_CATALOGUE_DOCUMENT_INTELLIGENCE_ENABLED` remains false there.
+- **Rollback:** deploy the prior image; no migration or stored artifact changes
+  are involved. Keep the document-intelligence and OCR gates disabled.
+- **Next gate:** provide the dedicated Azure document-worker transport and
+  execute its image/runtime isolation evidence, then add protected approved
+  MEXT/Open Doors evaluations and real PostgreSQL/Redis proof.

@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import io
+import subprocess
 
 import pytest
 from pypdf import PdfWriter
 
+from app.modules.catalogue_ingestion import document_conversion
 from app.modules.catalogue_ingestion.document_conversion import (
     DOCUMENT_CONVERTER_VERSION,
     CatalogueDocumentPayloadNormalizer,
     DocumentConversionError,
     DocumentConversionLimits,
     LayoutAwareDocumentConverter,
+    SubprocessDoclingWorker,
     _document_worker_environment,
 )
 
@@ -130,3 +133,54 @@ def test_document_worker_environment_removes_application_configuration_and_force
     assert environment["DOCLING_ARTIFACTS_PATH"] == "C:/reviewed/docling-models"
     assert environment["HOME"] == "C:/reviewed/docling-models"
     assert environment["USERPROFILE"] == "C:/reviewed/docling-models"
+
+
+def test_docling_timeout_terminates_the_worker_process_tree(monkeypatch) -> None:
+    launches: list[dict[str, object]] = []
+    taskkill_commands: list[list[str]] = []
+
+    class TimedOutProcess:
+        pid = 4242
+        returncode = None
+
+        def communicate(self, *, timeout: int) -> tuple[str, str]:
+            del timeout
+            raise subprocess.TimeoutExpired("docling", 1)
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, *, timeout: int) -> None:
+            del timeout
+
+    process = TimedOutProcess()
+
+    def fake_popen(*_args, **kwargs):
+        launches.append(kwargs)
+        return process
+
+    def fake_run(command: list[str], **_kwargs):
+        taskkill_commands.append(command)
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr(document_conversion.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(document_conversion.subprocess, "run", fake_run)
+
+    with pytest.raises(DocumentConversionError, match="document_conversion_timeout"):
+        SubprocessDoclingWorker(model_artifacts_path="C:/reviewed/docling-models").convert(
+            b"%PDF-test",
+            enable_ocr=False,
+            limits=DocumentConversionLimits(
+                max_bytes=100,
+                max_pages=1,
+                max_runtime_seconds=1,
+                max_output_characters=100,
+                min_text_characters=1,
+            ),
+        )
+
+    assert launches
+    assert int(launches[0]["creationflags"]) & getattr(
+        document_conversion.subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+    )
+    assert taskkill_commands == [["taskkill", "/PID", "4242", "/T", "/F"]]

@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -103,24 +104,32 @@ class SubprocessDoclingWorker:
             ]
             if enable_ocr:
                 command.append("--enable-ocr")
+            popen_kwargs: dict[str, object] = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                # Do not inherit application secrets/configuration.  The
+                # worker needs only enough environment for the interpreter
+                # and native libraries to start.
+                "env": _document_worker_environment(model_artifacts_path=self.model_artifacts_path),
+            }
+            if os.name == "nt":
+                # A dedicated process group lets taskkill terminate Docling's
+                # own helper processes on deadline expiry.
+                popen_kwargs["creationflags"] = getattr(
+                    subprocess, "CREATE_NO_WINDOW", 0
+                ) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            else:
+                # The isolated session gives the supervisor one process group
+                # to terminate rather than leaving child helpers behind.
+                popen_kwargs["start_new_session"] = True
+            process = subprocess.Popen(command, **popen_kwargs)
             try:
-                completed = subprocess.run(
-                    command,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=limits.max_runtime_seconds,
-                    # Do not inherit application secrets/configuration.  The
-                    # worker needs only enough environment for the interpreter
-                    # and native libraries to start.
-                    env=_document_worker_environment(
-                        model_artifacts_path=self.model_artifacts_path
-                    ),
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
+                process.communicate(timeout=limits.max_runtime_seconds)
             except subprocess.TimeoutExpired as exc:
+                _terminate_worker_process_tree(process)
                 raise DocumentConversionError("document_conversion_timeout") from exc
-            if completed.returncode != 0 or not output_path.is_file():
+            if process.returncode != 0 or not output_path.is_file():
                 raise DocumentConversionError("document_conversion_failed")
             try:
                 parsed = json.loads(output_path.read_text(encoding="utf-8"))
@@ -130,6 +139,45 @@ class SubprocessDoclingWorker:
             if not isinstance(text, str):
                 raise DocumentConversionError("document_conversion_invalid_output")
             return text
+
+
+def _terminate_worker_process_tree(process: subprocess.Popen[str]) -> None:
+    """Stop a timed-out converter and every helper it created.
+
+    Docling can start native/model helper processes.  Killing only the Python
+    entry process lets those helpers continue consuming CPU after the catalogue
+    run has failed.  This is a local deadline backstop; the production worker
+    must still enforce cgroup/container limits and restricted egress.
+    """
+
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if completed.returncode != 0:
+                process.kill()
+        except (OSError, subprocess.TimeoutExpired):
+            # A direct kill is still better than leaving the main converter
+            # alive when taskkill is unavailable or constrained by policy.
+            process.kill()
+    else:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            process.kill()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 class LayoutAwareDocumentConverter:
