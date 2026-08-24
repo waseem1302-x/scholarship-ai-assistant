@@ -7,6 +7,7 @@ __pycache__/
 .pytest_cache/
 .document-lab-storage/
 .catalogue-seeds/
+.docling-models/
 .pytest-tmp/
 /.w*-migration*/
 /.pytest-*/

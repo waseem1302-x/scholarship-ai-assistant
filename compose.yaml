@@ -140,6 +140,28 @@ services:
       sleep 5; done'
     restart: unless-stopped
 
+  # Reference isolation envelope for the one-shot catalogue PDF converter.
+  # The current Python supervisor does not yet invoke this image, so this
+  # profile remains disabled until its transport and runtime proof are added.
+  # It deliberately has no database, Redis, API, or application-secret
+  # environment variables.
+  document-converter:
+    profiles: ["catalogue-document-conversion"]
+    build:
+      context: .
+      dockerfile: docker/docling-worker.Dockerfile
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=536870912,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: 2.0
+
   clamav:
     profiles: ["documents"]
     image: clamav/clamav:1.4

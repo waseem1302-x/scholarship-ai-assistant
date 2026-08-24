@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 
@@ -22,7 +23,11 @@ def _convert(
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
+    artifacts_path = os.environ.get("DOCLING_ARTIFACTS_PATH")
+    if not artifacts_path or not Path(artifacts_path).is_dir():
+        raise RuntimeError("reviewed_docling_artifacts_missing")
     options = PdfPipelineOptions()
+    options.artifacts_path = Path(artifacts_path)
     options.do_ocr = enable_ocr
     options.do_table_structure = True
     converter = DocumentConverter(

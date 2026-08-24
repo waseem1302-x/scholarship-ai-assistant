@@ -147,7 +147,8 @@ class CatalogueIngestionService:
                             max_runtime_seconds=settings.catalogue_document_max_runtime_seconds,
                             max_output_characters=settings.catalogue_document_max_output_characters,
                             min_text_characters=settings.catalogue_document_min_text_characters,
-                        )
+                        ),
+                        model_artifacts_path=settings.catalogue_document_model_artifacts_path,
                     ),
                     allow_ocr=settings.catalogue_document_ocr_enabled,
                 )

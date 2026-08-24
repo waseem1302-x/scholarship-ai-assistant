@@ -1,5 +1,6 @@
 .git
 .venv
+.docling-models
 __pycache__
 *.pyc
 .pytest_cache

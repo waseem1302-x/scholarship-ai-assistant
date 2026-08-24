@@ -42,17 +42,24 @@ the approved bounded read-only retry completed.
 
 | Source | MIME | Raw hash | Normalized hash | Bytes | Normalized characters |
 | --- | --- | --- | --- | ---: | ---: |
-| `https://www.studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/` | `text/html` | `524c3f8c2a90a98ea774800ad80c2274aecde7c7d9350590063ad92f5853d7d4` | `137dfc2083704676e2be913797f4fdc4f75aaed3ee77ca382bba2a7b9c0370cc` | 28,825 | 8,854 |
-| `https://www.studyinjapan.go.jp/en/_mt/2026/04/01-2027_Research_Guidelines_E.pdf` | `application/pdf` | `5a65f0c41f38ffbcf42e9b6e691731901955bea4efdaa34d7ab7ea55a3e3ae52` | `ed069fe906b2779647c18066c5563332f092dd76297b66dade6487947ac6b94f` | 416,454 | 52,169 |
-| `https://od.globaluni.ru/` | `text/html` | `1185d4993f51f855d2d2e8284b02a629f7797f1a45bf6430bcbb8613a70c6855` | `ff1097998fde17133ee330ed7cfd12e25ed273cfa013c040ad40d8dbfb917c43` | 405,564 | 26,013 |
+| `https://www.studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/` | `text/html` | `47bbe69dd7be9b50c309761de57e969f426a2bc2b3eb311cbdfc70599334922e` | `137dfc2083704676e2be913797f4fdc4f75aaed3ee77ca382bba2a7b9c0370cc` | 28,825 | 8,854 |
+| `https://www.studyinjapan.go.jp/en/_mt/2026/04/01-2027_Research_Guidelines_E.pdf` | `application/pdf` | `41121b625bd81fafb422d3fad5dac97105fb7a4bdb9b3029a277428a63f94fde` | `ed069fe906b2779647c18066c5563332f092dd76297b66dade6487947ac6b94f` | 416,454 | 52,169 |
+| `https://od.globaluni.ru/` | `text/html` | `8fb340d0aaeb0e831d757e5313bfc4608aa780e730b059281d65234ac0244c7e` | `ff1097998fde17133ee330ed7cfd12e25ed273cfa013c040ad40d8dbfb917c43` | 405,564 | 26,013 |
 
-These hashes freeze observed source versions only. The repository does not yet
-contain immutable raw fixtures, so MEXT/Open Doors protected-fixture gates are
+The first recorded values labelled raw hashes were the fetcher's normalized
+evidence hashes, not byte hashes. The ledger now uses true raw-byte SHA-256
+values. Captured public source bytes were not retained: the MEXT overview
+explicitly states "Copyright © JASSO. All rights reserved" and no reusable
+license was established for the Open Doors capture. Raw fixture retention
+therefore requires legal/reviewer approval. Reviewed expected records and the
+protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 **not executed** and must not be reported as passing.
 
 ## P0-A — contract and fixture freeze
 
-- **Status:** partially complete; protected-fixture execution remains blocked.
+- **Status:** source snapshot identity is complete; raw-fixture retention and
+  protected-fixture execution remain blocked on licensing/reviewer approval,
+  reviewed expected outcomes and evaluation assertions.
 - **Objective:** version the queued-ingestion and no-publication contracts;
   record source snapshot identities and the remaining raw-fixture gap.
 - **Files changed:** `docs/decisions/0017-review-only-extraction-job-contract.md`,
@@ -73,9 +80,10 @@ contain immutable raw fixtures, so MEXT/Open Doors protected-fixture gates are
   — **10 passed** (FastAPI/Starlette deprecation warning only).
 - **Metrics/cost:** three bounded source acquisitions; no model calls and no
   database/graph/publication writes.
-- **Known limitation:** source bytes and reviewed expected outcomes are absent.
-  MEXT/Open Doors protected gates therefore remain blocked and are not
-  equivalent to the snapshot-ledger tests.
+- **Known limitation:** raw source bytes cannot be committed without a reviewed
+  reuse basis; reviewed expected canonical outcomes and executable protected
+  evaluation are also absent. MEXT/Open Doors protected gates therefore remain
+  blocked and are not equivalent to the snapshot-ledger tests.
 - **Rollback:** remove only the additive ledger/ADRs; it has no runtime effect.
 
 ## P0-B — durable queued direct URL ingestion
@@ -284,3 +292,65 @@ contain immutable raw fixtures, so MEXT/Open Doors protected-fixture gates are
 - **Known limitations:** the process boundary cannot itself prove OS/container sandboxing, CPU/memory cgroups, or network egress denial; those require deployment manifests and a pre-baked model image. Current artifact storage lacks a dedicated layout sidecar, so Markdown is persisted as the normalized immutable text and canonical blocks derive from it. A real layout fixture evaluation is required before enabling this feature in staging.
 - **Rollback:** keep `APP_CATALOGUE_DOCUMENT_INTELLIGENCE_ENABLED=false` and `APP_CATALOGUE_DOCUMENT_OCR_ENABLED=false` (both defaults), then deploy the prior image. No schema rollback or artifact mutation is required.
 - **Next gate:** provision the isolated, offline-model document-worker image and execute real complex-PDF/MEXT fixture conversion; then P0-F source-role/cycle classification and objective routing.
+
+### P0-E follow-up — offline artifact proof and raw fixture capture
+
+- **Status:** the local offline conversion proof is green; deployment-image and
+  restricted-egress/container-runtime evidence remain open.
+- **Objective:** prove a real complex MEXT PDF conversion with a reviewed,
+  pinned Docling artifact bundle; prevent the conversion child from inheriting
+  a mutable host model cache; verify whether MEXT/Open Doors bytes can safely
+  be retained for later protected evaluation.
+- **Files changed:** `app/core/config.py`,
+  `app/modules/catalogue_ingestion/document_conversion.py`,
+  `document_conversion_worker.py`, `service.py`,
+  `docker/docling-worker.Dockerfile`, `docker/docling-artifacts.lock.json`,
+  `scripts/verify_docling_artifacts.py`, `compose.yaml`, `.dockerignore`,
+  `.gitignore`, source fixture ledger/test, and
+  `tests/test_document_conversion.py`.
+- **Implementation:** conversion children now receive only a configured
+  `DOCLING_ARTIFACTS_PATH`/home path and offline flags. They reject a missing
+  artifact directory before Docling initialization. The new dedicated image
+  downloads layout, TableFormer and RapidOCR models at build time, verifies
+  the 26-file, 765,212,139-byte artifact bundle against the recorded aggregate
+  SHA-256 `2eb473093fb3b99176cdb10b485707400b34e22c5414021f1ad5c3e4056c81b6`,
+  and has no database, Redis or application-secret environment. The Compose
+  profile specifies no network, read-only root filesystem, dropped Linux
+  capabilities, no-new-privileges, 2 CPU, 4 GiB memory and 256 PID limits.
+- **Fixture capture:** bounded `SafeSourceFetcher` calls temporarily acquired
+  the 28,825 byte MEXT overview HTML, 416,454 byte MEXT 2027 Research
+  Guidelines PDF and 405,564 byte Open Doors homepage, yielding the true raw
+  hashes in the ledger. The 850,843 bytes were removed before commit after the
+  MEXT page's explicit all-rights-reserved notice and the absence of a reviewed
+  Open Doors reuse license. The ledger test continues to prevent a snapshot
+  hash from being misrepresented as a protected raw fixture.
+- **Real conversion experiment:** with Docling `2.121.0`, forced
+  `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, the MEXT PDF converted in
+  **40.672 seconds**: 11 pages, 56,293 Markdown characters, 13 table lines and
+  16 ordered-list lines. The preserved seven-column document table includes
+  document name, one-original, two-copy and remarks cells. A deliberately
+  blank permitted PDF entered the real OCR second pass and failed closed after
+  **35.140 seconds** as `document_ocr_text_insufficient`; it did not fall back
+  to flattened text or a remote service.
+- **Commands and results:**
+  - `uv --cache-dir .uv-cache run docling-tools models download layout tableformer rapidocr --output-dir .docling-models --quiet` — completed; staging artifacts are ignored and never committed.
+  - `uv --cache-dir .uv-cache run python scripts/verify_docling_artifacts.py --model-dir .docling-models --lock docker/docling-artifacts.lock.json` — passed.
+  - `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/p0e-fixtures-green tests/test_document_conversion.py tests/test_catalogue_source_snapshot_ledger.py tests/test_catalogue_ingestion.py tests/test_evidence_acquirer.py tests/test_source_monitor.py` — **111 passed, 2 warnings** before the licensing-driven fixture retention rollback. Rerun is required before counting the final fixture state as green.
+  - `docker compose config -q` — environment-blocked: `docker` is not installed in this workspace, so the image build, Compose validation, cgroup enforcement and egress-deny behavior are not claimed as executed.
+- **Security/trust invariants:** all source captures passed through
+  `SafeSourceFetcher`; the child receives no application configuration or
+  secrets; runtime model download remains forbidden; no browser, model or
+  converter chooses a URL; no approval/publication path was added.
+- **Known limitations:** licensed/reviewer-approved protected raw fixtures and
+  expected protected records, real OCR-success quality benchmark, canonical
+  layout-region/table-coordinate blocks, Docker image build and runtime
+  isolation proof, PostgreSQL/Redis and browser-worker execution remain open.
+  The P0-E operational/deployment gate is therefore incomplete despite the
+  local conversion proof.
+- **Rollback:** keep the document-intelligence and OCR feature gates false;
+  discard the ignored local `.docling-models` staging directory; deploy the
+  prior image. Do not retain captured raw source bytes without a reviewed reuse
+  basis.
+- **Next gate:** rerun the corrected fixture/P0-E suites, then implement P0-F
+  source-role/cycle classification and routed objective work without weakening
+  the open deployment gate.

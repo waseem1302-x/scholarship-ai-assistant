@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     # Docling runs only in a short-lived child process after SafeSourceFetcher
     # has admitted the bytes. OCR remains independently off by default.
     catalogue_document_ocr_enabled: bool = False
+    # The document-worker image bakes the reviewed Docling artifacts at this
+    # path. The conversion child receives this path, never a host model cache
+    # or the parent application's environment.
+    catalogue_document_model_artifacts_path: str = "/opt/docling/models"
     catalogue_document_max_pages: int = Field(default=200, ge=1, le=500)
     catalogue_document_max_runtime_seconds: int = Field(default=30, ge=1, le=300)
     catalogue_document_max_output_characters: int = Field(default=500_000, ge=1_000, le=2_000_000)

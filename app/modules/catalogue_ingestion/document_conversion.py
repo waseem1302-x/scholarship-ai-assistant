@@ -21,6 +21,7 @@ from typing import Protocol
 from app.modules.opportunities.source_monitor import SourceFetchError
 
 DOCUMENT_CONVERTER_VERSION = "catalogue-docling-layout.v1"
+DEFAULT_DOCUMENT_MODEL_ARTIFACTS_PATH = "/opt/docling/models"
 
 
 class DocumentConversionError(SourceFetchError):
@@ -74,6 +75,11 @@ class SubprocessDoclingWorker:
     documents into the API/queue worker process.
     """
 
+    def __init__(
+        self, *, model_artifacts_path: str = DEFAULT_DOCUMENT_MODEL_ARTIFACTS_PATH
+    ) -> None:
+        self.model_artifacts_path = model_artifacts_path
+
     def convert(self, payload: bytes, *, enable_ocr: bool, limits: DocumentConversionLimits) -> str:
         with tempfile.TemporaryDirectory(prefix="scholarship-document-quarantine-") as temp_dir:
             root = Path(temp_dir)
@@ -107,7 +113,9 @@ class SubprocessDoclingWorker:
                     # Do not inherit application secrets/configuration.  The
                     # worker needs only enough environment for the interpreter
                     # and native libraries to start.
-                    env=_document_worker_environment(),
+                    env=_document_worker_environment(
+                        model_artifacts_path=self.model_artifacts_path
+                    ),
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
             except subprocess.TimeoutExpired as exc:
@@ -132,9 +140,10 @@ class LayoutAwareDocumentConverter:
         *,
         limits: DocumentConversionLimits,
         worker: LayoutConversionWorker | None = None,
+        model_artifacts_path: str = DEFAULT_DOCUMENT_MODEL_ARTIFACTS_PATH,
     ) -> None:
         self.limits = limits
-        self.worker = worker or SubprocessDoclingWorker()
+        self.worker = worker or SubprocessDoclingWorker(model_artifacts_path=model_artifacts_path)
 
     def normalize(self, payload: bytes, content_type: str, *, allow_ocr: bool = False) -> str:
         if content_type != "application/pdf":
@@ -214,7 +223,9 @@ class CatalogueDocumentPayloadNormalizer:
         return normalize_source_payload(payload, content_type)
 
 
-def _document_worker_environment() -> dict[str, str]:
+def _document_worker_environment(
+    *, model_artifacts_path: str = DEFAULT_DOCUMENT_MODEL_ARTIFACTS_PATH
+) -> dict[str, str]:
     """Return the minimal interpreter environment without application secrets."""
 
     allowed = ("PATH", "SYSTEMROOT", "WINDIR", "PYTHONHOME", "TEMP", "TMP")
@@ -224,10 +235,17 @@ def _document_worker_environment() -> dict[str, str]:
     # and make parser output non-reproducible.
     environment["HF_HUB_OFFLINE"] = "1"
     environment["TRANSFORMERS_OFFLINE"] = "1"
+    # Docling resolves its cache root during import. Pin it to the reviewed
+    # artifact mount instead of inheriting the API/worker account's home
+    # directory, which could contain mutable unreviewed model state.
+    environment["HOME"] = model_artifacts_path
+    environment["USERPROFILE"] = model_artifacts_path
+    environment["DOCLING_ARTIFACTS_PATH"] = model_artifacts_path
     return environment
 
 
 __all__ = [
+    "DEFAULT_DOCUMENT_MODEL_ARTIFACTS_PATH",
     "DOCUMENT_CONVERTER_VERSION",
     "CatalogueDocumentPayloadNormalizer",
     "ConvertedDocument",

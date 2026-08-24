@@ -1,0 +1,8 @@
+{
+  "schema_version": "docling-artifacts-lock.v1",
+  "docling_version": "2.121.0",
+  "models": ["layout", "tableformer", "rapidocr"],
+  "file_count": 26,
+  "total_bytes": 765212139,
+  "bundle_sha256": "2eb473093fb3b99176cdb10b485707400b34e22c5414021f1ad5c3e4056c81b6"
+}

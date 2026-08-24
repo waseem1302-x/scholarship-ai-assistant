@@ -122,8 +122,11 @@ def test_document_worker_environment_removes_application_configuration_and_force
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("APP_DATABASE_URL", "postgresql://must-not-leak")
-    environment = _document_worker_environment()
+    environment = _document_worker_environment(model_artifacts_path="C:/reviewed/docling-models")
 
     assert "APP_DATABASE_URL" not in environment
     assert environment["HF_HUB_OFFLINE"] == "1"
     assert environment["TRANSFORMERS_OFFLINE"] == "1"
+    assert environment["DOCLING_ARTIFACTS_PATH"] == "C:/reviewed/docling-models"
+    assert environment["HOME"] == "C:/reviewed/docling-models"
+    assert environment["USERPROFILE"] == "C:/reviewed/docling-models"
