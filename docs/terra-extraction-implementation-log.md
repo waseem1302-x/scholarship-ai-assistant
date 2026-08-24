@@ -430,3 +430,28 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Security/trust invariant:** an ambiguous source cannot fall through to
   broad extraction or replace the manual-review status; no publication path is
   involved.
+
+### P0-F follow-up — scoped unresolved objective routing
+
+- **Status:** enabled source routing now carries objective completion state
+  through an ordered direct-source bundle rather than independently invoking
+  every role-eligible objective for every source.
+- **Files changed:** `service.py` and `tests/test_catalogue_ingestion.py`.
+- **Implementation:** all claim objectives start unresolved for an extraction
+  bundle. A routed source receives only objectives it is allowed to answer and
+  that remain unresolved. A `complete` or `not_applicable` result removes that
+  objective; `partial` and `not_stated` results leave it available for a later
+  relevant source. The existing final completeness validation remains the
+  authoritative review gate for objectives no source has completed.
+- **Test added:** two official funding sources in one bundle persist two
+  funding decisions but make one model call and create one extraction attempt,
+  because the first source reports funding complete.
+- **Commands and results:**
+  `uv --cache-dir .uv-cache run pytest tests/test_catalogue_ingestion.py -k "source_routing_blocks_ambiguous_artifact_without_model_calls or source_routing_only_retries_objectives_left_unresolved_in_bundle" -q`
+  — **2 passed, 2 warnings**. Targeted Ruff checks, formatting, and
+  `git diff --check` passed. The final focused service/router/migration command
+  using `.pytest-tmp/p0f-unresolved-objectives-final` completed with **82
+  passed, 1 warning** (the existing Starlette deprecation warning).
+- **Security/trust invariant:** only source-role-permitted objectives can
+  consume model budget; an incomplete source cannot claim completion or block
+  a later relevant source from addressing the same objective.

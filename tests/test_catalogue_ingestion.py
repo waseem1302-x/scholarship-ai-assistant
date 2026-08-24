@@ -674,6 +674,42 @@ def test_source_routing_blocks_ambiguous_artifact_without_model_calls(db_session
     assert decision.applicable_objectives == []
 
 
+def test_source_routing_only_retries_objectives_left_unresolved_in_bundle(db_session) -> None:
+    supporting_url = "https://scholarships.gov.uk/funding-details"
+    source_texts = {
+        OFFICIAL_URL: "MEXT Scholarship funding stipend details. Tuition is covered.",
+        supporting_url: "MEXT Scholarship funding benefit details.",
+    }
+    extractor = FakeClaimProvider(claim_output())
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_source_routing_enabled=True,
+            catalogue_ai_max_pages_per_candidate=2,
+        ),
+        fetcher=MappingFetcher(source_texts),
+        claim_extractor=extractor,
+    )
+
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        supporting_urls=[supporting_url],
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    result = service.process_run(run.id, worker_id="source-routing-unresolved")
+
+    decisions = db_session.scalars(
+        select(CatalogueSourceRoutingDecision).order_by(CatalogueSourceRoutingDecision.role)
+    ).all()
+    assert result.model_calls == 1
+    assert extractor.calls == 1
+    assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == 1
+    assert len(decisions) == 2
+    assert all(item.role == "funding" for item in decisions)
+    assert all(item.applicable_objectives == [ClaimObjective.FUNDING.value] for item in decisions)
+
+
 def test_catalogue_source_byte_limit_is_independent_from_model_text_limit(db_session) -> None:
     service = CatalogueIngestionService(
         db_session,

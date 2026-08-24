@@ -1039,6 +1039,7 @@ class CatalogueIngestionService:
         extracted: list[tuple[CatalogueSourceArtifact, int, list[ExtractedClaim]]] = []
         unknown_objectives: set[str] = set()
         warnings: set[str] = set()
+        unresolved_objectives: set[ClaimObjective] = set(ClaimObjective)
         coverage_by_objective: dict[ClaimObjective, list[ObjectiveCoverageState]] = {
             objective: [] for objective in ClaimObjective
         }
@@ -1105,7 +1106,11 @@ class CatalogueIngestionService:
                     )
                     return
                 objectives = tuple(
-                    ClaimObjective(objective) for objective in decision.applicable_objectives
+                    objective
+                    for objective in (
+                        ClaimObjective(value) for value in decision.applicable_objectives
+                    )
+                    if objective in unresolved_objectives
                 )
             for objective in objectives:
                 attempt_schema = _claim_attempt_schema(objective)
@@ -1216,6 +1221,11 @@ class CatalogueIngestionService:
                     f"{artifact.id}:{objective.value}:{item}" for item in output.warnings
                 )
                 coverage_by_objective[objective].append(output.coverage_state)
+                if self.settings.catalogue_source_routing_enabled and output.coverage_state in {
+                    ObjectiveCoverageState.COMPLETE,
+                    ObjectiveCoverageState.NOT_APPLICABLE,
+                }:
+                    unresolved_objectives.discard(objective)
                 effective_trust_tier = (source.trust_tier or 99) * 10 + role_order[
                     source.source_role
                 ]
