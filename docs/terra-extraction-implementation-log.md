@@ -819,3 +819,32 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Next gate:** provide the dedicated Azure document-worker transport and
   execute its image/runtime isolation evidence, then add protected approved
   MEXT/Open Doors evaluations and real PostgreSQL/Redis proof.
+
+## P0-H follow-up â€” aggregate enabled-capability readiness
+
+- **Status:** local fail-closed readiness contract is green; live dependency
+  probes and deployment evidence remain required.
+- **Baseline commit:** `c713325`.
+- **Implementation:** `/health/ready` now evaluates a single aggregate
+  dependency report. Redis is probed only when enabled. Scheduled catalogue
+  ingestion requires a fresh worker record and zero dead-letter runs. Enabled
+  Docling, browser, and Azure extraction are explicitly blocked until their
+  dedicated runtime/provider probes exist. Production Document Lab is blocked
+  until its object-storage runtime probe exists. Disabled capabilities do not
+  affect readiness; non-production Document Lab retains its documented test
+  policy. Authenticated operations health exposes the safe report without
+  secrets.
+- **Tests:** disabled capabilities remain outside the gate; enabling Docling
+  without its dedicated transport returns `dedicated_worker_transport_unavailable`.
+- **Commands and results:** targeted Ruff lint/format passed;
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/p0h-readiness-summary tests/test_operations.py tests/test_auth.py`
+  â€” **30 passed, 2 warnings in 16.69s**; `git diff --check` passed.
+- **Security/trust invariant:** readiness never exposes secrets and never marks
+  an enabled high-risk dependency healthy merely because PostgreSQL responds.
+  No feature flag, worker, publication, or deployment state changed.
+- **Known limitations:** the blocked statuses are intentionally not runtime
+  proof. Dedicated Azure Docling/browser worker transport, object storage and
+  scanner probes, Azure extraction probe, migration-version verification, and
+  real PostgreSQL/Redis execution remain RC gates.
+- **Rollback:** deploy the prior API image; no migration or stored data changed.

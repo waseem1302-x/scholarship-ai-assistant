@@ -4,6 +4,8 @@ import pytest
 from sqlalchemy import select, text
 
 from app.cli.ingest_catalogue_seeds import _record_run_health
+from app.core.config import Settings
+from app.core.health import aggregate_readiness
 from app.modules.auth import models as auth_models
 from app.modules.auth.models import AuditLog, verify_audit_integrity_chain
 from app.modules.catalogue_ingestion.models import IngestionRunStatus
@@ -96,6 +98,44 @@ def test_metrics_snapshot_includes_latency_distribution(client) -> None:
     assert health_metrics["requests"] >= 1
     assert "latency_buckets_ms" in health_metrics
     assert set(health_metrics["latency_buckets_ms"]) >= {"le_50", "gt_5000"}
+
+
+def test_aggregate_readiness_fails_closed_when_catalogue_docling_is_enabled_without_worker(
+    db_session,
+) -> None:
+    settings = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="readiness-test-secret-that-is-at-least-32-characters",
+        catalogue_document_intelligence_enabled=True,
+    )
+
+    readiness = aggregate_readiness(db_session, settings)
+
+    assert readiness["status"] == "blocked"
+    assert readiness["dependencies"]["database"]["status"] == "ready"
+    assert readiness["dependencies"]["catalogue_document_worker"] == {
+        "status": "blocked",
+        "reason": "dedicated_worker_transport_unavailable",
+    }
+    assert readiness["dependencies"]["catalogue_browser_worker"]["status"] == "disabled"
+
+
+def test_aggregate_readiness_keeps_disabled_high_risk_capabilities_out_of_the_ready_gate(
+    db_session,
+) -> None:
+    settings = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="readiness-test-secret-that-is-at-least-32-characters",
+    )
+
+    readiness = aggregate_readiness(db_session, settings)
+
+    assert readiness["status"] == "ready"
+    assert readiness["dependencies"]["catalogue_document_worker"]["status"] == "disabled"
+    assert readiness["dependencies"]["catalogue_browser_worker"]["status"] == "disabled"
+    assert readiness["dependencies"]["catalogue_extraction_provider"]["status"] == "disabled"
 
 
 def _two_audit_rows(db_session) -> tuple[AuditLog, AuditLog]:
