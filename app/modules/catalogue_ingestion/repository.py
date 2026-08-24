@@ -85,6 +85,26 @@ class CatalogueIngestionRepository:
     def get_run(self, run_id: uuid.UUID) -> CatalogueIngestionRun | None:
         return self.session.get(CatalogueIngestionRun, run_id)
 
+    def get_run_status(self, run_id: uuid.UUID) -> CatalogueIngestionRun | None:
+        """Load only the persisted lineage needed by the safe operator view."""
+
+        artifact_options = (
+            selectinload(CatalogueIngestionRun.candidates)
+            .selectinload(CatalogueCandidate.sources)
+            .selectinload(CatalogueCandidateSource.artifacts)
+        )
+        return self.session.scalar(
+            select(CatalogueIngestionRun)
+            .where(CatalogueIngestionRun.id == run_id)
+            .options(
+                artifact_options.selectinload(CatalogueSourceArtifact.evidence_blocks),
+                artifact_options.selectinload(CatalogueSourceArtifact.routing_decisions),
+                selectinload(CatalogueIngestionRun.candidates).selectinload(
+                    CatalogueCandidate.extraction_attempts
+                ),
+            )
+        )
+
     def claim_runs(
         self,
         *,

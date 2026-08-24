@@ -19,6 +19,7 @@ from app.modules.catalogue_ingestion.schemas import (
     DirectUrlIngestionRequest,
     IngestionRunListResponse,
     IngestionRunResponse,
+    OperatorRunStatusResponse,
 )
 from app.modules.catalogue_ingestion.service import CatalogueIngestionService
 
@@ -64,12 +65,12 @@ def list_runs(
     return service.list_runs(limit=limit, offset=offset)
 
 
-@router.get("/runs/{run_id}", response_model=IngestionRunResponse)
+@router.get("/runs/{run_id}", response_model=OperatorRunStatusResponse)
 def get_run_status(
     run_id: uuid.UUID,
     _admin: AdminReader,
     service: Annotated[CatalogueIngestionService, Depends(get_service)],
-) -> IngestionRunResponse:
+) -> OperatorRunStatusResponse:
     return service.run_status(run_id)
 
 

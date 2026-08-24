@@ -184,7 +184,6 @@ class IngestionRunResponse(BaseModel):
     estimated_cost: Decimal
     aggregate_summary: dict[str, object]
     failure_code: str | None
-    last_error_reason: str | None
     retry_class: IngestionRunRetryClass | None
     max_attempts: int
     attempt_count: int
@@ -192,11 +191,91 @@ class IngestionRunResponse(BaseModel):
     claimed_by: str | None
     claimed_at: datetime | None
     claimed_until: datetime | None
-    lease_token: str | None
+    # Fencing tokens are credentials. Operators may see lease state, never its token.
+    lease_active: bool = False
     dead_lettered_at: datetime | None
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+
+
+class OperatorArtifactStatus(StrictExtractionModel):
+    id: uuid.UUID
+    final_url: str
+    content_type: str
+    content_hash: str
+    extraction_method: str
+    parser_version: str | None
+    byte_count: int
+    character_count: int
+    evidence_block_count: int
+    canonicalization_versions: list[str]
+    ocr_decision: str
+    ocr_reason: str
+    browser_decision: str
+    browser_reason: str
+
+
+class OperatorSourceRoutingStatus(StrictExtractionModel):
+    role: str
+    cycle: str
+    classifier_version: str
+    deterministic_signals: list[str]
+    ambiguity_reason: str | None
+    requires_manual_review: bool
+    applicable_objectives: list[str]
+
+
+class OperatorSourceStatus(StrictExtractionModel):
+    id: uuid.UUID
+    url: str
+    final_url: str | None
+    source_role: CandidateSourceRole
+    status: str
+    is_official: bool
+    trust_tier: int | None
+    failure_code: str | None
+    artifacts: list[OperatorArtifactStatus]
+    routing: list[OperatorSourceRoutingStatus]
+
+
+class OperatorExtractionAttemptStatus(StrictExtractionModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    provider: str
+    model: str
+    schema_version: str
+    prompt_hash: str
+    status: str
+    error_code: str | None
+    input_tokens: int
+    output_tokens: int
+    estimated_cost: Decimal
+    latency_ms: int
+    created_at: datetime
+
+
+class OperatorCandidateStatus(StrictExtractionModel):
+    id: uuid.UUID
+    seed_index: int
+    status: CandidateStatus
+    failure_code: str | None
+    accepted_claim_count: int
+    rejected_claim_count: int
+    conflict_count: int
+    objective_coverage: dict[str, str]
+    missing_mandatory_objectives: list[str]
+    sources: list[OperatorSourceStatus]
+    attempts: list[OperatorExtractionAttemptStatus]
+
+
+class OperatorRunStatusResponse(IngestionRunResponse):
+    """Safe operational lineage; deliberately excludes artifacts' source text."""
+
+    terminal_failure: bool
+    candidates: list[OperatorCandidateStatus]
+    executed_objective_count: int
+    reused_objective_count: int
 
 
 class SourceArtifactResponse(BaseModel):

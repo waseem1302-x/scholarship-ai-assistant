@@ -639,6 +639,50 @@ def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_
     assert artifact.content_hash == hashlib.sha256(MEXT_TEXT.encode()).hexdigest()
 
 
+def test_operator_run_status_exposes_safe_lineage_without_source_content_or_lease_token(
+    db_session,
+) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    service.process_run(run.id, worker_id="operator-projection")
+    persisted = db_session.get(CatalogueIngestionRun, run.id)
+    assert persisted is not None
+    persisted.lease_token = "must-not-leave-the-service"
+    db_session.commit()
+
+    status = service.run_status(run.id)
+    serialized = status.model_dump_json()
+    candidate = status.candidates[0]
+    source = candidate.sources[0]
+    artifact = source.artifacts[0]
+
+    assert status.lease_active is True
+    assert "lease_token" not in serialized
+    assert "must-not-leave-the-service" not in serialized
+    assert "normalized_text" not in artifact.model_dump()
+    assert "Tuition is covered" not in serialized
+    assert source.source_role is CandidateSourceRole.PRIMARY
+    assert artifact.content_hash == hashlib.sha256(MEXT_TEXT.encode()).hexdigest()
+    assert artifact.parser_version == "legacy-safe-fetcher.v1"
+    assert artifact.evidence_block_count > 0
+    assert artifact.browser_decision == "not_used"
+    assert artifact.ocr_decision == "not_applicable"
+    assert candidate.accepted_claim_count > 0
+    assert candidate.rejected_claim_count == 0
+    assert len(candidate.attempts) == 12
+    assert status.executed_objective_count == 12
+    assert status.reused_objective_count == 0
+
+
 def test_source_routing_blocks_ambiguous_artifact_without_model_calls(db_session) -> None:
     ambiguous_text = """
     Official scholarship funding stipend details.

@@ -83,6 +83,12 @@ from app.modules.catalogue_ingestion.schemas import (
     CatalogueExtractionOutput,
     IngestionRunListResponse,
     IngestionRunResponse,
+    OperatorArtifactStatus,
+    OperatorCandidateStatus,
+    OperatorExtractionAttemptStatus,
+    OperatorRunStatusResponse,
+    OperatorSourceRoutingStatus,
+    OperatorSourceStatus,
     SeedCandidate,
 )
 from app.modules.catalogue_ingestion.seed_parser import (
@@ -206,13 +212,13 @@ class CatalogueIngestionService:
         )
         run, created = self.repository.get_or_create_run(run)
         if not created:
-            return IngestionRunResponse.model_validate(run)
+            return self._run_response(run)
         self.repository.add_seed_candidates(run, seeds[:maximum])
         self.metrics.add("ingestion_runs_total")
         self.metrics.add("candidates_discovered", min(len(seeds), maximum))
         self.repository.refresh_run_summary(run)
         self.session.commit()
-        return IngestionRunResponse.model_validate(run)
+        return self._run_response(run)
 
     def create_run_from_url(
         self,
@@ -284,7 +290,7 @@ class CatalogueIngestionService:
         run, created = self.repository.get_or_create_run(run)
         if not created:
             self.session.commit()
-            return IngestionRunResponse.model_validate(run)
+            return self._run_response(run)
         self.repository.add_seed_candidates(
             run,
             [
@@ -325,7 +331,7 @@ class CatalogueIngestionService:
         self.metrics.add("candidates_discovered")
         self.repository.refresh_run_summary(run)
         self.session.commit()
-        return IngestionRunResponse.model_validate(run)
+        return self._run_response(run)
 
     def process_run(
         self,
@@ -349,7 +355,7 @@ class CatalogueIngestionService:
                 IngestionRunStatus.FAILED,
                 IngestionRunStatus.DEAD_LETTER,
             }:
-                return IngestionRunResponse.model_validate(existing)
+                return self._run_response(existing)
             raise AppError(
                 "ingestion_run_unavailable",
                 "Ingestion run is already claimed or not due for retry",
@@ -428,7 +434,7 @@ class CatalogueIngestionService:
                             ) from None
                         result = self.repository.get_run(run.id)
                         assert result is not None
-                        return IngestionRunResponse.model_validate(result)
+                        return self._run_response(result)
                     except Exception as exc:
                         candidate.status = CandidateStatus.NEEDS_REVIEW
                         candidate.failure_code = "unexpected_pipeline_failure"
@@ -444,7 +450,7 @@ class CatalogueIngestionService:
                 raise AppError("ingestion_run_lease_lost", "Run lease expired", 409)
             result = self.repository.get_run(run.id)
             assert result is not None
-            return IngestionRunResponse.model_validate(result)
+            return self._run_response(result)
         except AppError:
             raise
         except Exception as exc:
@@ -461,7 +467,7 @@ class CatalogueIngestionService:
             )
             result = self.repository.get_run(run.id)
             assert result is not None
-            return IngestionRunResponse.model_validate(result)
+            return self._run_response(result)
 
     def process_bound_discovery_source(
         self,
@@ -1297,14 +1303,27 @@ class CatalogueIngestionService:
     def list_runs(self, *, limit: int, offset: int) -> IngestionRunListResponse:
         items, total = self.repository.list_runs(limit=limit, offset=offset)
         return IngestionRunListResponse(
-            items=[IngestionRunResponse.model_validate(item) for item in items], total=total
+            items=[self._run_response(item) for item in items], total=total
         )
 
-    def run_status(self, run_id: uuid.UUID) -> IngestionRunResponse:
-        run = self.repository.get_run(run_id)
+    def run_status(self, run_id: uuid.UUID) -> OperatorRunStatusResponse:
+        run = self.repository.get_run_status(run_id)
         if run is None:
             raise AppError("ingestion_run_not_found", "Ingestion run was not found", 404)
-        return IngestionRunResponse.model_validate(run)
+        candidates = [self._operator_candidate_status(candidate) for candidate in run.candidates]
+        attempts = [attempt for candidate in candidates for attempt in candidate.attempts]
+        return OperatorRunStatusResponse(
+            **self._run_response(run).model_dump(),
+            terminal_failure=run.status
+            in {IngestionRunStatus.FAILED, IngestionRunStatus.DEAD_LETTER},
+            candidates=candidates,
+            executed_objective_count=sum(
+                attempt.status != ExtractionAttemptStatus.REUSED.value for attempt in attempts
+            ),
+            reused_objective_count=sum(
+                attempt.status == ExtractionAttemptStatus.REUSED.value for attempt in attempts
+            ),
+        )
 
     def list_candidates(
         self,
@@ -1435,6 +1454,7 @@ class CatalogueIngestionService:
             fetch_metadata={
                 "operator_host": urlsplit(source.url).hostname,
                 "source_role": source.source_role.value,
+                "parser_version": fetched.parser_version,
                 "links": [
                     {"url": item.url, "text": item.text, "title": item.title}
                     for item in fetched.links[:500]
@@ -1553,6 +1573,129 @@ class CatalogueIngestionService:
     @staticmethod
     def _candidate_response(candidate: CatalogueCandidate) -> CandidateResponse:
         return CandidateResponse.model_validate(candidate)
+
+    @staticmethod
+    def _run_response(run: CatalogueIngestionRun) -> IngestionRunResponse:
+        return IngestionRunResponse.model_validate(run).model_copy(
+            update={"lease_active": run.lease_token is not None}
+        )
+
+    @staticmethod
+    def _operator_candidate_status(candidate: CatalogueCandidate) -> OperatorCandidateStatus:
+        payload = candidate.proposed_payload if isinstance(candidate.proposed_payload, dict) else {}
+        coverage = payload.get("objective_coverage", {})
+        objective_coverage = {
+            str(objective): str(state)
+            for objective, state in coverage.items()
+            if isinstance(objective, str) and isinstance(state, str)
+        }
+        missing_objectives = sorted(
+            objective
+            for objective, state in objective_coverage.items()
+            if state
+            in {ObjectiveCoverageState.PARTIAL.value, ObjectiveCoverageState.NOT_STATED.value}
+        )
+        return OperatorCandidateStatus(
+            id=candidate.id,
+            seed_index=candidate.seed_index,
+            status=candidate.status,
+            failure_code=candidate.failure_code,
+            accepted_claim_count=len(payload.get("resolved", [])),
+            rejected_claim_count=len(payload.get("rejected", []))
+            + len(payload.get("completeness_errors", [])),
+            conflict_count=len(payload.get("conflicts", [])),
+            objective_coverage=objective_coverage,
+            missing_mandatory_objectives=missing_objectives,
+            sources=[
+                CatalogueIngestionService._operator_source_status(source)
+                for source in sorted(candidate.sources, key=lambda item: (item.url, item.id))
+            ],
+            attempts=[
+                OperatorExtractionAttemptStatus(
+                    id=attempt.id,
+                    source_id=attempt.source_id,
+                    provider=attempt.provider,
+                    model=attempt.model,
+                    schema_version=attempt.schema_version,
+                    prompt_hash=attempt.prompt_hash,
+                    status=attempt.status.value,
+                    error_code=attempt.error_code,
+                    input_tokens=attempt.input_tokens,
+                    output_tokens=attempt.output_tokens,
+                    estimated_cost=attempt.estimated_cost,
+                    latency_ms=attempt.latency_ms,
+                    created_at=attempt.created_at,
+                )
+                for attempt in sorted(
+                    candidate.extraction_attempts, key=lambda item: (item.created_at, item.id)
+                )
+            ],
+        )
+
+    @staticmethod
+    def _operator_source_status(source: CatalogueCandidateSource) -> OperatorSourceStatus:
+        return OperatorSourceStatus(
+            id=source.id,
+            url=source.url,
+            final_url=source.final_url,
+            source_role=source.source_role,
+            status=source.status.value,
+            is_official=source.is_official,
+            trust_tier=source.trust_tier,
+            failure_code=source.failure_code,
+            artifacts=[
+                CatalogueIngestionService._operator_artifact_status(artifact)
+                for artifact in sorted(
+                    source.artifacts, key=lambda item: (item.created_at, item.id)
+                )
+            ],
+            routing=[
+                OperatorSourceRoutingStatus(
+                    role=decision.role,
+                    cycle=decision.cycle,
+                    classifier_version=decision.classifier_version,
+                    deterministic_signals=list(decision.deterministic_signals),
+                    ambiguity_reason=decision.ambiguity_reason,
+                    requires_manual_review=decision.requires_manual_review,
+                    applicable_objectives=list(decision.applicable_objectives),
+                )
+                for artifact in source.artifacts
+                for decision in sorted(
+                    artifact.routing_decisions, key=lambda item: (item.created_at, item.id)
+                )
+            ],
+        )
+
+    @staticmethod
+    def _operator_artifact_status(artifact: CatalogueSourceArtifact) -> OperatorArtifactStatus:
+        metadata = artifact.fetch_metadata if isinstance(artifact.fetch_metadata, dict) else {}
+        is_pdf = artifact.content_type == "application/pdf"
+        return OperatorArtifactStatus(
+            id=artifact.id,
+            final_url=artifact.final_url,
+            content_type=artifact.content_type,
+            content_hash=artifact.content_hash,
+            extraction_method=artifact.extraction_method,
+            parser_version=(
+                str(metadata["parser_version"])
+                if isinstance(metadata.get("parser_version"), str)
+                else None
+            ),
+            byte_count=artifact.byte_count,
+            character_count=artifact.character_count,
+            evidence_block_count=len(artifact.evidence_blocks),
+            canonicalization_versions=sorted(
+                {block.canonicalization_version for block in artifact.evidence_blocks}
+            ),
+            ocr_decision="not_recorded" if is_pdf else "not_applicable",
+            ocr_reason=(
+                "artifact_metadata_does_not_record_ocr_outcome"
+                if is_pdf
+                else "content_type_not_pdf"
+            ),
+            browser_decision="not_used",
+            browser_reason="browser_acquisition_not_enabled",
+        )
 
 
 def _safe_failure_code(message: str) -> str:

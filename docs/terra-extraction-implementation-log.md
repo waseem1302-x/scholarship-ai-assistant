@@ -848,3 +848,42 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   scanner probes, Azure extraction probe, migration-version verification, and
   real PostgreSQL/Redis execution remain RC gates.
 - **Rollback:** deploy the prior API image; no migration or stored data changed.
+
+## P0-H follow-up — safe operator ingestion-run projection
+
+- **Status:** local projection and confidentiality regression are green; this
+  adds a read-only operator view and does not complete the broader P0-H review
+  projection, live dependency, or deployment gates.
+- **Baseline commit:** `2e92eab`.
+- **Implementation:** `GET /admin/catalogue-ingestion/runs/{run_id}` now
+  returns a dedicated operator projection rather than the raw ORM-shaped run.
+  It reports candidate/source roles, artifact IDs and hashes, parser versions,
+  canonical evidence-block counts, source-routing decisions, safe OCR/browser
+  decision state, objective coverage, executed/reused extraction counts, and
+  provider/model/prompt/schema/cost lineage. The endpoint exposes lease owner
+  timing and a `lease_active` state but no fencing token. It also excludes raw
+  artifact text, excerpts, HTML, model output, and external failure text. New
+  artifacts persist the fetch parser version in immutable artifact metadata;
+  historic PDF artifacts explicitly report that OCR outcome was not recorded,
+  rather than inventing an outcome.
+- **Test added:** a real local queued extraction verifies hashes, parser and
+  evidence-block lineage, attempt accounting, safe decision states, and that a
+  deliberately populated fencing token or source text cannot appear in the
+  serialized projection.
+- **Commands and results:** targeted Ruff lint and format checks passed;
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/p0h-operator-projection-evidence
+  tests/test_catalogue_ingestion.py::test_operator_run_status_exposes_safe_lineage_without_source_content_or_lease_token -q`
+  — passed with the existing Starlette deprecation and local pytest-cache
+  permission warnings; `git diff --check` passed.
+- **Security/trust invariant:** a fencing token never reaches any run response,
+  and the operator endpoint exposes lineage metadata only—never raw source
+  HTML/text or unbounded external exception text. No review action,
+  publication action, feature flag, worker, or deployment state changed.
+- **Known limitations:** no review projection yet displays proposed facts,
+  exact evidence blocks, scoped conflicts, reviewer actions, or append-only
+  review history. OCR decision telemetry is not yet persisted by the document
+  normalizer, browser acquisition remains disabled, and the remaining P0-H
+  runtime/readiness gates stay open.
+- **Rollback:** deploy the prior API image; no migration or stored data rewrite
+  is required.
