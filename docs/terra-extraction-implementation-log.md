@@ -1190,3 +1190,18 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Security/trust:** the thread changes scheduler lifetime only; DNS/IP,
   redirect, robots, MIME, byte, and SSRF controls remain exclusively in
   `SafeSourceFetcher`.
+
+## CI follow-up — POSIX Docling timeout assertion
+
+- **Status:** hosted CI run 481 passed migration, lint, format, security scan,
+  coverage (86.53%), and 729 tests before one Linux-specific test assertion
+  failed. Azure infrastructure validation run 124 and the release-candidate
+  security scan were green.
+- **Cause and fix:** the timeout production code uses `creationflags` and
+  `taskkill` on Windows, but `start_new_session` and `killpg` on POSIX. The
+  regression test still read Windows-only `creationflags` unconditionally;
+  it now asserts the appropriate process-isolation mechanism for each
+  platform.
+- **Evidence:** focused lint/format and `tests/test_document_conversion.py`
+  completed **9 passed, 2 known warnings** locally. The next push is limited
+  to this cross-platform test correction; hosted CI remains the release gate.

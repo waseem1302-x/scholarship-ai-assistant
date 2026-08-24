@@ -216,11 +216,12 @@ def test_docling_timeout_terminates_the_worker_process_tree(monkeypatch) -> None
         )
 
     assert launches
-    assert int(launches[0]["creationflags"]) & getattr(
-        document_conversion.subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-    )
     if document_conversion.os.name == "nt":
+        assert int(launches[0]["creationflags"]) & getattr(
+            document_conversion.subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
         assert taskkill_commands == [["taskkill", "/PID", "4242", "/T", "/F"]]
     else:
+        assert launches[0]["start_new_session"] is True
         assert taskkill_commands == []
         assert process_group_kills == [(4242, document_conversion.signal.SIGKILL)]
