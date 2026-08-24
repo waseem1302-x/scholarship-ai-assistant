@@ -76,7 +76,7 @@ def upgrade() -> None:
     if connection.dialect.name == "postgresql":
         op.execute(
             """
-            INSERT INTO assistant_quota_counters (user_id, window, window_start, used_slots)
+            INSERT INTO assistant_quota_counters (user_id, "window", window_start, used_slots)
             SELECT user_id, 'daily', (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, COUNT(*)
             FROM assistant_answers
             WHERE created_at >= (
@@ -98,7 +98,7 @@ def upgrade() -> None:
     elif connection.dialect.name == "sqlite":
         op.execute(
             """
-            INSERT INTO assistant_quota_counters (user_id, window, window_start, used_slots)
+            INSERT INTO assistant_quota_counters (user_id, "window", window_start, used_slots)
             SELECT user_id, 'daily', date('now'), COUNT(*)
             FROM assistant_answers
             WHERE created_at >= date('now')

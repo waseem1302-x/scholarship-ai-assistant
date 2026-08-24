@@ -1116,3 +1116,24 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   worker transport; add a reviewed text-insufficient scan with expected
   outcomes; demonstrate the automatic OCR fallback and persist its telemetry;
   then execute the full protected-fixture evaluation.
+
+## CI follow-up — PostgreSQL quota migration compatibility
+
+- **Status:** fixed a hosted-CI PostgreSQL migration failure that blocked all
+  later lint and test steps. This is a migration correctness repair only; it
+  changes no feature flag, review decision, publication, or deployment state.
+- **Cause:** `20260824_0048_assistant_quota_reservations` backfilled the
+  reserved `assistant_quota_counters.window` column using raw unquoted SQL.
+  SQLite accepted it, while PostgreSQL rejected the insert at `window`.
+- **Fix:** quote `"window"` in both dialect-specific backfill statements. The
+  table definition and ORM field remain unchanged.
+- **PostgreSQL evidence:** a fresh disposable database named
+  `p0e_migration_proof` in the local Compose PostgreSQL service was upgraded
+  from an empty schema to `20260824_0053` using a disposable read-only
+  application container. It completed successfully; the target table has
+  `user_id`, `window`, `window_start`, `used_slots`, and `updated_at`, and its
+  RLS/force-RLS flags are enabled. The running application database was not
+  used.
+- **Next evidence:** push the corrective commit and require hosted CI to
+  complete its full lint and test stages before treating this as a closed CI
+  gate.
