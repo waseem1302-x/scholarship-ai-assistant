@@ -518,3 +518,38 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Rollback:** deploy the prior service image. This is an in-place state
   correction with no schema migration; already-expired reservations can be
   safely reconciled by rerunning the bounded expiry operation.
+
+## R-02 — atomic profile optimistic locking
+
+- **Status:** conditional-update regression coverage is green; real
+  PostgreSQL concurrent-session execution remains required for release proof.
+- **Baseline commit:** `4d48e4d`.
+- **Objective:** make profile updates database-enforced compare-and-swap
+  operations so two writers using one expected version cannot both succeed.
+- **Files changed:** `app/modules/profiles/repository.py`,
+  `app/modules/profiles/service.py`, and `tests/test_profiles.py`.
+- **Behavior before:** the service loaded a profile, compared `version` in
+  Python, mutated the ORM row and committed. Two sessions could both observe
+  the old version and independently commit.
+- **Implementation:** `update_if_version()` issues one `UPDATE` constrained by
+  `user_id` and `expected_version`, increments the version in the statement,
+  and returns the updated ORM row. The service maps a no-row result to the
+  existing `profile_version_conflict` 409 response. Payload normalization and
+  create behavior remain unchanged.
+- **Tests added:** two direct repository writes using expected version 1 allow
+  only the first write; it returns version 2 and the second writes no row.
+- **Commands and results:**
+  `uv --cache-dir .uv-cache run pytest tests/test_profiles.py -q` — **10
+  passed, 2 warnings**. Targeted Ruff checks, formatting and `git diff --check`
+  passed. `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/r02-profiles tests/test_profiles.py tests/test_matching.py` —
+  **30 passed, 2 warnings** (existing Starlette deprecation and local
+  pytest-cache access warnings).
+- **Security/trust invariant:** a stale version cannot overwrite a newer
+  profile update; no handler accepts a successful stale write merely because
+  the process loaded an old ORM object.
+- **Known limitation:** the deterministic predicate is database-portable, but
+  the required two-real-PostgreSQL-session 409 experiment is environment
+  blocked until `TEST_POSTGRES_URL` is configured.
+- **Rollback:** deploy the prior service image; no migration or stored-data
+  rewrite is required.

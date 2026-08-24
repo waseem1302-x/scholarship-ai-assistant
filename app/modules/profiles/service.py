@@ -39,10 +39,7 @@ class StudentProfileService:
             profile = StudentProfile(user_id=user.id, **values)
             self.repository.add(profile)
         else:
-            self._check_expected_version(profile, payload.expected_version)
-            for key, value in values.items():
-                setattr(profile, key, value)
-            profile.version += 1
+            profile = self._update_existing(user, payload.expected_version, values)
 
         self.repository.session.commit()
         self.repository.session.refresh(profile)
@@ -55,10 +52,11 @@ class StudentProfileService:
             profile = StudentProfile(user_id=user.id, **values)
             self.repository.add(profile)
         else:
-            self._check_expected_version(profile, payload.expected_version)
-            for key, value in payload.update_values().items():
-                setattr(profile, key, value)
-            profile.version += 1
+            profile = self._update_existing(
+                user,
+                payload.expected_version,
+                payload.update_values(),
+            )
 
         self.repository.session.commit()
         self.repository.session.refresh(profile)
@@ -112,14 +110,28 @@ class StudentProfileService:
         return "general_scholarship_profile"
 
     @staticmethod
-    def _check_expected_version(profile: StudentProfile, expected_version: int | None) -> None:
+    def _require_expected_version(expected_version: int | None) -> int:
         if expected_version is None:
             raise ConflictError(
                 "profile_version_required",
                 "Profile updates require expected_version to prevent overwriting newer edits",
             )
-        if expected_version != profile.version:
+        return expected_version
+
+    def _update_existing(
+        self,
+        user: User,
+        expected_version: int | None,
+        values: dict[str, object],
+    ) -> StudentProfile:
+        profile = self.repository.update_if_version(
+            user_id=user.id,
+            expected_version=self._require_expected_version(expected_version),
+            values=values,
+        )
+        if profile is None:
             raise ConflictError(
                 "profile_version_conflict",
                 "This profile was updated elsewhere; refresh and try again",
             )
+        return profile

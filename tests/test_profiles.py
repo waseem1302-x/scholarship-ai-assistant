@@ -1,10 +1,12 @@
 import uuid
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.modules.auth.models import User, UserRole
+from app.modules.profiles.repository import StudentProfileRepository
 
 PASSWORD = "ProfilePassword123"
 
@@ -204,6 +206,40 @@ def test_profile_update_requires_current_version(client: TestClient, db_session:
     assert missing.json()["error"]["code"] == "profile_version_required"
     assert stale.status_code == 409
     assert stale.json()["error"]["code"] == "profile_version_conflict"
+
+
+def test_profile_repository_compare_and_swap_rejects_second_stale_writer(
+    client: TestClient, db_session: Session
+) -> None:
+    email = "compare-and-swap@example.com"
+    create_student(db_session, email)
+    token = login(client, email)
+    created = client.put(
+        "/api/v1/profiles/me",
+        json=profile_payload(),
+        headers=auth_headers(token),
+    )
+    assert created.status_code == 200
+    user = db_session.scalar(select(User).where(User.email == email))
+    assert user is not None
+    repository = StudentProfileRepository(db_session)
+
+    first = repository.update_if_version(
+        user_id=user.id,
+        expected_version=1,
+        values={"financial_need": "first writer"},
+    )
+    second = repository.update_if_version(
+        user_id=user.id,
+        expected_version=1,
+        values={"financial_need": "stale writer"},
+    )
+    db_session.commit()
+
+    assert first is not None
+    assert second is None
+    assert first.version == 2
+    assert first.financial_need == "first writer"
 
 
 def test_profile_validation_bounds_free_text_and_lists(
