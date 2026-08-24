@@ -14,7 +14,11 @@ These controls are external GitHub settings and cannot be proved by workflow YAM
 - enable automatic deletion of merged branches and remove obsolete stacked branches/PRs only after
   confirming no unique commits remain.
 
-Current live verification on 14 August 2026 found `main` unprotected and zero GitHub Environments.
-GitHub reported that private-repository protection requires an account-plan upgrade. This is an
-explicit **external release blocker**, not something CI or code may mark as passed. The repository
-must not be made public temporarily to bypass the protection requirement.
+Current live verification on 24 August 2026 found `main` protected with
+administrator enforcement, conversation resolution, linear history, and the
+required `test`, `security-scan`, `browser-e2e`, and `bicep` checks. The
+`azure-staging` environment has a branch policy; `azure-beta` has both a branch
+policy and required reviewers. The remaining release-control gap is mandatory
+pull-request review on `main`: it is not currently required. Enable at least
+one independent approving review before production release. The repository
+must not be made public temporarily to bypass any protection requirement.
