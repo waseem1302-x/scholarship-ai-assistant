@@ -28,6 +28,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimObjective,
     ClaimValue,
 )
+from app.modules.catalogue_ingestion.document_conversion_transport import FilesystemDoclingWorker
 from app.modules.catalogue_ingestion.evaluation import GoldItem, evaluate
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceRole,
@@ -970,6 +971,7 @@ def test_service_enables_layout_document_normalizer_only_behind_feature_gate(db_
 
     assert disabled.fetcher.payload_normalizer.__name__ == "normalize_source_payload"
     assert enabled.fetcher.payload_normalizer.parser_version == "catalogue-docling-layout.v1"
+    assert isinstance(enabled.fetcher.payload_normalizer.converter.worker, FilesystemDoclingWorker)
 
 
 def test_direct_url_run_rejects_non_https_and_reuses_unchanged_extraction(db_session) -> None:

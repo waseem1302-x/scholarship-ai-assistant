@@ -2,6 +2,7 @@
 
 import secrets
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -77,7 +78,24 @@ def _catalogue_queue_readiness(session: Session, settings: Settings) -> dict[str
 def _catalogue_document_worker_readiness(settings: Settings) -> dict[str, object]:
     if not settings.catalogue_document_intelligence_enabled:
         return {"status": "disabled"}
-    return {"status": "blocked", "reason": "dedicated_worker_transport_unavailable"}
+    if not settings.catalogue_document_worker_transport_root:
+        return {"status": "blocked", "reason": "dedicated_worker_transport_unavailable"}
+    heartbeat = (
+        Path(settings.catalogue_document_worker_transport_root) / "health" / "worker-heartbeat"
+    )
+    try:
+        fresh = (
+            heartbeat.is_file()
+            and heartbeat.stat().st_mtime
+            >= (
+                datetime.now(UTC) - timedelta(minutes=settings.operational_job_stale_minutes)
+            ).timestamp()
+        )
+    except OSError:
+        fresh = False
+    if not fresh:
+        return {"status": "blocked", "reason": "dedicated_worker_stale"}
+    return {"status": "ready"}
 
 
 def _catalogue_browser_worker_readiness(settings: Settings) -> dict[str, object]:

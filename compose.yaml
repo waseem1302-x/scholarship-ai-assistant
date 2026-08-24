@@ -40,8 +40,11 @@ services:
       # the documents profile must also explicitly set APP_DOCUMENT_LAB_ENABLED=true.
       APP_DOCUMENT_LAB_ENABLED: ${APP_DOCUMENT_LAB_ENABLED:-false}
       APP_DOCUMENT_LAB_STORAGE_ROOT: /app/document-data
+      APP_CATALOGUE_DOCUMENT_WORKER_TRANSPORT_ROOT: /var/lib/catalogue-docling-jobs
     volumes:
       - document_lab_data:/app/document-data
+      - catalogue_docling_jobs:/catalogue-docling-jobs
+      - catalogue_document_jobs:/var/lib/catalogue-docling-jobs
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -161,6 +164,9 @@ services:
     pids_limit: 256
     mem_limit: 4g
     cpus: 2.0
+    volumes:
+      - catalogue_document_jobs:/jobs
+    command: ["--serve", "--job-root", "/jobs", "--poll-milliseconds", "100"]
 
   clamav:
     profiles: ["documents"]
@@ -177,3 +183,5 @@ volumes:
     # a legacy volume with POSTGRES_DATA_VOLUME=scholarshipaiassistant_postgres_data.
     name: ${POSTGRES_DATA_VOLUME:-scholarship-ai-assistant-postgres-data}
   document_lab_data:
+  catalogue_document_jobs:
+    name: ${CATALOGUE_DOCUMENT_JOBS_VOLUME:-scholarship-ai-assistant-catalogue-document-jobs}

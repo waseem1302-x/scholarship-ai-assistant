@@ -1205,3 +1205,48 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Evidence:** focused lint/format and `tests/test_document_conversion.py`
   completed **9 passed, 2 known warnings** locally. The next push is limited
   to this cross-platform test correction; hosted CI remains the release gate.
+
+## P0-E — application-to-dedicated Docling worker transport
+
+- **Status:** bounded local transport contract is green. The default
+  `catalogue_document_intelligence_enabled` gate remains false; this does not
+  enable production conversion, deploy an image, or close the reviewed OCR
+  fixture gate.
+- **Baseline:** `c43ccdd`.
+- **Implementation:** when the existing document-intelligence gate is enabled,
+  `CatalogueIngestionService` now selects a filesystem job-volume transport
+  instead of a local Docling subprocess. The application writes a fresh opaque
+  job directory containing only admitted PDF bytes and fixed conversion limits,
+  then atomically publishes it to the restricted worker. The worker atomically
+  claims one request, starts a fresh isolated Docling child for that request,
+  returns only bounded text or a stable error code, and removes the input.
+  Request/result messages have an absolute deadline; the caller cancels late
+  work, and the worker rejects expired work before starting Docling. Both the
+  caller and worker impose the runtime cap; worker timeout termination reuses
+  the existing process-group cleanup path. Pending plus in-flight work is
+  bounded, abandoned result/cancellation messages are pruned, and the worker
+  emits a volume heartbeat used by readiness.
+- **Isolation/configuration:** the pre-existing restricted `document-converter`
+  Compose profile now mounts only the dedicated jobs volume and runs the worker
+  service loop. The API receives the same volume path but the conversion feature
+  flag stays false. The worker still has no database, Redis, URL, or application
+  credential transport.
+- **Files changed:** `app/modules/catalogue_ingestion/document_conversion_transport.py`,
+  `document_conversion_worker.py`, `service.py`, `app/core/config.py`,
+  `app/core/health.py`, `compose.yaml`, and focused transport/readiness tests.
+- **Focused evidence:**
+  `uv --cache-dir .uv-cache run python -m pytest -q --basetemp
+  .pytest-tmp/p0e-transport-fix2 tests/test_document_conversion_transport.py
+  tests/test_document_conversion.py
+  tests/test_operations.py::test_aggregate_readiness_fails_closed_when_catalogue_docling_is_enabled_without_worker
+  tests/test_operations.py::test_aggregate_readiness_accepts_a_fresh_catalogue_docling_worker_heartbeat
+  tests/test_catalogue_ingestion.py::test_service_enables_layout_document_normalizer_only_behind_feature_gate`
+  — **21 passed, 1 existing Starlette deprecation warning**. Targeted Ruff lint,
+  format check, and `git diff --check` passed.
+- **Known limitations:** this proves the application/worker protocol, not a
+  reviewed text-insufficient OCR fixture or protected-fixture evaluation. The
+  dedicated worker profile remains opt-in, and no production flag was enabled.
+- **Rollback:** keep `APP_CATALOGUE_DOCUMENT_INTELLIGENCE_ENABLED=false` (the
+  default) or remove the worker profile; pending jobs are bounded and carry no
+  database state. Deploying the prior application image restores the previous
+  disabled behavior.

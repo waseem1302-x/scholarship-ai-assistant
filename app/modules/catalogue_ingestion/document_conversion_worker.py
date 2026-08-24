@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 
+from app.modules.catalogue_ingestion.document_conversion_transport import FilesystemDoclingJobServer
+
 
 def _convert(
     input_path: Path,
@@ -46,13 +48,28 @@ def _convert(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--max-pages", required=True, type=int)
-    parser.add_argument("--max-file-bytes", required=True, type=int)
-    parser.add_argument("--max-output-characters", required=True, type=int)
+    parser.add_argument("--serve", action="store_true")
+    parser.add_argument("--job-root")
+    parser.add_argument("--poll-milliseconds", type=int, default=100)
+    parser.add_argument("--input")
+    parser.add_argument("--output")
+    parser.add_argument("--max-pages", type=int)
+    parser.add_argument("--max-file-bytes", type=int)
+    parser.add_argument("--max-output-characters", type=int)
     parser.add_argument("--enable-ocr", action="store_true")
     args = parser.parse_args()
+    if args.serve:
+        if not args.job_root or args.poll_milliseconds < 1:
+            parser.error("--serve requires --job-root and a positive --poll-milliseconds")
+        FilesystemDoclingJobServer(
+            job_root=args.job_root,
+            poll_interval_milliseconds=args.poll_milliseconds,
+        ).serve_forever()
+        return 0
+    if not all(
+        (args.input, args.output, args.max_pages, args.max_file_bytes, args.max_output_characters)
+    ):
+        parser.error("one-shot conversion requires input, output, and all conversion limits")
     text = _convert(
         Path(args.input),
         enable_ocr=args.enable_ocr,

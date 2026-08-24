@@ -49,6 +49,7 @@ from app.modules.catalogue_ingestion.document_conversion import (
     DocumentConversionLimits,
     LayoutAwareDocumentConverter,
 )
+from app.modules.catalogue_ingestion.document_conversion_transport import FilesystemDoclingWorker
 from app.modules.catalogue_ingestion.evidence_acquirer import AcquisitionRequest
 from app.modules.catalogue_ingestion.evidence_blocks import ensure_evidence_blocks
 from app.modules.catalogue_ingestion.graph_materializer import MextGraphMaterializer
@@ -170,6 +171,11 @@ class CatalogueIngestionService:
                             max_runtime_seconds=settings.catalogue_document_max_runtime_seconds,
                             max_output_characters=settings.catalogue_document_max_output_characters,
                             min_text_characters=settings.catalogue_document_min_text_characters,
+                        ),
+                        worker=FilesystemDoclingWorker(
+                            job_root=settings.catalogue_document_worker_transport_root,
+                            poll_interval_milliseconds=settings.catalogue_document_worker_poll_milliseconds,
+                            max_pending_jobs=settings.catalogue_document_worker_max_pending_jobs,
                         ),
                         model_artifacts_path=settings.catalogue_document_model_artifacts_path,
                     ),

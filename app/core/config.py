@@ -130,6 +130,11 @@ class Settings(BaseSettings):
     # path. The conversion child receives this path, never a host model cache
     # or the parent application's environment.
     catalogue_document_model_artifacts_path: str = "/opt/docling/models"
+    # The API and restricted converter exchange only bounded file jobs on this
+    # volume. Leaving it unset makes an enabled document feature fail closed.
+    catalogue_document_worker_transport_root: str | None = None
+    catalogue_document_worker_poll_milliseconds: int = Field(default=50, ge=1, le=1_000)
+    catalogue_document_worker_max_pending_jobs: int = Field(default=32, ge=1, le=128)
     catalogue_document_max_pages: int = Field(default=200, ge=1, le=500)
     catalogue_document_max_runtime_seconds: int = Field(default=30, ge=1, le=300)
     catalogue_document_max_output_characters: int = Field(default=500_000, ge=1_000, le=2_000_000)

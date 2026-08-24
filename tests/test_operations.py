@@ -121,6 +121,26 @@ def test_aggregate_readiness_fails_closed_when_catalogue_docling_is_enabled_with
     assert readiness["dependencies"]["catalogue_browser_worker"]["status"] == "disabled"
 
 
+def test_aggregate_readiness_accepts_a_fresh_catalogue_docling_worker_heartbeat(
+    db_session, tmp_path
+) -> None:
+    root = tmp_path / "catalogue-docling-jobs"
+    heartbeat = root / "health" / "worker-heartbeat"
+    heartbeat.parent.mkdir(parents=True)
+    heartbeat.touch()
+    settings = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="readiness-test-secret-that-is-at-least-32-characters",
+        catalogue_document_intelligence_enabled=True,
+        catalogue_document_worker_transport_root=str(root),
+    )
+
+    readiness = aggregate_readiness(db_session, settings)
+
+    assert readiness["dependencies"]["catalogue_document_worker"] == {"status": "ready"}
+
+
 def test_aggregate_readiness_keeps_disabled_high_risk_capabilities_out_of_the_ready_gate(
     db_session,
 ) -> None:
