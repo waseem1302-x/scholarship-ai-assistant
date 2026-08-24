@@ -1103,7 +1103,7 @@ class CatalogueIngestionService:
                         candidate,
                         f"source_routing_manual_review:{source.id}:{routing_reason}",
                     )
-                    continue
+                    return
                 objectives = tuple(
                     ClaimObjective(objective) for objective in decision.applicable_objectives
                 )

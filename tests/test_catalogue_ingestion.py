@@ -37,6 +37,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
     CatalogueSourceArtifact,
+    CatalogueSourceRoutingDecision,
     IngestionInputKind,
     IngestionMode,
     IngestionRunStatus,
@@ -635,6 +636,42 @@ def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_
     assert artifact is not None
     assert artifact.normalized_text == MEXT_TEXT
     assert artifact.content_hash == hashlib.sha256(MEXT_TEXT.encode()).hexdigest()
+
+
+def test_source_routing_blocks_ambiguous_artifact_without_model_calls(db_session) -> None:
+    ambiguous_text = """
+    Official scholarship funding stipend details.
+    Required documents checklist and application form.
+    """
+    extractor = FakeClaimProvider(claim_output())
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(catalogue_source_routing_enabled=True),
+        fetcher=FakeFetcher(ambiguous_text),
+        claim_extractor=extractor,
+    )
+
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    service.process_run(run.id, worker_id="source-routing-ambiguous")
+
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    decision = db_session.scalar(select(CatalogueSourceRoutingDecision))
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.NEEDS_REVIEW
+    assert candidate.failure_code is not None
+    assert candidate.failure_code.startswith("source_routing_manual_review:")
+    assert extractor.calls == 0
+    assert decision is not None
+    assert decision.role == "unknown"
+    assert decision.requires_manual_review is True
+    assert decision.ambiguity_reason == "conflicting_role_signals"
+    assert decision.applicable_objectives == []
 
 
 def test_catalogue_source_byte_limit_is_independent_from_model_text_limit(db_session) -> None:

@@ -404,3 +404,29 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   stop workers using the new path and downgrade `0047` only after they stop.
 - **Next gate:** supply scoped unresolved objectives, add routed service tests,
   then demonstrate cache/budget/resume behavior and PostgreSQL execution.
+
+### P0-F follow-up — fail-closed routed service regression
+
+- **Status:** the opt-in routed service path now has an end-to-end regression
+  proving that conflicting source roles persist a decision, make no model call,
+  and retain the candidate in manual review.
+- **Files changed:** `service.py` and `tests/test_catalogue_ingestion.py`.
+- **Implementation:** when a persisted or newly classified decision requires
+  manual review, `_process_direct_claims` returns immediately after recording
+  the manual-review state. This prevents its later normal extraction finalizer
+  from overwriting `needs_review` with an extraction/validation status.
+- **Test added:** an official direct URL whose immutable artifact carries both
+  funding and document-checklist signals produces one `unknown` routing
+  decision with `conflicting_role_signals`, zero `FakeClaimProvider` calls,
+  and a `needs_review` candidate.
+- **Commands and results:**
+  `uv --cache-dir .uv-cache run pytest tests/test_catalogue_ingestion.py -k source_routing_blocks_ambiguous_artifact_without_model_calls -q`
+  — **1 passed, 2 warnings**. Warnings are the existing Starlette deprecation
+  and local pytest-cache access warning.
+  `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp .pytest-tmp/p0f-routed-service tests/test_catalogue_ingestion.py tests/test_source_routing.py tests/test_migrations.py::test_catalogue_source_routing_migration_is_additive_and_rolls_back`
+  — **81 passed, 2 warnings**. The same two known warnings were emitted.
+  Targeted Ruff check/format checks and `git diff --check` passed after the
+  formatter normalized line endings in the two touched Python files.
+- **Security/trust invariant:** an ambiguous source cannot fall through to
+  broad extraction or replace the manual-review status; no publication path is
+  involved.
