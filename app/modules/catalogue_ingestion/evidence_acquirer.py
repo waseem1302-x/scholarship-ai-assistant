@@ -157,6 +157,7 @@ class LegacySafeEvidenceAcquirer:
             tier=AcquisitionTier.STATIC_HTTP,
             role_hint=request.role_hint,
             retrieved_at=now,
+            parser_version=fetched.parser_version,
         )
         return AcquisitionResult(artifact=artifact, fetched=fetched)
 
@@ -173,6 +174,7 @@ class LegacySafeEvidenceAcquirer:
                     host: replace(policy, max_bytes=min(policy.max_bytes, max_bytes))
                     for host, policy in original.crawl_policies.items()
                 },
+                payload_normalizer=original.payload_normalizer,
             )
             limited.opener = original.opener
             limited._robots = original._robots

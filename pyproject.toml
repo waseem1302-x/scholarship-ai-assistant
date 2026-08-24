@@ -41,6 +41,11 @@ dev = [
 crawlee = [
   "crawlee>=1.9,<2",
 ]
+# Layout-aware PDF conversion for catalogue ingestion.  This is deliberately
+# optional because it runs in a quarantined worker and remains feature-gated.
+document-conversion = [
+  "docling>=2.0,<3",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

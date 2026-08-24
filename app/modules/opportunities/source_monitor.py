@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import urllib.robotparser
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
@@ -72,6 +73,7 @@ class FetchedSource:
     normalized_content_hash: str | None = None
     content_type: str = "text/html"
     links: tuple[FetchedLink, ...] = ()
+    parser_version: str = "legacy-safe-fetcher.v1"
 
 
 @dataclass(frozen=True)
@@ -209,10 +211,15 @@ class SafeSourceFetcher:
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         max_bytes: int = DEFAULT_MAX_BYTES,
         crawl_policies: dict[str, SourceCrawlPolicy] | None = None,
+        payload_normalizer: Callable[[bytes, str], str] | None = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_bytes = max_bytes
         self.crawl_policies = crawl_policies or {}
+        # Catalogue document conversion is injected here only after the same
+        # URL, redirect, DNS/IP, robots, MIME and byte checks as every other
+        # source. Source-monitor callers retain the legacy normalizer.
+        self.payload_normalizer = payload_normalizer or normalize_source_payload
         self.opener = urllib.request.build_opener(SafeRedirectHandler)
         self._robots: dict[str, urllib.robotparser.RobotFileParser | None] = {}
 
@@ -248,7 +255,7 @@ class SafeSourceFetcher:
         if len(payload) > policy.max_bytes:
             raise SourceFetchError(f"source_too_large: exceeded {policy.max_bytes} bytes")
 
-        evidence_text = normalize_source_payload(payload, content_type)
+        evidence_text = self.payload_normalizer(payload, content_type)
         if len(evidence_text) < 20:
             raise SourceFetchError("source_has_no_extractable_evidence")
         if is_low_information_source_text(evidence_text):
@@ -274,6 +281,9 @@ class SafeSourceFetcher:
             normalized_content_hash=hashlib.sha256(evidence_text.encode()).hexdigest(),
             content_type=content_type,
             links=links,
+            parser_version=getattr(
+                self.payload_normalizer, "parser_version", "legacy-safe-fetcher.v1"
+            ),
         )
 
     def policy_for(self, url: str) -> SourceCrawlPolicy:

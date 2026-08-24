@@ -42,6 +42,11 @@ from app.modules.catalogue_ingestion.discovery_promotion import (
     CatalogueDiscoveryPromotionService,
     DiscoveryPromotionResult,
 )
+from app.modules.catalogue_ingestion.document_conversion import (
+    CatalogueDocumentPayloadNormalizer,
+    DocumentConversionLimits,
+    LayoutAwareDocumentConverter,
+)
 from app.modules.catalogue_ingestion.evidence_acquirer import AcquisitionRequest
 from app.modules.catalogue_ingestion.evidence_blocks import ensure_evidence_blocks
 from app.modules.catalogue_ingestion.graph_materializer import MextGraphMaterializer
@@ -129,10 +134,28 @@ class CatalogueIngestionService:
         self.opportunities = OpportunityRepository(session)
         self.parser = parser or LocalSeedDocumentParser()
         self.discovery = discovery or SeedUrlDiscoveryProvider()
-        self.fetcher = fetcher or SafeSourceFetcher(
-            timeout_seconds=settings.catalogue_ai_timeout_seconds,
-            max_bytes=settings.catalogue_source_max_bytes_per_page,
-        )
+        if fetcher is not None:
+            self.fetcher = fetcher
+        else:
+            payload_normalizer = None
+            if settings.catalogue_document_intelligence_enabled:
+                payload_normalizer = CatalogueDocumentPayloadNormalizer(
+                    converter=LayoutAwareDocumentConverter(
+                        limits=DocumentConversionLimits(
+                            max_bytes=settings.catalogue_source_max_bytes_per_page,
+                            max_pages=settings.catalogue_document_max_pages,
+                            max_runtime_seconds=settings.catalogue_document_max_runtime_seconds,
+                            max_output_characters=settings.catalogue_document_max_output_characters,
+                            min_text_characters=settings.catalogue_document_min_text_characters,
+                        )
+                    ),
+                    allow_ocr=settings.catalogue_document_ocr_enabled,
+                )
+            self.fetcher = SafeSourceFetcher(
+                timeout_seconds=settings.catalogue_ai_timeout_seconds,
+                max_bytes=settings.catalogue_source_max_bytes_per_page,
+                payload_normalizer=payload_normalizer,
+            )
         self.evidence_acquirer = select_evidence_acquirer(
             prefer_crawlee_static=settings.catalogue_crawlee_static_enabled,
             fetcher=self.fetcher,

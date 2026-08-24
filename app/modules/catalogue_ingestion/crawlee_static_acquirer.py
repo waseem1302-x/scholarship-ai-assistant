@@ -57,7 +57,7 @@ class CrawleeStaticEvidenceAcquirer:
         result = asyncio.run(self._acquire_with_crawlee(request))
         relabelled = replace(
             result.artifact,
-            parser_version="crawlee-static.v2-safe-bridge",
+            parser_version=f"crawlee-static.v2-safe-bridge+{result.artifact.parser_version}",
         )
         return AcquisitionResult(artifact=relabelled, fetched=result.fetched)
 

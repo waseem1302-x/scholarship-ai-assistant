@@ -68,6 +68,7 @@ def test_legacy_acquirer_returns_static_http_artifact() -> None:
     assert artifact.tier is AcquisitionTiers.STATIC_HTTP
     assert artifact.role_hint is SourceRoleHint.PRIMARY
     assert artifact.acquirer_contract_version == EVIDENCE_ACQUIRER_CONTRACT_VERSION
+    assert artifact.parser_version == "legacy-safe-fetcher.v1"
     assert artifact.links == fetched.links
     assert artifact.retrieved_at.tzinfo is not None
 

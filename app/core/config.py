@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     catalogue_crawlee_static_enabled: bool = False
     catalogue_browser_fetching_enabled: bool = False
     catalogue_document_intelligence_enabled: bool = False
+    # Docling runs only in a short-lived child process after SafeSourceFetcher
+    # has admitted the bytes. OCR remains independently off by default.
+    catalogue_document_ocr_enabled: bool = False
+    catalogue_document_max_pages: int = Field(default=200, ge=1, le=500)
+    catalogue_document_max_runtime_seconds: int = Field(default=30, ge=1, le=300)
+    catalogue_document_max_output_characters: int = Field(default=500_000, ge=1_000, le=2_000_000)
+    catalogue_document_min_text_characters: int = Field(default=200, ge=20, le=10_000)
     catalogue_scheduled_ingestion_enabled: bool = False
     catalogue_reviewed_official_domains: str = ""
     catalogue_worker_claim_seconds: int = Field(default=900, ge=30, le=3600)

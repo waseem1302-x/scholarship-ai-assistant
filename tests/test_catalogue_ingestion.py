@@ -650,6 +650,20 @@ def test_catalogue_source_byte_limit_is_independent_from_model_text_limit(db_ses
     assert service.fetcher.max_bytes == 750_000
 
 
+def test_service_enables_layout_document_normalizer_only_behind_feature_gate(db_session) -> None:
+    disabled = CatalogueIngestionService(db_session, enabled_settings())
+    enabled = CatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_document_intelligence_enabled=True,
+            catalogue_document_ocr_enabled=False,
+        ),
+    )
+
+    assert disabled.fetcher.payload_normalizer.__name__ == "normalize_source_payload"
+    assert enabled.fetcher.payload_normalizer.parser_version == "catalogue-docling-layout.v1"
+
+
 def test_direct_url_run_rejects_non_https_and_reuses_unchanged_extraction(db_session) -> None:
     extractor = FakeClaimProvider(claim_output())
     service = CatalogueIngestionService(
