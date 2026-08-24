@@ -43,7 +43,6 @@ services:
       APP_CATALOGUE_DOCUMENT_WORKER_TRANSPORT_ROOT: /var/lib/catalogue-docling-jobs
     volumes:
       - document_lab_data:/app/document-data
-      - catalogue_docling_jobs:/catalogue-docling-jobs
       - catalogue_document_jobs:/var/lib/catalogue-docling-jobs
     depends_on:
       migrate:

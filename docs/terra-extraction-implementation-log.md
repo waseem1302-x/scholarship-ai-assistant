@@ -1230,19 +1230,22 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   Compose profile now mounts only the dedicated jobs volume and runs the worker
   service loop. The API receives the same volume path but the conversion feature
   flag stays false. The worker still has no database, Redis, URL, or application
-  credential transport.
+  credential transport. `docker compose --profile catalogue-document-conversion
+  config --quiet` completed successfully; no container or conversion run was
+  started.
 - **Files changed:** `app/modules/catalogue_ingestion/document_conversion_transport.py`,
   `document_conversion_worker.py`, `service.py`, `app/core/config.py`,
   `app/core/health.py`, `compose.yaml`, and focused transport/readiness tests.
 - **Focused evidence:**
   `uv --cache-dir .uv-cache run python -m pytest -q --basetemp
-  .pytest-tmp/p0e-transport-fix2 tests/test_document_conversion_transport.py
+  .pytest-tmp/p0e-transport-final tests/test_document_conversion_transport.py
   tests/test_document_conversion.py
   tests/test_operations.py::test_aggregate_readiness_fails_closed_when_catalogue_docling_is_enabled_without_worker
   tests/test_operations.py::test_aggregate_readiness_accepts_a_fresh_catalogue_docling_worker_heartbeat
   tests/test_catalogue_ingestion.py::test_service_enables_layout_document_normalizer_only_behind_feature_gate`
-  — **21 passed, 1 existing Starlette deprecation warning**. Targeted Ruff lint,
-  format check, and `git diff --check` passed.
+  — **21 passed, 2 warnings in 3.51s**. Warnings are the existing Starlette
+  TestClient deprecation and local pytest-cache permission warning. Targeted
+  Ruff lint, format check, and `git diff --check` passed.
 - **Known limitations:** this proves the application/worker protocol, not a
   reviewed text-insufficient OCR fixture or protected-fixture evaluation. The
   dedicated worker profile remains opt-in, and no production flag was enabled.
