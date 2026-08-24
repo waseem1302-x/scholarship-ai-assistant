@@ -672,3 +672,22 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   health evidence before RC acceptance.
 - **Rollback:** deploy the prior service image. No migration is required; the
   cleanup is irreversible for records already purged.
+
+## R-09 — fenced source-monitor completion
+
+- **Status:** local fenced-completion coverage is green; real PostgreSQL
+  concurrent-worker evidence remains required.
+- **Baseline commit:** `09d0266`.
+- **Implementation:** each monitor claim now receives an opaque token. A
+  successful check locks and verifies that token before changing the hash,
+  verification state, excerpts, audit record, next schedule, failure count, and
+  lease fields; all changes commit together. Failure completion likewise only
+  releases the matching token.
+- **Test:** a stale token after a simulated reclaim cannot write a hash or
+  verification record, nor clear the newer worker's lease.
+- **Commands:** `uv --cache-dir .uv-cache run python -m pytest -ra --basetemp
+  .pytest-tmp/source-monitor-fencing tests/test_source_monitor.py
+  tests/test_migrations.py::test_source_monitor_fencing_migration_is_additive_and_rolls_back`
+  — **20 passed, 2 warnings**. Targeted Ruff lint and formatting passed.
+- **Known limitation:** SQLite does not prove concurrent PostgreSQL row-lock
+  behavior; a two-session PostgreSQL fencing test remains an RC gate.

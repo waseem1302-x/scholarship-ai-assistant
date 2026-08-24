@@ -641,3 +641,30 @@ def test_assistant_quota_reservation_migration_is_additive_and_rolls_back(
         "assistant_quota_reservations",
     }.intersection(inspector.get_table_names())
     engine.dispose()
+
+
+def test_source_monitor_fencing_migration_is_additive_and_rolls_back(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'source-monitor-fencing.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260824_0048")
+    engine = create_engine(database_url)
+    assert "monitor_claim_token" not in {
+        column["name"] for column in inspect(engine).get_columns("sources")
+    }
+
+    command.upgrade(alembic_config, "20260824_0049")
+    inspector = inspect(engine)
+    assert "monitor_claim_token" in {column["name"] for column in inspector.get_columns("sources")}
+    assert "ix_sources_monitor_claim_token" in {
+        index["name"] for index in inspector.get_indexes("sources")
+    }
+
+    command.downgrade(alembic_config, "20260824_0048")
+    assert "monitor_claim_token" not in {
+        column["name"] for column in inspect(engine).get_columns("sources")
+    }
+    engine.dispose()

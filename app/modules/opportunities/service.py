@@ -756,6 +756,82 @@ class OpportunityService:
             ),
         )
 
+    def record_claimed_source_check(
+        self,
+        source_id: uuid.UUID,
+        payload: SourceCheckRequest,
+        *,
+        claim_token: str,
+        next_check_at: datetime,
+    ) -> bool:
+        """Atomically persist a monitor check and release its matching lease."""
+        source = self.session.scalar(
+            select(Source)
+            .where(Source.id == source_id, Source.monitor_claim_token == claim_token)
+            .with_for_update()
+        )
+        if source is None:
+            self.session.rollback()
+            return False
+
+        previous_hash = source.content_hash
+        changed = (
+            payload.content_hash is not None
+            and previous_hash is not None
+            and payload.content_hash != previous_hash
+        )
+        if payload.content_hash is not None:
+            source.hash_algorithm = payload.hash_algorithm
+            source.content_hash = payload.content_hash
+        source.last_updated_at = payload.observed_at or datetime.now(UTC)
+        if payload.excerpt is not None:
+            self.session.add(
+                SourceExcerpt(
+                    source_id=source.id,
+                    section_label=payload.excerpt.section_label,
+                    locator=payload.excerpt.locator,
+                    text=payload.excerpt.text,
+                    hash_algorithm=(
+                        payload.excerpt.hash_algorithm
+                        if payload.excerpt.content_hash is not None
+                        else payload.hash_algorithm
+                    ),
+                    content_hash=payload.excerpt.content_hash or payload.content_hash,
+                )
+            )
+        if changed:
+            source.verification_status = VerificationStatus.NEEDS_REVIEW
+        status = VerificationStatus.NEEDS_REVIEW if changed else source.verification_status
+        self.session.add(
+            VerificationRecord(
+                opportunity_id=source.opportunity_id,
+                source_id=source.id,
+                status=status,
+                notes=payload.change_summary,
+                metadata_json={
+                    "action": "source_check_recorded",
+                    "changed": changed,
+                    "previous_hash": previous_hash,
+                    "current_hash": source.content_hash,
+                    "observed_at": (payload.observed_at or source.last_updated_at).isoformat(),
+                },
+            )
+        )
+        self.session.add(
+            AuditLog(
+                action="source_check_recorded",
+                entity_type="source",
+                entity_id=str(source.id),
+                metadata_json={"changed": changed, "opportunity_id": str(source.opportunity_id)},
+            )
+        )
+        source.monitor_claimed_until = None
+        source.monitor_claim_token = None
+        source.monitor_next_check_at = next_check_at
+        source.monitor_failure_count = 0
+        self.session.commit()
+        return True
+
     def list_admin_opportunities(
         self, *, limit: int, offset: int, **filters: object
     ) -> AdminOpportunitySearchResponse:

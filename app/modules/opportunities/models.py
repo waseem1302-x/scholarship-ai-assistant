@@ -717,6 +717,7 @@ class Source(Base):
         DateTime(timezone=True), index=True
     )
     monitor_claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    monitor_claim_token: Mapped[str | None] = mapped_column(String(64), index=True)
     monitor_failure_count: Mapped[int] = mapped_column(default=0)
     hash_algorithm: Mapped[str] = mapped_column(
         String(16), default="sha256", server_default="sha256"

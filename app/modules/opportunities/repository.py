@@ -367,6 +367,7 @@ class OpportunityRepository:
         lease_until = now + timedelta(seconds=lease_seconds)
         for source in sources:
             source.monitor_claimed_until = lease_until
+            source.monitor_claim_token = uuid.uuid4().hex
         self.session.commit()
         return sources
 
@@ -374,16 +375,24 @@ class OpportunityRepository:
         self,
         source_id: uuid.UUID,
         *,
+        claim_token: str,
         next_check_at: datetime,
         succeeded: bool,
-    ) -> None:
-        source = self.get_source(source_id)
+    ) -> bool:
+        source = self.session.scalar(
+            select(Source)
+            .where(Source.id == source_id, Source.monitor_claim_token == claim_token)
+            .with_for_update()
+        )
         if source is None:
-            return
+            self.session.rollback()
+            return False
         source.monitor_claimed_until = None
+        source.monitor_claim_token = None
         source.monitor_next_check_at = next_check_at
         source.monitor_failure_count = 0 if succeeded else source.monitor_failure_count + 1
         self.session.commit()
+        return True
 
     def list_admin_opportunities(
         self,

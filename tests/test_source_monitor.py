@@ -16,6 +16,9 @@ from app.modules.opportunities.models import (
     VerificationRecord,
     VerificationStatus,
 )
+from app.modules.opportunities.repository import OpportunityRepository
+from app.modules.opportunities.schemas import SourceCheckRequest
+from app.modules.opportunities.service import OpportunityService
 from app.modules.opportunities.source_monitor import (
     FetchedSource,
     SafeSourceFetcher,
@@ -612,6 +615,48 @@ def test_source_monitor_failure_releases_claim_with_exponential_backoff(db_sessi
     assert source.monitor_claimed_until is None
     assert source.monitor_failure_count == 1
     assert source.monitor_next_check_at.replace(tzinfo=UTC) == NOW + timedelta(hours=2)
+
+
+def test_source_monitor_stale_claim_cannot_commit_check_or_release_newer_lease(db_session) -> None:
+    source = add_active_verified_source(
+        db_session,
+        url="https://example.edu/fenced",
+        content_hash=_hash(b"old content"),
+        last_updated_at=NOW - timedelta(days=8),
+    )
+    repository = OpportunityRepository(db_session)
+    claimed = repository.claim_sources_due_for_monitoring(
+        now=NOW,
+        check_interval_days=7,
+        freshness_days=90,
+        limit=1,
+        lease_seconds=60,
+    )
+    assert claimed == [source]
+    stale_token = source.monitor_claim_token
+    assert stale_token is not None
+
+    source.monitor_claim_token = "newer-claim-token"
+    source.monitor_claimed_until = NOW + timedelta(seconds=120)
+    db_session.commit()
+
+    completed = OpportunityService(db_session).record_claimed_source_check(
+        source.id,
+        SourceCheckRequest(
+            content_hash=_hash(b"new content that stale worker must not commit"),
+            observed_at=NOW,
+            change_summary="stale worker result",
+        ),
+        claim_token=stale_token,
+        next_check_at=NOW + timedelta(days=7),
+    )
+
+    assert completed is False
+    db_session.refresh(source)
+    assert source.content_hash == _hash(b"old content")
+    assert source.monitor_claim_token == "newer-claim-token"
+    assert source.monitor_claimed_until is not None
+    assert db_session.scalars(select(VerificationRecord)).all() == []
 
 
 def test_source_monitor_enforces_per_host_interval(db_session) -> None:

@@ -405,6 +405,7 @@ class SourceMonitor:
                     backoff_hours = min(24 * 7, 2 ** min(failures_so_far, 8))
                     self.repository.complete_source_monitoring(
                         source.id,
+                        claim_token=source.monitor_claim_token or "",
                         next_check_at=observed_at + timedelta(hours=backoff_hours),
                         succeeded=False,
                     )
@@ -424,7 +425,7 @@ class SourceMonitor:
             if dry_run:
                 continue
 
-            self.service.record_source_check(
+            completed = self.service.record_claimed_source_check(
                 source.id,
                 SourceCheckRequest(
                     content_hash=fetched.content_hash,
@@ -436,13 +437,18 @@ class SourceMonitor:
                     ),
                     excerpt=_excerpt_payload(fetched) if has_changed else None,
                 ),
-                checked_by=None,
-            )
-            self.repository.complete_source_monitoring(
-                source.id,
+                claim_token=source.monitor_claim_token or "",
                 next_check_at=observed_at + timedelta(days=check_interval_days),
-                succeeded=True,
             )
+            if not completed:
+                failures.append(
+                    SourceMonitorFailure(
+                        source_id=str(source.id),
+                        url=source.url,
+                        error_code="monitor_claim_lost",
+                        error="Monitor claim was reclaimed before completion.",
+                    )
+                )
 
         result = SourceMonitorRunResult(
             candidates=len(sources),
