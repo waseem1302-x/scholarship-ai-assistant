@@ -253,6 +253,43 @@ def test_reply_counts_follow_viewer_block_visibility(
     assert body["replies"] == []
 
 
+def test_admin_suspends_and_reinstates_with_public_member_id(
+    client: TestClient, db_session: Session
+) -> None:
+    member = community_headers(client, db_session, "moderated.member@example.com")
+    post = create_post(client, member)
+    admin = admin_headers(client, db_session)
+
+    suspended = client.post(
+        "/api/v1/community/admin/moderation-actions",
+        json={
+            "action": "suspend",
+            "member_id": post["author"]["id"],
+            "reason": "Repeated scholarship-topic violations.",
+        },
+        headers=admin,
+    )
+    assert suspended.status_code == 204
+    assert (
+        client.post(
+            "/api/v1/community/posts",
+            json={
+                "title": "Blocked post",
+                "body": "This must not be published.",
+                "topic": "general",
+            },
+            headers=member,
+        ).status_code
+        == 403
+    )
+    reinstated = client.post(
+        "/api/v1/community/admin/moderation-actions",
+        json={"action": "reinstate", "member_id": post["author"]["id"]},
+        headers=admin,
+    )
+    assert reinstated.status_code == 204
+
+
 def test_community_delete_is_strictly_scoped_to_community_data(
     client: TestClient, db_session: Session
 ) -> None:

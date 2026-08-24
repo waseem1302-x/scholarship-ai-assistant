@@ -142,7 +142,7 @@ class CommunityModerationActionRequest(BaseModel):
     action: CommunityModerationAction
     post_id: uuid.UUID | None = None
     reply_id: uuid.UUID | None = None
-    user_id: uuid.UUID | None = None
+    member_id: uuid.UUID | None = None
     report_id: uuid.UUID | None = None
     reason: str | None = Field(default=None, min_length=3, max_length=300)
 
@@ -153,16 +153,16 @@ class CommunityModerationActionRequest(BaseModel):
             CommunityModerationAction.HIDE,
             CommunityModerationAction.RESTORE,
         }:
-            if content_count != 1 or self.user_id or self.report_id:
+            if content_count != 1 or self.member_id or self.report_id:
                 raise ValueError("Hide and restore require exactly one post_id or reply_id")
         elif self.action in {
             CommunityModerationAction.SUSPEND,
             CommunityModerationAction.REINSTATE,
         }:
-            if self.user_id is None or content_count or self.report_id:
-                raise ValueError("Suspend and reinstate require user_id only")
+            if self.member_id is None or content_count or self.report_id:
+                raise ValueError("Suspend and reinstate require member_id only")
         elif self.action is CommunityModerationAction.RESOLVE_REPORT and (
-            self.report_id is None or content_count or self.user_id
+            self.report_id is None or content_count or self.member_id
         ):
             raise ValueError("Resolve report requires report_id only")
         return self

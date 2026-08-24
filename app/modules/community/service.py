@@ -417,7 +417,11 @@ class CommunityService:
             CommunityModerationAction.SUSPEND,
             CommunityModerationAction.REINSTATE,
         }:
-            preference = self.session.get(CommunityPreference, payload.user_id)
+            preference = self.session.scalar(
+                select(CommunityPreference).where(
+                    CommunityPreference.public_id == payload.member_id
+                )
+            )
             if preference is None:
                 raise AppError(
                     "community_member_not_found",
@@ -430,7 +434,7 @@ class CommunityService:
             preference.suspension_reason = (
                 payload.reason if payload.action is CommunityModerationAction.SUSPEND else None
             )
-            target_type, target_id = "user", str(preference.user_id)
+            target_type, target_id = "community_member", str(preference.public_id)
         else:
             report = self.session.get(CommunityReport, payload.report_id)
             if report is None:

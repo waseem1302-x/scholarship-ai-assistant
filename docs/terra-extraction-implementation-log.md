@@ -553,3 +553,34 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
   blocked until `TEST_POSTGRES_URL` is configured.
 - **Rollback:** deploy the prior service image; no migration or stored-data
   rewrite is required.
+
+## R-08 — public community member-ID moderation
+
+- **Status:** local API regression coverage is green.
+- **Baseline commit:** `1c21696`.
+- **Objective:** make moderation use the public community member identifier
+  exposed in queue/feed responses, never an internal user primary key.
+- **Files changed:** `app/modules/community/schemas.py`,
+  `app/modules/community/service.py`, and `tests/test_community.py`.
+- **Behavior before:** suspend/reinstate requests required `user_id`, and the
+  service called `session.get(CommunityPreference, user_id)`. The API exposes
+  `CommunityPreference.public_id`, making the visible identifier unusable and
+  encouraging internal-ID exposure.
+- **Implementation:** the request field is now `member_id`; suspend/reinstate
+  resolve it against `CommunityPreference.public_id`. Moderation/audit target
+  records use the public member ID and a `community_member` target type.
+- **Tests added:** an administrator suspends and reinstates a participating
+  author using the public author ID returned from a post; publishing is denied
+  while suspended.
+- **Commands and results:** `uv --cache-dir .uv-cache run pytest
+  tests/test_community.py -q` — **7 passed, 2 warnings**. Targeted Ruff checks,
+  formatting and `git diff --check` passed. `uv --cache-dir .uv-cache run
+  python -m pytest -ra --basetemp .pytest-tmp/r08-community
+  tests/test_community.py tests/test_auth.py` — **26 passed, 2 warnings**
+  (existing Starlette deprecation and local pytest-cache access warnings).
+- **Security/trust invariant:** privileged moderation no longer requires or
+  records an internal user identifier in its externally supplied target
+  contract; existing admin step-up remains unchanged.
+- **Rollback:** deploy the prior service image. This intentionally changes the
+  request contract; clients must use the public member ID exposed by community
+  content before rollback/roll-forward.
