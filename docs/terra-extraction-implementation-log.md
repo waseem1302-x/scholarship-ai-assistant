@@ -584,3 +584,59 @@ protected evaluation remain outstanding, so protected MEXT/Open Doors gates are
 - **Rollback:** deploy the prior service image. This intentionally changes the
   request contract; clients must use the public member ID exposed by community
   content before rollback/roll-forward.
+
+## R-06 — atomic assistant quota reservation
+
+- **Status:** local quota-admission and terminal-state coverage is green; the
+  required real PostgreSQL competing-request execution is present but not run
+  because `TEST_POSTGRES_URL` is not configured.
+- **Baseline commit:** `c51d820`.
+- **Objective:** reserve daily and monthly assistant capacity atomically before
+  a request can reach the provider boundary.
+- **Files changed:** `app/modules/assistant/models.py`,
+  `app/modules/assistant/service.py`,
+  `alembic/versions/20260824_0048_assistant_quota_reservations.py`,
+  `tests/test_assistant.py`, `tests/test_assistant_quota_postgres.py`,
+  `tests/test_migrations.py`, and `tests/test_postgres_tenant_isolation.py`.
+- **Behavior before:** the service counted persisted answers, then later
+  inserted an answer. Competing requests could both observe remaining capacity
+  and begin provider work.
+- **Implementation:** a durable per-user UTC daily/monthly counter is
+  incremented with an `INSERT ... ON CONFLICT DO UPDATE ... WHERE` capacity
+  predicate. Both counters and a reservation row commit together before the
+  response path begins. The reservation becomes `consumed` only when its answer
+  commits. Failures after an attempted provider invocation remain consumed;
+  only failures proved to occur before invocation are marked `refunded` and
+  decrement both counters. The additive migration backfills the active UTC
+  daily/monthly counters from existing answers and applies PostgreSQL RLS to
+  both new user-owned tables.
+- **Tests added:** limit-one admission rejects a second request before its
+  provider can run; provider failures consume their reservation; a local
+  pre-provider failure refunds it; the migration upgrades and rolls back; and
+  a PostgreSQL-marked two-session limit-one race test asserts exactly one
+  admission.
+- **Commands and results:** `uv --cache-dir .uv-cache run ruff check
+  app/modules/assistant/models.py app/modules/assistant/service.py
+  alembic/versions/20260824_0048_assistant_quota_reservations.py
+  tests/test_assistant.py tests/test_assistant_quota_postgres.py
+  tests/test_migrations.py tests/test_postgres_tenant_isolation.py` and the
+  equivalent `ruff format --check` both passed. `uv --cache-dir .uv-cache run
+  python -m pytest -ra --basetemp .pytest-tmp/r06-quota-final
+  tests/test_assistant.py
+  tests/test_migrations.py::test_assistant_quota_reservation_migration_is_additive_and_rolls_back
+  tests/test_assistant_quota_postgres.py` — **16 passed, 1 skipped, 2
+  warnings**. The skip is explicitly the PostgreSQL concurrency test awaiting
+  `TEST_POSTGRES_URL`; the warnings were the existing Starlette deprecation
+  and local pytest-cache access warning. A final clean-basetemp rerun of the
+  same selection reported **16 passed, 1 skipped, 1 warning**.
+- **Security/trust invariant:** quota rejection occurs before provider work;
+  a provider failure cannot silently free capacity after a possibly billable
+  attempt; RLS keeps reservation and counter state tenant-scoped.
+- **Known limitation:** this is not PostgreSQL runtime evidence. The marked
+  two-session test must pass against a disposable PostgreSQL service before RC
+  acceptance. Current counters use UTC calendar daily/monthly windows; this
+  behavior is explicit in the migration backfill and must remain aligned with
+  published quota policy before release.
+- **Rollback:** deploy the prior service image and downgrade migration
+  `20260824_0048` only if no retained quota reservation data is needed. The
+  migration is additive; existing answers remain untouched.

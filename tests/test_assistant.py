@@ -1,11 +1,18 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
+from app.core.errors import AppError
 from app.core.rate_limit import AuthRateLimitMiddleware
+from app.modules.assistant.models import (
+    AssistantQuotaCounter,
+    AssistantQuotaReservation,
+    AssistantQuotaReservationStatus,
+)
 from app.modules.assistant.provider import AssistantProviderUnavailable
 from app.modules.assistant.schemas import AssistantAnswerRequest
 from app.modules.assistant.service import AssistantService
@@ -240,6 +247,100 @@ def test_assistant_persists_safe_provider_failure(client: TestClient, db_session
     assert result.status.value == "failed"
     assert result.response.abstained_reason == "provider_unavailable"
     assert result.response.citations == []
+
+
+def test_assistant_quota_reserves_before_provider_and_rejects_limit_one(
+    client: TestClient, db_session: Session
+) -> None:
+    verified_opportunity(client, db_session)
+    student_headers(client, db_session, "quota-limit-one@example.com")
+    user = db_session.scalar(select(User).where(User.email == "quota-limit-one@example.com"))
+    assert user is not None
+
+    class CountingProvider:
+        name = "counting-test"
+        model_version = "counting-v1"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, response):
+            self.calls += 1
+            return response
+
+    provider = CountingProvider()
+    service = AssistantService(
+        db_session,
+        Settings(
+            env="test",
+            database_url="sqlite+pysqlite:///:memory:",
+            jwt_secret="quota-limit-test-secret-at-least-32-characters",
+            assistant_daily_user_limit=1,
+            assistant_monthly_user_limit=1,
+        ),
+        provider=provider,
+    )
+    first = service.answer(AssistantAnswerRequest(question="Malaysia masters scholarship"), user)
+    assert first.status.value == "completed"
+    with pytest.raises(AppError) as exc_info:
+        service.answer(AssistantAnswerRequest(question="Malaysia masters scholarship"), user)
+    assert getattr(exc_info.value, "code", None) == "assistant_quota_exceeded"
+    assert provider.calls == 1
+    reservations = db_session.scalars(select(AssistantQuotaReservation)).all()
+    assert len(reservations) == 1
+    assert reservations[0].status is AssistantQuotaReservationStatus.CONSUMED
+    assert {
+        counter.used_slots for counter in db_session.scalars(select(AssistantQuotaCounter))
+    } == {1}
+
+
+def test_assistant_quota_consumes_provider_failure_but_refunds_pre_provider_failure(
+    client: TestClient, db_session: Session
+) -> None:
+    verified_opportunity(client, db_session)
+    student_headers(client, db_session, "quota-terminal-state@example.com")
+    user = db_session.scalar(select(User).where(User.email == "quota-terminal-state@example.com"))
+    assert user is not None
+
+    class FailingProvider:
+        name = "quota-failing-test"
+        model_version = "quota-failing-v1"
+
+        def generate(self, _response):
+            raise AssistantProviderUnavailable("timed out after provider invocation")
+
+    settings = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="quota-terminal-test-secret-at-least-32-characters",
+        assistant_daily_user_limit=2,
+        assistant_monthly_user_limit=2,
+    )
+    service = AssistantService(db_session, settings, provider=FailingProvider())
+    failed = service.answer(AssistantAnswerRequest(question="Malaysia masters scholarship"), user)
+    assert failed.status.value == "failed"
+    consumed = db_session.scalar(select(AssistantQuotaReservation))
+    assert consumed is not None
+    assert consumed.status is AssistantQuotaReservationStatus.CONSUMED
+    assert consumed.answer_id is not None
+
+    def raise_before_provider(*_args, **_kwargs):
+        raise RuntimeError("local response assembly failed")
+
+    service._compose_response = raise_before_provider  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="local response assembly failed"):
+        service.answer(AssistantAnswerRequest(question="Malaysia masters scholarship"), user)
+    reservations = db_session.scalars(
+        select(AssistantQuotaReservation).order_by(AssistantQuotaReservation.created_at)
+    ).all()
+    assert [reservation.status for reservation in reservations] == [
+        AssistantQuotaReservationStatus.CONSUMED,
+        AssistantQuotaReservationStatus.REFUNDED,
+    ]
+    assert reservations[1].terminal_reason == "pre_provider_failure"
+    assert {
+        counter.used_slots for counter in db_session.scalars(select(AssistantQuotaCounter))
+    } == {1}
 
 
 def test_profile_matching_uses_canonical_rule_evaluation(

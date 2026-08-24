@@ -1,8 +1,10 @@
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, delete, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings
@@ -18,6 +20,10 @@ from app.modules.assistant.models import (
     AssistantMessage,
     AssistantMessageRole,
     AssistantPrivacyPreference,
+    AssistantQuotaCounter,
+    AssistantQuotaReservation,
+    AssistantQuotaReservationStatus,
+    AssistantQuotaWindow,
 )
 from app.modules.assistant.provider import (
     AssistantProviderError,
@@ -86,107 +92,121 @@ class AssistantService:
     def answer(self, payload: AssistantAnswerRequest, user: User) -> AssistantAnswerResponse:
         self._purge_expired_data()
         self._require_consent(user.id)
-        self._enforce_quota(user.id)
-        conversation = self._conversation_for_request(payload.conversation_id, user.id)
         question = payload.question.strip()
         blocked = any(term in question.casefold() for term in self.BLOCKED_TERMS)
         answer_type = self._answer_type(question, payload.selected_opportunity_ids)
         opportunities, skipped = self._retrieve(question, payload.selected_opportunity_ids)
-        packet = AssistantEvidencePacket(
-            user_id=user.id,
-            query_interpretation={
-                "question_length": len(question),
-                "tokens": self._query_tokens(question),
-                "profile_requested": payload.use_profile,
-                "application_data_requested": payload.use_application_data,
-                "answer_type": answer_type,
-            },
-            scholarship_ids=[str(item.id) for item, _ in opportunities],
-            source_snapshots=[
-                self._source_snapshot(item, source) for item, source in opportunities
-            ],
-            freshness_status={
-                "accepted": len(opportunities),
-                "rejected": skipped,
-            },
-            conflicts=[],
-            retrieval_version=self.settings.assistant_retrieval_version,
-            rule_version="official-source-freshness.v1",
-        )
-        self.session.add(packet)
-        self.session.flush()
+        reservation = self._reserve_quota(user.id)
+        provider_invoked = False
+        try:
+            conversation = self._conversation_for_request(payload.conversation_id, user.id)
+            packet = AssistantEvidencePacket(
+                user_id=user.id,
+                query_interpretation={
+                    "question_length": len(question),
+                    "tokens": self._query_tokens(question),
+                    "profile_requested": payload.use_profile,
+                    "application_data_requested": payload.use_application_data,
+                    "answer_type": answer_type,
+                },
+                scholarship_ids=[str(item.id) for item, _ in opportunities],
+                source_snapshots=[
+                    self._source_snapshot(item, source) for item, source in opportunities
+                ],
+                freshness_status={
+                    "accepted": len(opportunities),
+                    "rejected": skipped,
+                },
+                conflicts=[],
+                retrieval_version=self.settings.assistant_retrieval_version,
+                rule_version="official-source-freshness.v1",
+            )
+            self.session.add(packet)
+            self.session.flush()
 
-        if blocked:
-            response = self._blocked_response()
-            status = AssistantAnswerStatus.BLOCKED
-            citation_specs: list[tuple[Opportunity, Source, str]] = []
-        elif answer_type in {
-            "application task prioritization",
-            "private application progress summary",
-        }:
-            response, citation_specs = self._private_progress_response(
-                user.id,
-                enabled=payload.use_application_data,
-                answer_type=answer_type,
-            )
-            status = AssistantAnswerStatus.COMPLETED
-        elif answer_type == "what changed from source monitoring":
-            response = self._source_change_unavailable_response()
-            citation_specs = []
-            status = AssistantAnswerStatus.ABSTAINED
-        elif not opportunities:
-            response = self._abstained_response(skipped)
-            status = AssistantAnswerStatus.ABSTAINED
-            citation_specs = []
-        else:
-            profile = self._profile(user.id) if payload.use_profile else None
-            response, citation_specs = self._compose_response(
-                question, opportunities, profile, answer_type=answer_type
-            )
-            try:
-                response = AssistantStructuredResponse.model_validate(
-                    self.provider.generate(response).model_dump()
+            if blocked:
+                response = self._blocked_response()
+                status = AssistantAnswerStatus.BLOCKED
+                citation_specs: list[tuple[Opportunity, Source, str]] = []
+            elif answer_type in {
+                "application task prioritization",
+                "private application progress summary",
+            }:
+                response, citation_specs = self._private_progress_response(
+                    user.id,
+                    enabled=payload.use_application_data,
+                    answer_type=answer_type,
                 )
                 status = AssistantAnswerStatus.COMPLETED
-            except AssistantProviderError:
-                response = self._provider_unavailable_response()
+            elif answer_type == "what changed from source monitoring":
+                response = self._source_change_unavailable_response()
                 citation_specs = []
-                status = AssistantAnswerStatus.FAILED
+                status = AssistantAnswerStatus.ABSTAINED
+            elif not opportunities:
+                response = self._abstained_response(skipped)
+                status = AssistantAnswerStatus.ABSTAINED
+                citation_specs = []
+            else:
+                profile = self._profile(user.id) if payload.use_profile else None
+                response, citation_specs = self._compose_response(
+                    question, opportunities, profile, answer_type=answer_type
+                )
+                try:
+                    provider_invoked = True
+                    response = AssistantStructuredResponse.model_validate(
+                        self.provider.generate(response).model_dump()
+                    )
+                    status = AssistantAnswerStatus.COMPLETED
+                except AssistantProviderError:
+                    response = self._provider_unavailable_response()
+                    citation_specs = []
+                    status = AssistantAnswerStatus.FAILED
 
-        answer = AssistantAnswer(
-            user_id=user.id,
-            conversation_id=conversation.id,
-            evidence_packet_id=packet.id,
-            status=status,
-            provider=self.provider.name,
-            model_version=self.provider.model_version,
-            prompt_template_version=self.settings.assistant_prompt_version,
-            retrieval_version=self.settings.assistant_retrieval_version,
-            response_json={},
-            failure_code="provider_unavailable" if status is AssistantAnswerStatus.FAILED else None,
-        )
-        self.session.add(answer)
-        self.session.flush()
-        citations = self._store_citations(answer, citation_specs)
-        response = self._attach_citations(response, citations)
-        answer.response_json = response.model_dump(mode="json")
-        if conversation.history_enabled:
-            self.session.add(
-                AssistantMessage(
-                    conversation_id=conversation.id,
-                    role=AssistantMessageRole.USER,
-                    content=question,
-                )
+            answer = AssistantAnswer(
+                user_id=user.id,
+                conversation_id=conversation.id,
+                evidence_packet_id=packet.id,
+                status=status,
+                provider=self.provider.name,
+                model_version=self.provider.model_version,
+                prompt_template_version=self.settings.assistant_prompt_version,
+                retrieval_version=self.settings.assistant_retrieval_version,
+                response_json={},
+                failure_code="provider_unavailable"
+                if status is AssistantAnswerStatus.FAILED
+                else None,
             )
-            self.session.add(
-                AssistantMessage(
-                    conversation_id=conversation.id,
-                    role=AssistantMessageRole.ASSISTANT,
-                    content=response.answer,
+            self.session.add(answer)
+            self.session.flush()
+            citations = self._store_citations(answer, citation_specs)
+            response = self._attach_citations(response, citations)
+            answer.response_json = response.model_dump(mode="json")
+            if conversation.history_enabled:
+                self.session.add(
+                    AssistantMessage(
+                        conversation_id=conversation.id,
+                        role=AssistantMessageRole.USER,
+                        content=question,
+                    )
                 )
-            )
-        self.session.commit()
-        return self._answer_response(answer, response)
+                self.session.add(
+                    AssistantMessage(
+                        conversation_id=conversation.id,
+                        role=AssistantMessageRole.ASSISTANT,
+                        content=response.answer,
+                    )
+                )
+            reservation.status = AssistantQuotaReservationStatus.CONSUMED
+            reservation.answer_id = answer.id
+            reservation.terminal_reason = "answer_persisted"
+            reservation.finalized_at = utc_now()
+            self.session.commit()
+            return self._answer_response(answer, response)
+        except Exception:
+            self.session.rollback()
+            if not provider_invoked:
+                self._refund_nonbillable_quota(reservation.id, "pre_provider_failure")
+            raise
 
     def list_conversations(self, user_id: uuid.UUID) -> list[ConversationSummaryResponse]:
         self._purge_expired_data()
@@ -315,35 +335,112 @@ class AssistantService:
         )
         self.session.commit()
 
-    def _enforce_quota(self, user_id: uuid.UUID) -> None:
-        now = datetime.now(UTC)
-        daily = (
-            self.session.scalar(
-                select(func.count(AssistantAnswer.id)).where(
-                    AssistantAnswer.user_id == user_id,
-                    AssistantAnswer.created_at >= now - timedelta(days=1),
-                )
+    def _reserve_quota(self, user_id: uuid.UUID) -> AssistantQuotaReservation:
+        """Atomically admit one request before provider work can begin.
+
+        Counter upserts serialize competing requests on each counter's primary
+        key. Both the daily and monthly increments commit with the reservation
+        together, so a request rejected by either limit consumes neither slot.
+        """
+        today = datetime.now(UTC).date()
+        daily_start = today
+        monthly_start = date(today.year, today.month, 1)
+        try:
+            daily_reserved = self._increment_quota_counter(
+                user_id,
+                AssistantQuotaWindow.DAILY,
+                daily_start,
+                self.settings.assistant_daily_user_limit,
             )
-            or 0
-        )
-        monthly = (
-            self.session.scalar(
-                select(func.count(AssistantAnswer.id)).where(
-                    AssistantAnswer.user_id == user_id,
-                    AssistantAnswer.created_at >= now - timedelta(days=30),
-                )
+            monthly_reserved = daily_reserved and self._increment_quota_counter(
+                user_id,
+                AssistantQuotaWindow.MONTHLY,
+                monthly_start,
+                self.settings.assistant_monthly_user_limit,
             )
-            or 0
-        )
+            if not monthly_reserved:
+                self.session.rollback()
+                raise AppError(
+                    "assistant_quota_exceeded",
+                    "Assistant request limit reached. Try again later.",
+                    429,
+                )
+            reservation = AssistantQuotaReservation(
+                user_id=user_id,
+                daily_window_start=daily_start,
+                monthly_window_start=monthly_start,
+            )
+            self.session.add(reservation)
+            self.session.commit()
+            return reservation
+        except AppError:
+            raise
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def _increment_quota_counter(
+        self,
+        user_id: uuid.UUID,
+        window: AssistantQuotaWindow,
+        window_start: date,
+        limit: int,
+    ) -> bool:
+        table = AssistantQuotaCounter.__table__
+        values = {
+            "user_id": user_id,
+            "window": window.value,
+            "window_start": window_start,
+            "used_slots": 1,
+        }
+        dialect_name = self.session.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            statement = postgresql_insert(table).values(values)
+        elif dialect_name == "sqlite":
+            statement = sqlite_insert(table).values(values)
+        else:
+            raise RuntimeError("Assistant quota reservation requires PostgreSQL or SQLite")
+        statement = statement.on_conflict_do_update(
+            index_elements=["user_id", "window", "window_start"],
+            set_={"used_slots": table.c.used_slots + 1, "updated_at": utc_now()},
+            where=table.c.used_slots < limit,
+        ).returning(table.c.user_id)
+        return self.session.execute(statement).scalar_one_or_none() is not None
+
+    def _refund_nonbillable_quota(self, reservation_id: uuid.UUID, reason: str) -> None:
+        """Refund only work proven not to have reached the provider boundary."""
+        reservation = self.session.get(AssistantQuotaReservation, reservation_id)
         if (
-            daily >= self.settings.assistant_daily_user_limit
-            or monthly >= self.settings.assistant_monthly_user_limit
+            reservation is None
+            or reservation.status is not AssistantQuotaReservationStatus.RESERVED
         ):
-            raise AppError(
-                "assistant_quota_exceeded",
-                "Assistant request limit reached. Try again later.",
-                429,
+            return
+        reservation.status = AssistantQuotaReservationStatus.REFUNDED
+        reservation.terminal_reason = reason
+        reservation.finalized_at = utc_now()
+        for window, window_start in (
+            (AssistantQuotaWindow.DAILY, reservation.daily_window_start),
+            (AssistantQuotaWindow.MONTHLY, reservation.monthly_window_start),
+        ):
+            self.session.execute(
+                update(AssistantQuotaCounter)
+                .where(
+                    AssistantQuotaCounter.user_id == reservation.user_id,
+                    AssistantQuotaCounter.window == window,
+                    AssistantQuotaCounter.window_start == window_start,
+                )
+                .values(
+                    used_slots=case(
+                        (
+                            AssistantQuotaCounter.used_slots > 0,
+                            AssistantQuotaCounter.used_slots - 1,
+                        ),
+                        else_=0,
+                    ),
+                    updated_at=utc_now(),
+                )
             )
+        self.session.commit()
 
     def _conversation_for_request(
         self, conversation_id: uuid.UUID | None, user_id: uuid.UUID

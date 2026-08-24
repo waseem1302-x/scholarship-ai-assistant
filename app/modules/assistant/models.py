@@ -1,14 +1,16 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     func,
@@ -29,6 +31,17 @@ class AssistantAnswerStatus(StrEnum):
     ABSTAINED = "abstained"
     BLOCKED = "blocked"
     FAILED = "failed"
+
+
+class AssistantQuotaWindow(StrEnum):
+    DAILY = "daily"
+    MONTHLY = "monthly"
+
+
+class AssistantQuotaReservationStatus(StrEnum):
+    RESERVED = "reserved"
+    CONSUMED = "consumed"
+    REFUNDED = "refunded"
 
 
 class AssistantFeedbackType(StrEnum):
@@ -173,6 +186,72 @@ class AssistantAnswer(Base):
     citations: Mapped[list["AssistantCitation"]] = relationship(
         back_populates="answer", cascade="all, delete-orphan"
     )
+
+
+class AssistantQuotaCounter(Base):
+    """One atomic capacity counter per user and UTC quota window."""
+
+    __tablename__ = "assistant_quota_counters"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    window: Mapped[AssistantQuotaWindow] = mapped_column(
+        Enum(
+            AssistantQuotaWindow,
+            name="assistant_quota_window",
+            native_enum=False,
+            values_callable=enum_values,
+        ),
+        primary_key=True,
+    )
+    window_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    used_slots: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
+    )
+
+    user: Mapped[User] = relationship()
+
+
+class AssistantQuotaReservation(Base):
+    """Durable quota admission record, retained even if later answer work fails."""
+
+    __tablename__ = "assistant_quota_reservations"
+    __table_args__ = (
+        Index("ix_assistant_quota_reservations_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    daily_window_start: Mapped[date] = mapped_column(Date)
+    monthly_window_start: Mapped[date] = mapped_column(Date)
+    status: Mapped[AssistantQuotaReservationStatus] = mapped_column(
+        Enum(
+            AssistantQuotaReservationStatus,
+            name="assistant_quota_reservation_status",
+            native_enum=False,
+            values_callable=enum_values,
+        ),
+        default=AssistantQuotaReservationStatus.RESERVED,
+        index=True,
+    )
+    answer_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("assistant_answers.id", ondelete="SET NULL"), unique=True
+    )
+    terminal_reason: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship()
+    answer: Mapped["AssistantAnswer | None"] = relationship()
 
 
 class AssistantCitation(Base):

@@ -55,6 +55,8 @@ PROTECTED_TABLES = {
     "assistant_feedback",
     "assistant_messages",
     "assistant_privacy_preferences",
+    "assistant_quota_counters",
+    "assistant_quota_reservations",
     "community_blocks",
     "community_bookmarks",
     "community_preferences",

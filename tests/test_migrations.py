@@ -602,3 +602,42 @@ def test_catalogue_source_routing_migration_is_additive_and_rolls_back(tmp_path:
     command.downgrade(alembic_config, "20260824_0046")
     assert "catalogue_source_routing_decisions" not in inspect(engine).get_table_names()
     engine.dispose()
+
+
+def test_assistant_quota_reservation_migration_is_additive_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'assistant-quota.db').as_posix()}"
+    repository_root = Path(__file__).parents[1]
+    alembic_config = Config(repository_root / "alembic.ini")
+    alembic_config.set_main_option("script_location", str(repository_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(alembic_config, "20260824_0047")
+    engine = create_engine(database_url)
+    assert "assistant_quota_counters" not in inspect(engine).get_table_names()
+
+    command.upgrade(alembic_config, "20260824_0048")
+    inspector = inspect(engine)
+    assert {
+        "user_id",
+        "window",
+        "window_start",
+        "used_slots",
+    }.issubset({column["name"] for column in inspector.get_columns("assistant_quota_counters")})
+    assert {
+        "user_id",
+        "daily_window_start",
+        "monthly_window_start",
+        "status",
+        "answer_id",
+        "terminal_reason",
+    }.issubset({column["name"] for column in inspector.get_columns("assistant_quota_reservations")})
+
+    command.downgrade(alembic_config, "20260824_0047")
+    inspector = inspect(engine)
+    assert not {
+        "assistant_quota_counters",
+        "assistant_quota_reservations",
+    }.intersection(inspector.get_table_names())
+    engine.dispose()
