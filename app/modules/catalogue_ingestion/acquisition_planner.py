@@ -106,12 +106,7 @@ class CatalogueAcquisitionPlanner:
                 )
             )
         )
-        unresolved = [
-            (cell, node)
-            for cell, node in rows
-            if cell.state not in _TERMINAL_COVERAGE_STATES
-        ]
-        if not unresolved:
+        if not rows:
             return AcquisitionPlan(
                 candidate_id=candidate_id,
                 needs=tuple(
@@ -129,6 +124,24 @@ class CatalogueAcquisitionPlanner:
                 coverage_revision=None,
             )
 
+        unresolved = [
+            (cell, node)
+            for cell, node in rows
+            if cell.state not in _TERMINAL_COVERAGE_STATES
+        ]
+        revisions = {
+            cell.evaluator_version
+            for cell, _node in rows
+            if cell.evaluator_version
+        }
+        coverage_revision = next(iter(revisions)) if len(revisions) == 1 else None
+        if not unresolved:
+            return AcquisitionPlan(
+                candidate_id=candidate_id,
+                needs=(),
+                coverage_revision=coverage_revision,
+            )
+
         unresolved.sort(
             key=lambda item: (
                 _STATE_PRIORITY.get(item[0].state, 99),
@@ -138,12 +151,6 @@ class CatalogueAcquisitionPlanner:
                 item[1].canonical_key,
             )
         )
-        revisions = {
-            cell.evaluator_version
-            for cell, _node in unresolved
-            if cell.evaluator_version
-        }
-        coverage_revision = next(iter(revisions)) if len(revisions) == 1 else None
         needs = tuple(
             AcquisitionFrontierNeed(
                 objective=cell.objective.value,
