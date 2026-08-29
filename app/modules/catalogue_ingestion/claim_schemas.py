@@ -8,9 +8,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CLAIM_SCHEMA_VERSION = "catalogue-claims.v3"
+CLAIM_SCHEMA_VERSION = "catalogue-claims.v4"
+PREVIOUS_CLAIM_SCHEMA_VERSION = "catalogue-claims.v3"
 LEGACY_CLAIM_SCHEMA_VERSION = "catalogue-claims.v2"
-CLAIM_SCHEMA_VERSIONS = frozenset({LEGACY_CLAIM_SCHEMA_VERSION, CLAIM_SCHEMA_VERSION})
+CLAIM_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_CLAIM_SCHEMA_VERSION, PREVIOUS_CLAIM_SCHEMA_VERSION, CLAIM_SCHEMA_VERSION}
+)
 
 
 class ClaimObjective(StrEnum):
@@ -33,6 +36,19 @@ class ObjectiveCoverageState(StrEnum):
     PARTIAL = "partial"
     NOT_STATED = "not_stated"
     NOT_APPLICABLE = "not_applicable"
+
+
+class ScopedCoverageState(StrEnum):
+    UNKNOWN = "unknown"
+    NOT_YET_ACQUIRED = "not_yet_acquired"
+    BLOCKED = "blocked"
+    NOT_STATED = "not_stated"
+    NOT_APPLICABLE = "not_applicable"
+    PARTIAL = "partial"
+    COMPLETE = "complete"
+    CONFLICTING = "conflicting"
+    QUARANTINED = "quarantined"
+    FAILED = "failed"
 
 
 class ClaimEntityType(StrEnum):
@@ -190,10 +206,16 @@ class StrictClaimModel(BaseModel):
 
 
 class ClaimScope(StrictClaimModel):
-    cycle_key: str | None
-    track_key: str | None
-    institution_key: str | None
-    programme_key: str | None
+    scholarship_family_key: str | None = None
+    cycle_key: str | None = None
+    country_key: str | None = None
+    institution_key: str | None = None
+    track_key: str | None = None
+    programme_key: str | None = None
+    degree_level_key: str | None = None
+    subject_key: str | None = None
+    award_variant_key: str | None = None
+    application_channel_key: str | None = None
 
 
 class ClaimValue(StrictClaimModel):
@@ -274,10 +296,49 @@ class ResolvedClaim(StrictClaimModel):
     source_url: str
     content_hash: str
     trust_tier: int = Field(ge=1)
+    claim_id: str | None = None
+    objectives: list[ClaimObjective] = Field(default_factory=list)
+
+
+class ClaimConflictRecord(StrictClaimModel):
+    entity_type: ClaimEntityType
+    entity_key: str
+    field_path: str
+    scope: ClaimScope
+    reason: str
+
+
+class ClaimRejectionRecord(StrictClaimModel):
+    artifact_id: str
+    entity_type: ClaimEntityType
+    entity_key: str
+    field_path: str
+    scope: ClaimScope
+    reason: str
+
+
+class ScopeCoverageDecision(StrictClaimModel):
+    scope_node_id: str | None = None
+    scope_type: str
+    scope_key: str
+    lifecycle_key: str | None = None
+    objective: ClaimObjective
+    state: ScopedCoverageState
+    required: bool = True
+    supporting_claim_ids: list[str] = Field(default_factory=list)
+    supporting_evidence_ids: list[str] = Field(default_factory=list)
+    expected_item_count: int | None = None
+    resolved_item_count: int = 0
+    reason: str
+    missing_frontier_reasons: list[str] = Field(default_factory=list)
 
 
 class ClaimResolution(StrictClaimModel):
-    schema_version: Literal["catalogue-claims.v2", "catalogue-claims.v3"] = CLAIM_SCHEMA_VERSION
+    schema_version: Literal[
+        "catalogue-claims.v2",
+        "catalogue-claims.v3",
+        "catalogue-claims.v4",
+    ] = CLAIM_SCHEMA_VERSION
     resolved: list[ResolvedClaim]
     conflicts: list[str]
     rejected: list[str]
@@ -285,6 +346,11 @@ class ClaimResolution(StrictClaimModel):
     unknown_objectives: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     objective_coverage: dict[str, str] = Field(default_factory=dict)
+    provider_objective_coverage: dict[str, str] = Field(default_factory=dict)
+    conflict_records: list[ClaimConflictRecord] = Field(default_factory=list)
+    rejection_records: list[ClaimRejectionRecord] = Field(default_factory=list)
+    scope_coverage: list[ScopeCoverageDecision] = Field(default_factory=list)
+    coverage_revision: str | None = None
 
     @property
     def is_materializable(self) -> bool:
