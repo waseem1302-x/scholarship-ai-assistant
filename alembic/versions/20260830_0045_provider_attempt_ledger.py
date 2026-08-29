@@ -125,6 +125,11 @@ def upgrade() -> None:
             ["source_artifact_id"], ["catalogue_source_artifacts.id"], ondelete="RESTRICT"
         ),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "extraction_job_key",
+            "retry_ordinal",
+            name="uq_catalogue_provider_attempt_job_retry",
+        ),
     )
 
     for column in (
