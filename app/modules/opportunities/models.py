@@ -116,6 +116,17 @@ class ApplicationWindowState(StrEnum):
     ARCHIVED = "archived"
 
 
+class PublicationFactState(StrEnum):
+    """Typed terminal states used by the publication-readiness contract."""
+
+    SUPPORTED = "supported"
+    NOT_APPLICABLE = "not_applicable"
+    ROLLING = "rolling"
+    VARIES_BY_COUNTRY = "varies_by_country"
+    NOT_YET_ANNOUNCED = "not_yet_announced"
+    UNKNOWN = "unknown"
+
+
 class EligibilityRuleType(StrEnum):
     NATIONALITY = "nationality"
     RESIDENCE = "residence"
@@ -230,6 +241,15 @@ class Opportunity(Base):
             "canonical_provider_id",
             "entity_kind",
         ),
+        Index(
+            "uq_opportunity_catalogue_identity_key",
+            "catalogue_identity_key",
+            unique=True,
+            sqlite_where=text("catalogue_identity_key IS NOT NULL"),
+            postgresql_where=text("catalogue_identity_key IS NOT NULL"),
+        ),
+        Index("ix_opportunity_catalogue_route_key", "catalogue_route_key"),
+        Index("ix_opportunity_catalogue_family_key", "catalogue_family_key"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -259,10 +279,19 @@ class Opportunity(Base):
     publication_completeness: Mapped[str] = mapped_column(
         String(32), default="incomplete", server_default="incomplete"
     )
+    publication_readiness_policy_version: Mapped[str | None] = mapped_column(String(64))
+    publication_readiness_evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     current_cycle_id: Mapped[uuid.UUID | None] = mapped_column()
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     programme_family_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    programme_route_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    catalogue_family_key: Mapped[str | None] = mapped_column(String(64))
+    catalogue_route_key: Mapped[str | None] = mapped_column(String(64))
+    catalogue_identity_key: Mapped[str | None] = mapped_column(String(64))
+    catalogue_identity_policy_version: Mapped[str | None] = mapped_column(String(64))
     cycle_id: Mapped[str | None] = mapped_column(String(120), index=True)
     country: Mapped[str] = mapped_column(String(100), index=True)
     degree_level: Mapped[DegreeLevel] = mapped_column(

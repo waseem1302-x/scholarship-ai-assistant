@@ -19,6 +19,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.modules.opportunities.evidence_models import (
+    OfficialityStatus,
+    SourceOwnerType,
+    SourceSnapshot,
+)
 from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.lifecycle import SOURCE_FRESHNESS_DAYS
 from app.modules.opportunities.models import (
@@ -41,6 +46,10 @@ from app.modules.opportunities.models import (
     SourceType,
     University,
     VerificationStatus,
+)
+from app.modules.opportunities.publication_readiness import (
+    PUBLICATION_COMPLETE_STATES,
+    PUBLICATION_READINESS_POLICY_VERSION,
 )
 
 NATIONALITY_BROAD_VALUE_KEYS = {
@@ -198,6 +207,49 @@ class OpportunityRepository:
             )
         )
 
+    def find_duplicate_by_catalogue_identity_key(
+        self, catalogue_identity_key: str
+    ) -> Opportunity | None:
+        return self.session.scalar(
+            select(Opportunity).where(
+                Opportunity.catalogue_identity_key == catalogue_identity_key
+            )
+        )
+
+    def get_opportunity_for_update(self, opportunity_id: uuid.UUID) -> Opportunity | None:
+        """Lock the publication aggregate for one transactional review transition."""
+
+        return self.session.scalar(
+            select(Opportunity)
+            .where(Opportunity.id == opportunity_id)
+            .with_for_update()
+            .options(
+                joinedload(Opportunity.provider),
+                joinedload(Opportunity.university),
+                selectinload(Opportunity.sources),
+                selectinload(Opportunity.cycles),
+                selectinload(Opportunity.eligibility_rules),
+            )
+        )
+
+    def list_provider_opportunities(self, provider_id: uuid.UUID) -> list[Opportunity]:
+        """Load a provider's records for deterministic scholarship-family grouping."""
+
+        return list(
+            self.session.scalars(
+                select(Opportunity)
+                .where(Opportunity.provider_id == provider_id)
+                .options(
+                    joinedload(Opportunity.provider),
+                    joinedload(Opportunity.university),
+                    selectinload(Opportunity.sources),
+                    selectinload(Opportunity.cycles),
+                    selectinload(Opportunity.eligibility_rules),
+                )
+                .order_by(Opportunity.degree_level, Opportunity.name)
+            )
+        )
+
     def get_source(self, source_id: uuid.UUID) -> Source | None:
         return self.session.get(Source, source_id)
 
@@ -217,6 +269,9 @@ class OpportunityRepository:
         canonical_urls = {
             source.canonical_url for source in opportunity.sources if source.canonical_url
         }
+        content_hashes = {
+            source.content_hash for source in opportunity.sources if source.content_hash
+        }
         candidates = self.session.scalars(
             select(Opportunity)
             .where(
@@ -227,6 +282,7 @@ class OpportunityRepository:
                         Opportunity.country == opportunity.country,
                     ),
                     Opportunity.sources.any(Source.canonical_url.in_(canonical_urls)),
+                    Opportunity.sources.any(Source.content_hash.in_(content_hashes)),
                 ),
             )
             .options(joinedload(Opportunity.provider), selectinload(Opportunity.sources))
@@ -237,11 +293,21 @@ class OpportunityRepository:
             candidate_urls = {
                 source.canonical_url for source in candidate.sources if source.canonical_url
             }
+            candidate_hashes = {
+                source.content_hash for source in candidate.sources if source.content_hash
+            }
             score = max(
                 SequenceMatcher(
                     None, opportunity.name.casefold(), candidate.name.casefold()
                 ).ratio(),
-                0.95 if canonical_urls & candidate_urls else 0.0,
+                1.0 if content_hashes & candidate_hashes else 0.0,
+                0.99 if canonical_urls & candidate_urls else 0.0,
+                (
+                    0.98
+                    if opportunity.catalogue_identity_key
+                    and opportunity.catalogue_identity_key == candidate.catalogue_identity_key
+                    else 0.0
+                ),
             )
             if score >= 0.80:
                 self.session.add(
@@ -259,6 +325,18 @@ class OpportunityRepository:
             .options(
                 joinedload(DuplicateSuggestion.opportunity),
                 joinedload(DuplicateSuggestion.matched_opportunity),
+                joinedload(DuplicateSuggestion.opportunity).joinedload(Opportunity.provider),
+                joinedload(DuplicateSuggestion.opportunity).joinedload(Opportunity.university),
+                joinedload(DuplicateSuggestion.opportunity).selectinload(Opportunity.sources),
+                joinedload(DuplicateSuggestion.matched_opportunity).joinedload(
+                    Opportunity.provider
+                ),
+                joinedload(DuplicateSuggestion.matched_opportunity).joinedload(
+                    Opportunity.university
+                ),
+                joinedload(DuplicateSuggestion.matched_opportunity).selectinload(
+                    Opportunity.sources
+                ),
             )
             .order_by(DuplicateSuggestion.score.desc(), DuplicateSuggestion.created_at)
             .offset(offset)
@@ -283,6 +361,18 @@ class OpportunityRepository:
             .options(
                 joinedload(DuplicateSuggestion.opportunity),
                 joinedload(DuplicateSuggestion.matched_opportunity),
+                joinedload(DuplicateSuggestion.opportunity).joinedload(Opportunity.provider),
+                joinedload(DuplicateSuggestion.opportunity).joinedload(Opportunity.university),
+                joinedload(DuplicateSuggestion.opportunity).selectinload(Opportunity.sources),
+                joinedload(DuplicateSuggestion.matched_opportunity).joinedload(
+                    Opportunity.provider
+                ),
+                joinedload(DuplicateSuggestion.matched_opportunity).joinedload(
+                    Opportunity.university
+                ),
+                joinedload(DuplicateSuggestion.matched_opportunity).selectinload(
+                    Opportunity.sources
+                ),
             )
         )
 
@@ -730,6 +820,22 @@ class OpportunityRepository:
             "Data confidence is low.",
             Opportunity.data_confidence == DataConfidence.LOW,
         )
+        publication_incomplete = issue(
+            "publication_readiness_incomplete",
+            "high",
+            "Active opportunity does not satisfy the current publication-readiness policy.",
+            and_(
+                Opportunity.status == OpportunityStatus.ACTIVE,
+                or_(
+                    ~Opportunity.publication_completeness.in_(PUBLICATION_COMPLETE_STATES),
+                    Opportunity.publication_readiness_policy_version
+                    != PUBLICATION_READINESS_POLICY_VERSION,
+                    Opportunity.publication_readiness_policy_version.is_(None),
+                    Opportunity.next_review_at.is_(None),
+                    Opportunity.next_review_at < now,
+                ),
+            ),
+        )
         return union_all(
             source_requires_review,
             source_conflict,
@@ -749,6 +855,7 @@ class OpportunityRepository:
             broken_evidence,
             funding_unknown,
             low_confidence,
+            publication_incomplete,
         )
 
     def _admin_opportunities_statement(
@@ -918,6 +1025,19 @@ class OpportunityRepository:
         official_source_filters = [
             Source.source_type == SourceType.OFFICIAL,
             Source.verification_status == VerificationStatus.OFFICIALLY_VERIFIED,
+            Source.is_active.is_(True),
+            Source.officiality_status.in_(
+                [OfficialityStatus.OFFICIAL, OfficialityStatus.SUPPORTING_OFFICIAL]
+            ),
+            Source.source_owner_type != SourceOwnerType.UNKNOWN,
+            Source.content_hash.is_not(None),
+            Source.last_verified_at >= datetime.now(UTC) - timedelta(days=SOURCE_FRESHNESS_DAYS),
+            select(SourceSnapshot.id)
+            .where(
+                SourceSnapshot.source_id == Source.id,
+                SourceSnapshot.content_hash == Source.content_hash,
+            )
+            .exists(),
         ]
         if verified_after is not None:
             official_source_filters.append(Source.last_verified_at >= verified_after)
@@ -926,7 +1046,21 @@ class OpportunityRepository:
             select(Opportunity)
             .where(
                 Opportunity.status == OpportunityStatus.ACTIVE,
+                Opportunity.publication_completeness.in_(PUBLICATION_COMPLETE_STATES),
+                Opportunity.publication_readiness_policy_version
+                == PUBLICATION_READINESS_POLICY_VERSION,
+                Opportunity.publication_readiness_evaluated_at.is_not(None),
+                Opportunity.next_review_at >= datetime.now(UTC),
                 Opportunity.sources.any(and_(*official_source_filters)),
+                ~select(DuplicateSuggestion.id)
+                .where(
+                    or_(
+                        DuplicateSuggestion.opportunity_id == Opportunity.id,
+                        DuplicateSuggestion.matched_opportunity_id == Opportunity.id,
+                    ),
+                    DuplicateSuggestion.status == DuplicateSuggestionStatus.PENDING,
+                )
+                .exists(),
                 ~Opportunity.sources.any(
                     and_(
                         Source.source_type == SourceType.OFFICIAL,

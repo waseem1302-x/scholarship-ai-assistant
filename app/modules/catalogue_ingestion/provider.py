@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from pydantic import ValidationError
 
 from app.core.config import Settings
+from app.modules.catalogue_ingestion.ai_contract import azure_openai_request_url
 from app.modules.catalogue_ingestion.schemas import (
     CatalogueExtractionOutput,
     ExtractionResult,
@@ -198,10 +199,12 @@ class AzureOpenAIExtractionProvider:
         opener: Any | None = None,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
-        if not settings.catalogue_ai_endpoint or not settings.catalogue_ai_model:
+        endpoint = settings.catalogue_ai_endpoint
+        if not endpoint or not settings.catalogue_ai_model:
             raise ExtractionProviderUnavailable("Azure catalogue extraction is not configured")
         self.settings = settings
         self.model = settings.catalogue_ai_model
+        self.request_url = azure_openai_request_url(endpoint)
         self.credential = credential or self._default_credential()
         self.opener = opener or urllib.request.build_opener()
         self.sleeper = sleeper
@@ -237,15 +240,13 @@ class AzureOpenAIExtractionProvider:
             },
         }
         payload = json.dumps(body, separators=(",", ":")).encode()
-        endpoint = self.settings.catalogue_ai_endpoint.rstrip("/")
-        url = f"{endpoint}/openai/v1/chat/completions"
         started = time.perf_counter()
         last_error: BaseException | None = None
         for attempt in range(self.settings.catalogue_ai_max_retries + 1):
             try:
                 token = self.credential.get_token(self.settings.catalogue_ai_token_scope).token
                 request = urllib.request.Request(
-                    url,
+                    self.request_url,
                     data=payload,
                     method="POST",
                     headers={
@@ -315,7 +316,13 @@ class AzureOpenAIExtractionProvider:
             raise ExtractionSchemaError("Azure response usage was missing or invalid") from exc
 
         try:
-            message = response["choices"][0]["message"]
+            choice = response["choices"][0]
+            if choice.get("finish_reason") != "stop":
+                raise ExtractionSchemaError(
+                    "Model extraction did not complete normally",
+                    usage=usage,
+                )
+            message = choice["message"]
             if message.get("refusal"):
                 raise ExtractionSchemaError(
                     "Model refused the extraction request",

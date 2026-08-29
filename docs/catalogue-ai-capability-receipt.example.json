@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "runtime_contract": {
+    "provider": "azure_openai",
+    "endpoint": "https://scholarship-ai-863780.openai.azure.com",
+    "deployment": "catalogue-gpt5-mini",
+    "api_mode": "azure_openai_v1_chat_completions",
+    "request_path": "/openai/v1/chat/completions",
+    "strict_json_schema": true
+  },
+  "extraction_contract": {
+    "identity_version": 1,
+    "schema_sha256": "f47365e99c223166bd3cd43278c548f00e4239c5c0ca6aad57650ea2c764a938",
+    "prompt_sha256": "3fe84408d065b5fa1eeb41ee0e11b67a70e1068fcd432aaaab7a3c9f8ae0c0cf"
+  },
+  "model_family": "gpt-5-mini",
+  "verification": {
+    "method": "live_strict_json_schema_request",
+    "request_id": "",
+    "response_id": ""
+  },
+  "verified_at": null,
+  "expires_at": null
+}

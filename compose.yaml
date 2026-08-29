@@ -41,6 +41,9 @@ services:
       APP_DOCUMENT_LAB_ENABLED: ${APP_DOCUMENT_LAB_ENABLED:-false}
       APP_DOCUMENT_LAB_STORAGE_ROOT: /app/document-data
       APP_CATALOGUE_DOCUMENT_WORKER_TRANSPORT_ROOT: /var/lib/catalogue-docling-jobs
+      # Manually reviewed owner domains for the private priority seed. This only
+      # permits acquisition; it never verifies facts or publishes a record.
+      APP_CATALOGUE_REVIEWED_OFFICIAL_DOMAINS: daad.de,stipendiumhungaricum.hu,gatescambridge.org,rhodeshouse.ox.ac.uk,ox.ac.uk,studyinchina.org.cn,gks.go.kr,studyinkorea.go.kr
     volumes:
       - document_lab_data:/app/document-data
       - catalogue_document_jobs:/var/lib/catalogue-docling-jobs
@@ -114,6 +117,41 @@ services:
       sh -c 'while true; do python -m app.cli.run_retention;
       sleep "$${APP_RETENTION_WORKER_POLL_SECONDS}"; done'
     restart: unless-stopped
+
+  catalogue-worker:
+    profiles: ["catalogue"]
+    image: scholarship-ai-assistant-catalogue-worker:local
+    build:
+      context: .
+      target: catalogue-worker
+    env_file:
+      - path: ./config/catalogue/worker.env.example
+      - path: ./.local/env/catalogue-worker.env
+        required: false
+    environment:
+      APP_ENV: development
+      APP_DATABASE_URL: postgresql+psycopg://scholarship:scholarship@db:5432/scholarship
+      APP_CATALOGUE_DOCUMENT_WORKER_TRANSPORT_ROOT: /var/lib/catalogue-docling-jobs
+      APP_CATALOGUE_AI_CAPABILITY_RECEIPT_PATH: /run/catalogue/model-capability.json
+    volumes:
+      - catalogue_document_jobs:/var/lib/catalogue-docling-jobs
+      - ./.catalogue-local:/run/catalogue:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    command: >
+      sh -c 'while true; do python -m app.cli.process_catalogue_ingestion_runs --limit 1 --batch-size 1;
+      sleep "$${APP_CATALOGUE_WORKER_POLL_SECONDS:-30}"; done'
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=536870912,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   document-worker:
     profiles: ["documents"]

@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "alembic_heads": ["20260824_0053"],
+  "alembic_heads": ["20260825_0056"],
   "migration_classification": "expand",
   "compatible_with_previous_release": true,
   "contract_migration_deferred": true,
   "rollback_strategy": "Keep the prior revision active; roll traffic back. Database changes are additive and remain readable by the prior release.",
-  "reviewed_at": "2026-08-24"
+  "reviewed_at": "2026-08-25"
 }

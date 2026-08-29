@@ -76,6 +76,15 @@ export interface OpportunityDetail extends OpportunitySummary {
   };
 }
 
+export interface OpportunityFamily {
+  family_key: string;
+  name: string;
+  provider_name: string;
+  country: string;
+  degree_levels: DegreeLevel[];
+  variants: OpportunityDetail[];
+}
+
 export interface OpportunitySearchResponse {
   items: OpportunitySummary[];
   pagination: PaginationMeta;

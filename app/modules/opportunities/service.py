@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ConflictError
 from app.modules.auth.models import AuditLog, User
+from app.modules.opportunities.catalogue_identity import (
+    build_catalogue_identity,
+    normalize_catalogue_alias,
+)
 from app.modules.opportunities.evidence_models import (
     ApplicationStep,
     FieldEvidence,
@@ -24,6 +28,7 @@ from app.modules.opportunities.graph_models import (
     ApplicationTrack,
     Institution,
     InstitutionParticipation,
+    ScholarshipAlias,
 )
 from app.modules.opportunities.graph_schemas import (
     GraphCitationResponse,
@@ -36,6 +41,7 @@ from app.modules.opportunities.lifecycle import (
 )
 from app.modules.opportunities.models import (
     ApplicationWindowState,
+    DegreeLevel,
     DuplicateSuggestion,
     DuplicateSuggestionStatus,
     EligibilityRule,
@@ -52,14 +58,22 @@ from app.modules.opportunities.models import (
     VerificationRecord,
     VerificationStatus,
 )
+from app.modules.opportunities.publication_readiness import (
+    PUBLICATION_COMPLETE_STATES,
+    PUBLICATION_READINESS_POLICY_VERSION,
+    PublicationReadiness,
+    PublicationReadinessPolicy,
+)
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.schemas import (
+    AdminOpportunityFamilyResponse,
     AdminOpportunityResponse,
     AdminOpportunitySearchResponse,
     CatalogueDecisionTier,
     DataQualityIssueResponse,
     DataQualityIssueSearchResponse,
     DataQualitySeverity,
+    DuplicateOpportunitySnapshot,
     DuplicateSuggestionDecision,
     DuplicateSuggestionResponse,
     DuplicateSuggestionSearchResponse,
@@ -67,6 +81,7 @@ from app.modules.opportunities.schemas import (
     ImportRowStatus,
     OpportunityCreate,
     OpportunityDetailResponse,
+    OpportunityFamilyResponse,
     OpportunityImportRequest,
     OpportunityImportResponse,
     OpportunityImportRowResult,
@@ -282,21 +297,28 @@ class OpportunityService:
             str(payload.provider_website_url) if payload.provider_website_url else None,
             payload.provider_canonical_id or self._canonical_identifier(payload.provider_name),
         )
-        programme_family_id = payload.programme_family_id or self._canonical_identifier(
+        programme_family_id = payload.programme_family_id or self._programme_family_identifier(
             payload.name
         )
+        programme_route_id = payload.programme_route_id or (
+            normalize_catalogue_alias(payload.name) or programme_family_id
+        )
         cycle_id = payload.cycle_id or (str(payload.intake_year) if payload.intake_year else None)
-        if self.repository.find_duplicate_by_canonical_identity(
-            provider_id=provider.id,
+        identity = build_catalogue_identity(
+            provider_canonical_id=provider.canonical_id or str(provider.id),
             programme_family_id=programme_family_id,
+            programme_route_id=programme_route_id,
+            host_institution=payload.university_name,
+            destination_country=payload.country,
+            degree_level=payload.degree_level.value,
             cycle_id=cycle_id,
-            degree_level=payload.degree_level,
-            funding_type=payload.funding_type,
-        ):
+        )
+        canonical_source_url = self.repository.canonicalize_url(str(payload.source.url))
+        if self.repository.find_duplicate_by_catalogue_identity_key(identity.identity_key):
             raise ConflictError(
                 "duplicate_opportunity",
-                "An opportunity with the same canonical provider, programme family, cycle, "
-                "degree, and funding already exists",
+                "An opportunity with the same provider, family, route/course, host, country, "
+                "degree, and cycle already exists",
             )
         university = self.repository.get_or_create_university(
             payload.university_name,
@@ -309,6 +331,11 @@ class OpportunityService:
             university_id=university.id if university else None,
             name=payload.name,
             programme_family_id=programme_family_id,
+            programme_route_id=programme_route_id,
+            catalogue_family_key=identity.family_key,
+            catalogue_route_key=identity.route_key,
+            catalogue_identity_key=identity.identity_key,
+            catalogue_identity_policy_version=identity.policy_version,
             cycle_id=cycle_id,
             country=payload.country,
             degree_level=payload.degree_level,
@@ -348,7 +375,7 @@ class OpportunityService:
         )
         source = Source(
             url=str(payload.source.url),
-            canonical_url=self.repository.canonicalize_url(str(payload.source.url)),
+            canonical_url=canonical_source_url,
             source_type=payload.source.source_type,
             title=payload.source.title.strip(),
             publication_date=payload.source.publication_date,
@@ -374,11 +401,22 @@ class OpportunityService:
                     timezone=cycle.timezone,
                     is_rolling=cycle.is_rolling,
                     is_archived=cycle.is_archived,
+                    status=cycle.status.value if cycle.status is not None else None,
                 )
             )
         materialize_catalogue_window(opportunity)
         self.repository.add_opportunity(opportunity)
         self.session.flush()
+        for alias in sorted({item.strip() for item in payload.aliases if item.strip()}):
+            normalized_alias = normalize_catalogue_alias(alias)
+            if normalized_alias:
+                self.session.add(
+                    ScholarshipAlias(
+                        scholarship_id=opportunity.id,
+                        alias=alias,
+                        normalized_alias=normalized_alias,
+                    )
+                )
         self.repository.create_duplicate_suggestions(opportunity)
         if payload.eligibility_rules:
             excerpt = SourceExcerpt(
@@ -433,7 +471,7 @@ class OpportunityService:
         self, payload: OpportunityImportRequest, *, created_by: User
     ) -> OpportunityImportResponse:
         results: list[OpportunityImportRowResult] = []
-        seen_keys: set[tuple[str, str, str, int | None]] = set()
+        seen_keys: set[str] = set()
         import_rows = self._import_rows(payload)
 
         for row_number, raw_row, row_warnings in import_rows:
@@ -469,12 +507,20 @@ class OpportunityService:
                 continue
             seen_keys.add(duplicate_key)
 
-            duplicate = self.repository.find_duplicate_opportunity(
-                provider_name=opportunity_payload.provider_name,
-                name=opportunity_payload.name,
-                country=opportunity_payload.country,
-                intake_year=opportunity_payload.intake_year,
+            duplicate = self.repository.find_duplicate_by_catalogue_identity_key(
+                duplicate_key
             )
+            if (
+                duplicate is None
+                and opportunity_payload.programme_family_id is None
+                and opportunity_payload.programme_route_id is None
+            ):
+                duplicate = self.repository.find_duplicate_opportunity(
+                    provider_name=opportunity_payload.provider_name,
+                    name=opportunity_payload.name,
+                    country=opportunity_payload.country,
+                    intake_year=opportunity_payload.intake_year,
+                )
             if duplicate is not None:
                 results.append(
                     OpportunityImportRowResult(
@@ -576,6 +622,9 @@ class OpportunityService:
         }:
             opportunity.status = OpportunityStatus.DRAFT
 
+        if payload.verification_status is not VerificationStatus.OFFICIALLY_VERIFIED:
+            self._invalidate_publication_readiness(opportunity)
+
         self.session.add(
             VerificationRecord(
                 opportunity_id=opportunity.id,
@@ -605,14 +654,37 @@ class OpportunityService:
         *,
         reviewed_by: User,
     ) -> AdminOpportunityResponse:
-        opportunity = self.repository.get_opportunity(opportunity_id)
+        opportunity = self.repository.get_opportunity_for_update(opportunity_id)
         if opportunity is None:
             raise AppError("opportunity_not_found", "Opportunity was not found", 404)
 
         source = self._select_source(opportunity, payload.source_id)
         self._validate_review_action(payload)
 
+        readiness: PublicationReadiness | None = None
+        if payload.action in {ReviewAction.PUBLISH, ReviewAction.RESOLVE_CONFLICT}:
+            readiness = PublicationReadinessPolicy(self.session).evaluate(
+                opportunity,
+                prospective_source_id=source.id,
+            )
+            if not readiness.ready:
+                self.session.rollback()
+                codes = ", ".join(
+                    sorted({reason.reason_code for reason in readiness.blocking_reasons})
+                )
+                raise ConflictError(
+                    "publication_readiness_blocked",
+                    f"Publication readiness failed: {codes}",
+                )
+
         status = self._apply_review_transition(opportunity, source, payload, reviewed_by)
+        if readiness is not None:
+            opportunity.publication_completeness = "complete_core"
+            opportunity.publication_readiness_policy_version = (
+                PUBLICATION_READINESS_POLICY_VERSION
+            )
+            opportunity.publication_readiness_evaluated_at = readiness.evaluated_at
+            opportunity.next_review_at = readiness.valid_until
         pipeline_candidate_published = False
         if payload.action in {ReviewAction.PUBLISH, ReviewAction.RESOLVE_CONFLICT}:
             # Runtime imports keep the core catalogue independent at module load time while
@@ -667,6 +739,12 @@ class OpportunityService:
         self.session.refresh(opportunity)
         return self.to_admin_response(opportunity)
 
+    def get_publication_readiness(self, opportunity_id: uuid.UUID) -> PublicationReadiness:
+        opportunity = self.repository.get_opportunity(opportunity_id)
+        if opportunity is None:
+            raise AppError("opportunity_not_found", "Opportunity was not found", 404)
+        return PublicationReadinessPolicy(self.session).evaluate(opportunity)
+
     def record_source_check(
         self,
         source_id: uuid.UUID,
@@ -708,6 +786,7 @@ class OpportunityService:
 
         if changed:
             source.verification_status = VerificationStatus.NEEDS_REVIEW
+            self._invalidate_publication_readiness(source.opportunity)
 
         status = VerificationStatus.NEEDS_REVIEW if changed else source.verification_status
         self.session.add(
@@ -801,6 +880,7 @@ class OpportunityService:
             )
         if changed:
             source.verification_status = VerificationStatus.NEEDS_REVIEW
+            self._invalidate_publication_readiness(source.opportunity)
         status = VerificationStatus.NEEDS_REVIEW if changed else source.verification_status
         self.session.add(
             VerificationRecord(
@@ -839,7 +919,10 @@ class OpportunityService:
             **filters, limit=limit, offset=offset
         )
         total = self.repository.count_admin_opportunities(**filters)
-        items = [self.to_admin_response(opportunity) for opportunity in opportunities]
+        items = [
+            self.to_admin_response(opportunity, include_readiness=True)
+            for opportunity in opportunities
+        ]
         return AdminOpportunitySearchResponse(
             items=items,
             pagination=self._pagination(total=total, limit=limit, offset=offset, count=len(items)),
@@ -871,6 +954,9 @@ class OpportunityService:
             ReviewQueueItemResponse(
                 opportunity=self.to_admin_response(opportunity),
                 reasons=self._sorted_issues(issues_by_opportunity[opportunity.id]),
+                publication_readiness=PublicationReadinessPolicy(self.session).evaluate(
+                    opportunity
+                ),
             )
             for opportunity in opportunities
         ]
@@ -878,6 +964,43 @@ class OpportunityService:
         return ReviewQueueResponse(
             items=items,
             pagination=self._pagination(total=total, limit=limit, offset=offset, count=len(items)),
+        )
+
+    def get_review_queue_item(self, opportunity_id: uuid.UUID) -> ReviewQueueItemResponse:
+        opportunity = self.repository.get_opportunity(opportunity_id)
+        if opportunity is None:
+            raise AppError("opportunity_not_found", "Opportunity was not found", 404)
+        return ReviewQueueItemResponse(
+            opportunity=self.to_admin_response(opportunity),
+            reasons=self._sorted_issues(self._data_quality_issues_for_opportunity(opportunity)),
+            publication_readiness=PublicationReadinessPolicy(self.session).evaluate(opportunity),
+        )
+
+    def get_admin_opportunity_family(
+        self, opportunity_id: uuid.UUID
+    ) -> AdminOpportunityFamilyResponse:
+        anchor = self.repository.get_opportunity(opportunity_id)
+        if anchor is None:
+            raise AppError("opportunity_not_found", "Opportunity was not found", 404)
+        members = self._family_members(anchor)
+        return AdminOpportunityFamilyResponse(
+            family_key=self._family_key(anchor),
+            name=self._family_display_name(members),
+            provider_name=anchor.provider.name,
+            country=anchor.country,
+            degree_levels=self._family_degree_levels(members),
+            variants=[
+                ReviewQueueItemResponse(
+                    opportunity=self.to_admin_response(member),
+                    reasons=self._sorted_issues(
+                        self._data_quality_issues_for_opportunity(member)
+                    ),
+                    publication_readiness=PublicationReadinessPolicy(self.session).evaluate(
+                        member
+                    ),
+                )
+                for member in members
+            ],
         )
 
     def list_public_opportunities(
@@ -924,13 +1047,51 @@ class OpportunityService:
             raise AppError("opportunity_not_found", "Opportunity was not found", 404)
         if opportunity.status is not OpportunityStatus.ACTIVE:
             raise AppError("opportunity_not_found", "Opportunity was not found", 404)
+        if not self._publication_is_current(opportunity):
+            raise AppError("opportunity_not_found", "Opportunity was not found", 404)
+        if not PublicationReadinessPolicy(self.session).evaluate(opportunity).ready:
+            raise AppError("opportunity_not_found", "Opportunity was not found", 404)
         return self.to_detail_response(opportunity)
 
-    def to_admin_response(self, opportunity: Opportunity) -> AdminOpportunityResponse:
+    def get_public_opportunity_family(self, opportunity_id: uuid.UUID) -> OpportunityFamilyResponse:
+        anchor = self.repository.get_opportunity(opportunity_id)
+        if (
+            anchor is None
+            or anchor.status is not OpportunityStatus.ACTIVE
+            or self._official_source(anchor) is None
+            or not self._publication_is_current(anchor)
+            or not PublicationReadinessPolicy(self.session).evaluate(anchor).ready
+        ):
+            raise AppError("opportunity_not_found", "Opportunity was not found", 404)
+        members = [
+            member
+            for member in self._family_members(anchor)
+            if member.status is OpportunityStatus.ACTIVE
+            and self._official_source(member) is not None
+            and self._publication_is_current(member)
+            and PublicationReadinessPolicy(self.session).evaluate(member).ready
+        ]
+        return OpportunityFamilyResponse(
+            family_key=self._family_key(anchor),
+            name=self._family_display_name(members),
+            provider_name=anchor.provider.name,
+            country=anchor.country,
+            degree_levels=self._family_degree_levels(members),
+            variants=[self.to_detail_response(member) for member in members],
+        )
+
+    def to_admin_response(
+        self, opportunity: Opportunity, *, include_readiness: bool = False
+    ) -> AdminOpportunityResponse:
         official_source = self._best_source(opportunity)
         return AdminOpportunityResponse(
             **self._response_base(opportunity, official_source, require_verified=False),
             sources=[SourceResponse.model_validate(source) for source in opportunity.sources],
+            publication_readiness=(
+                PublicationReadinessPolicy(self.session).evaluate(opportunity)
+                if include_readiness
+                else None
+            ),
         )
 
     def to_detail_response(self, opportunity: Opportunity) -> OpportunityDetailResponse:
@@ -978,6 +1139,14 @@ class OpportunityService:
             name=opportunity.name,
             provider_name=opportunity.provider.name,
             university_name=opportunity.university.name if opportunity.university else None,
+            programme_family_id=opportunity.programme_family_id,
+            programme_route_id=opportunity.programme_route_id,
+            catalogue_family_key=opportunity.catalogue_family_key,
+            catalogue_route_key=opportunity.catalogue_route_key,
+            catalogue_identity_key=opportunity.catalogue_identity_key,
+            catalogue_identity_policy_version=(
+                opportunity.catalogue_identity_policy_version
+            ),
             country=opportunity.country,
             degree_level=opportunity.degree_level,
             degree_levels=opportunity.degree_levels or [opportunity.degree_level],
@@ -1046,7 +1215,7 @@ class OpportunityService:
     @staticmethod
     def _funding_display_label(opportunity: Opportunity) -> str:
         if opportunity.funding_classification is FundingClassification.FULLY_FUNDED:
-            return "All tracked funding components confirmed"
+            return "Full tuition and stipend confirmed"
         if opportunity.funding_classification is FundingClassification.PARTIAL:
             return "Some funding components confirmed"
         return "Funding coverage requires verification"
@@ -1168,29 +1337,56 @@ class OpportunityService:
         if payload.action is ReviewAction.HOLD_FOR_REVIEW:
             source.verification_status = VerificationStatus.NEEDS_REVIEW
             opportunity.status = OpportunityStatus.DRAFT
+            OpportunityService._invalidate_publication_readiness(opportunity)
             return VerificationStatus.NEEDS_REVIEW
 
         if payload.action is ReviewAction.REQUEST_RECHECK:
             source.verification_status = VerificationStatus.NEEDS_REVIEW
             opportunity.status = OpportunityStatus.DRAFT
+            OpportunityService._invalidate_publication_readiness(opportunity)
             return VerificationStatus.NEEDS_REVIEW
 
         if payload.action is ReviewAction.FLAG_CONFLICT:
             source.verification_status = VerificationStatus.CONFLICTING_INFORMATION
             opportunity.status = OpportunityStatus.DRAFT
+            OpportunityService._invalidate_publication_readiness(opportunity)
             return VerificationStatus.CONFLICTING_INFORMATION
 
         if payload.action is ReviewAction.EXPIRE:
             source.verification_status = VerificationStatus.EXPIRED
             opportunity.status = OpportunityStatus.EXPIRED
+            OpportunityService._invalidate_publication_readiness(opportunity)
             return VerificationStatus.EXPIRED
 
         if payload.action is ReviewAction.ARCHIVE:
             source.verification_status = VerificationStatus.ARCHIVED
             opportunity.status = OpportunityStatus.ARCHIVED
+            OpportunityService._invalidate_publication_readiness(opportunity)
             return VerificationStatus.ARCHIVED
 
         raise AppError("unsupported_review_action", "Review action is not supported", 422)
+
+    @staticmethod
+    def _invalidate_publication_readiness(opportunity: Opportunity) -> None:
+        opportunity.publication_completeness = "incomplete"
+        opportunity.publication_readiness_policy_version = None
+        opportunity.publication_readiness_evaluated_at = None
+        opportunity.next_review_at = None
+
+    @staticmethod
+    def _publication_is_current(opportunity: Opportunity) -> bool:
+        if (
+            opportunity.publication_completeness not in PUBLICATION_COMPLETE_STATES
+            or opportunity.publication_readiness_policy_version
+            != PUBLICATION_READINESS_POLICY_VERSION
+            or opportunity.publication_readiness_evaluated_at is None
+            or opportunity.next_review_at is None
+        ):
+            return False
+        next_review_at = opportunity.next_review_at
+        if next_review_at.tzinfo is None:
+            next_review_at = next_review_at.replace(tzinfo=UTC)
+        return next_review_at >= datetime.now(UTC)
 
     @staticmethod
     def _official_source(opportunity: Opportunity) -> Source | None:
@@ -1226,8 +1422,10 @@ class OpportunityService:
             payload.insurance_coverage_status,
             payload.fees_coverage_status,
         ]
-        if payload.funding_policy and all(
-            component is FundingCoverageStatus.CONFIRMED for component in components
+        if (
+            payload.funding_policy
+            and payload.tuition_coverage_status is FundingCoverageStatus.CONFIRMED
+            and payload.stipend_coverage_status is FundingCoverageStatus.CONFIRMED
         ):
             return FundingClassification.FULLY_FUNDED
         if any(component is not FundingCoverageStatus.UNKNOWN for component in components):
@@ -1332,20 +1530,14 @@ class OpportunityService:
             source.setdefault("verification_status", VerificationStatus.NEEDS_REVIEW.value)
             row["source"] = source
 
-        component_fields = (
-            "tuition_coverage_status",
-            "stipend_coverage_status",
-            "accommodation_coverage_status",
-            "travel_coverage_status",
-            "insurance_coverage_status",
-            "fees_coverage_status",
-        )
+        component_fields = ("tuition_coverage_status", "stipend_coverage_status")
         if row.get("funding_type") == "full" and not all(
             row.get(field) == FundingCoverageStatus.CONFIRMED.value for field in component_fields
         ):
             row["funding_type"] = "unknown"
             warnings.append(
-                "Imported full-funding claim was set to unknown until every component is verified"
+                "Imported full-funding claim was set to unknown until full tuition and stipend "
+                "are verified"
             )
         return row, warnings
 
@@ -1402,16 +1594,29 @@ class OpportunityService:
             messages.append(f"{field}: {error['msg']}")
         return messages
 
-    @staticmethod
+    @classmethod
     def _duplicate_key(
-        payload: OpportunityCreate,
-    ) -> tuple[str, str, str, int | None]:
-        return (
-            payload.provider_name.lower(),
-            payload.name.lower(),
-            payload.country.lower(),
-            payload.intake_year,
+        cls, payload: OpportunityCreate
+    ) -> str:
+        programme_family_id = payload.programme_family_id or cls._programme_family_identifier(
+            payload.name
         )
+        programme_route_id = payload.programme_route_id or (
+            normalize_catalogue_alias(payload.name) or programme_family_id
+        )
+        return build_catalogue_identity(
+            provider_canonical_id=(
+                payload.provider_canonical_id
+                or cls._canonical_identifier(payload.provider_name)
+            ),
+            programme_family_id=programme_family_id,
+            programme_route_id=programme_route_id,
+            host_institution=payload.university_name,
+            destination_country=payload.country,
+            degree_level=payload.degree_level.value,
+            cycle_id=payload.cycle_id
+            or (str(payload.intake_year) if payload.intake_year else None),
+        ).identity_key
 
     def list_duplicate_suggestions(
         self, *, limit: int, offset: int
@@ -1458,20 +1663,165 @@ class OpportunityService:
         normalized = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
         return normalized[:120] or "catalogue-record"
 
+    @classmethod
+    def _programme_family_identifier(cls, value: str) -> str:
+        """Collapse display-only degree and cycle suffixes into one scheme identity."""
+
+        normalized = value.strip()
+        normalized = re.sub(r"\s+20\d{2}(?:\s*/\s*(?:20)?\d{2})?\s*$", "", normalized)
+        normalized = re.sub(
+            r"\s*[\u2014\u2013-]\s*(?:bachelor(?:'s)?|undergraduate|master(?:'s)?|ph\.?d\.?|doctoral|postdoc(?:toral)?)\s*$",
+            "",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        normalized = re.sub(r"\s+20\d{2}(?:\s*/\s*(?:20)?\d{2})?\s*$", "", normalized)
+        normalized = re.sub(
+            r"\s+(?:graduate|undergraduate)\s+degrees?\s*$",
+            "",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        canonical = cls._canonical_identifier(normalized).replace("programme", "program")
+        if canonical.endswith("scholarships"):
+            canonical = canonical[:-1]
+        return canonical
+
+    def _family_members(self, anchor: Opportunity) -> list[Opportunity]:
+        family_key = self._family_key(anchor)
+        return [
+            item
+            for item in self.repository.list_provider_opportunities(anchor.provider_id)
+            if self._family_key(item) == family_key
+        ]
+
+    @classmethod
+    def _family_key(cls, opportunity: Opportunity) -> str:
+        return opportunity.catalogue_family_key or cls._programme_family_identifier(
+            opportunity.name
+        )
+
+    @staticmethod
+    def _family_degree_levels(opportunities: list[Opportunity]) -> list[DegreeLevel]:
+        levels = {
+            DegreeLevel(level)
+            for opportunity in opportunities
+            for level in (opportunity.degree_levels or [opportunity.degree_level])
+        }
+        order = {
+            DegreeLevel.BACHELORS: 0,
+            DegreeLevel.MASTERS: 1,
+            DegreeLevel.PHD: 2,
+            DegreeLevel.POSTDOC: 3,
+            DegreeLevel.SHORT_COURSE: 4,
+        }
+        return sorted(levels, key=lambda level: order[level])
+
+    @classmethod
+    def _family_display_name(cls, opportunities: list[Opportunity]) -> str:
+        def clean(value: str) -> str:
+            without_cycle = re.sub(
+                r"\s+20\d{2}(?:\s*/\s*(?:20)?\d{2})?\s*$", "", value.strip()
+            )
+            without_degree = re.sub(
+                r"\s*[\u2014\u2013-]\s*(?:bachelor(?:'s)?|undergraduate|master(?:'s)?|ph\.?d\.?|doctoral|postdoc(?:toral)?)\s*$",
+                "",
+                without_cycle,
+                flags=re.IGNORECASE,
+            )
+            without_degree = re.sub(
+                r"\s+(?:graduate|undergraduate)\s+degrees?\s*$",
+                "",
+                without_degree,
+                flags=re.IGNORECASE,
+            )
+            return re.sub(
+                r"\s+20\d{2}(?:\s*/\s*(?:20)?\d{2})?\s*$", "", without_degree
+            )
+
+        return min((clean(item.name) for item in opportunities), key=len)
+
     @staticmethod
     def _duplicate_suggestion_response(
         suggestion: DuplicateSuggestion,
     ) -> DuplicateSuggestionResponse:
+        left = suggestion.opportunity
+        right = suggestion.matched_opportunity
+        matching_signals, conflicting_fields = OpportunityService._duplicate_comparison(
+            left, right
+        )
         return DuplicateSuggestionResponse(
             id=suggestion.id,
             opportunity_id=suggestion.opportunity_id,
-            opportunity_name=suggestion.opportunity.name,
+            opportunity_name=left.name,
             matched_opportunity_id=suggestion.matched_opportunity_id,
-            matched_opportunity_name=suggestion.matched_opportunity.name,
+            matched_opportunity_name=right.name,
             score=suggestion.score,
             status=suggestion.status,
+            matching_signals=matching_signals,
+            conflicting_fields=conflicting_fields,
+            opportunity=OpportunityService._duplicate_snapshot(left),
+            matched_opportunity=OpportunityService._duplicate_snapshot(right),
             created_at=suggestion.created_at,
         )
+
+    @staticmethod
+    def _duplicate_snapshot(opportunity: Opportunity) -> DuplicateOpportunitySnapshot:
+        return DuplicateOpportunitySnapshot(
+            id=opportunity.id,
+            name=opportunity.name,
+            provider_name=opportunity.provider.name,
+            programme_family_id=opportunity.programme_family_id,
+            programme_route_id=opportunity.programme_route_id,
+            university_name=opportunity.university.name if opportunity.university else None,
+            country=opportunity.country,
+            degree_level=opportunity.degree_level,
+            cycle_id=opportunity.cycle_id,
+            catalogue_identity_key=opportunity.catalogue_identity_key,
+            official_source_urls=sorted(
+                source.canonical_url for source in opportunity.sources if source.canonical_url
+            ),
+        )
+
+    @staticmethod
+    def _duplicate_comparison(
+        left: Opportunity, right: Opportunity
+    ) -> tuple[list[str], dict[str, list[str | None]]]:
+        left_urls = {source.canonical_url for source in left.sources if source.canonical_url}
+        right_urls = {source.canonical_url for source in right.sources if source.canonical_url}
+        left_hashes = {source.content_hash for source in left.sources if source.content_hash}
+        right_hashes = {source.content_hash for source in right.sources if source.content_hash}
+        signals: list[str] = []
+        if left_urls & right_urls:
+            signals.append("exact_canonical_url")
+        if left_hashes & right_hashes:
+            signals.append("exact_content_hash")
+        comparisons: dict[str, tuple[str | None, str | None]] = {
+            "provider": (left.provider.canonical_id, right.provider.canonical_id),
+            "programme_family": (left.programme_family_id, right.programme_family_id),
+            "programme_route": (left.programme_route_id, right.programme_route_id),
+            "host_institution": (
+                left.university.name if left.university else None,
+                right.university.name if right.university else None,
+            ),
+            "destination_country": (left.country, right.country),
+            "degree_level": (left.degree_level.value, right.degree_level.value),
+            "cycle": (left.cycle_id, right.cycle_id),
+        }
+        conflicts: dict[str, list[str | None]] = {}
+        for field, (left_value, right_value) in comparisons.items():
+            if left_value is not None and right_value is not None and (
+                normalize_catalogue_alias(left_value)
+                == normalize_catalogue_alias(right_value)
+            ):
+                signals.append(f"same_{field}")
+            elif left_value != right_value:
+                conflicts[field] = [left_value, right_value]
+        if normalize_catalogue_alias(left.name) == normalize_catalogue_alias(right.name):
+            signals.append("normalized_name_match")
+        else:
+            signals.append("fuzzy_name_similarity")
+        return signals, conflicts
 
     @staticmethod
     def _data_quality_warnings(payload: OpportunityCreate) -> list[str]:

@@ -6,8 +6,9 @@ import hashlib
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -229,6 +230,100 @@ class CatalogueIngestionRepository:
         self.session.commit()
         return result.rowcount == 1
 
+    def reserve_model_budget(
+        self,
+        run_id: uuid.UUID,
+        *,
+        lease_token: str,
+        projected_cost: Decimal,
+    ) -> bool:
+        """Persist one conservative call reservation before provider I/O."""
+
+        result = self.session.execute(
+            update(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.id == run_id,
+                CatalogueIngestionRun.status == IngestionRunStatus.RUNNING,
+                CatalogueIngestionRun.lease_token == lease_token,
+                CatalogueIngestionRun.model_calls < CatalogueIngestionRun.max_model_calls,
+                CatalogueIngestionRun.estimated_cost + projected_cost
+                <= CatalogueIngestionRun.max_estimated_cost,
+            )
+            .values(
+                model_calls=CatalogueIngestionRun.model_calls + 1,
+                estimated_cost=CatalogueIngestionRun.estimated_cost + projected_cost,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.commit()
+        self.session.expire_all()
+        return result.rowcount == 1
+
+    def reconcile_model_budget(
+        self,
+        run_id: uuid.UUID,
+        *,
+        lease_token: str,
+        reserved_cost: Decimal,
+        input_tokens: int,
+        output_tokens: int,
+        actual_cost: Decimal,
+    ) -> bool:
+        """Replace a persisted estimate with billed usage without releasing the call slot."""
+
+        result = self.session.execute(
+            update(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.id == run_id,
+                CatalogueIngestionRun.status == IngestionRunStatus.RUNNING,
+                CatalogueIngestionRun.lease_token == lease_token,
+            )
+            .values(
+                input_tokens=CatalogueIngestionRun.input_tokens + input_tokens,
+                output_tokens=CatalogueIngestionRun.output_tokens + output_tokens,
+                estimated_cost=(
+                    CatalogueIngestionRun.estimated_cost - reserved_cost + actual_cost
+                ),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.commit()
+        self.session.expire_all()
+        return result.rowcount == 1
+
+    def pause_run_claim(self, run_id: uuid.UUID, *, lease_token: str) -> bool:
+        """Release a run cleanly when the operator's runtime kill switch is active."""
+
+        result = self.session.execute(
+            update(CatalogueIngestionRun)
+            .where(
+                CatalogueIngestionRun.id == run_id,
+                CatalogueIngestionRun.status == IngestionRunStatus.RUNNING,
+                CatalogueIngestionRun.lease_token == lease_token,
+            )
+            .values(
+                status=IngestionRunStatus.PENDING,
+                stage=IngestionRunStage.QUEUED,
+                failure_code="operator_kill_switch_active",
+                last_error_reason=None,
+                retry_class=None,
+                claimed_by=None,
+                claimed_at=None,
+                claimed_until=None,
+                lease_token=None,
+                next_attempt_at=None,
+                attempt_count=case(
+                    (CatalogueIngestionRun.attempt_count > 0,
+                     CatalogueIngestionRun.attempt_count - 1),
+                    else_=0,
+                ),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.commit()
+        self.session.expire_all()
+        return result.rowcount == 1
+
     def complete_run_claim(self, run_id: uuid.UUID, *, lease_token: str) -> bool:
         completed_at = datetime.now(UTC)
         result = self.session.execute(
@@ -433,6 +528,7 @@ class CatalogueIngestionRepository:
             .options(
                 artifact_options.selectinload(CatalogueSourceArtifact.evidence_blocks),
                 artifact_options.selectinload(CatalogueSourceArtifact.routing_decisions),
+                selectinload(CatalogueCandidate.extraction_attempts),
             )
         )
 
@@ -477,6 +573,41 @@ class CatalogueIngestionRepository:
             )
             .order_by(CatalogueExtractionAttempt.created_at.desc())
         )
+
+    def save_extraction_attempt(
+        self, attempt: CatalogueExtractionAttempt
+    ) -> CatalogueExtractionAttempt:
+        """Insert an extraction result or replace the failed result for the same version.
+
+        The database intentionally stores one row for each candidate/source/content/schema/
+        provider/model version. A retry after a timeout must therefore update that version
+        instead of attempting a duplicate insert. Run-level counters still retain every paid
+        call reservation, including the failed call.
+        """
+
+        existing = self.session.scalar(
+            select(CatalogueExtractionAttempt).where(
+                CatalogueExtractionAttempt.candidate_id == attempt.candidate_id,
+                CatalogueExtractionAttempt.source_id == attempt.source_id,
+                CatalogueExtractionAttempt.content_hash == attempt.content_hash,
+                CatalogueExtractionAttempt.schema_version == attempt.schema_version,
+                CatalogueExtractionAttempt.provider == attempt.provider,
+                CatalogueExtractionAttempt.model == attempt.model,
+            )
+        )
+        if existing is None:
+            self.session.add(attempt)
+            return attempt
+
+        existing.prompt_hash = attempt.prompt_hash
+        existing.status = attempt.status
+        existing.output_json = attempt.output_json
+        existing.error_code = attempt.error_code
+        existing.input_tokens = attempt.input_tokens
+        existing.output_tokens = attempt.output_tokens
+        existing.estimated_cost = attempt.estimated_cost
+        existing.latency_ms = attempt.latency_ms
+        return existing
 
     def list_runs(self, *, limit: int, offset: int) -> tuple[list[CatalogueIngestionRun], int]:
         items = list(

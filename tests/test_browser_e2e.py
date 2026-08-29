@@ -177,7 +177,7 @@ def test_phase_three_catalogue_and_source_detail_are_browsable(
         "application_window_state": "open",
         "source_is_fresh": True,
         "verification_freshness": "recent",
-        "funding_display_label": "All tracked funding components confirmed",
+        "funding_display_label": "Full tuition and stipend confirmed",
         "catalogue_decision_tier": "informational_only",
         "structured_eligibility_complete": False,
     }
@@ -216,6 +216,20 @@ def test_phase_three_catalogue_and_source_detail_are_browsable(
     }
 
     def fulfil_opportunity_request(route) -> None:
+        if route.request.url.endswith(f"/{opportunity_id}/family"):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                json={
+                    "family_key": "phase-three-test-scholarship",
+                    "name": detail["name"],
+                    "provider_name": detail["provider_name"],
+                    "country": detail["country"],
+                    "degree_levels": ["masters"],
+                    "variants": [detail],
+                },
+            )
+            return
         if route.request.url.endswith(opportunity_id):
             route.fulfill(status=200, content_type="application/json", json=detail)
         else:
@@ -250,7 +264,7 @@ def test_phase_three_catalogue_and_source_detail_are_browsable(
     expect(page.get_by_role("link", name="Open official source")).to_have_attribute(
         "href", "https://example.com/official-scholarship"
     )
-    expect(page.get_by_role("link", name="Create an account to save and track")).to_have_attribute(
+    expect(page.get_by_role("link", name="Create an account to save")).to_have_attribute(
         "href", "/auth"
     )
 
@@ -280,7 +294,7 @@ def test_phase_three_student_workspace_is_browsable(page: Page, live_base_url: s
         "application_window_state": "open",
         "source_is_fresh": True,
         "verification_freshness": "recent",
-        "funding_display_label": "All tracked funding components confirmed",
+        "funding_display_label": "Full tuition and stipend confirmed",
         "catalogue_decision_tier": "informational_only",
         "structured_eligibility_complete": False,
     }
@@ -461,6 +475,8 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
         ),
         "verification_status": "needs_review",
         "last_verified_at": None,
+        "hash_algorithm": "sha256",
+        "content_hash": "a" * 64,
     }
     opportunity = {
         "id": "52c07256-ad65-4169-841e-c23189874049",
@@ -469,16 +485,47 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
         "university_name": None,
         "country": "Malaysia",
         "degree_level": "masters",
+        "degree_levels": ["masters"],
         "application_deadline": "2099-12-31T23:59:59Z",
+        "application_opening_date": None,
+        "application_timezone": "UTC",
+        "intake_year": 2100,
         "funding_type": "full",
+        "funding_classification": "fully_funded",
         "funding_summary": "Tuition is covered.",
+        "funding_policy": "Full tuition and stipend are listed by the official call.",
+        "tuition_coverage": "Full tuition",
+        "tuition_coverage_status": "confirmed",
+        "monthly_stipend_amount": 1500,
+        "monthly_stipend_currency": "USD",
+        "stipend_coverage_status": "confirmed",
+        "accommodation_coverage": None,
+        "accommodation_coverage_status": "unknown",
+        "travel_allowance": None,
+        "travel_coverage_status": "unknown",
+        "health_insurance": "Covered",
+        "insurance_coverage_status": "confirmed",
+        "fees_coverage_status": "unknown",
+        "application_fee_info": None,
+        "application_fee_status": "unknown",
+        "field_eligibility": "All fields",
+        "nationality_eligibility": "International applicants",
+        "minimum_academic_requirement": None,
+        "english_language_requirement": None,
+        "standardized_test_requirement": None,
+        "required_documents": ["Transcript", "Passport"],
+        "application_method": "Online portal",
+        "application_url": "https://example.com/apply",
+        "eligibility_warnings": [],
+        "eligibility_rules": [],
+        "notes": None,
         "verification_status": "needs_review",
         "last_verified_at": None,
         "official_source_url": source["url"],
         "application_window_state": "open",
         "source_is_fresh": True,
         "verification_freshness": "recent",
-        "funding_display_label": "All tracked funding components confirmed",
+        "funding_display_label": "Full tuition and stipend confirmed",
         "catalogue_decision_tier": "informational_only",
         "structured_eligibility_complete": False,
         "status": "draft",
@@ -512,15 +559,23 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
             json={"access_token": "test-access-token", "expires_in": 900, "user": user},
         ),
     )
-    page.route(
-        "**/api/v1/admin/review-queue**",
-        lambda route: route.fulfill(
+    def review_queue_route(route) -> None:
+        route.fulfill(
             status=200,
             content_type="application/json",
             json={
                 "items": [{"opportunity": opportunity, "reasons": [issue]}],
                 "pagination": pagination,
             },
+        )
+
+    page.route("**/api/v1/admin/review-queue**", review_queue_route)
+    page.route(
+        "**/api/v1/admin/catalogue-ingestion/candidates**",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={"items": [], "total": 0},
         ),
     )
     page.route(
@@ -534,29 +589,50 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
 
     def catalogue_records_route(route) -> None:
         catalogue_queries.append(route.request.url)
+        if route.request.url.endswith(f"/{opportunity['id']}/family"):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                json={
+                    "family_key": "admin-review-test-scholarship",
+                    "name": opportunity["name"],
+                    "provider_name": opportunity["provider_name"],
+                    "country": opportunity["country"],
+                    "degree_levels": ["masters"],
+                    "variants": [{"opportunity": opportunity, "reasons": [issue]}],
+                },
+            )
+            return
         route.fulfill(
             status=200,
             content_type="application/json",
-            json={"items": [opportunity], "pagination": {**pagination, "limit": 20}},
+            json={"items": [opportunity], "pagination": {**pagination, "limit": 100}},
         )
 
     page.route("**/api/v1/admin/opportunities**", catalogue_records_route)
 
     page.goto(f"{live_base_url}/admin", wait_until="networkidle")
 
-    expect(page.get_by_role("heading", name="Keep scholarships trustworthy.")).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Choose a scholarship. Review one clear page.")
+    ).to_be_visible()
     expect(page.get_by_role("heading", name="Admin Review Test Scholarship")).to_be_visible()
-    expect(page.get_by_role("heading", name="Build a cited scholarship record.")).to_be_visible()
-    page.get_by_role("button", name="Add supporting URL").click()
-    supporting_url = page.get_by_label("Supporting official URL 1")
-    expect(supporting_url).to_be_visible()
-    supporting_url.fill("https://www.mext.go.jp/current-guidelines.pdf")
-    page.get_by_role("button", name="Remove").click()
-    assert page.get_by_label("Supporting official URL 1").count() == 0
-    expect(page.get_by_text("source requires review").first).to_be_visible()
-    assert page.get_by_label("Administrator password").count() == 3
-    expect(page.get_by_role("button", name="Record source check")).to_be_visible()
-    expect(page.get_by_role("button", name="Reverify selected source")).to_be_visible()
+    search = page.get_by_role("searchbox", name="Search scholarships")
+    search.fill(user["email"])
+    expect(search).to_have_value("")
+    expect(page.get_by_role("heading", name="Admin Review Test Scholarship")).to_be_visible()
+    expect(page.get_by_text("1 key gap")).to_be_visible()
+    page.get_by_role("link", name="Review scholarship").click()
+    expect(page).to_have_url(f"{live_base_url}/admin/review/{opportunity['id']}")
+    expect(page.get_by_role("heading", name="1 level on one page")).to_be_visible()
+    expect(page.get_by_text("Hold recommended")).to_be_visible()
+    expect(page.get_by_text("1 critical check", exact=True)).to_be_visible()
+    assert page.get_by_label("Administrator password").count() == 1
+    expect(page.get_by_role("button", name="Publish")).to_be_disabled()
+    expect(page.get_by_role("button", name="Hold")).to_be_visible()
+    expect(page.get_by_role("button", name="Reject")).to_be_visible()
+    page.get_by_role("link", name="Back to scholarship cards").click()
+    page.get_by_text("Advanced tools", exact=True).click()
     page.get_by_label("Upload opportunity import file").set_input_files(
         {
             "name": "opportunities.csv",
@@ -569,13 +645,10 @@ def test_phase_three_admin_workspace_is_browsable(page: Page, live_base_url: str
     )
     expect(
         page.get_by_text(
-            "Loaded opportunities.csv. Review the contents before running a dry import."
+            "Loaded opportunities.csv. Nothing has been imported yet."
         )
     ).to_be_visible()
-    page.get_by_label("Country").last.fill("Malaysia")
-    page.get_by_role("button", name="Apply filters").last.click()
-    expect(page.get_by_text("Showing 1 of 1").last).to_be_visible()
-    assert any("country=Malaysia" in query for query in catalogue_queries)
+    assert any("limit=100" in query for query in catalogue_queries)
 
 
 def test_phase_five_application_command_centre_journey(page: Page, live_base_url: str) -> None:
@@ -606,7 +679,7 @@ def test_phase_five_application_command_centre_journey(page: Page, live_base_url
         "application_window_state": "open",
         "source_is_fresh": True,
         "verification_freshness": "recent",
-        "funding_display_label": "All tracked funding components confirmed",
+        "funding_display_label": "Full tuition and stipend confirmed",
         "catalogue_decision_tier": "informational_only",
         "structured_eligibility_complete": False,
     }
@@ -694,10 +767,20 @@ def test_phase_five_application_command_centre_journey(page: Page, live_base_url
             json={"access_token": "test-access-token", "expires_in": 900, "user": user},
         ),
     )
-    page.route(
-        f"**/api/v1/opportunities/{opportunity_id}",
-        lambda route: route.fulfill(status=200, content_type="application/json", json=detail),
-    )
+    def opportunity_route(route) -> None:
+        payload = detail
+        if route.request.url.endswith(f"/{opportunity_id}/family"):
+            payload = {
+                "family_key": "phase-five-verified-scholarship",
+                "name": detail["name"],
+                "provider_name": detail["provider_name"],
+                "country": detail["country"],
+                "degree_levels": ["masters"],
+                "variants": [detail],
+            }
+        route.fulfill(status=200, content_type="application/json", json=payload)
+
+    page.route(f"**/api/v1/opportunities/{opportunity_id}**", opportunity_route)
     page.route(
         "**/api/v1/saved-opportunities",
         lambda route: route.fulfill(status=201, content_type="application/json", json={}),

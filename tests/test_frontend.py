@@ -37,6 +37,7 @@ def test_react_routes_use_the_same_frontend_shell(client: TestClient) -> None:
         "/catalogue/example-id",
         "/dashboard",
         "/admin",
+        "/admin/review/example-id",
     ):
         response = client.get(path)
         assert response.status_code == 200

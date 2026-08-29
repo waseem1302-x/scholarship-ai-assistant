@@ -180,8 +180,14 @@ CLAIM_FIELD_ALIASES: dict[ClaimEntityType, dict[str, str]] = {
         "component_description": "description",
         "component_frequency": "frequency",
     },
+    ClaimEntityType.EVENT: {"description": "notes", "order": "display_order"},
     ClaimEntityType.STEP: {"label": "title", "order": "display_order"},
-    ClaimEntityType.RESOURCE: {"label": "title", "link": "url"},
+    ClaimEntityType.RESOURCE: {
+        "description": "notes",
+        "label": "title",
+        "link": "url",
+        "name": "title",
+    },
 }
 
 
@@ -194,6 +200,8 @@ class ClaimScope(StrictClaimModel):
     track_key: str | None
     institution_key: str | None
     programme_key: str | None
+    country_code: str | None = None
+    programme_family_key: str | None = None
 
 
 class ClaimValue(StrictClaimModel):
@@ -267,6 +275,14 @@ class ClaimExtractionOutput(StrictClaimModel):
     warnings: list[str]
 
 
+class ClaimExtractionLineage(StrictClaimModel):
+    objective: ClaimObjective
+    schema_version: str
+    prompt_hash: str
+    provider: str
+    model: str
+
+
 class ResolvedClaim(StrictClaimModel):
     claim: ExtractedClaim
     artifact_id: str
@@ -274,6 +290,7 @@ class ResolvedClaim(StrictClaimModel):
     source_url: str
     content_hash: str
     trust_tier: int = Field(ge=1)
+    extraction: ClaimExtractionLineage | None = None
 
 
 class ClaimResolution(StrictClaimModel):
@@ -288,4 +305,6 @@ class ClaimResolution(StrictClaimModel):
 
     @property
     def is_materializable(self) -> bool:
-        return not self.conflicts and not self.rejected and not self.completeness_errors
+        # Invalid atomic suggestions are quarantined outside ``resolved``. They remain
+        # visible for audit, but cannot poison an otherwise complete, conflict-free graph.
+        return not self.conflicts and not self.completeness_errors

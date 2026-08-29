@@ -144,6 +144,11 @@ class LegacySafeEvidenceAcquirer:
             fetched = self.fetcher.fetch(request.url)
 
         now = datetime.now(UTC)
+        tier = (
+            AcquisitionTier.BROWSER
+            if fetched.parser_version.startswith("playwright-browser.")
+            else AcquisitionTier.STATIC_HTTP
+        )
         artifact = AcquiredArtifact(
             requested_url=fetched.url,
             final_url=fetched.final_url,
@@ -154,7 +159,7 @@ class LegacySafeEvidenceAcquirer:
             excerpt_text=fetched.excerpt_text,
             bytes_read=fetched.bytes_read,
             links=fetched.links,
-            tier=AcquisitionTier.STATIC_HTTP,
+            tier=tier,
             role_hint=request.role_hint,
             retrieved_at=now,
             parser_version=fetched.parser_version,

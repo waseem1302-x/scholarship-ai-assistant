@@ -178,6 +178,11 @@ class IngestionRunResponse(BaseModel):
     dry_run: bool
     checkpoint_cursor: int
     max_candidates: int
+    max_pages_per_candidate: int
+    max_model_calls: int
+    max_input_characters: int
+    max_output_tokens: int
+    max_estimated_cost: Decimal
     model_calls: int
     input_tokens: int
     output_tokens: int
@@ -215,6 +220,9 @@ class OperatorArtifactStatus(StrictExtractionModel):
     ocr_reason: str
     browser_decision: str
     browser_reason: str
+    acquisition_role: str
+    acquisition_role_classifier_version: str | None
+    acquisition_role_requires_manual_review: bool
 
 
 class OperatorSourceRoutingStatus(StrictExtractionModel):
@@ -230,6 +238,7 @@ class OperatorSourceRoutingStatus(StrictExtractionModel):
 
 class OperatorSourceStatus(StrictExtractionModel):
     id: uuid.UUID
+    title: str
     url: str
     final_url: str | None
     source_role: CandidateSourceRole
@@ -237,6 +246,7 @@ class OperatorSourceStatus(StrictExtractionModel):
     is_official: bool
     trust_tier: int | None
     failure_code: str | None
+    checked_at: datetime | None
     artifacts: list[OperatorArtifactStatus]
     routing: list[OperatorSourceRoutingStatus]
 
@@ -267,6 +277,7 @@ class OperatorCandidateStatus(StrictExtractionModel):
     conflict_count: int
     objective_coverage: dict[str, str]
     missing_mandatory_objectives: list[str]
+    acquisition_bundle: dict[str, object]
     sources: list[OperatorSourceStatus]
     attempts: list[OperatorExtractionAttemptStatus]
 
@@ -285,6 +296,8 @@ class ReviewFactScope(StrictExtractionModel):
     track_key: str | None
     institution_key: str | None
     programme_key: str | None
+    country_code: str | None = None
+    programme_family_key: str | None = None
 
 
 class ReviewEvidenceBlock(StrictExtractionModel):
@@ -298,16 +311,27 @@ class ReviewEvidenceBlock(StrictExtractionModel):
     text_format: Literal["plain_text"] = "plain_text"
 
 
+class ReviewClaimExtraction(StrictExtractionModel):
+    objective: str
+    schema_version: str
+    prompt_hash: str
+    provider: str
+    model: str
+
+
 class ReviewProposedFact(StrictExtractionModel):
     entity_type: str
     entity_key: str
     field_path: str
     value: dict[str, object]
     scope: ReviewFactScope
+    source_title: str
     source_url: str
+    source_checked_at: datetime | None
     source_role: CandidateSourceRole
     source_content_role: str | None
     authority_tier: Literal["T0", "T1", "T2", "T3", "unresolved"]
+    extraction: ReviewClaimExtraction | None
     evidence: ReviewEvidenceBlock
 
 
@@ -329,6 +353,16 @@ class ReviewDecisionHistoryItem(StrictExtractionModel):
     created_at: datetime
 
 
+class CandidateReviewReadiness(StrictExtractionModel):
+    ready: bool
+    supported_mandatory_count: int
+    mandatory_count: int
+    blockers: list[str]
+    warnings: list[str]
+    source_freshness: Literal["fresh", "stale", "unknown"]
+    evaluated_at: datetime
+
+
 class CandidateReviewProjectionResponse(StrictExtractionModel):
     candidate_id: uuid.UUID
     candidate_status: CandidateStatus
@@ -336,6 +370,13 @@ class CandidateReviewProjectionResponse(StrictExtractionModel):
     conflicts: list[str]
     rejected_claims: list[str]
     missing_mandatory_objectives: list[str]
+    objective_coverage: dict[str, str]
+    readiness: CandidateReviewReadiness
+    warnings: list[str]
+    acquisition_bundle: dict[str, object]
+    sources: list[OperatorSourceStatus]
+    extraction_attempts: list[OperatorExtractionAttemptStatus]
+    duplicate_opportunity_ids: list[str]
     decision_history: list[ReviewDecisionHistoryItem]
     audit_history: list[ReviewAuditHistoryItem]
 
@@ -360,6 +401,7 @@ class CandidateSourceResponse(BaseModel):
     url: str
     final_url: str | None
     source_role: CandidateSourceRole
+    status: str
     is_official: bool
     trust_tier: int | None
     classification_reason: str
@@ -367,6 +409,7 @@ class CandidateSourceResponse(BaseModel):
     content_hash: str | None
     relevant_excerpt: str | None
     failure_code: str | None
+    fetched_at: datetime | None
     artifacts: list[SourceArtifactResponse] = Field(default_factory=list)
 
 
@@ -387,6 +430,7 @@ class CandidateResponse(BaseModel):
     seed_keywords: list[str]
     status: CandidateStatus
     proposed_payload: dict[str, object] | None
+    acquisition_bundle: dict[str, object]
     validation_errors: list[str]
     conflicts: list[str]
     duplicate_opportunity_ids: list[str]

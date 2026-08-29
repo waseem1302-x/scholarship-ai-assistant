@@ -1,6 +1,8 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from conftest import support_opportunity_for_publication
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,7 +10,9 @@ from sqlalchemy.orm import Session
 from app.cli.create_admin import upsert_admin
 from app.core.security import hash_password
 from app.modules.auth.models import AuditLog, User, UserRole
-from app.modules.opportunities.models import SourceExcerpt, VerificationRecord
+from app.modules.opportunities.catalogue_identity import CATALOGUE_IDENTITY_POLICY_VERSION
+from app.modules.opportunities.graph_models import ScholarshipAlias
+from app.modules.opportunities.models import Opportunity, SourceExcerpt, VerificationRecord
 from app.modules.opportunities.schemas import OpportunityImportRequest
 from app.modules.opportunities.service import OpportunityService
 
@@ -109,7 +113,16 @@ def create_opportunity(client: TestClient, headers: dict[str, str], **overrides:
     return response.json()
 
 
-def publish_opportunity(client: TestClient, headers: dict[str, str], opportunity: dict) -> dict:
+def publish_opportunity(
+    client: TestClient,
+    headers: dict[str, str],
+    opportunity: dict,
+    *,
+    fill_missing_values: bool = True,
+) -> dict:
+    support_opportunity_for_publication(
+        opportunity["id"], fill_missing_values=fill_missing_values
+    )
     response = client.post(
         f"/api/v1/admin/opportunities/{opportunity['id']}/review-actions",
         json={
@@ -350,8 +363,15 @@ def test_open_now_excludes_closed_future_and_unknown_deadline_records(
             application_deadline=None,
         ),
     ]
-    for record in records:
+    for record in records[:3]:
         publish_opportunity(client, headers, record)
+    support_opportunity_for_publication(records[3]["id"], fill_missing_values=False)
+    blocked = client.post(
+        f"/api/v1/admin/opportunities/{records[3]['id']}/review-actions",
+        json={"action": "publish", "source_id": records[3]["sources"][0]["id"]},
+        headers=headers,
+    )
+    assert blocked.status_code == 409
 
     response = client.get("/api/v1/opportunities?open_now=true")
 
@@ -418,6 +438,7 @@ def test_public_catalogue_prioritizes_open_then_upcoming_then_other_verified_rec
             name="Deadline-variable catalogue scholarship",
             application_opening_date=None,
             application_deadline=None,
+            application_cycles=[{"status": "varies_by_country"}],
         ),
         create_opportunity(
             client,
@@ -435,7 +456,12 @@ def test_public_catalogue_prioritizes_open_then_upcoming_then_other_verified_rec
         ),
     ]
     for record in records:
-        publish_opportunity(client, headers, record)
+        publish_opportunity(
+            client,
+            headers,
+            record,
+            fill_missing_values=record["name"] != "Deadline-variable catalogue scholarship",
+        )
 
     response = client.get("/api/v1/opportunities")
 
@@ -719,9 +745,11 @@ def test_admin_opportunity_list_supports_review_and_status_filters(
 
     assert active_filter.status_code == 200
     assert [item["id"] for item in response_items(active_filter)] == [active["id"]]
+    assert response_items(active_filter)[0]["publication_readiness"]["ready"] is True
     assert response_pagination(active_filter)["total"] == 1
     assert review_filter.status_code == 200
     assert [item["id"] for item in response_items(review_filter)] == [draft["id"]]
+    assert response_items(review_filter)[0]["publication_readiness"]["ready"] is False
     assert provider_filter.status_code == 200
     assert [item["id"] for item in response_items(provider_filter)] == [draft["id"]]
     assert verification_filter.status_code == 200
@@ -748,7 +776,7 @@ def test_canonical_identity_rejects_variants_without_blocking_distinct_tracks(
     client: TestClient, db_session: Session
 ) -> None:
     headers = admin_headers(client, db_session)
-    create_opportunity(
+    first = create_opportunity(
         client,
         headers,
         name="Commonwealth Scholarship",
@@ -756,6 +784,7 @@ def test_canonical_identity_rejects_variants_without_blocking_distinct_tracks(
         provider_canonical_id="commonwealth-secretariat",
         programme_family_id="commonwealth-scholarship",
         cycle_id="2027",
+        aliases=["Commonwealth Graduate Award", "Commonwealth Masters Bursary"],
         source={
             **opportunity_payload()["source"],
             "url": "https://example.edu/commonwealth?utm_source=directory",
@@ -796,6 +825,17 @@ def test_canonical_identity_rejects_variants_without_blocking_distinct_tracks(
 
     assert duplicate.status_code == 409
     assert distinct_track.status_code == 201
+    stored = db_session.get(Opportunity, uuid.UUID(first["id"]))
+    assert stored is not None
+    assert stored.programme_route_id == "commonwealth"
+    assert stored.catalogue_identity_policy_version == CATALOGUE_IDENTITY_POLICY_VERSION
+    assert len(stored.catalogue_identity_key or "") == 64
+    assert len(stored.catalogue_family_key or "") == 64
+    assert len(stored.catalogue_route_key or "") == 64
+    assert set(db_session.scalars(select(ScholarshipAlias.normalized_alias))) == {
+        "commonwealth-graduate",
+        "commonwealth-masters-bursary",
+    }
 
 
 def test_fuzzy_duplicate_suggestion_requires_human_decision(
@@ -835,6 +875,14 @@ def test_fuzzy_duplicate_suggestion_requires_human_decision(
     assert suggestion["matched_opportunity_id"] == first["id"]
     assert suggestion["status"] == "pending"
     assert float(suggestion["score"]) >= 0.95
+    assert "exact_canonical_url" in suggestion["matching_signals"]
+    assert "same_provider" in suggestion["matching_signals"]
+    assert suggestion["conflicting_fields"]["programme_family"] == [
+        "commonwealth-scholarship-general",
+        "commonwealth-scholarship-masters",
+    ]
+    assert suggestion["opportunity"]["name"] == "Commonwealth Scholarships"
+    assert suggestion["matched_opportunity"]["name"] == "Commonwealth Scholarship"
 
     decision = client.post(
         f"/api/v1/admin/duplicate-suggestions/{suggestion['id']}/decision",
@@ -1004,6 +1052,49 @@ def test_import_detects_duplicate_rows_inside_same_batch(
     assert body["duplicate_count"] == 1
     assert body["results"][1]["status"] == "skipped_duplicate"
     assert "same import batch" in body["results"][1]["errors"][0]
+
+
+def test_import_keeps_distinct_routes_in_the_same_family(db_session: Session) -> None:
+    admin = User(
+        id=uuid.uuid4(),
+        email="route-import-admin@example.com",
+        password_hash=hash_password(PASSWORD),
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    db_session.add(admin)
+    db_session.commit()
+    first = opportunity_payload(
+        name="Synthetic DAAD EPOS Course",
+        provider_canonical_id="daad",
+        programme_family_id="daad-epos",
+        programme_route_id="development-studies",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/daad/development-studies",
+        },
+    )
+    second = opportunity_payload(
+        name="Synthetic DAAD EPOS Course",
+        provider_canonical_id="daad",
+        programme_family_id="daad-epos",
+        programme_route_id="public-policy",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/daad/public-policy",
+        },
+    )
+
+    result = OpportunityService(db_session).import_opportunities(
+        OpportunityImportRequest.model_validate(
+            {"source_format": "json", "rows": [first, second]}
+        ),
+        created_by=admin,
+    )
+
+    assert result.imported_count == 2
+    assert result.duplicate_count == 0
+    assert db_session.query(Opportunity).count() == 2
 
 
 def test_import_commits_once_for_all_accepted_rows(db_session: Session, monkeypatch) -> None:
@@ -1191,6 +1282,15 @@ def test_admin_data_quality_dashboard_reports_review_reasons(
     assert response_items(queue)[0]["opportunity"]["id"] == created["id"]
     assert any(reason["severity"] == "high" for reason in response_items(queue)[0]["reasons"])
 
+    detail = client.get(f"/api/v1/admin/review-queue/{created['id']}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["opportunity"]["id"] == created["id"]
+    assert {reason["code"] for reason in detail.json()["reasons"]} >= {
+        "deadline_missing",
+        "funding_type_unknown",
+        "required_documents_missing",
+    }
+
 
 def test_admin_quality_queues_use_sql_pagination(client: TestClient, db_session: Session) -> None:
     headers = admin_headers(client, db_session)
@@ -1286,6 +1386,7 @@ def test_admin_review_action_publish_and_flag_conflict_control_public_visibility
         },
     )
     source_id = created["sources"][0]["id"]
+    support_opportunity_for_publication(created["id"])
 
     published = client.post(
         f"/api/v1/admin/opportunities/{created['id']}/review-actions",
@@ -1339,6 +1440,7 @@ def test_admin_review_action_resolves_conflict_and_request_recheck(
         },
     )
     source_id = created["sources"][0]["id"]
+    support_opportunity_for_publication(created["id"])
     assert (
         client.post(
             f"/api/v1/admin/opportunities/{created['id']}/review-actions",
@@ -1361,7 +1463,7 @@ def test_admin_review_action_resolves_conflict_and_request_recheck(
         },
         headers=headers,
     )
-    assert resolved.status_code == 200
+    assert resolved.status_code == 200, resolved.text
     assert resolved.json()["status"] == "active"
     assert resolved.json()["verification_status"] == "officially_verified"
 
@@ -1450,15 +1552,21 @@ def test_full_funding_requires_structured_coverage_evidence(
     assert response.json()["error"]["code"] == "validation_error"
 
 
-def test_full_funding_requires_every_component_and_a_documented_policy(
+def test_full_funding_requires_tuition_stipend_and_a_documented_policy(
     client: TestClient, db_session: Session
 ) -> None:
     headers = admin_headers(client, db_session)
-    incomplete = opportunity_payload(accommodation_coverage_status="unknown")
+    incomplete = opportunity_payload(stipend_coverage_status="unknown")
+    optional_components_unknown = opportunity_payload(
+        accommodation_coverage_status="unknown",
+        travel_coverage_status="unknown",
+        insurance_coverage_status="unknown",
+        fees_coverage_status="unknown",
+    )
 
     rejected = client.post("/api/v1/admin/opportunities", json=incomplete, headers=headers)
     accepted = client.post(
-        "/api/v1/admin/opportunities", json=opportunity_payload(), headers=headers
+        "/api/v1/admin/opportunities", json=optional_components_unknown, headers=headers
     )
 
     assert rejected.status_code == 422
@@ -1491,7 +1599,7 @@ def test_public_response_uses_effective_cycle_deadline_and_safe_funding_label(
     assert response.json()["application_deadline"].startswith("2099-08-31T23:59:00")
     assert response.json()["application_timezone"] == "Asia/Kuala_Lumpur"
     assert response.json()["effective_cycle_id"] is not None
-    assert response.json()["funding_display_label"] == ("All tracked funding components confirmed")
+    assert response.json()["funding_display_label"] == ("Full tuition and stipend confirmed")
     assert response.json()["verification_freshness"] == "recent"
     assert response.json()["catalogue_decision_tier"] == "informational_only"
     assert response.json()["structured_eligibility_complete"] is False
@@ -1510,3 +1618,177 @@ def test_deadline_cannot_be_before_opening_date(client: TestClient, db_session: 
     )
 
     assert response.status_code == 422
+
+
+def test_admin_family_groups_degree_routes_in_stable_order(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = []
+    routes = [("— PhD", "phd"), ("— Bachelor's", "bachelors"), ("— Master's", "masters")]
+    for suffix, degree in routes:
+        created.append(
+            create_opportunity(
+                client,
+                headers,
+                name=f"Chinese Government Scholarship {suffix}",
+                provider_name="China Scholarship Council",
+                degree_level=degree,
+                source={
+                    **opportunity_payload()["source"],
+                    "url": f"https://example.edu/csc-{degree}",
+                },
+            )
+        )
+
+    response = client.get(
+        f"/api/v1/admin/opportunities/{created[0]['id']}/family", headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Chinese Government Scholarship"
+    assert response.json()["degree_levels"] == ["bachelors", "masters", "phd"]
+    assert {item["opportunity"]["id"] for item in response.json()["variants"]} == {
+        item["id"] for item in created
+    }
+
+
+def test_family_grouping_never_crosses_provider_boundaries(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    first = create_opportunity(
+        client,
+        headers,
+        name="Global Scholarship — Master's",
+        provider_name="Provider One",
+        source={**opportunity_payload()["source"], "url": "https://one.example/global"},
+    )
+    create_opportunity(
+        client,
+        headers,
+        name="Global Scholarship — PhD",
+        provider_name="Provider Two",
+        degree_level="phd",
+        source={**opportunity_payload()["source"], "url": "https://two.example/global"},
+    )
+
+    response = client.get(
+        f"/api/v1/admin/opportunities/{first['id']}/family", headers=headers
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["variants"]) == 1
+    assert response.json()["provider_name"] == "Provider One"
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "first_name", "second_name"),
+    [
+        (
+            "National Institute for International Education Korea",
+            "Global Korea Scholarship",
+            "Global Korea Scholarship Graduate Degrees",
+        ),
+        (
+            "Turkiye Scholarships",
+            "Turkiye Scholarships Full-Time Program",
+            "Turkiye Scholarships Full-Time Programme",
+        ),
+    ],
+)
+def test_family_grouping_normalizes_known_display_name_variants(
+    client: TestClient,
+    db_session: Session,
+    provider_name: str,
+    first_name: str,
+    second_name: str,
+) -> None:
+    headers = admin_headers(client, db_session)
+    first = create_opportunity(
+        client,
+        headers,
+        name=first_name,
+        provider_name=provider_name,
+        source={**opportunity_payload()["source"], "url": "https://example.edu/first"},
+    )
+    second = create_opportunity(
+        client,
+        headers,
+        name=second_name,
+        provider_name=provider_name,
+        degree_level="phd",
+        source={**opportunity_payload()["source"], "url": "https://example.edu/second"},
+    )
+
+    response = client.get(
+        f"/api/v1/admin/opportunities/{first['id']}/family", headers=headers
+    )
+
+    assert response.status_code == 200
+    assert {item["opportunity"]["id"] for item in response.json()["variants"]} == {
+        first["id"],
+        second["id"],
+    }
+
+
+def test_public_family_excludes_draft_or_unverified_routes(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    published = create_opportunity(
+        client,
+        headers,
+        name="Unified Scholarship — Master's",
+        provider_name="Unified Provider",
+        source={**opportunity_payload()["source"], "url": "https://example.edu/unified-master"},
+    )
+    hidden = create_opportunity(
+        client,
+        headers,
+        name="Unified Scholarship — PhD",
+        provider_name="Unified Provider",
+        degree_level="phd",
+        source={**opportunity_payload()["source"], "url": "https://example.edu/unified-phd"},
+    )
+    publish_opportunity(client, headers, published)
+
+    response = client.get(f"/api/v1/opportunities/{published['id']}/family")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["variants"]] == [published["id"]]
+    assert hidden["id"] not in {item["id"] for item in response.json()["variants"]}
+
+
+def test_future_imports_normalize_programme_family_identifiers(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    rows = []
+    for suffix, degree in [("— Bachelor's", "bachelors"), ("— Master's 2027/28", "masters")]:
+        rows.append(
+            opportunity_payload(
+                name=f"Future Government Scholarship {suffix}",
+                provider_name="Future Scholarship Authority",
+                degree_level=degree,
+                source={
+                    **opportunity_payload()["source"],
+                    "url": f"https://example.edu/future-{degree}",
+                },
+            )
+        )
+
+    response = client.post(
+        "/api/v1/admin/opportunities/import",
+        json={"source_format": "json", "rows": rows},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["imported_count"] == 2
+    imported_ids = [uuid.UUID(item["opportunity_id"]) for item in response.json()["results"]]
+    family_ids = {
+        db_session.scalar(select(Opportunity.programme_family_id).where(Opportunity.id == item_id))
+        for item_id in imported_ids
+    }
+    assert family_ids == {"future-government-scholarship"}

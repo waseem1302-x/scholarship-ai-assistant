@@ -11,6 +11,7 @@ from pypdf import PdfWriter
 from app.modules.catalogue_ingestion import document_conversion
 from app.modules.catalogue_ingestion.document_conversion import (
     DOCUMENT_CONVERTER_VERSION,
+    LOCAL_PDF_PARSER_VERSION,
     CatalogueDocumentPayloadNormalizer,
     DocumentConversionError,
     DocumentConversionLimits,
@@ -147,6 +148,27 @@ def test_catalogue_normalizer_records_a_successful_ocr_fallback_per_call() -> No
         "document_ocr_reason": "text_insufficient_ocr_succeeded",
     }
     assert worker.calls == [False, True]
+
+
+def test_catalogue_normalizer_keeps_sufficient_pdf_text_local(monkeypatch) -> None:
+    worker = _Worker(["must not be used"])
+    normalizer = CatalogueDocumentPayloadNormalizer(
+        converter=_converter(worker),
+        allow_ocr=True,
+    )
+    local_text = "Local PDF text with sufficient official scholarship evidence."
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.normalize_source_payload",
+        lambda _payload, _content_type: local_text,
+    )
+
+    normalized = normalizer(_pdf(), "application/pdf")
+
+    assert isinstance(normalized, NormalizedSourcePayload)
+    assert normalized.text == local_text
+    assert normalized.parser_version == LOCAL_PDF_PARSER_VERSION
+    assert normalized.conversion_metadata["document_ocr_reason"] == "local_text_sufficient"
+    assert worker.calls == []
 
 
 def test_document_worker_environment_removes_application_configuration_and_forces_offline_models(

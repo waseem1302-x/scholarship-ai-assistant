@@ -77,14 +77,13 @@ class Settings(BaseSettings):
     catalogue_ai_provider: Literal["unavailable", "azure_openai"] = "unavailable"
     catalogue_ai_endpoint: str | None = None
     catalogue_ai_model: str = "unconfigured"
-    catalogue_ai_api_version: str = "2024-10-21"
     catalogue_ai_token_scope: str = "https://cognitiveservices.azure.com/.default"
     catalogue_ai_timeout_seconds: int = Field(default=30, ge=1, le=120)
     catalogue_ai_max_retries: int = Field(default=2, ge=0, le=5)
     catalogue_ai_max_retry_delay_seconds: int = Field(default=60, ge=1, le=300)
     catalogue_ai_max_response_bytes: int = Field(default=1_000_000, ge=10_000, le=5_000_000)
     catalogue_ai_max_candidates_per_run: int = Field(default=500, ge=1, le=5_000)
-    catalogue_ai_max_pages_per_candidate: int = Field(default=3, ge=1, le=10)
+    catalogue_ai_max_pages_per_candidate: int = Field(default=12, ge=1, le=60)
     catalogue_source_max_bytes_per_page: int = Field(default=5_000_000, ge=100_000, le=20_000_000)
     catalogue_ai_max_calls_per_run: int = Field(default=500, ge=0, le=5_000)
     catalogue_ai_max_input_characters: int = Field(default=80_000, ge=1_000, le=500_000)
@@ -144,6 +143,16 @@ class Settings(BaseSettings):
     catalogue_source_routing_enabled: bool = False
     catalogue_scheduled_ingestion_enabled: bool = False
     catalogue_reviewed_official_domains: str = ""
+    catalogue_worker_poll_seconds: int = Field(default=30, ge=5, le=3600)
+    catalogue_worker_health_required: bool = False
+    catalogue_worker_kill_switch_path: str | None = None
+    catalogue_worker_min_free_disk_bytes: int = Field(
+        default=1_073_741_824, ge=10_000_000, le=1_000_000_000_000
+    )
+    # A reviewed local receipt proves that the configured deployment supports
+    # the exact API and strict JSON-schema mode used by the extractor. Preflight
+    # reads this file but never calls the model merely to discover capabilities.
+    catalogue_ai_capability_receipt_path: str | None = None
     catalogue_worker_claim_seconds: int = Field(default=900, ge=30, le=3600)
     catalogue_worker_max_attempts: int = Field(default=3, ge=1, le=20)
     catalogue_worker_retry_base_seconds: int = Field(default=60, ge=1, le=3600)
@@ -424,6 +433,7 @@ class Settings(BaseSettings):
                 or not parsed_catalogue_endpoint.hostname
                 or parsed_catalogue_endpoint.username
                 or parsed_catalogue_endpoint.password
+                or parsed_catalogue_endpoint.path not in {"", "/"}
                 or parsed_catalogue_endpoint.query
                 or parsed_catalogue_endpoint.fragment
             ):

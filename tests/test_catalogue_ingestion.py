@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -17,6 +17,7 @@ from app.modules.catalogue_ingestion.claim_provider import (
     ClaimExtractionResult,
     FakeClaimProvider,
     _azure_schema,
+    _coerce_typed_claim_value,
     _normalize_claim_output,
     _objective_azure_schema,
     _objective_source_text,
@@ -42,6 +43,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueReviewProposal,
     CatalogueSourceArtifact,
     CatalogueSourceRoutingDecision,
+    ExtractionAttemptStatus,
     IngestionInputKind,
     IngestionMode,
     IngestionRunStatus,
@@ -50,6 +52,7 @@ from app.modules.catalogue_ingestion.provider import (
     AzureOpenAIExtractionProvider,
     ExtractionProviderError,
     ExtractionProviderRateLimited,
+    ExtractionProviderTimeout,
     ExtractionSchemaError,
     FakeExtractionProvider,
     azure_structured_output_schema,
@@ -73,6 +76,7 @@ from app.modules.catalogue_ingestion.service import (
     _canonical_identity_name,
     _crawler_child_matches_root,
     _identity_name_matches,
+    _objective_source_authority_rank,
     _routing_authority_tier,
 )
 from app.modules.catalogue_ingestion.sources import OfficialSourceClassifier
@@ -401,9 +405,9 @@ def test_requirements_objective_retains_more_than_twelve_documents() -> None:
 
 
 def test_objective_source_mask_reduces_tokens_without_changing_evidence_offsets() -> None:
-    prefix = "Overview " + ("irrelevant material " * 700)
+    prefix = "Overview " + ("irrelevant material " * 1_600)
     evidence = "Documents to be submitted include an Academic Transcript."
-    source_text = prefix + evidence + (" unrelated appendix" * 700)
+    source_text = prefix + evidence + (" unrelated appendix" * 1_600)
 
     masked = _objective_source_text(source_text, ClaimObjective.DOCUMENTS_CORE)
 
@@ -412,6 +416,305 @@ def test_objective_source_mask_reduces_tokens_without_changing_evidence_offsets(
     assert masked[evidence_start : evidence_start + len(evidence)] == evidence
     assert masked.index(evidence) == evidence_start
     assert len(masked.replace(" ", "")) < len(source_text.replace(" ", ""))
+
+
+def test_claim_output_rebinds_pdf_apostrophe_corruption_to_exact_source() -> None:
+    source_text = (
+        "Regular students enrolled in master\u2019s or professional degree courses: "
+        "144,000 yen per month"
+    )
+    item = claim_output().claims[11].model_copy(deep=True)
+    item.entity_type = ClaimEntityType.FUNDING
+    item.entity_key = "masters_allowance"
+    item.field_path = "component_type"
+    item.value.string_value = "stipend"
+    item.excerpt = source_text.replace("master\u2019s", "master\x02s")
+    item.excerpt_start = 0
+    item.excerpt_end = len(item.excerpt)
+    output = claim_output().model_copy(
+        update={"objective": ClaimObjective.FUNDING, "claims": [item]}
+    )
+
+    normalized = _normalize_claim_output(
+        output,
+        source_text,
+        objective=ClaimObjective.FUNDING,
+    )
+
+    assert normalized.claims[0].excerpt == source_text
+    assert normalized.claims[0].excerpt_start == 0
+    assert normalized.claims[0].excerpt_end == len(source_text)
+
+
+def test_claim_output_repairs_truncated_intake_year_and_amount_citations() -> None:
+    source_text = (
+        "The scholarship is for study beginning in September/October 2027. "
+        "A living allowance of GBP 2,000 per month is provided."
+    )
+    cycle = claim_output().claims[4].model_copy(deep=True)
+    cycle.entity_key = "2027_28"
+    cycle.scope.cycle_key = "2027/28"
+    cycle.excerpt = "study beginning in September/October"
+    cycle.excerpt_start = source_text.index(cycle.excerpt)
+    cycle.excerpt_end = cycle.excerpt_start + len(cycle.excerpt)
+    amount = claim_output().claims[11].model_copy(deep=True)
+    amount.entity_key = "scholarship"
+    amount.field_path = "amount"
+    amount.value = ClaimValue(
+        string_value=None,
+        decimal_value=Decimal("2000"),
+        integer_value=None,
+        boolean_value=None,
+        string_list_value=None,
+    )
+    amount.excerpt = "living allowance"
+    amount.excerpt_start = source_text.index(amount.excerpt)
+    amount.excerpt_end = amount.excerpt_start + len(amount.excerpt)
+
+    identity = _normalize_claim_output(
+        claim_output().model_copy(
+            update={"objective": ClaimObjective.IDENTITY, "claims": [cycle]}
+        ),
+        source_text,
+        objective=ClaimObjective.IDENTITY,
+    )
+    funding = _normalize_claim_output(
+        claim_output().model_copy(
+            update={"objective": ClaimObjective.FUNDING, "claims": [amount]}
+        ),
+        source_text,
+        objective=ClaimObjective.FUNDING,
+    )
+
+    assert "2027" in identity.claims[0].excerpt
+    assert "2,000" in funding.claims[0].excerpt
+    for item in [identity.claims[0], funding.claims[0]]:
+        assert source_text[item.excerpt_start : item.excerpt_end] == item.excerpt
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="8" * 64,
+        normalized_text=source_text,
+        extraction_method="normalized_text",
+        byte_count=len(source_text),
+        character_count=len(source_text),
+    )
+    resolution = resolve_claims([(artifact, 1, identity.claims)])
+    assert resolution.rejected == []
+
+
+def test_claim_output_normalizes_reused_cycle_range_to_start_year() -> None:
+    source_text = "Chinese Government Scholarship Program 2026-27"
+    cycle = claim_output().claims[4].model_copy(deep=True)
+    cycle.entity_key = "cycle_2026_27"
+    cycle.scope.cycle_key = "cycle_2026_27"
+    cycle.value = ClaimValue(
+        string_value="2026-27",
+        decimal_value=None,
+        integer_value=None,
+        boolean_value=None,
+        string_list_value=None,
+    )
+    cycle.excerpt = source_text
+    cycle.excerpt_start = 0
+    cycle.excerpt_end = len(source_text)
+
+    normalized = _normalize_claim_output(
+        claim_output().model_copy(
+            update={"objective": ClaimObjective.IDENTITY, "claims": [cycle]}
+        ),
+        source_text,
+        objective=ClaimObjective.IDENTITY,
+    )
+
+    assert normalized.claims[0].value.primitive() == 2026
+
+
+def test_document_requirement_text_is_normalized_to_boolean() -> None:
+    source_text = "Passport is required. A portfolio is optional if applicable."
+    required = claim_output().claims[12].model_copy(deep=True)
+    required.field_path = "required"
+    required.value = ClaimValue(
+        string_value="Passport is required",
+        decimal_value=None,
+        integer_value=None,
+        boolean_value=None,
+        string_list_value=None,
+    )
+    required.excerpt = "Passport is required"
+    required.excerpt_start = source_text.index(required.excerpt)
+    required.excerpt_end = required.excerpt_start + len(required.excerpt)
+    optional = required.model_copy(deep=True)
+    optional.entity_key = "portfolio"
+    optional.value.string_value = "A portfolio is optional if applicable"
+    optional.excerpt = "A portfolio is optional if applicable"
+    optional.excerpt_start = source_text.index(optional.excerpt)
+    optional.excerpt_end = optional.excerpt_start + len(optional.excerpt)
+
+    normalized = _normalize_claim_output(
+        claim_output().model_copy(
+            update={
+                "objective": ClaimObjective.DOCUMENTS_REQUIREMENTS,
+                "claims": [required, optional],
+            }
+        ),
+        source_text,
+        objective=ClaimObjective.DOCUMENTS_REQUIREMENTS,
+    )
+
+    assert [item.value.primitive() for item in normalized.claims] == [True, False]
+
+
+def test_claim_output_splits_reused_generic_funding_key() -> None:
+    first = claim_output().claims[11].model_copy(deep=True)
+    first.entity_key = "scholarship"
+    first.field_path = "component_type"
+    first.value.string_value = "tuition"
+    second = first.model_copy(deep=True)
+    second.value.string_value = "stipend"
+    output = claim_output().model_copy(
+        update={"objective": ClaimObjective.FUNDING, "claims": [first, second]}
+    )
+
+    normalized = _normalize_claim_output(output, MEXT_TEXT, objective=ClaimObjective.FUNDING)
+
+    assert len({item.entity_key for item in normalized.claims}) == 2
+
+
+def test_claim_output_keeps_fields_for_each_funding_component_together() -> None:
+    source_text = (
+        "Tuition fees are fully funded. "
+        "A monthly stipend is provided as financial support."
+    )
+    template = claim_output().claims[11].model_copy(deep=True)
+
+    def funding_claim(field_path: str, value: str, excerpt: str):
+        item = template.model_copy(deep=True)
+        item.entity_key = "funding"
+        item.field_path = field_path
+        item.value.string_value = value
+        item.excerpt = excerpt
+        item.excerpt_start = source_text.index(excerpt)
+        item.excerpt_end = item.excerpt_start + len(excerpt)
+        return item
+
+    tuition = "Tuition fees are fully funded."
+    stipend = "A monthly stipend is provided as financial support."
+    output = claim_output().model_copy(
+        update={
+            "objective": ClaimObjective.FUNDING,
+            "claims": [
+                funding_claim("component_type", "tuition", tuition),
+                funding_claim("coverage_status", "fully_funded", tuition),
+                funding_claim("description", tuition, tuition),
+                funding_claim("component_type", "stipend", stipend),
+                funding_claim("coverage_status", "provided", stipend),
+                funding_claim("description", stipend, stipend),
+            ],
+        }
+    )
+
+    normalized = _normalize_claim_output(
+        output,
+        source_text,
+        objective=ClaimObjective.FUNDING,
+    )
+
+    keys_by_excerpt = {
+        excerpt: {item.entity_key for item in normalized.claims if item.excerpt == excerpt}
+        for excerpt in (tuition, stipend)
+    }
+    assert all(len(keys) == 1 for keys in keys_by_excerpt.values())
+    assert keys_by_excerpt[tuition] != keys_by_excerpt[stipend]
+
+
+def test_application_timeline_normalizes_date_text_and_completes_deadline_type() -> None:
+    source_text = "The application form deadline varies according to each embassy."
+    item = claim_output().claims[14].model_copy(deep=True)
+    item.entity_key = "embassy_deadline"
+    item.field_path = "date_text"
+    item.value.string_value = "Varies according to each embassy"
+    item.excerpt = source_text
+    item.excerpt_start = 0
+    item.excerpt_end = len(source_text)
+    output = claim_output().model_copy(
+        update={"objective": ClaimObjective.APPLICATION_TIMELINE, "claims": [item]}
+    )
+
+    normalized = _normalize_claim_output(
+        output,
+        source_text,
+        objective=ClaimObjective.APPLICATION_TIMELINE,
+    )
+
+    fields = {claim.field_path: claim for claim in normalized.claims}
+    assert set(fields) == {"deadline_text", "deadline_type"}
+    assert fields["deadline_type"].value.primitive() == "application_submission"
+    assert all(
+        source_text[claim.excerpt_start : claim.excerpt_end] == claim.excerpt
+        for claim in normalized.claims
+    )
+
+
+def test_application_timeline_converts_exam_date_to_event() -> None:
+    source_text = "The CSCA examination date will be announced by the testing agency."
+    item = claim_output().claims[14].model_copy(deep=True)
+    item.entity_key = "csca_exam"
+    item.field_path = "deadline_text"
+    item.value.string_value = "To be announced"
+    item.excerpt = source_text
+    item.excerpt_start = 0
+    item.excerpt_end = len(source_text)
+    event_type = item.model_copy(deep=True)
+    event_type.field_path = "deadline_type"
+    event_type.value.string_value = "application_submission"
+
+    normalized = _normalize_claim_output(
+        claim_output().model_copy(
+            update={
+                "objective": ClaimObjective.APPLICATION_TIMELINE,
+                "claims": [item, event_type],
+            }
+        ),
+        source_text,
+        objective=ClaimObjective.APPLICATION_TIMELINE,
+    )
+
+    assert len(normalized.claims) == 2
+    assert all(claim.entity_type is ClaimEntityType.EVENT for claim in normalized.claims)
+    assert {claim.field_path for claim in normalized.claims} == {"date_text", "event_type"}
+    assert next(
+        claim.value.primitive()
+        for claim in normalized.claims
+        if claim.field_path == "event_type"
+    ) == "assessment"
+
+
+def test_eligibility_rule_uses_exact_requirement_as_missing_value() -> None:
+    source_text = "Applicants must have the nationality of an eligible country."
+    item = claim_output().claims[18].model_copy(deep=True)
+    item.entity_key = "nationality"
+    item.field_path = "rule_type"
+    item.value.string_value = "nationality"
+    item.excerpt = source_text
+    item.excerpt_start = 0
+    item.excerpt_end = len(source_text)
+    output = claim_output().model_copy(
+        update={"objective": ClaimObjective.ELIGIBILITY, "claims": [item]}
+    )
+
+    normalized = _normalize_claim_output(
+        output,
+        source_text,
+        objective=ClaimObjective.ELIGIBILITY,
+    )
+
+    fields = {claim.field_path: claim for claim in normalized.claims}
+    assert set(fields) == {"rule_type", "value"}
+    assert fields["value"].value.primitive() == source_text
+    assert fields["value"].basis == "normalized"
 
 
 def extraction_output(
@@ -654,6 +957,144 @@ def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_
     assert artifact.content_hash == hashlib.sha256(MEXT_TEXT.encode()).hexdigest()
 
 
+def test_failed_extraction_version_is_replaced_by_its_successful_retry(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert candidate is not None
+    source = candidate.sources[0]
+    version = {
+        "candidate_id": candidate.id,
+        "source_id": source.id,
+        "provider": "fake_claims",
+        "model": "retry-model",
+        "schema_version": "catalogue-claims.v3.eligibility",
+        "content_hash": "a" * 64,
+        "prompt_hash": "b" * 64,
+    }
+    service.repository.save_extraction_attempt(
+        CatalogueExtractionAttempt(
+            **version,
+            status=ExtractionAttemptStatus.PROVIDER_FAILED,
+            error_code="ai_provider_timeout",
+        )
+    )
+    db_session.commit()
+
+    service.repository.save_extraction_attempt(
+        CatalogueExtractionAttempt(
+            **version,
+            status=ExtractionAttemptStatus.SUCCEEDED,
+            output_json={"objective": "eligibility"},
+            input_tokens=100,
+            output_tokens=50,
+            estimated_cost=Decimal("0.001"),
+            latency_ms=200,
+        )
+    )
+    db_session.commit()
+
+    attempts = list(
+        db_session.scalars(
+            select(CatalogueExtractionAttempt).where(
+                CatalogueExtractionAttempt.candidate_id == candidate.id
+            )
+        )
+    )
+    assert len(attempts) == 1
+    assert attempts[0].status is ExtractionAttemptStatus.SUCCEEDED
+    assert attempts[0].error_code is None
+    assert attempts[0].output_json == {"objective": "eligibility"}
+    assert attempts[0].input_tokens == 100
+
+
+def test_direct_url_run_response_exposes_persisted_budget_ceilings(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_ai_max_pages_per_candidate=3,
+            catalogue_ai_max_calls_per_run=8,
+            catalogue_ai_max_input_characters=12_345,
+            catalogue_ai_max_output_tokens=512,
+            catalogue_ai_max_estimated_cost_per_run=Decimal("1.00"),
+        ),
+    )
+
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.CANDIDATE_ONLY,
+        dry_run=True,
+    )
+
+    assert run.max_candidates == 1
+    assert run.max_pages_per_candidate == 3
+    assert run.max_model_calls == 8
+    assert run.max_input_characters == 12_345
+    assert run.max_output_tokens == 512
+    assert run.max_estimated_cost == Decimal("1.000000")
+
+
+def test_candidate_flush_failure_rolls_back_and_moves_candidate_to_review(
+    db_session, monkeypatch
+) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.CANDIDATE_ONLY,
+        dry_run=True,
+    )
+    failed_once = False
+    flush_failure_armed = False
+
+    def fail_one_flush(session, flush_context, instances) -> None:
+        nonlocal failed_once
+        del session, flush_context, instances
+        if flush_failure_armed and not failed_once:
+            failed_once = True
+            raise RuntimeError("simulated database flush failure")
+
+    def trigger_flush(current_run, candidate) -> None:
+        nonlocal flush_failure_armed
+        del current_run
+        flush_failure_armed = True
+        candidate.failure_reason = "force dirty state"
+        db_session.flush()
+
+    event.listen(db_session, "before_flush", fail_one_flush)
+    monkeypatch.setattr(service, "_process_candidate", trigger_flush)
+    try:
+        result = service.process_run(run.id, worker_id="flush-recovery", batch_size=1)
+    finally:
+        event.remove(db_session, "before_flush", fail_one_flush)
+
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert result.status is IngestionRunStatus.COMPLETED
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.NEEDS_REVIEW
+    assert candidate.failure_code == "unexpected_pipeline_failure"
+    assert candidate.failure_reason == "RuntimeError"
+    assert candidate.claimed_by is None
+    assert candidate.claimed_until is None
+
+
 def test_operator_run_status_exposes_safe_lineage_without_source_content_or_lease_token(
     db_session,
 ) -> None:
@@ -823,6 +1264,14 @@ def test_candidate_review_projection_cites_exact_blocks_and_preserves_audit_hist
     assert scholarship_name.value["string_value"] == "MEXT Scholarship"
     assert scholarship_name.scope.cycle_key == "intake_2027"
     assert scholarship_name.authority_tier == "T0"
+    assert scholarship_name.source_title == "Official source — scholarships.gov.uk"
+    assert scholarship_name.source_checked_at is not None
+    assert scholarship_name.extraction is not None
+    assert scholarship_name.extraction.objective == "identity"
+    assert scholarship_name.extraction.schema_version.startswith("catalogue-claims.v3")
+    assert scholarship_name.extraction.prompt_hash
+    assert scholarship_name.extraction.provider == "fake_claims"
+    assert scholarship_name.extraction.model == "fake-catalogue-claims-v2"
     assert scholarship_name.evidence.text == MEXT_TEXT
     assert scholarship_name.evidence.start_offset == 0
     assert scholarship_name.evidence.end_offset == len(MEXT_TEXT)
@@ -830,12 +1279,59 @@ def test_candidate_review_projection_cites_exact_blocks_and_preserves_audit_hist
     assert projection.conflicts == []
     assert projection.rejected_claims == []
     assert projection.missing_mandatory_objectives == []
+    assert set(projection.objective_coverage) == {item.value for item in ClaimObjective}
+    assert set(projection.objective_coverage.values()) == {"complete"}
+    assert projection.readiness.ready is True
+    assert projection.readiness.supported_mandatory_count == len(ClaimObjective)
+    assert projection.readiness.mandatory_count == len(ClaimObjective)
+    assert projection.readiness.blockers == []
+    assert projection.readiness.source_freshness == "fresh"
+    assert all(item.startswith("acquisition_gap:") for item in projection.warnings)
+    assert projection.acquisition_bundle["complete"] is False
+    assert projection.acquisition_bundle["reviewable"] is True
+    assert projection.sources[0].title == "Official source — scholarships.gov.uk"
+    assert projection.sources[0].checked_at is not None
+    assert projection.sources[0].artifacts
+    assert projection.sources[0].routing == []
+    assert len(projection.extraction_attempts) == len(ClaimObjective)
+    assert projection.duplicate_opportunity_ids == []
     assert projection.audit_history[0].action == "catalogue_candidate_hold_for_review"
     assert projection.audit_history[0].actor_user_id == reviewer_id
     assert projection.audit_history[0].reason == "Verify the delegated university deadline."
 
 
-def test_source_routing_blocks_ambiguous_artifact_without_model_calls(db_session) -> None:
+def test_candidate_review_projection_explains_acquisition_only_blockers(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.CANDIDATE_ONLY,
+        dry_run=True,
+    )
+    service.process_run(run.id, worker_id="acquisition-only-review")
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert candidate is not None
+
+    projection = service.candidate_review_projection(candidate.id)
+
+    assert projection.proposed_facts == []
+    assert projection.readiness.ready is False
+    assert projection.readiness.supported_mandatory_count == 0
+    assert projection.readiness.source_freshness == "fresh"
+    assert {"extraction_not_available", "candidate_only_complete"} <= set(
+        projection.readiness.blockers
+    )
+    assert projection.sources[0].artifacts
+    assert projection.extraction_attempts == []
+
+
+def test_source_routing_processes_multi_topic_artifact_without_blocking(db_session) -> None:
     ambiguous_text = """
     Official scholarship funding stipend details.
     Required documents checklist and application form.
@@ -860,18 +1356,112 @@ def test_source_routing_blocks_ambiguous_artifact_without_model_calls(db_session
     )
     decision = db_session.scalar(select(CatalogueSourceRoutingDecision))
     assert candidate is not None
-    assert candidate.status is CandidateStatus.NEEDS_REVIEW
-    assert candidate.failure_code is not None
-    assert candidate.failure_code.startswith("source_routing_manual_review:")
-    assert extractor.calls == 0
+    assert candidate.status is CandidateStatus.VALIDATION_FAILED
+    assert extractor.calls == 5
     assert decision is not None
-    assert decision.role == "unknown"
-    assert decision.requires_manual_review is True
-    assert decision.ambiguity_reason == "conflicting_role_signals"
-    assert decision.applicable_objectives == []
+    assert decision.role == "funding"
+    assert decision.requires_manual_review is False
+    assert decision.ambiguity_reason == "multiple_supported_content_roles"
+    assert set(decision.applicable_objectives) == {
+        "funding",
+        "documents_core",
+        "documents_requirements",
+        "documents_counts",
+        "documents_format",
+    }
 
 
-def test_source_routing_only_retries_objectives_left_unresolved_in_bundle(db_session) -> None:
+def test_claim_pipeline_continues_after_one_objective_provider_failure(db_session) -> None:
+    delegate = FakeClaimProvider(claim_output())
+
+    class FailEligibility:
+        name = delegate.name
+        model = delegate.model
+
+        def __init__(self) -> None:
+            self.objectives: list[ClaimObjective] = []
+
+        def extract_claims(self, **kwargs):
+            objective = kwargs["objective"]
+            self.objectives.append(objective)
+            if objective is ClaimObjective.ELIGIBILITY:
+                raise ExtractionProviderTimeout("test timeout")
+            return delegate.extract_claims(**kwargs)
+
+    provider = FailEligibility()
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=provider,
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+
+    result = service.process_run(run.id, worker_id="continue-after-objective-failure")
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+
+    assert result.model_calls == len(ClaimObjective) + 1
+    assert provider.objectives[-1] is ClaimObjective.APPLICATION_TIMELINE
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.VALIDATION_FAILED
+    assert candidate.failure_code == "objective_extraction_incomplete"
+    assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == len(
+        ClaimObjective
+    )
+
+
+def test_claim_pipeline_recovers_from_one_transient_objective_failure(db_session) -> None:
+    delegate = FakeClaimProvider(claim_output())
+
+    class FailFirstEligibilityAttempt:
+        name = delegate.name
+        model = delegate.model
+
+        def __init__(self) -> None:
+            self.eligibility_attempts = 0
+
+        def extract_claims(self, **kwargs):
+            if kwargs["objective"] is ClaimObjective.ELIGIBILITY:
+                self.eligibility_attempts += 1
+                if self.eligibility_attempts == 1:
+                    raise ExtractionProviderTimeout("test transient timeout")
+            return delegate.extract_claims(**kwargs)
+
+    provider = FailFirstEligibilityAttempt()
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(catalogue_ai_max_calls_per_run=len(ClaimObjective) + 1),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=provider,
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+
+    result = service.process_run(run.id, worker_id="transient-objective-retry")
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+
+    assert result.model_calls == len(ClaimObjective) + 1
+    assert provider.eligibility_attempts == 2
+    assert candidate is not None
+    assert candidate.failure_code is None
+    assert not any(
+        item.startswith("incomplete_objective:eligibility")
+        for item in candidate.validation_errors
+    )
+
+
+def test_source_routing_extracts_each_relevant_official_source_in_bundle(db_session) -> None:
     supporting_url = "https://scholarships.gov.uk/funding-details"
     source_texts = {
         OFFICIAL_URL: "MEXT Scholarship funding stipend details. Tuition is covered.",
@@ -899,15 +1489,15 @@ def test_source_routing_only_retries_objectives_left_unresolved_in_bundle(db_ses
     decisions = db_session.scalars(
         select(CatalogueSourceRoutingDecision).order_by(CatalogueSourceRoutingDecision.role)
     ).all()
-    assert result.model_calls == 1
-    assert extractor.calls == 1
-    assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == 1
+    assert result.model_calls == 2
+    assert extractor.calls == 2
+    assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == 2
     assert len(decisions) == 2
     assert all(item.role == "funding" for item in decisions)
     assert all(item.applicable_objectives == [ClaimObjective.FUNDING.value] for item in decisions)
 
 
-def test_source_routing_blocks_current_and_historical_cycle_merge(db_session) -> None:
+def test_source_routing_skips_historical_source_instead_of_merging_cycles(db_session) -> None:
     current_year = date.today().year
     supporting_url = "https://scholarships.gov.uk/funding-history"
     source_texts = {
@@ -938,12 +1528,23 @@ def test_source_routing_blocks_current_and_historical_cycle_merge(db_session) ->
     )
     decisions = db_session.scalars(select(CatalogueSourceRoutingDecision)).all()
     assert candidate is not None
-    assert candidate.status is CandidateStatus.NEEDS_REVIEW
-    assert candidate.failure_code is not None
-    assert candidate.failure_code.startswith("source_routing_cycle_conflict:")
-    assert candidate.proposed_payload is None
+    assert candidate.status is CandidateStatus.VALIDATION_FAILED
+    assert candidate.proposed_payload is not None
+    assert any(
+        warning.startswith("source_routing_cycle_skipped:")
+        for warning in candidate.proposed_payload["warnings"]
+    )
     assert extractor.calls == 1
     assert {item.cycle for item in decisions} == {"current", "historical"}
+
+
+def test_specialist_source_has_higher_authority_for_its_objective() -> None:
+    assert _objective_source_authority_rank("funding", ClaimObjective.FUNDING) == 0
+    assert (
+        _objective_source_authority_rank("current_cycle_guideline", ClaimObjective.FUNDING)
+        == 1
+    )
+    assert _objective_source_authority_rank("application_route", ClaimObjective.FUNDING) == 2
 
 
 def test_catalogue_source_byte_limit_is_independent_from_model_text_limit(db_session) -> None:
@@ -1053,7 +1654,9 @@ def test_direct_source_bundle_stages_expanded_claims_from_three_explicit_sources
         return outputs[source_url]
 
     extractor = FakeClaimProvider(extract)
-    fetcher = MappingFetcher({item: MEXT_TEXT for item in outputs})
+    fetcher = MappingFetcher(
+        {item: f"{MEXT_TEXT}\nSource route: {item}" for item in outputs}
+    )
     service = CatalogueIngestionService(
         db_session,
         enabled_settings(catalogue_ai_max_pages_per_candidate=3),
@@ -1262,6 +1865,11 @@ def test_retry_clears_stale_direct_url_review_state(db_session) -> None:
     assert retried.validation_errors == []
     assert retried.duplicate_opportunity_ids == []
     assert retried.proposed_payload is None
+    persisted_run = db_session.get(CatalogueIngestionRun, run.id)
+    assert persisted_run is not None
+    assert persisted_run.status is IngestionRunStatus.PENDING
+    assert persisted_run.checkpoint_cursor == 0
+    assert persisted_run.completed_at is None
 
 
 def test_expanded_direct_url_stays_in_cited_staging_until_graph_support_exists(
@@ -1357,6 +1965,30 @@ def test_claim_resolution_rejects_bad_offsets_and_same_tier_conflicts() -> None:
     assert "scholarship:scholarship:name:same_tier_conflict" in resolution.conflicts
     assert any(item.endswith("evidence_span_invalid") for item in resolution.rejected)
     assert resolution.is_materializable is False
+
+
+def test_quarantined_optional_claim_does_not_block_an_exact_complete_resolution() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="f" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    claims = claim_output().claims
+    invalid_duplicate = claims[-1].model_copy(deep=True)
+    invalid_duplicate.excerpt_start += 1
+
+    resolution = resolve_claims([(artifact, 1, [*claims, invalid_duplicate])])
+
+    assert resolution.rejected
+    assert resolution.conflicts == []
+    assert resolution.completeness_errors == []
+    assert resolution.is_materializable is True
 
 
 def test_claim_resolution_fails_closed_when_one_entity_key_spans_routes() -> None:
@@ -1492,6 +2124,50 @@ def test_claim_resolution_canonicalizes_same_year_cycle_aliases() -> None:
     assert {item.claim.scope.cycle_key for item in resolution.resolved} == {"intake_2027"}
 
 
+def test_claim_resolution_canonicalizes_cycle_scope_and_programme_key_aliases() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="9" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    cycle = claim_output().claims[4].model_copy(deep=True)
+    core_name = claim_output().claims[16].model_copy(deep=True)
+    core_degrees = claim_output().claims[17].model_copy(deep=True)
+    detail = core_name.model_copy(deep=True)
+    detail.entity_key = "research_programme"
+    detail.field_path = "description"
+    detail.value.string_value = "Research Students"
+    detail.scope.programme_key = "research_programme"
+    scoped_funding = claim_output().claims[11].model_copy(deep=True)
+    scoped_funding.scope.cycle_key = "2027_2028"
+    scoped_funding.scope.programme_key = "research_programme"
+
+    resolution = resolve_claims(
+        [(artifact, 1, [cycle, core_name, core_degrees, detail, scoped_funding])]
+    )
+
+    programme_claims = [
+        item.claim
+        for item in resolution.resolved
+        if item.claim.entity_type is ClaimEntityType.PROGRAMME
+    ]
+    assert {item.entity_key for item in programme_claims} == {"research_students"}
+    assert scoped_funding.scope.cycle_key == "2027_2028"
+    resolved_funding = next(
+        item.claim
+        for item in resolution.resolved
+        if item.claim.entity_type is ClaimEntityType.FUNDING
+    )
+    assert resolved_funding.scope.cycle_key == "intake_2027"
+    assert resolved_funding.scope.programme_key == "research_students"
+
+
 def test_claim_resolution_rejects_a_route_inferred_from_generic_university_text() -> None:
     text = f"{MEXT_TEXT} Study at Japanese universities."
     artifact = CatalogueSourceArtifact(
@@ -1557,9 +2233,32 @@ def test_claim_resolution_separates_events_and_validates_resource_links() -> Non
     invented_resource = valid_resource.model_copy(deep=True)
     invented_resource.entity_key = "invented_form"
     invented_resource.value.string_value = "https://scholarships.gov.uk/forms/invented.pdf"
+    plain_text_resource = valid_resource.model_copy(deep=True)
+    plain_text_resource.entity_key = "plain_text_portal"
+    plain_text_resource.value.string_value = "https://apply.scholarships.gov.uk"
+    plain_text_resource.excerpt = "Apply at https://apply.scholarships.gov.uk"
+    text += " Apply at https://apply.scholarships.gov.uk"
+    plain_text_resource.excerpt_start = text.index(plain_text_resource.excerpt)
+    plain_text_resource.excerpt_end = (
+        plain_text_resource.excerpt_start + len(plain_text_resource.excerpt)
+    )
+    artifact.normalized_text = text
+    artifact.character_count = len(text)
 
     resolution = resolve_claims(
-        [(artifact, 1, [arrival_deadline, arrival_event, valid_resource, invented_resource])]
+        [
+            (
+                artifact,
+                1,
+                [
+                    arrival_deadline,
+                    arrival_event,
+                    valid_resource,
+                    invented_resource,
+                    plain_text_resource,
+                ],
+            )
+        ]
     )
 
     assert any(item.endswith("non_deadline_event_misclassified") for item in resolution.rejected)
@@ -1570,6 +2269,117 @@ def test_claim_resolution_separates_events_and_validates_resource_links() -> Non
     }
     assert (ClaimEntityType.EVENT, "arrival", "date_text") in accepted
     assert (ClaimEntityType.RESOURCE, "application_form", "url") in accepted
+    assert (ClaimEntityType.RESOURCE, "plain_text_portal", "url") in accepted
+
+
+def test_claim_resolution_quarantines_semantically_misclassified_details() -> None:
+    text = (
+        "Seventy-five scholarship seats are available. "
+        "The physical examination form is valid for six months. "
+        "Applicants for the general scholar programme must hold HSK level 3. "
+        "The passport must be valid until March 2027. "
+        "The application deadline is 5 January 2027."
+    )
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="3" * 64,
+        normalized_text=text,
+        extraction_method="normalized_text",
+        byte_count=len(text),
+        character_count=len(text),
+    )
+    template = claim_output().claims[11].model_copy(deep=True)
+
+    def typed_claim(
+        entity_type: ClaimEntityType,
+        entity_key: str,
+        field_path: str,
+        value: str | Decimal,
+        excerpt: str,
+    ):
+        item = template.model_copy(deep=True)
+        item.entity_type = entity_type
+        item.entity_key = entity_key
+        item.field_path = field_path
+        item.value = ClaimValue(
+            string_value=value if isinstance(value, str) else None,
+            decimal_value=value if isinstance(value, Decimal) else None,
+            integer_value=None,
+            boolean_value=None,
+            string_list_value=None,
+        )
+        item.excerpt = excerpt
+        item.excerpt_start = text.index(excerpt)
+        item.excerpt_end = item.excerpt_start + len(excerpt)
+        return item
+
+    claims = [
+        typed_claim(
+            ClaimEntityType.FUNDING,
+            "award",
+            "amount",
+            Decimal("75"),
+            "Seventy-five scholarship seats are available.",
+        ),
+        typed_claim(
+            ClaimEntityType.PROGRAMME,
+            "senior_scholar",
+            "duration",
+            "six months",
+            "The physical examination form is valid for six months.",
+        ),
+        typed_claim(
+            ClaimEntityType.EVENT,
+            "physical_examination_validity",
+            "date_text",
+            "six months",
+            "The physical examination form is valid for six months.",
+        ),
+        typed_claim(
+            ClaimEntityType.PROGRAMME,
+            "general_scholar",
+            "fields_of_study",
+            "HSK level 3",
+            "Applicants for the general scholar programme must hold HSK level 3.",
+        ),
+        typed_claim(
+            ClaimEntityType.DEADLINE,
+            "passport_validity",
+            "deadline_text",
+            "March 2027",
+            "The passport must be valid until March 2027.",
+        ),
+        typed_claim(
+            ClaimEntityType.DEADLINE,
+            "application_deadline",
+            "deadline_text",
+            "5 January 2027",
+            "The application deadline is 5 January 2027.",
+        ),
+    ]
+
+    resolution = resolve_claims([(artifact, 1, claims)])
+
+    assert any(item.endswith("amount:funding_context_missing") for item in resolution.rejected)
+    assert any(
+        item.endswith("duration:programme_duration_context_mismatch")
+        for item in resolution.rejected
+    )
+    assert any(
+        item.endswith("fields_of_study:programme_field_context_mismatch")
+        for item in resolution.rejected
+    )
+    assert any(item.endswith("date_text:event_evidence_missing") for item in resolution.rejected)
+    assert any(
+        item.endswith("deadline_text:deadline_evidence_missing")
+        for item in resolution.rejected
+    )
+    assert {
+        (item.claim.entity_key, item.claim.field_path) for item in resolution.resolved
+    } == {("application_deadline", "deadline_text")}
 
 
 def test_detail_completeness_requires_degree_mapping_for_every_programme() -> None:
@@ -1609,7 +2419,36 @@ def test_detail_completeness_requires_degree_mapping_for_every_programme() -> No
     assert resolution.is_materializable is False
 
 
-def test_multi_programme_detail_requires_scoped_requirements_for_each_programme() -> None:
+def test_resolution_preserves_additive_degree_levels_sharing_one_citation() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="3" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    masters = claim_output().claims[17].model_copy(deep=True)
+    masters.value.string_list_value = ["masters"]
+    doctoral = masters.model_copy(deep=True)
+    doctoral.value.string_list_value = ["doctoral"]
+
+    resolution = resolve_claims([(artifact, 1, [masters, doctoral])])
+
+    values = {
+        tuple(item.claim.value.primitive())
+        for item in resolution.resolved
+        if item.claim.entity_type is ClaimEntityType.PROGRAMME
+        and item.claim.field_path == "degree_levels"
+    }
+    assert values == {("masters",), ("doctoral",)}
+    assert resolution.conflicts == []
+
+
+def test_multi_programme_detail_allows_general_requirements_to_apply_to_each_programme() -> None:
     artifact = CatalogueSourceArtifact(
         id=uuid.uuid4(),
         source_id=uuid.uuid4(),
@@ -1660,19 +2499,247 @@ def test_multi_programme_detail_requires_scoped_requirements_for_each_programme(
     for programme_key in ("research_students", "undergraduate_students"):
         for entity_type in ("document", "funding", "step"):
             assert (
-                f"missing:programme.{programme_key}.{entity_type}" in resolution.completeness_errors
+                f"missing:programme.{programme_key}.{entity_type}"
+                not in resolution.completeness_errors
             )
     assert "missing:programme.undergraduate_students.eligibility" in (
         resolution.completeness_errors
     )
 
 
-def test_objective_coverage_is_partial_when_any_official_source_is_partial() -> None:
+def test_objective_coverage_is_complete_when_a_specialist_source_completes_it() -> None:
     from app.modules.catalogue_ingestion.claim_schemas import ObjectiveCoverageState
 
+    assert _aggregate_coverage([]) is ObjectiveCoverageState.NOT_STATED
     assert (
         _aggregate_coverage([ObjectiveCoverageState.COMPLETE, ObjectiveCoverageState.PARTIAL])
-        is ObjectiveCoverageState.PARTIAL
+        is ObjectiveCoverageState.COMPLETE
+    )
+
+
+def test_intake_cycle_string_is_coerced_to_start_year() -> None:
+    raw_claim = {
+        "field_path": "intake_year",
+        "value": {
+            "string_value": "2026-27",
+            "decimal_value": None,
+            "integer_value": None,
+            "boolean_value": None,
+            "string_list_value": None,
+        },
+    }
+
+    _coerce_typed_claim_value(raw_claim)
+
+    assert raw_claim["value"]["integer_value"] == 2026
+    assert raw_claim["value"]["string_value"] is None
+
+
+def test_single_degree_string_is_coerced_to_required_list_value() -> None:
+    raw_claim = {
+        "field_path": "degree_levels",
+        "value": {
+            "string_value": "masters",
+            "decimal_value": None,
+            "integer_value": None,
+            "boolean_value": None,
+            "string_list_value": None,
+        },
+    }
+
+    _coerce_typed_claim_value(raw_claim)
+
+    assert raw_claim["value"]["string_list_value"] == ["masters"]
+    assert raw_claim["value"]["string_value"] is None
+
+
+def test_general_funding_is_not_scoped_to_an_unsupported_degree() -> None:
+    funding = claim_output().claims[11].model_copy(deep=True)
+    funding.scope.programme_key = "undergraduate_students"
+    output = claim_output().model_copy(update={"claims": [funding]})
+
+    normalized = _normalize_claim_output(
+        output,
+        MEXT_TEXT,
+        objective=ClaimObjective.FUNDING,
+    )
+
+    assert normalized.claims[0].scope.programme_key is None
+
+
+def test_programme_normalization_infers_non_degree_category_and_duration_unit() -> None:
+    text = "General scholar programs. Categories Major Study (Years) Masters 2-3."
+    template = claim_output().claims[16].model_copy(deep=True)
+    template.entity_key = "general_scholar_programs"
+    template.scope.programme_key = "general_scholar_programs"
+    template.value.string_value = "General scholar programs"
+    template.excerpt = "General scholar programs"
+    template.excerpt_start = text.index(template.excerpt)
+    template.excerpt_end = template.excerpt_start + len(template.excerpt)
+    programmes = _normalize_claim_output(
+        claim_output().model_copy(update={"claims": [template]}),
+        text,
+        objective=ClaimObjective.PROGRAMMES,
+    )
+
+    duration = template.model_copy(deep=True)
+    duration.entity_key = "masters_students"
+    duration.scope.programme_key = "masters_students"
+    duration.field_path = "duration"
+    duration.value.string_value = "2-3"
+    duration.excerpt = "Masters 2-3"
+    duration.excerpt_start = text.index(duration.excerpt)
+    duration.excerpt_end = duration.excerpt_start + len(duration.excerpt)
+    details = _normalize_claim_output(
+        claim_output().model_copy(update={"claims": [duration]}),
+        text,
+        objective=ClaimObjective.PROGRAMME_DETAILS,
+    )
+
+    assert any(
+        item.field_path == "degree_levels"
+        and item.value.string_list_value == ["non_degree"]
+        for item in programmes.claims
+    )
+    assert details.claims[0].value.string_value == "2-3 years"
+
+
+def test_programme_degree_mapping_does_not_include_prerequisite_degree() -> None:
+    programme = claim_output().claims[17].model_copy(deep=True)
+    programme.entity_key = "masters_programs"
+    programme.scope.programme_key = "masters_programs"
+    programme.value.string_list_value = ["bachelors", "masters"]
+
+    normalized = _normalize_claim_output(
+        claim_output().model_copy(update={"claims": [programme]}),
+        MEXT_TEXT,
+        objective=ClaimObjective.PROGRAMMES,
+    )
+
+    assert normalized.claims[0].value.string_list_value == ["masters"]
+
+
+def test_degree_named_programme_alias_maps_to_unique_canonical_programme() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="5" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    template = claim_output().claims
+    canonical_name = template[16].model_copy(deep=True)
+    canonical_name.entity_key = "government_scholarship_program"
+    canonical_name.scope.programme_key = "government_scholarship_program"
+    canonical_degrees = template[17].model_copy(deep=True)
+    canonical_degrees.entity_key = "government_scholarship_program"
+    canonical_degrees.scope.programme_key = "government_scholarship_program"
+    alias_detail = template[16].model_copy(deep=True)
+    alias_detail.entity_key = "masters_students"
+    alias_detail.scope.programme_key = "masters_students"
+    alias_detail.field_path = "description"
+    scoped_eligibility = template[18].model_copy(deep=True)
+    scoped_eligibility.scope.programme_key = "masters_students"
+
+    resolution = resolve_claims(
+        [(artifact, 1, [canonical_name, canonical_degrees, alias_detail, scoped_eligibility])]
+    )
+
+    assert all(
+        item.claim.entity_key != "masters_students"
+        for item in resolution.resolved
+        if item.claim.entity_type is ClaimEntityType.PROGRAMME
+    )
+    assert any(
+        item.claim.scope.programme_key == "government_scholarship_program"
+        for item in resolution.resolved
+        if item.claim.entity_type is ClaimEntityType.ELIGIBILITY
+    )
+
+
+def test_duplicate_programme_keys_for_one_degree_use_best_authoritative_key() -> None:
+    lower_artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="6" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    higher_artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="7" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    template = claim_output().claims
+
+    def programme_pair(entity_key: str) -> list:
+        name = template[16].model_copy(deep=True)
+        name.entity_key = entity_key
+        name.scope.programme_key = entity_key
+        degrees = template[17].model_copy(deep=True)
+        degrees.entity_key = entity_key
+        degrees.scope.programme_key = entity_key
+        degrees.value.string_list_value = ["masters"]
+        return [name, degrees]
+
+    resolution = resolve_claims(
+        [
+            (lower_artifact, 20, programme_pair("masters_programs")),
+            (higher_artifact, 10, programme_pair("masters_students")),
+        ]
+    )
+
+    programme_keys = {
+        item.claim.entity_key
+        for item in resolution.resolved
+        if item.claim.entity_type is ClaimEntityType.PROGRAMME
+    }
+    assert programme_keys == {"masters_students"}
+
+
+def test_scholarship_title_misclassified_as_programme_is_quarantined() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="8" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    scholarship_name = next(
+        item
+        for item in claim_output().claims
+        if item.entity_type is ClaimEntityType.SCHOLARSHIP and item.field_path == "name"
+    ).model_copy(deep=True)
+    umbrella = scholarship_name.model_copy(deep=True)
+    umbrella.entity_type = ClaimEntityType.PROGRAMME
+    umbrella.entity_key = "mext_scholarship"
+
+    resolution = resolve_claims([(artifact, 1, [scholarship_name, umbrella])])
+
+    assert not any(
+        item.claim.entity_type is ClaimEntityType.PROGRAMME for item in resolution.resolved
+    )
+    assert any(
+        item.endswith("name:scholarship_umbrella_misclassified")
+        for item in resolution.rejected
     )
 
 
@@ -1952,15 +3019,17 @@ def test_review_queue_creates_only_existing_domain_draft(db_session, tmp_path) -
     )
     db_session.add(reviewer)
     db_session.commit()
-    OpportunityService(db_session).apply_review_action(
-        opportunity.id,
-        ReviewActionRequest(action=ReviewAction.PUBLISH),
-        reviewed_by=reviewer,
-    )
+    with pytest.raises(AppError, match="Publication readiness failed") as exc_info:
+        OpportunityService(db_session).apply_review_action(
+            opportunity.id,
+            ReviewActionRequest(action=ReviewAction.PUBLISH),
+            reviewed_by=reviewer,
+        )
+    assert exc_info.value.code == "publication_readiness_blocked"
     db_session.refresh(candidate)
     db_session.refresh(opportunity)
-    assert candidate.status is CandidateStatus.PUBLISHED
-    assert opportunity.status is OpportunityStatus.ACTIVE
+    assert candidate.status is CandidateStatus.SUBMITTED_FOR_REVIEW
+    assert opportunity.status is OpportunityStatus.DRAFT
 
 
 def test_seed_and_extracted_identity_mismatch_fails_validation(db_session, tmp_path) -> None:
@@ -2044,6 +3113,122 @@ def test_budget_exhaustion_is_explicit_and_resumeable(db_session, tmp_path) -> N
     assert candidate is not None
     assert candidate.status is CandidateStatus.SOURCE_FETCHED
     assert candidate.claimed_by is None
+
+
+def test_provider_budget_is_persisted_before_io_and_reconciled_afterward(
+    db_session, tmp_path
+) -> None:
+    observed: list[tuple[int, Decimal]] = []
+    run_id: uuid.UUID | None = None
+
+    class InspectingProvider:
+        name = "inspecting"
+        model = "fixture-model"
+
+        def extract(self, *, source_url: str, source_text: str) -> ExtractionResult:
+            del source_url, source_text
+            assert run_id is not None
+            db_session.expire_all()
+            persisted = db_session.get(CatalogueIngestionRun, run_id)
+            assert persisted is not None
+            observed.append((persisted.model_calls, persisted.estimated_cost))
+            return ExtractionResult(
+                output=extraction_output(),
+                usage=ExtractionUsage(
+                    input_tokens=100,
+                    output_tokens=50,
+                    estimated_cost=Decimal("0.002"),
+                    latency_ms=1,
+                ),
+            )
+
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_ai_max_calls_per_run=1,
+            catalogue_ai_max_output_tokens=256,
+            catalogue_ai_max_estimated_cost_per_run=Decimal("0.010"),
+        ),
+        fetcher=FakeFetcher(),
+        extractor=InspectingProvider(),
+    )
+    run = service.create_run_from_source(
+        str(
+            write_seed(
+                tmp_path,
+                [{"name": "Example Scholarship", "possible_official_url": OFFICIAL_URL}],
+            )
+        ),
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    run_id = run.id
+
+    result = service.process_run(run.id, worker_id="atomic-budget", batch_size=1)
+
+    assert len(observed) == 1
+    assert observed[0][0] == 1
+    assert observed[0][1] > 0
+    assert result.model_calls == 1
+    assert result.input_tokens == 100
+    assert result.output_tokens == 50
+    assert result.estimated_cost == Decimal("0.002000")
+
+
+def test_runtime_kill_switch_pauses_between_objectives_and_resumes_from_cache(
+    db_session,
+) -> None:
+    stopped = False
+    armed = True
+    delegate = FakeClaimProvider(claim_output())
+
+    class StoppingProvider:
+        name = delegate.name
+        model = delegate.model
+
+        def extract_claims(self, **kwargs):
+            nonlocal armed, stopped
+            result = delegate.extract_claims(**kwargs)
+            if armed:
+                stopped = True
+                armed = False
+            return result
+
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_ai_max_calls_per_run=len(ClaimObjective),
+            catalogue_ai_max_estimated_cost_per_run=Decimal("1.00"),
+        ),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=StoppingProvider(),
+        kill_switch=lambda: stopped,
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+
+    paused = service.process_run(run.id, worker_id="kill-switch", batch_size=1)
+    attempts_after_pause = db_session.scalar(
+        select(func.count()).select_from(CatalogueExtractionAttempt)
+    )
+
+    assert paused.status is IngestionRunStatus.PENDING
+    assert paused.failure_code == "operator_kill_switch_active"
+    assert paused.model_calls == 1
+    assert attempts_after_pause == 1
+    stopped = False
+
+    resumed = service.process_run(run.id, worker_id="kill-switch-resume", batch_size=1)
+
+    assert resumed.status is IngestionRunStatus.COMPLETED
+    assert resumed.model_calls == len(ClaimObjective)
+    assert delegate.calls == len(ClaimObjective)
+    assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == len(
+        ClaimObjective
+    )
 
 
 def test_actual_cost_overflow_preserves_paid_output_for_resume(db_session, tmp_path) -> None:
@@ -2271,10 +3456,14 @@ def test_cost_and_evaluation_report_fail_closed() -> None:
 
 
 def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
+    import time
+
     output = extraction_output()
     response_body = json.dumps(
         {
-            "choices": [{"message": {"content": output.model_dump_json()}}],
+            "choices": [
+                {"finish_reason": "stop", "message": {"content": output.model_dump_json()}}
+            ],
             "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         }
     ).encode()
@@ -2317,11 +3506,30 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
 
     assert opener.calls == 2
     assert waits == [1]
+    assert opener.request.full_url == (
+        "https://example.openai.azure.com/openai/v1/chat/completions"
+    )
     assert opener.request.get_header("Authorization") == "Bearer entra-token"
     sent = json.loads(opener.request.data)
     assert sent["response_format"]["json_schema"]["strict"] is True
     assert result.output.identity.name == "Example Scholarship"
     assert result.usage.estimated_cost == Decimal("0.000200")
+
+    filtered_body = json.dumps(
+        {
+            "choices": [
+                {
+                    "finish_reason": "content_filter",
+                    "message": {"content": output.model_dump_json()},
+                }
+            ],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 1},
+        }
+    ).encode()
+    with pytest.raises(ExtractionSchemaError, match="did not complete normally") as filtered:
+        provider._parse_response(filtered_body, time.perf_counter())
+
+    assert filtered.value.usage is not None
 
 
 def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_usage() -> None:
@@ -2346,9 +3554,17 @@ def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_us
     assert programme_schema["$defs"]["ClaimObjective"]["enum"] == ["programmes"]
     assert "name" in programme_schema["$defs"]["ExtractedClaim"]["properties"]["field_path"]["enum"]
     provider = AzureOpenAIClaimProvider(enabled_settings(), credential=object())
+    assert provider.request_url == (
+        "https://example.openai.azure.com/openai/v1/chat/completions"
+    )
     response_body = json.dumps(
         {
-            "choices": [{"message": {"content": claim_output().model_dump_json()}}],
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": claim_output().model_dump_json()},
+                }
+            ],
             "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         }
     ).encode()
@@ -2385,7 +3601,9 @@ def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_us
     )
     salvaged_response = json.dumps(
         {
-            "choices": [{"message": {"content": json.dumps(salvageable)}}],
+            "choices": [
+                {"finish_reason": "stop", "message": {"content": json.dumps(salvageable)}}
+            ],
             "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         }
     ).encode()
@@ -2396,7 +3614,7 @@ def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_us
 
     invalid_response = json.dumps(
         {
-            "choices": [{"message": {"content": "{}"}}],
+            "choices": [{"finish_reason": "stop", "message": {"content": "{}"}}],
             "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         }
     ).encode()
@@ -2418,6 +3636,19 @@ def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_us
 
     assert truncated_info.value.code == "ai_output_truncated"
     assert truncated_info.value.usage is not None
+
+    filtered_response = json.dumps(
+        {
+            "choices": [
+                {"finish_reason": "content_filter", "message": {"content": "{}"}}
+            ],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 1},
+        }
+    ).encode()
+    with pytest.raises(ExtractionSchemaError, match="did not complete normally") as filtered:
+        provider._parse(filtered_response, time.perf_counter())
+
+    assert filtered.value.usage is not None
 
 
 def test_azure_provider_does_not_retry_non_retryable_http_errors() -> None:
@@ -3121,6 +4352,7 @@ def test_azure_schema_failure_preserves_usage_for_evaluation_costs() -> None:
         {
             "choices": [
                 {
+                    "finish_reason": "stop",
                     "message": {
                         "content": "{}",
                     }

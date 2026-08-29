@@ -1,5 +1,7 @@
+import gzip
 import hashlib
 import urllib.error
+import urllib.request
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -22,6 +24,7 @@ from app.modules.opportunities.service import OpportunityService
 from app.modules.opportunities.source_monitor import (
     FetchedSource,
     NormalizedSourcePayload,
+    SafeRedirectHandler,
     SafeSourceFetcher,
     SourceFetchError,
     SourceMonitor,
@@ -226,6 +229,14 @@ def test_monitor_normalizes_dynamic_html_before_section_hashing() -> None:
     )
 
 
+def test_html_normalization_decodes_entities_in_programme_tables() -> None:
+    normalized = normalize_evidence_text(
+        b"<table><tr><td>Masters&nbsp;</td><td>2-3</td><td>1-2</td></tr></table>"
+    )
+
+    assert normalized == "Masters 2-3 1-2"
+
+
 def test_safe_fetcher_rejects_authentication_destination(monkeypatch) -> None:
     class Headers:
         def get_content_type(self) -> str:
@@ -318,6 +329,153 @@ def test_safe_fetcher_allows_ordinary_public_redirect(monkeypatch) -> None:
 
     assert result.final_url == ("https://www.example.edu/scholarships/programme")
     assert "Official public scholarship" in (result.normalized_text or "")
+
+
+def test_safe_fetcher_requests_identity_encoding_and_safely_decodes_gzip_html(
+    monkeypatch,
+) -> None:
+    compressed = gzip.compress(
+        b"<html><main>Official scholarship eligibility and funding evidence.</main></html>"
+    )
+
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+        def get(self, name: str, default: str = "") -> str:
+            return "gzip" if name.casefold() == "content-encoding" else default
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/scholarship"
+
+        def read(self, limit: int) -> bytes:
+            assert limit > len(compressed)
+            return compressed
+
+    class Opener:
+        requested_encoding: str | None = None
+
+        def open(self, request, timeout: int):
+            del timeout
+            self.requested_encoding = request.get_header("Accept-encoding")
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url", lambda url: None
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    opener = Opener()
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = opener
+    fetcher._robots["https://example.edu"] = None
+
+    result = fetcher.fetch("https://example.edu/scholarship")
+
+    assert opener.requested_encoding == "identity"
+    assert "Official scholarship eligibility" in (result.normalized_text or "")
+
+
+def test_safe_fetcher_rejects_gzip_that_expands_beyond_the_byte_limit(monkeypatch) -> None:
+    compressed = gzip.compress(b"A" * 2_000)
+
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/plain"
+
+        def get(self, name: str, default: str = "") -> str:
+            return "gzip" if name.casefold() == "content-encoding" else default
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/scholarship"
+
+        def read(self, limit: int) -> bytes:
+            assert limit == 1_001
+            return compressed
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url", lambda url: None
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer", lambda response: None
+    )
+
+    fetcher = SafeSourceFetcher(max_bytes=1_000)
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    with pytest.raises(SourceFetchError, match="source_too_large"):
+        fetcher.fetch("https://example.edu/scholarship")
+
+
+def test_safe_fetcher_rejects_normalized_evidence_containing_nul(monkeypatch) -> None:
+    class Headers:
+        def get_content_type(self) -> str:
+            return "text/html"
+
+    class Response:
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://example.edu/scholarship"
+
+        def read(self, limit: int) -> bytes:
+            del limit
+            return b"Official scholarship funding\x00 and eligibility evidence."
+
+    class Opener:
+        def open(self, request, timeout: int):
+            del request, timeout
+            return Response()
+
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_monitor_url", lambda url: None
+    )
+    monkeypatch.setattr(
+        "app.modules.opportunities.source_monitor.validate_response_peer",
+        lambda response: None,
+    )
+
+    fetcher = SafeSourceFetcher()
+    fetcher.opener = Opener()
+    fetcher._robots["https://example.edu"] = None
+
+    with pytest.raises(
+        SourceFetchError, match="source_payload_contains_unsafe_control_characters"
+    ):
+        fetcher.fetch("https://example.edu/scholarship")
 
 
 def test_safe_fetcher_keeps_per_fetch_normalization_telemetry(monkeypatch) -> None:
@@ -542,6 +700,23 @@ def test_safe_fetcher_treats_robots_4xx_as_unavailable(monkeypatch) -> None:
     fetcher._assert_robots_allowed(target, fetcher.policy_for(target))
 
     assert fetcher._robots["https://example.edu"] is None
+
+
+def test_safe_redirect_treats_explicit_robots_404_destination_as_unavailable() -> None:
+    handler = SafeRedirectHandler()
+    request = urllib.request.Request("https://example.edu/robots.txt")
+
+    with pytest.raises(urllib.error.HTTPError) as captured:
+        handler.redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "https://broken.example.edu/404.html",
+        )
+
+    assert captured.value.code == 404
 
 
 def test_safe_fetcher_fails_closed_for_robots_5xx(monkeypatch) -> None:

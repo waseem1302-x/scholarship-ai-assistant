@@ -23,7 +23,7 @@ _TRACKING_QUERY_KEYS = frozenset(
     }
 )
 _AUTH_PATH_CUES = re.compile(
-    r"(?:^|/)(?:account|auth|captcha|idp|login|logout|session|signin|sign-in|sso)"
+    r"(?:^|/)(?:account|auth|authenticate|captcha|idp|login|logout|session|signin|sign-in|sso)"
     r"(?:[.;/]|$)",
     re.IGNORECASE,
 )

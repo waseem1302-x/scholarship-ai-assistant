@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
+import html
 import io
 import ipaddress
 import re
@@ -186,6 +188,8 @@ LOW_INFORMATION_SOURCE_MARKERS = (
     "javascript is required",
 )
 
+UNSAFE_EVIDENCE_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
 
 def is_low_information_source_text(text: str) -> bool:
     """Detect short browser/loading shells that contain no usable evidence."""
@@ -204,6 +208,14 @@ class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         target = urllib.parse.urljoin(req.full_url, newurl)
         source_url = urllib.parse.urlparse(req.full_url)
         target_url = urllib.parse.urlparse(target)
+        if source_url.path.rstrip("/") == "/robots.txt" and target_url.path.rstrip(
+            "/"
+        ).casefold() in {"/404", "/404.html"}:
+            # Some official sites express a missing robots.txt as a redirect
+            # to their 404 page. Treat that explicit destination exactly like
+            # an HTTP 404 instead of following a potentially broken vanity
+            # hostname and misclassifying the file as a network outage.
+            raise urllib.error.HTTPError(target, 404, "robots.txt unavailable", headers, fp)
         try:
             target_port = target_url.port
         except ValueError as exc:
@@ -242,7 +254,15 @@ class SafeSourceFetcher:
         validate_monitor_url(url)
         policy = self.policy_for(url)
         self._assert_robots_allowed(url, policy)
-        request = urllib.request.Request(url, headers={"User-Agent": policy.user_agent})
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": policy.user_agent,
+                # Evidence normalization expects the bytes described by the
+                # response Content-Type, not an opaque compressed stream.
+                "Accept-Encoding": "identity",
+            },
+        )
         try:
             with self.opener.open(request, timeout=policy.timeout_seconds) as response:
                 final_url = response.geturl()
@@ -250,6 +270,7 @@ class SafeSourceFetcher:
                 validate_response_peer(response)
                 if is_authentication_destination(final_url):
                     raise SourceFetchError("source_authentication_required")
+                content_encoding = _content_encoding(response.headers)
                 content_type = response.headers.get_content_type().casefold()
                 if content_type not in ACCEPTED_CONTENT_TYPES:
                     raise SourceFetchError(f"unsupported_source_content_type: {content_type[:100]}")
@@ -269,6 +290,7 @@ class SafeSourceFetcher:
 
         if len(payload) > policy.max_bytes:
             raise SourceFetchError(f"source_too_large: exceeded {policy.max_bytes} bytes")
+        payload = _decode_content_encoding(payload, content_encoding, policy.max_bytes)
 
         normalized_payload = self.payload_normalizer(payload, content_type)
         if isinstance(normalized_payload, NormalizedSourcePayload):
@@ -283,6 +305,8 @@ class SafeSourceFetcher:
             conversion_metadata = {}
         else:
             raise SourceFetchError("source_payload_normalization_invalid")
+        if UNSAFE_EVIDENCE_CONTROL_CHARACTERS.search(evidence_text):
+            raise SourceFetchError("source_payload_contains_unsafe_control_characters")
         if len(evidence_text) < 20:
             raise SourceFetchError("source_has_no_extractable_evidence")
         if is_low_information_source_text(evidence_text):
@@ -328,11 +352,18 @@ class SafeSourceFetcher:
         origin = f"{parsed.scheme}://{parsed.netloc}"
         if origin not in self._robots:
             robots_url = f"{origin}/robots.txt"
-            request = urllib.request.Request(robots_url, headers={"User-Agent": policy.user_agent})
+            request = urllib.request.Request(
+                robots_url,
+                headers={
+                    "User-Agent": policy.user_agent,
+                    "Accept-Encoding": "identity",
+                },
+            )
             try:
                 with self.opener.open(request, timeout=policy.timeout_seconds) as response:
                     validate_monitor_url(response.geturl())
                     validate_response_peer(response)
+                    content_encoding = _content_encoding(getattr(response, "headers", None))
                     payload = response.read(min(policy.max_bytes, 512_000) + 1)
             except urllib.error.HTTPError as exc:
                 if 400 <= exc.code <= 499:
@@ -350,12 +381,50 @@ class SafeSourceFetcher:
             else:
                 if len(payload) > min(policy.max_bytes, 512_000):
                     raise SourceFetchError("robots_file_too_large")
+                payload = _decode_content_encoding(
+                    payload,
+                    content_encoding,
+                    min(policy.max_bytes, 512_000),
+                    too_large_code="robots_file_too_large",
+                )
                 robots = urllib.robotparser.RobotFileParser(robots_url)
                 robots.parse(payload.decode("utf-8", errors="ignore").splitlines())
                 self._robots[origin] = robots
         robots = self._robots[origin]
         if robots is not None and not robots.can_fetch(policy.user_agent, url):
             raise SourceFetchError("robots_disallowed")
+
+
+def _content_encoding(headers: object) -> str:
+    """Return a narrowly supported HTTP content encoding."""
+    get_header = getattr(headers, "get", None)
+    raw_encoding = get_header("Content-Encoding", "") if callable(get_header) else ""
+    encoding = str(raw_encoding or "").strip().casefold()
+    if encoding not in {"", "identity", "gzip"}:
+        raise SourceFetchError(f"unsupported_source_content_encoding: {encoding[:100]}")
+    return encoding
+
+
+def _decode_content_encoding(
+    payload: bytes,
+    encoding: str,
+    max_bytes: int,
+    *,
+    too_large_code: str | None = None,
+) -> bytes:
+    """Decode a gzip response with a strict expanded-size ceiling."""
+
+    if encoding in {"", "identity"}:
+        return payload
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(payload)) as stream:
+            decoded = stream.read(max_bytes + 1)
+    except (EOFError, OSError) as exc:
+        raise SourceFetchError("invalid_source_content_encoding: gzip") from exc
+    if len(decoded) > max_bytes:
+        code = too_large_code or f"source_too_large: exceeded {max_bytes} bytes"
+        raise SourceFetchError(code)
+    return decoded
 
 
 class SourceMonitor:
@@ -634,6 +703,10 @@ def normalize_evidence_text(payload: bytes) -> str:
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
+    # Some public-sector CMS pages double-encode non-breaking spaces (for
+    # example ``Masters&nbsp; 2-3``). Decode entities before removing tags so
+    # table rows remain readable and exact evidence spans can be rebound.
+    text = html.unescape(text)
     text = re.sub(r"<(h[1-6]|p|li|dt|dd|section|article|div)\b[^>]*>", "\n", text)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", " ", text)

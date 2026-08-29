@@ -10,6 +10,7 @@ from app.db.session import SystemSessionLocal
 from app.modules.catalogue_ingestion.models import IngestionMode, IngestionRunStatus
 from app.modules.catalogue_ingestion.schemas import IngestionRunResponse
 from app.modules.catalogue_ingestion.service import CatalogueIngestionService, RunBudgetExhausted
+from app.modules.catalogue_ingestion.worker_safety import kill_switch_active
 from app.modules.operations.service import OperationalJobService
 
 
@@ -72,7 +73,13 @@ def main(argv: list[str] | None = None) -> None:
     with SystemSessionLocal() as session:
         health = OperationalJobService(session)
         health.started("catalogue_ingestion")
-        service = CatalogueIngestionService(session, settings)
+        service = CatalogueIngestionService(
+            session,
+            settings,
+            kill_switch=lambda: kill_switch_active(
+                settings.catalogue_worker_kill_switch_path
+            ),
+        )
         try:
             if args.resume:
                 run_id = args.resume

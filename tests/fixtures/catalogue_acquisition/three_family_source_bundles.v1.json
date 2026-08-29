@@ -1,0 +1,54 @@
+{
+  "fixture_version": "synthetic-official-source-bundles.v1",
+  "notice": "Synthetic minimal text; no redistributed official source content.",
+  "families": [
+    {
+      "id": "csc-route",
+      "name": "Synthetic CSC University Route",
+      "provider": "Synthetic CSC Council",
+      "country_code": "CN",
+      "programme": "Synthetic CSC Graduate Course",
+      "root_url": "https://csc-fixture.test/overview",
+      "pages": [
+        ["overview", "Synthetic CSC University Route is awarded by Synthetic CSC Council for study in CN. The 2027 intake offers the Synthetic CSC Graduate Course at masters level. Official scholarship overview."],
+        ["funding", "Funding benefits: tuition is fully covered and a monthly stipend is provided."],
+        ["eligibility", "Eligibility: applicants must hold a bachelor's degree as an academic requirement."],
+        ["dates", "Application deadline 2027-05-15. Submit the application before the deadline."],
+        ["apply", "The official application process uses the Online Application route. Apply online at https://csc-fixture.test/apply."],
+        ["documents", "Required documents: Passport is required and one certified copy must be submitted."]
+      ]
+    },
+    {
+      "id": "daad-epos-route",
+      "name": "Synthetic DAAD EPOS Course Route",
+      "provider": "Synthetic DAAD Foundation",
+      "country_code": "DE",
+      "programme": "Synthetic Development Studies Course",
+      "root_url": "https://daad-fixture.test/overview",
+      "pages": [
+        ["overview", "Synthetic DAAD EPOS Course Route is awarded by Synthetic DAAD Foundation for study in DE. The 2027 intake offers the Synthetic Development Studies Course at masters level. Official scholarship overview."],
+        ["funding", "Funding benefits: tuition is fully covered and a monthly stipend is provided."],
+        ["eligibility", "Eligibility: applicants must hold a bachelor's degree as an academic requirement."],
+        ["dates", "Application deadline 2027-05-15. Submit the application before the deadline."],
+        ["apply", "The official application process uses the Online Application route. Apply online at https://daad-fixture.test/apply."],
+        ["documents", "Required documents: Passport is required and one certified copy must be submitted."]
+      ]
+    },
+    {
+      "id": "erasmus-route",
+      "name": "Synthetic Erasmus Joint Masters Route",
+      "provider": "Synthetic Erasmus Consortium",
+      "country_code": "EU",
+      "programme": "Synthetic Joint Masters Course",
+      "root_url": "https://erasmus-fixture.test/overview",
+      "pages": [
+        ["overview", "Synthetic Erasmus Joint Masters Route is awarded by Synthetic Erasmus Consortium for study in EU. The 2027 intake offers the Synthetic Joint Masters Course at masters level. Official scholarship overview."],
+        ["funding", "Funding benefits: tuition is fully covered and a monthly stipend is provided."],
+        ["eligibility", "Eligibility: applicants must hold a bachelor's degree as an academic requirement."],
+        ["dates", "Application deadline 2027-05-15. Submit the application before the deadline."],
+        ["apply", "The official application process uses the Online Application route. Apply online at https://erasmus-fixture.test/apply."],
+        ["https://consortium-fixture.test/documents", "Required documents: Passport is required and one certified copy must be submitted."]
+      ]
+    }
+  ]
+}

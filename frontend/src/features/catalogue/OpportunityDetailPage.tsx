@@ -1,124 +1,12 @@
-import { type ReactNode, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
 import { useServerQuery } from "../../hooks/useServerQuery";
 import { createApplication } from "../workspace/workspace";
-import { deadlineLabel, formatDate, getOpportunity, isNotFound, readableValue } from "./catalogue";
-import type { OpportunityDetail } from "./types";
-
-function Value({ children }: { children: string | number | null | undefined }) {
-  return <span>{children === null || children === undefined || children === "" ? "Not stated" : children}</span>;
-}
-
-function DetailList({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="detail-list">
-      <h2>{title}</h2>
-      <dl>{children}</dl>
-    </section>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string | number | null | undefined }) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd><Value>{value}</Value></dd>
-    </div>
-  );
-}
-
-function OpportunityDetailContent({ opportunity }: { opportunity: OpportunityDetail }) {
-  const stipend = opportunity.monthly_stipend_amount
-    ? `${opportunity.monthly_stipend_amount.toLocaleString()} ${opportunity.monthly_stipend_currency ?? ""}`.trim()
-    : null;
-  return (
-    <>
-      <section className="detail-hero">
-        <div>
-          <p className="eyebrow">Official-source opportunity detail</p>
-          <h1>{opportunity.name}</h1>
-          <p className="provider-name">
-            {opportunity.provider_name}
-            {opportunity.university_name ? ` · ${opportunity.university_name}` : ""}
-          </p>
-        </div>
-        <div className="tag-list detail-tags" aria-label="Opportunity snapshot">
-          <span>{opportunity.country}</span>
-          <span>{(opportunity.degree_levels?.length ? opportunity.degree_levels : [opportunity.degree_level]).map(readableValue).join(", ")}</span>
-          <span>{opportunity.funding_display_label}</span>
-          <span>{deadlineLabel(opportunity.application_deadline)}</span>
-        </div>
-      </section>
-
-      <section className="detail-summary">
-        <div>
-          <span className="card-kicker">Funding summary</span>
-          <p>{opportunity.funding_summary}</p>
-        </div>
-        <div>
-          <span className="card-kicker">Source confidence</span>
-          <p>{readableValue(opportunity.data_confidence)} confidence · {readableValue(opportunity.verification_freshness)} · checked {formatDate(opportunity.last_verified_at)}</p>
-        </div>
-      </section>
-
-      <div className="detail-grid">
-        <DetailList title="Funding package">
-          <DetailRow label="Tuition" value={opportunity.tuition_coverage} />
-          <DetailRow label="Monthly stipend" value={stipend} />
-          <DetailRow label="Accommodation" value={opportunity.accommodation_coverage} />
-          <DetailRow label="Travel" value={opportunity.travel_allowance} />
-          <DetailRow label="Health insurance" value={opportunity.health_insurance} />
-          <DetailRow label="Application fee" value={opportunity.application_fee_info} />
-        </DetailList>
-        <DetailList title="Eligibility">
-          <DetailRow label="Field" value={opportunity.field_eligibility} />
-          <DetailRow label="Nationality" value={opportunity.nationality_eligibility} />
-          <DetailRow label="Minimum academics" value={opportunity.minimum_academic_requirement} />
-          <DetailRow label="English language" value={opportunity.english_language_requirement} />
-          <DetailRow label="Standardized tests" value={opportunity.standardized_test_requirement} />
-        </DetailList>
-        <DetailList title="Application">
-          <DetailRow label="Method" value={opportunity.application_method} />
-          <DetailRow label="Deadline" value={formatDate(opportunity.application_deadline)} />
-          <DetailRow label="Intake year" value={opportunity.intake_year} />
-          <div>
-            <dt>Application page</dt>
-            <dd>{opportunity.application_url ? <a className="detail-link" href={opportunity.application_url} target="_blank" rel="noreferrer">Open application page</a> : "Not stated"}</dd>
-          </div>
-        </DetailList>
-        <DetailList title="Required documents">
-          {opportunity.required_documents.length ? opportunity.required_documents.map((document) => <DetailRow key={document} label="Document" value={document} />) : <DetailRow label="Documents" value={null} />}
-        </DetailList>
-      </div>
-
-      {opportunity.eligibility_warnings.length ? (
-        <section className="detail-warning" aria-label="Eligibility warnings">
-          <h2>Important eligibility checks</h2>
-          <ul>{opportunity.eligibility_warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
-        </section>
-      ) : null}
-      {opportunity.notes ? (
-        <section className="detail-note">
-          <h2>Curator note</h2>
-          <p>{opportunity.notes}</p>
-        </section>
-      ) : null}
-
-      <section className="source-evidence">
-        <div>
-          <p className="eyebrow">Official source evidence</p>
-          <h2>{opportunity.source.title}</h2>
-          <p>{opportunity.source.relevant_excerpt}</p>
-          <p className="evidence-caption">Officially verified {formatDate(opportunity.source.last_verified_at)}. Always confirm current requirements on the source before applying.</p>
-        </div>
-        <a className="button button-primary" href={opportunity.source.url} target="_blank" rel="noreferrer">Open official source</a>
-      </section>
-      <p className="detail-disclaimer">This information supports your research. It is not an admission, scholarship, or visa prediction.</p>
-    </>
-  );
-}
+import { getOpportunityFamily, isNotFound } from "./catalogue";
+import { ScholarshipDetailView } from "./ScholarshipDetailView";
+import type { OpportunityFamily } from "./types";
 
 function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
   const { user } = useAuth();
@@ -130,16 +18,13 @@ function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
       <section className="guest-save-cta" aria-label="Save and track this opportunity">
         <div>
           <p className="eyebrow">Keep your research moving</p>
-          <h2>Save this opportunity and track your application.</h2>
-          <p>Create a student account to keep private notes, personal deadlines, and application progress in one place.</p>
+          <h2>Save this scholarship and track your application.</h2>
+          <p>Create a student account to keep private notes, deadlines, and application progress together.</p>
         </div>
-        <Link className="button button-primary" to="/auth">
-          Create an account to save and track
-        </Link>
+        <Link className="button button-primary" to="/auth">Create an account to save</Link>
       </section>
     );
   }
-
   if (user.role !== "student") return null;
 
   async function save() {
@@ -149,7 +34,7 @@ function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
       await createApplication(opportunityId);
       setMessage("Application workspace created. Your source-linked tasks are ready.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to save this opportunity.");
+      setMessage(error instanceof Error ? error.message : "Unable to save this scholarship.");
     } finally {
       setIsSaving(false);
     }
@@ -160,33 +45,47 @@ function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
 
 export function OpportunityDetailPage() {
   const { opportunityId } = useParams();
-  const { data: opportunity, error, isLoading, reload } = useServerQuery<OpportunityDetail>(
+  const [activeId, setActiveId] = useState(opportunityId ?? "");
+  const { data: family, error, isLoading, reload } = useServerQuery<OpportunityFamily>(
     opportunityId ?? "missing-opportunity",
-    (signal) => getOpportunity(opportunityId!, signal),
+    (signal) => getOpportunityFamily(opportunityId!, signal),
     Boolean(opportunityId),
   );
+
+  useEffect(() => {
+    if (family && !family.variants.some((variant) => variant.id === activeId)) {
+      setActiveId(family.variants[0]?.id ?? "");
+    }
+  }, [activeId, family]);
 
   return (
     <main className="detail-page page-width" aria-live="polite" aria-busy={isLoading}>
       <Link className="back-link" to="/catalogue">← Back to scholarships</Link>
-      {isLoading ? <div className="catalogue-message">Loading official source evidence...</div> : null}
+      {isLoading ? <div className="catalogue-message">Loading official scholarship profile...</div> : null}
       {!isLoading && error ? (
         <div className="catalogue-message error-message" role="alert">
-          <h1>{isNotFound(error) ? "This opportunity is no longer publicly available." : "We could not load this opportunity."}</h1>
+          <h1>{isNotFound(error) ? "This scholarship is no longer publicly available." : "We could not load this scholarship."}</h1>
           <p>{isNotFound(error) ? "It may have closed or returned to review after its source changed." : error instanceof Error ? error.message : "Please try again."}</p>
           <Link className="button button-primary" to="/catalogue">Return to scholarships</Link>
           {!isNotFound(error) ? <button className="button button-quiet" type="button" onClick={reload}>Try again</button> : null}
         </div>
       ) : null}
-      {!isLoading && !error && opportunity ? <OpportunityDetailContent opportunity={opportunity} /> : null}
-      {!isLoading && !error && opportunity ? <SaveToTrackerButton opportunityId={opportunity.id} /> : null}
-      {!isLoading && !error && opportunity ? (
-        <section className="save-to-tracker">
-          <p>Have a practical application question? Community experiences are never official advice.</p>
-          <Link className="button button-quiet" to={`/community?opportunity=${opportunity.id}`}>
-            Discuss this scholarship
-          </Link>
-        </section>
+      {!isLoading && !error && family && activeId ? (
+        <ScholarshipDetailView
+          family={family}
+          activeId={activeId}
+          onActiveIdChange={setActiveId}
+          afterDetails={(
+            <>
+              <SaveToTrackerButton opportunityId={activeId} />
+              <section className="save-to-tracker">
+                <p>Have a practical application question? Community experiences are never official advice.</p>
+                <Link className="button button-quiet" to={`/community?opportunity=${activeId}`}>Discuss this scholarship</Link>
+              </section>
+              <p className="detail-disclaimer">This information supports your research. It is not an admission, scholarship, or visa prediction.</p>
+            </>
+          )}
+        />
       ) : null}
     </main>
   );

@@ -1,4 +1,9 @@
 .env
+.env.*
+!.env.example
+.catalogue-local/
+.local/
+.azure/
 .venv/
 node_modules/
 .pnpm-store/

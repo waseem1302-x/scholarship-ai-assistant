@@ -1,0 +1,94 @@
+{
+  "schema_version": "catalogue-readiness-gold.v1",
+  "notice": "Non-authoritative synthetic text derived only to exercise contracts; not official guidance.",
+  "policy_version": "publication-readiness.v1",
+  "records": [
+    {
+      "family": "Chinese Government Scholarship",
+      "route": "Synthetic bilateral route",
+      "country": "China",
+      "cycle": "2027",
+      "artifact": {
+        "id": "csc-route-overview",
+        "source_kind": "synthetic_official_derived",
+        "normalized_text": "CSC identity and family are stated. Provider and China are stated. Masters route scope is stated. The 2027 cycle is stated. The deadline is 30 April 2027. Apply online through the stated official portal. Full tuition coverage is stated. A monthly CNY stipend is stated. Funding is classified from its components. International nationality eligibility is stated. Academic requirements are stated. Language and test rules are stated. Required route documents are stated. The artifact is official, owned, fresh, and hash-backed. No conflict or pending duplicate exists."
+      },
+      "expected": {"ready": true, "deadline_state": "supported", "tuition_state": "supported", "stipend_state": "supported"},
+      "evidence_mappings": [
+        {"dimension": "identity_family", "artifact_id": "csc-route-overview", "excerpt": "CSC identity and family are stated."},
+        {"dimension": "provider_country", "artifact_id": "csc-route-overview", "excerpt": "Provider and China are stated."},
+        {"dimension": "degree_route_scope", "artifact_id": "csc-route-overview", "excerpt": "Masters route scope is stated."},
+        {"dimension": "cycle", "artifact_id": "csc-route-overview", "excerpt": "The 2027 cycle is stated."},
+        {"dimension": "deadline", "artifact_id": "csc-route-overview", "excerpt": "The deadline is 30 April 2027."},
+        {"dimension": "application", "artifact_id": "csc-route-overview", "excerpt": "Apply online through the stated official portal."},
+        {"dimension": "tuition", "artifact_id": "csc-route-overview", "excerpt": "Full tuition coverage is stated."},
+        {"dimension": "stipend", "artifact_id": "csc-route-overview", "excerpt": "A monthly CNY stipend is stated."},
+        {"dimension": "funding_classification", "artifact_id": "csc-route-overview", "excerpt": "Funding is classified from its components."},
+        {"dimension": "nationality_geography", "artifact_id": "csc-route-overview", "excerpt": "International nationality eligibility is stated."},
+        {"dimension": "academic_requirement", "artifact_id": "csc-route-overview", "excerpt": "Academic requirements are stated."},
+        {"dimension": "language_tests", "artifact_id": "csc-route-overview", "excerpt": "Language and test rules are stated."},
+        {"dimension": "required_documents", "artifact_id": "csc-route-overview", "excerpt": "Required route documents are stated."},
+        {"dimension": "official_artifacts", "artifact_id": "csc-route-overview", "excerpt": "The artifact is official, owned, fresh, and hash-backed."},
+        {"dimension": "conflicts_duplicates", "artifact_id": "csc-route-overview", "excerpt": "No conflict or pending duplicate exists."}
+      ]
+    },
+    {
+      "family": "DAAD EPOS",
+      "route": "Synthetic development studies course",
+      "country": "Germany",
+      "cycle": "2027",
+      "artifact": {
+        "id": "daad-epos-course",
+        "source_kind": "synthetic_official_derived",
+        "normalized_text": "DAAD EPOS course identity and family are stated. Provider and Germany are stated. Masters course route scope is stated. The 2027 cycle is stated. The course deadline is stated. Apply using the course process and official URL. Tuition status is stated. A monthly EUR stipend is stated. Funding is classified from its components. Eligible geographies are stated. Academic and experience requirements are stated. Language and test rules are stated. Course documents are stated. The artifact is official, owned, fresh, and hash-backed. No conflict or pending duplicate exists."
+      },
+      "expected": {"ready": true, "deadline_state": "supported", "tuition_state": "supported", "stipend_state": "supported"},
+      "evidence_mappings": [
+        {"dimension": "identity_family", "artifact_id": "daad-epos-course", "excerpt": "DAAD EPOS course identity and family are stated."},
+        {"dimension": "provider_country", "artifact_id": "daad-epos-course", "excerpt": "Provider and Germany are stated."},
+        {"dimension": "degree_route_scope", "artifact_id": "daad-epos-course", "excerpt": "Masters course route scope is stated."},
+        {"dimension": "cycle", "artifact_id": "daad-epos-course", "excerpt": "The 2027 cycle is stated."},
+        {"dimension": "deadline", "artifact_id": "daad-epos-course", "excerpt": "The course deadline is stated."},
+        {"dimension": "application", "artifact_id": "daad-epos-course", "excerpt": "Apply using the course process and official URL."},
+        {"dimension": "tuition", "artifact_id": "daad-epos-course", "excerpt": "Tuition status is stated."},
+        {"dimension": "stipend", "artifact_id": "daad-epos-course", "excerpt": "A monthly EUR stipend is stated."},
+        {"dimension": "funding_classification", "artifact_id": "daad-epos-course", "excerpt": "Funding is classified from its components."},
+        {"dimension": "nationality_geography", "artifact_id": "daad-epos-course", "excerpt": "Eligible geographies are stated."},
+        {"dimension": "academic_requirement", "artifact_id": "daad-epos-course", "excerpt": "Academic and experience requirements are stated."},
+        {"dimension": "language_tests", "artifact_id": "daad-epos-course", "excerpt": "Language and test rules are stated."},
+        {"dimension": "required_documents", "artifact_id": "daad-epos-course", "excerpt": "Course documents are stated."},
+        {"dimension": "official_artifacts", "artifact_id": "daad-epos-course", "excerpt": "The artifact is official, owned, fresh, and hash-backed."},
+        {"dimension": "conflicts_duplicates", "artifact_id": "daad-epos-course", "excerpt": "No conflict or pending duplicate exists."}
+      ]
+    },
+    {
+      "family": "Erasmus Mundus Joint Masters",
+      "route": "Synthetic consortium programme",
+      "country": "Multi-country",
+      "cycle": "2027",
+      "artifact": {
+        "id": "erasmus-joint-master",
+        "source_kind": "synthetic_official_derived",
+        "normalized_text": "Erasmus joint master identity and family are stated. Consortium provider and multi-country scope are stated. Joint masters route scope is stated. The 2027 cycle is stated. The application deadline is stated. Apply through the consortium portal and process. Tuition coverage is stated. A monthly EUR stipend is stated. Funding is classified from its components. Eligible nationalities are stated. Academic requirements are stated. Language and test rules are stated. Consortium documents are stated. The artifact is official, owned, fresh, and hash-backed. No conflict or pending duplicate exists."
+      },
+      "expected": {"ready": true, "deadline_state": "supported", "tuition_state": "supported", "stipend_state": "supported"},
+      "evidence_mappings": [
+        {"dimension": "identity_family", "artifact_id": "erasmus-joint-master", "excerpt": "Erasmus joint master identity and family are stated."},
+        {"dimension": "provider_country", "artifact_id": "erasmus-joint-master", "excerpt": "Consortium provider and multi-country scope are stated."},
+        {"dimension": "degree_route_scope", "artifact_id": "erasmus-joint-master", "excerpt": "Joint masters route scope is stated."},
+        {"dimension": "cycle", "artifact_id": "erasmus-joint-master", "excerpt": "The 2027 cycle is stated."},
+        {"dimension": "deadline", "artifact_id": "erasmus-joint-master", "excerpt": "The application deadline is stated."},
+        {"dimension": "application", "artifact_id": "erasmus-joint-master", "excerpt": "Apply through the consortium portal and process."},
+        {"dimension": "tuition", "artifact_id": "erasmus-joint-master", "excerpt": "Tuition coverage is stated."},
+        {"dimension": "stipend", "artifact_id": "erasmus-joint-master", "excerpt": "A monthly EUR stipend is stated."},
+        {"dimension": "funding_classification", "artifact_id": "erasmus-joint-master", "excerpt": "Funding is classified from its components."},
+        {"dimension": "nationality_geography", "artifact_id": "erasmus-joint-master", "excerpt": "Eligible nationalities are stated."},
+        {"dimension": "academic_requirement", "artifact_id": "erasmus-joint-master", "excerpt": "Academic requirements are stated."},
+        {"dimension": "language_tests", "artifact_id": "erasmus-joint-master", "excerpt": "Language and test rules are stated."},
+        {"dimension": "required_documents", "artifact_id": "erasmus-joint-master", "excerpt": "Consortium documents are stated."},
+        {"dimension": "official_artifacts", "artifact_id": "erasmus-joint-master", "excerpt": "The artifact is official, owned, fresh, and hash-backed."},
+        {"dimension": "conflicts_duplicates", "artifact_id": "erasmus-joint-master", "excerpt": "No conflict or pending duplicate exists."}
+      ]
+    }
+  ]
+}

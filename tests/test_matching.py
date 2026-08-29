@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import support_opportunity_for_publication
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -93,6 +94,7 @@ def opportunity_payload(**overrides: object) -> dict:
         "english_language_requirement": "IELTS or TOEFL required unless waived",
         "minimum_academic_requirement": "Minimum CGPA 3.0 on a 4.0 scale",
         "required_documents": ["Transcript", "Passport"],
+        "application_method": "Apply through the official online portal",
         "application_url": "https://example.edu/apply",
         "status": "draft",
         "data_confidence": "medium",
@@ -121,6 +123,7 @@ def create_verified_opportunity(
     )
     assert created.status_code == 201
     created_body = created.json()
+    support_opportunity_for_publication(created_body["id"])
     published = client.post(
         f"/api/v1/admin/opportunities/{created_body['id']}/review-actions",
         json={

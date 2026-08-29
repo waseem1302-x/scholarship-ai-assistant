@@ -28,20 +28,110 @@ from app.modules.opportunities.source_monitor import (
     SourceFetchError,
 )
 
-_MAX_ROOT_PAGES = 10
-_DEFAULT_TOTAL_BYTES = 20 * 1024 * 1024
+_MAX_ROOT_PAGES = 60
+_DEFAULT_TOTAL_BYTES = 60 * 1024 * 1024
+_MIN_RELEVANCE_SCORE = 25
+_NEAR_DUPLICATE_MIN_CHARS = 2_000
+_NEAR_DUPLICATE_TAIL_CHARS = 4_096
+_NEAR_DUPLICATE_MAX_LENGTH_DELTA = 512
 _POSITIVE_SIGNALS: tuple[tuple[re.Pattern[str], int], ...] = (
     (re.compile(r"\b(?:scholarship|scholarships|award|awards|funding)\b", re.I), 20),
-    (re.compile(r"\b(?:eligibility|eligible|requirement|requirements)\b", re.I), 15),
-    (re.compile(r"\b(?:apply|application|applications|how[- ]?to)\b", re.I), 15),
-    (re.compile(r"\b(?:deadline|deadlines|timeline|closing date)\b", re.I), 15),
-    (re.compile(r"\b(?:benefit|benefits|funding|stipend|tuition)\b", re.I), 15),
-    (re.compile(r"\b(?:programme|program|course|courses|university list)\b", re.I), 10),
-    (re.compile(r"\b(?:faq|guidance|terms)\b", re.I), 8),
+    (re.compile(r"\b(?:eligibility|eligible|requirement|requirements)\b", re.I), 30),
+    (
+        re.compile(
+            r"\b(?:advice for applicants?|applicant guidance|how[- ]?to[- ]?apply)\b",
+            re.I,
+        ),
+        40,
+    ),
+    (re.compile(r"\b(?:apply|application|applications|applicants?)\b", re.I), 20),
+    (
+        re.compile(
+            r"\b(?:deadline|deadlines|timeline|opening date|closing date|application period)\b",
+            re.I,
+        ),
+        35,
+    ),
+    (re.compile(r"\b(?:benefit|benefits|funding|stipend|tuition|allowance)\b", re.I), 30),
+    (
+        re.compile(
+            r"\b(?:programme|program|course|courses|university list|fields? of study)\b",
+            re.I,
+        ),
+        20,
+    ),
+    (
+        re.compile(
+            r"\b(?:required documents?|supporting documents?|document checklist|"
+            r"application forms?|template application)\b",
+            re.I,
+        ),
+        35,
+    ),
+    (re.compile(r"\b(?:document|documents|checklist|forms?)\b", re.I), 20),
+    (re.compile(r"\b(?:selection|interview|screening|results?|schedule)\b", re.I), 25),
+    (
+        re.compile(
+            r"\b(?:rules?|regulations?|terms of participation|competition rules?)\b",
+            re.I,
+        ),
+        45,
+    ),
+    (
+        re.compile(
+            r"\b(?:subjects?|subject areas?|study areas?|academic disciplines?)\b",
+            re.I,
+        ),
+        30,
+    ),
+    (
+        re.compile(
+            r"\b(?:degree tracks?|bachelor(?:['\u2019]s)?|master(?:['\u2019]s)?|doctoral|"
+            r"postdoctoral)\b",
+            re.I,
+        ),
+        70,
+    ),
+    (re.compile(r"\b(?:guideline|guidelines|prospectus)\b", re.I), 20),
+    (re.compile(r"\b(?:participating|institutions?|universities)\b", re.I), 15),
+    (
+        re.compile(
+            r"\b(?:nominating agenc(?:y|ies)|nomination route|embassy route|"
+            r"application route|country route|(?:embassy|university|nomination) track)\b",
+            re.I,
+        ),
+        30,
+    ),
+    (re.compile(r"\bprogram(?:me)? offered\b", re.I), 35),
+    (re.compile(r"\b(?:faq|frequently asked questions?|guidance)\b", re.I), 30),
 )
-_NEGATIVE_SIGNAL = re.compile(
-    r"\b(?:calendar|news archive|newsroom|social media|facebook|instagram|linkedin|twitter)\b",
-    re.IGNORECASE,
+_NEGATIVE_SIGNALS: tuple[tuple[re.Pattern[str], int], ...] = (
+    (
+        re.compile(
+            r"\b(?:current scholars?|current fellows?|award[- ]?holders?|alumni|"
+            r"post[- ]?award|after your award)\b",
+            re.I,
+        ),
+        90,
+    ),
+    (
+        re.compile(
+            r"\b(?:code of conduct|departure forms?|stipend advance|disciplinary|"
+            r"handbook policies and forms|tenure track|sample tasks?|practice materials?|"
+            r"preparation materials?|recommended reading|exam preparation)\b",
+            re.I,
+        ),
+        90,
+    ),
+    (
+        re.compile(
+            r"\b(?:calendar|news|newsroom|social media|facebook|instagram|"
+            r"linkedin|twitter|privacy|cookie|accessibility|contact us|author|"
+            r"find a scholarship|scholarships? and fellowships?|programme pages?)\b",
+            re.I,
+        ),
+        50,
+    ),
 )
 
 
@@ -55,7 +145,7 @@ class CrawlBudget:
     """
 
     max_pages: int = _MAX_ROOT_PAGES
-    max_depth: int = 2
+    max_depth: int = 3
     max_total_bytes: int = _DEFAULT_TOTAL_BYTES
     max_links_per_page: int = 100
     per_host_interval_seconds: float = 0.0
@@ -109,6 +199,7 @@ class CrawlResult:
 
 @dataclass(order=True, slots=True)
 class _QueuedLink:
+    sort_depth: int
     sort_score: int
     insertion_order: int
     url: str = field(compare=False)
@@ -133,16 +224,98 @@ def _is_authentication_or_session_link(url: str) -> bool:
     return is_authentication_or_session_url(url)
 
 
+def _scholarship_collection_topic(url: str) -> tuple[str, frozenset[str]] | None:
+    """Return the scholarship collection path and scheme-specific slug tokens."""
+
+    segments = [segment.casefold() for segment in urlsplit(url).path.split("/") if segment]
+    for index, segment in enumerate(segments[:-1]):
+        if segment not in {"scholarship", "scholarships"}:
+            continue
+        slug = segments[index + 1]
+        tokens = {
+            token.removesuffix("s")
+            for token in re.findall(r"[a-z0-9]+", slug)
+            if token not in {"scholarship", "scholarships", "application", "applications"}
+        }
+        return "/".join(segments[: index + 1]), frozenset(tokens)
+    return None
+
+
+def _is_sibling_scholarship_page(root_url: str, candidate_url: str) -> bool:
+    """Reject a different scheme reached through a provider-wide scholarship listing."""
+
+    root_topic = _scholarship_collection_topic(root_url)
+    candidate_topic = _scholarship_collection_topic(candidate_url)
+    if root_topic is None or candidate_topic is None or root_topic[0] != candidate_topic[0]:
+        return False
+    root_path = urlsplit(root_url).path.rstrip("/").casefold()
+    candidate_path = urlsplit(candidate_url).path.rstrip("/").casefold()
+    if candidate_path == root_path or candidate_path.startswith(f"{root_path}/"):
+        return False
+    root_tokens = root_topic[1]
+    candidate_tokens = candidate_topic[1]
+    return bool(root_tokens and not root_tokens.issubset(candidate_tokens))
+
+
 def score_crawl_link(link: FetchedLink) -> int:
     """Rank official-site links by deterministic scholarship relevance signals."""
 
     combined = " ".join(part for part in (link.url, link.text, link.title or "") if part)
-    score = 30
+    score = 0
     for pattern, weight in _POSITIVE_SIGNALS:
         if pattern.search(combined):
             score += weight
-    if _NEGATIVE_SIGNAL.search(combined):
-        score -= 20
+    for pattern, weight in _NEGATIVE_SIGNALS:
+        if pattern.search(combined):
+            score -= weight
+    return score
+
+
+_GENERIC_PATH_TOKENS = frozenset(
+    {
+        "about",
+        "aspx",
+        "content",
+        "default",
+        "english",
+        "index",
+        "page",
+        "pages",
+        "programme",
+        "programmes",
+        "scholarship",
+        "scholarships",
+        "scholarshipsgrants",
+        "services",
+        "site",
+        "students",
+        "universities",
+        "faculty",
+    }
+)
+
+
+def _route_path_tokens(url: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for token in re.findall(r"[a-z0-9]+", urlsplit(url).path.casefold())
+        if len(token) >= 4 and token not in _GENERIC_PATH_TOKENS
+    )
+
+
+def score_crawl_link_for_root(root_url: str, link: FetchedLink) -> int:
+    """Prefer pages and documents inside the root scholarship's route namespace."""
+
+    score = score_crawl_link(link)
+    candidate_path = urlsplit(link.url).path.rstrip("/").casefold()
+    root_path = urlsplit(root_url).path.rstrip("/").casefold()
+    if candidate_path == f"{root_path}/about" or (not root_path and candidate_path == "/about"):
+        # A concise ``about`` page on a programme microsite commonly contains the
+        # authoritative identity, available levels, and funding overview. Keep
+        # broader organisational pages such as ``about-us`` below the threshold.
+        score += 30
+    if _route_path_tokens(root_url) & _route_path_tokens(link.url):
+        score += 100
     return score
 
 
@@ -151,6 +324,27 @@ def _failure_code(exc: SourceFetchError) -> str:
     if not value:
         return "source_fetch_failed"
     return value.split(":", 1)[0].strip() or "source_fetch_failed"
+
+
+def _is_near_duplicate_evidence(text: str, accepted_texts: list[str]) -> bool:
+    """Detect template variants whose substantive body is byte-for-byte identical.
+
+    Some programme sites expose both a default route and an explicit degree-tab route.
+    Their page titles differ while the complete evidence body is identical. Comparing a
+    long suffix plus a tight length bound removes those duplicates without collapsing
+    short pages or pages that merely share navigation/footer boilerplate.
+    """
+
+    if len(text) < _NEAR_DUPLICATE_MIN_CHARS:
+        return False
+    tail_chars = min(_NEAR_DUPLICATE_TAIL_CHARS, len(text) // 2)
+    tail = text[-tail_chars:]
+    return any(
+        abs(len(text) - len(existing)) <= _NEAR_DUPLICATE_MAX_LENGTH_DELTA
+        and len(existing) >= _NEAR_DUPLICATE_MIN_CHARS
+        and existing[-tail_chars:] == tail
+        for existing in accepted_texts
+    )
 
 
 def _safe_fetch_with_limit(
@@ -200,7 +394,7 @@ def _fetch_with_limit(fetcher: SourceFetcher, url: str, *, max_bytes: int) -> Fe
 
 
 class BoundedOfficialSiteCrawler:
-    """Explore a small ranked slice of one already-verified official host.
+    """Explore a ranked, bounded evidence set from an already-verified official host.
 
     The crawler performs no HTTP itself. Callers inject the existing source
     fetcher boundary, which keeps SSRF, robots, redirect, peer-IP, MIME, and
@@ -244,15 +438,17 @@ class BoundedOfficialSiteCrawler:
         seen_urls = {normalized_root}
         completed_urls: set[str] = set()
         seen_hashes: set[str] = set()
+        accepted_texts: list[str] = []
         queue: list[_QueuedLink] = []
         insertion_order = 0
         total_bytes = 0
         fetch_attempts = 0
         budget_exhausted = False
         previous_host: str | None = None
+        crawl_scope_root = normalized_root
 
         def fetch_page(url: str, *, depth: int, score: int, root: bool = False) -> bool:
-            nonlocal total_bytes, fetch_attempts, budget_exhausted, previous_host
+            nonlocal total_bytes, fetch_attempts, budget_exhausted, previous_host, crawl_scope_root
             if fetch_attempts >= limits.max_pages:
                 budget_exhausted = True
                 return False
@@ -323,15 +519,21 @@ class BoundedOfficialSiteCrawler:
                 previous_host = current_host
                 return True
 
+            if root:
+                crawl_scope_root = final_url
+
             completed_urls.add(url)
             completed_urls.add(final_url)
             seen_urls.add(final_url)
             total_bytes += fetched.bytes_read
             content_hash = fetched.normalized_content_hash or fetched.content_hash
-            if content_hash in seen_hashes:
+            if content_hash in seen_hashes or _is_near_duplicate_evidence(
+                fetched.normalized_text, accepted_texts
+            ):
                 duplicates.append(final_url)
             else:
                 seen_hashes.add(content_hash)
+                accepted_texts.append(fetched.normalized_text)
                 pages.append(CrawledPage(url=final_url, depth=depth, score=score, fetched=fetched))
                 if depth < limits.max_depth:
                     enqueue_links(fetched.links, depth=depth + 1)
@@ -344,11 +546,8 @@ class BoundedOfficialSiteCrawler:
 
         def enqueue_links(links: tuple[FetchedLink, ...], *, depth: int) -> None:
             nonlocal insertion_order
-            considered = 0
-            for link in links:
-                if considered >= limits.max_links_per_page:
-                    break
-                considered += 1
+            candidates: list[tuple[int, int, str]] = []
+            for source_order, link in enumerate(links):
                 normalized = normalize_crawl_url(link.url)
                 if normalized is None:
                     rejected.append(
@@ -377,13 +576,38 @@ class BoundedOfficialSiteCrawler:
                         )
                     )
                     continue
+                if _is_sibling_scholarship_page(normalized_root, normalized):
+                    rejected.append(
+                        RejectedCrawlLink(
+                            url=normalized,
+                            depth=depth,
+                            reason="different_scholarship_scheme",
+                        )
+                    )
+                    continue
+                if normalized in seen_urls or normalized in completed_urls:
+                    continue
+                score = score_crawl_link_for_root(crawl_scope_root, link)
+                if score < _MIN_RELEVANCE_SCORE:
+                    rejected.append(
+                        RejectedCrawlLink(
+                            url=normalized,
+                            depth=depth,
+                            reason="low_scholarship_relevance",
+                        )
+                    )
+                    continue
+                candidates.append((score, source_order, normalized))
+
+            candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+            for score, _, normalized in candidates[: limits.max_links_per_page]:
                 if normalized in seen_urls or normalized in completed_urls:
                     continue
                 seen_urls.add(normalized)
-                score = score_crawl_link(link)
                 heapq.heappush(
                     queue,
                     _QueuedLink(
+                        sort_depth=depth,
                         sort_score=-score,
                         insertion_order=insertion_order,
                         url=normalized,
@@ -392,6 +616,14 @@ class BoundedOfficialSiteCrawler:
                     ),
                 )
                 insertion_order += 1
+            for _, _, normalized in candidates[limits.max_links_per_page :]:
+                rejected.append(
+                    RejectedCrawlLink(
+                        url=normalized,
+                        depth=depth,
+                        reason="page_link_budget_exceeded",
+                    )
+                )
 
         if not fetch_page(normalized_root, depth=0, score=100, root=True):
             return CrawlResult(

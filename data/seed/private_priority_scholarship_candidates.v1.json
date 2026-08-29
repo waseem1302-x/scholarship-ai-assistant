@@ -1,0 +1,533 @@
+{
+  "schema_version": "private-scholarship-seed.v1",
+  "created_at": "2026-08-24",
+  "visibility": "private",
+  "publication_authorized": false,
+  "purpose": "Discovery-only canonical scholarship identities. Seed material and URL hints are not evidence.",
+  "audience_focus": [
+    "Asia",
+    "Africa",
+    "Pakistan",
+    "Bangladesh",
+    "India",
+    "Nepal",
+    "Sri Lanka"
+  ],
+  "funding_gate": "Prioritize candidates expected to include at least full tuition and a living stipend; verify both from current official evidence before promotion.",
+  "reference_sources": [
+    "C:/Users/Admin/Downloads/Indonesia_International_Scholarships_Guide.pdf",
+    "C:/Users/Admin/Downloads/Australia_Comprehensive_International_Scholarships_Guide.pdf",
+    "C:/Users/Admin/Downloads/100_UK_Scholarships_International_Students.pdf",
+    "C:/Users/Admin/Downloads/500_Europe_Scholarships_International_Students.pdf",
+    "C:/Users/Admin/Downloads/100_China_Scholarships_International_Students.pdf",
+    "C:/Users/Admin/Downloads/100_US_Scholarships_International_Students.pdf",
+    "https://www.scholars4dev.com/tag/government-scholarships/"
+  ],
+  "policy": {
+    "seed_is_evidence": false,
+    "third_party_pages_are_evidence": false,
+    "official_source_required_for_review_proposal": true,
+    "unsupported_fields": "unknown",
+    "duplicate_unit": "one independently awarded scholarship scheme; cycles, degrees, routes, institutions and programmes are scopes"
+  },
+  "scholarships": [
+    {
+      "name": "Fulbright Foreign Student Program",
+      "provider": "Fulbright Program",
+      "country": "United States",
+      "possible_official_url": "https://foreign.fulbrightonline.org/about/foreign-student-program",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Chevening Scholarships",
+      "provider": "Chevening",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.chevening.org/scholarships/",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Commonwealth Master's Scholarships",
+      "provider": "Commonwealth Scholarship Commission in the UK",
+      "country": "United Kingdom",
+      "possible_official_url": "https://cscuk.fcdo.gov.uk/scholarships/commonwealth-masters-scholarships/",
+      "keywords": ["priority-0", "government", "commonwealth", "asia", "africa", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Commonwealth PhD Scholarships",
+      "provider": "Commonwealth Scholarship Commission in the UK",
+      "country": "United Kingdom",
+      "possible_official_url": "https://cscuk.fcdo.gov.uk/scholarships/",
+      "keywords": ["priority-0", "government", "commonwealth", "asia", "africa", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Commonwealth Shared Scholarships",
+      "provider": "Commonwealth Scholarship Commission in the UK",
+      "country": "United Kingdom",
+      "possible_official_url": "https://cscuk.fcdo.gov.uk/scholarships/commonwealth-shared-scholarships/",
+      "keywords": ["priority-0", "government", "commonwealth", "asia", "africa", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Commonwealth Split-site Scholarships",
+      "provider": "Commonwealth Scholarship Commission in the UK",
+      "country": "United Kingdom",
+      "possible_official_url": "https://cscuk.fcdo.gov.uk/scholarships/",
+      "keywords": ["priority-1", "government", "commonwealth", "phd", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Commonwealth Distance Learning Scholarships",
+      "provider": "Commonwealth Scholarship Commission in the UK",
+      "country": "United Kingdom",
+      "possible_official_url": "https://cscuk.fcdo.gov.uk/scholarships/",
+      "keywords": ["priority-1", "government", "commonwealth", "online", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Erasmus Mundus Joint Masters Scholarships",
+      "provider": "European Commission Erasmus+",
+      "country": "Multiple European Countries",
+      "possible_official_url": "https://erasmus-plus.ec.europa.eu/opportunities/individuals/students/erasmus-mundus-joint-masters",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required", "pdf-europe"]
+    },
+    {
+      "name": "DAAD Development-Related Postgraduate Courses EPOS",
+      "provider": "German Academic Exchange Service DAAD",
+      "country": "Germany",
+      "possible_official_url": "https://www2.daad.de/deutschland/stipendium/datenbank/en/21148-scholarship-database?detail=50076777",
+      "keywords": ["priority-0", "government", "famous", "developing-countries", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Australia Awards Scholarships",
+      "provider": "Australian Government Department of Foreign Affairs and Trade",
+      "country": "Australia",
+      "possible_official_url": "https://www.dfat.gov.au/people-to-people/australia-awards/australia-awards-scholarships",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required", "pdf-australia"]
+    },
+    {
+      "name": "Japanese Government MEXT Scholarship",
+      "provider": "Ministry of Education, Culture, Sports, Science and Technology Japan",
+      "country": "Japan",
+      "possible_official_url": "https://studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Turkiye Scholarships Full-Time Programme",
+      "provider": "Turkiye Scholarships",
+      "country": "Turkiye",
+      "possible_official_url": "https://turkiyeburslari.gov.tr/fulltimeprograms",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Stipendium Hungaricum Scholarship Programme",
+      "provider": "Government of Hungary",
+      "country": "Hungary",
+      "possible_official_url": "https://stipendiumhungaricum.hu/",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Swiss Government Excellence Scholarships",
+      "provider": "State Secretariat for Education, Research and Innovation SERI",
+      "country": "Switzerland",
+      "possible_official_url": "https://www.sbfi.admin.ch/en/swiss-government-excellence-scholarships",
+      "keywords": ["priority-0", "government", "famous", "research", "funding-review-required"]
+    },
+    {
+      "name": "Gates Cambridge Scholarship",
+      "provider": "Gates Cambridge Trust",
+      "university": "University of Cambridge",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.gatescambridge.org/programme/the-scholarship/",
+      "keywords": ["priority-0", "famous", "university", "asia", "africa", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Rhodes Scholarship",
+      "provider": "Rhodes Trust",
+      "university": "University of Oxford",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.rhodeshouse.ox.ac.uk/scholarships/the-rhodes-scholarship/",
+      "keywords": ["priority-0", "famous", "foundation", "asia", "africa", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Clarendon Fund Scholarships",
+      "provider": "University of Oxford",
+      "university": "University of Oxford",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.ox.ac.uk/clarendon",
+      "keywords": ["priority-0", "famous", "university", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Knight-Hennessy Scholars",
+      "provider": "Knight-Hennessy Scholars",
+      "university": "Stanford University",
+      "country": "United States",
+      "possible_official_url": "https://knight-hennessy.stanford.edu/admission",
+      "keywords": ["priority-0", "famous", "university", "asia", "africa", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Chinese Government Scholarship",
+      "provider": "China Scholarship Council",
+      "country": "China",
+      "possible_official_url": "https://tt.china-embassy.gov.cn/eng/sgxw/202601/t20260107_11807431.htm",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required", "pdf-china"]
+    },
+    {
+      "name": "Global Korea Scholarship",
+      "provider": "National Institute for International Education Korea",
+      "country": "South Korea",
+      "possible_official_url": "https://www.studyinkorea.go.kr/ko/plan/scholarship.do",
+      "keywords": ["priority-0", "government", "famous", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "KNB Scholarship",
+      "provider": "Ministry of Higher Education, Science and Technology of Indonesia",
+      "country": "Indonesia",
+      "possible_official_url": "https://knb.kemdiktisaintek.go.id/",
+      "keywords": ["priority-0", "government", "developing-countries", "asia", "africa", "funding-review-required", "pdf-indonesia"]
+    },
+    {
+      "name": "TaiwanICDF International Higher Education Scholarship",
+      "provider": "International Cooperation and Development Fund TaiwanICDF",
+      "country": "Taiwan",
+      "possible_official_url": "https://www.icdf.org.tw/wSite/ct?ctNode=31562&mp=1&xItem=12505",
+      "keywords": ["priority-0", "government-linked", "developing-countries", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Swedish Institute Scholarship for Global Professionals",
+      "provider": "Swedish Institute",
+      "country": "Sweden",
+      "possible_official_url": "https://si.se/en/apply/scholarships/swedish-institute-scholarships-for-global-professionals/",
+      "keywords": ["priority-0", "government", "developing-countries", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Government of Brunei Darussalam Scholarship",
+      "provider": "Ministry of Foreign Affairs Brunei Darussalam",
+      "country": "Brunei Darussalam",
+      "possible_official_url": "https://www.mfa.gov.bn/pages/online-bdgs2.aspx",
+      "keywords": ["priority-0", "government", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Malaysia Technical Cooperation Programme Scholarship",
+      "provider": "Ministry of Foreign Affairs Malaysia",
+      "country": "Malaysia",
+      "possible_official_url": "https://mtcp.kln.gov.my/scholarship",
+      "keywords": ["priority-0", "government", "developing-countries", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Singapore International Graduate Award SINGA",
+      "provider": "Agency for Science, Technology and Research Singapore",
+      "country": "Singapore",
+      "possible_official_url": "https://www.a-star.edu.sg/Scholarships/for-graduate-studies/singapore-international-graduate-award-singa",
+      "keywords": ["priority-0", "government-linked", "phd", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Thailand International Postgraduate Programme TIPP",
+      "provider": "Thailand International Cooperation Agency",
+      "country": "Thailand",
+      "possible_official_url": "https://tica-thaigov.mfa.go.th/en/content/37132-allowances-expenses?cate=5f206afba58d6575e9277ddb",
+      "keywords": ["priority-0", "government", "developing-countries", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Manaaki New Zealand Scholarships",
+      "provider": "New Zealand Government",
+      "country": "New Zealand",
+      "possible_official_url": "https://www.nzscholarships.govt.nz/",
+      "keywords": ["priority-0", "government", "developing-countries", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "ADB-Japan Scholarship Program",
+      "provider": "Asian Development Bank",
+      "country": "Asia-Pacific Partner Institutions",
+      "possible_official_url": "https://www.adb.org/work-with-us/careers/japan-scholarship-program",
+      "keywords": ["priority-0", "multilateral", "developing-countries", "asia", "funding-review-required"]
+    },
+    {
+      "name": "Heydar Aliyev International Education Grant",
+      "provider": "Ministry of Foreign Affairs and Ministry of Science and Education of Azerbaijan",
+      "country": "Azerbaijan",
+      "possible_official_url": "https://www.studyinazerbaijan.edu.az/financial-support",
+      "keywords": ["priority-0", "government", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "IsDB Scholarship Programme for Muslim Communities",
+      "provider": "Islamic Development Bank",
+      "country": "IsDB Partner Countries",
+      "possible_official_url": "https://www.isdb.org/scholarships",
+      "keywords": ["priority-0", "multilateral", "muslim-communities", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "IsDB M.Sc. Scholarship Programme in Science and Technology",
+      "provider": "Islamic Development Bank",
+      "country": "IsDB Least-Developed Member Countries",
+      "possible_official_url": "https://www.isdb.org/scholarships",
+      "keywords": ["priority-0", "multilateral", "masters", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "IsDB Merit Scholarship Programme in High Technology",
+      "provider": "Islamic Development Bank",
+      "country": "IsDB Member Countries",
+      "possible_official_url": "https://www.isdb.org/scholarships",
+      "keywords": ["priority-0", "multilateral", "phd", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "Kazakhstan Government Scholarship Programme",
+      "provider": "Republic of Kazakhstan Scholarship Programme",
+      "country": "Kazakhstan",
+      "possible_official_url": "https://oq.gov.kz/en/b-ship",
+      "keywords": ["priority-0", "government", "asia", "africa", "funding-review-required"]
+    },
+    {
+      "name": "VLIR-UOS Scholarships",
+      "provider": "VLIR-UOS",
+      "country": "Belgium",
+      "possible_official_url": "https://www.vliruos.be/en/scholarships/6",
+      "keywords": ["priority-0", "government-linked", "developing-countries", "asia", "africa", "funding-review-required", "scholars4dev-discovery"]
+    },
+    {
+      "name": "British Council Women in STEM Scholarships",
+      "provider": "British Council",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.britishcouncil.org/study-work-abroad/in-uk/scholarship-women-stem",
+      "keywords": ["priority-0", "women", "stem", "asia", "africa", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Saïd Foundation Scholarships",
+      "provider": "Saïd Foundation",
+      "country": "United Kingdom",
+      "possible_official_url": "https://saidfoundation.org/scholarships/",
+      "keywords": ["priority-1", "foundation", "masters", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "President's PhD Scholarships",
+      "provider": "Imperial College London",
+      "university": "Imperial College London",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.imperial.ac.uk/study/fees-and-funding/postgraduate-doctoral/grants-scholarships/presidents-phd/",
+      "keywords": ["priority-1", "university", "phd", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Chancellor's International Scholarship",
+      "provider": "University of Warwick",
+      "university": "University of Warwick",
+      "country": "United Kingdom",
+      "possible_official_url": "https://warwick.ac.uk/services/dc/schols_fund/scholarships_and_funding/chancellors_int/",
+      "keywords": ["priority-1", "university", "phd", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Oxford Pershing Square Graduate Scholarships",
+      "provider": "University of Oxford",
+      "university": "University of Oxford",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.sbs.ox.ac.uk/oxford-experience/scholarships-and-funding/pershing-square-scholarship",
+      "keywords": ["priority-1", "university", "mba", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Edinburgh Doctoral College Scholarships",
+      "provider": "University of Edinburgh",
+      "university": "University of Edinburgh",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.ed.ac.uk/student-funding/postgraduate/international/other-funding/doctoral-college",
+      "keywords": ["priority-1", "university", "phd", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "Schwarzman Scholars",
+      "provider": "Schwarzman Scholars",
+      "university": "Tsinghua University",
+      "country": "China",
+      "possible_official_url": "https://www.schwarzmanscholars.org/",
+      "keywords": ["priority-0", "famous", "masters", "asia", "africa", "funding-review-required", "pdf-china"]
+    },
+    {
+      "name": "Yenching Academy Scholarship",
+      "provider": "Yenching Academy of Peking University",
+      "university": "Peking University",
+      "country": "China",
+      "possible_official_url": "https://yenchingacademy.pku.edu.cn/",
+      "keywords": ["priority-0", "famous", "masters", "asia", "africa", "funding-review-required", "pdf-china"]
+    },
+    {
+      "name": "USTC Fellowship",
+      "provider": "University of Science and Technology of China",
+      "university": "University of Science and Technology of China",
+      "country": "China",
+      "possible_official_url": "https://ic.ustc.edu.cn/en/v7list.php?Nav_x=16",
+      "keywords": ["priority-1", "university", "masters", "phd", "funding-review-required", "pdf-china"]
+    },
+    {
+      "name": "MOFCOM Scholarship",
+      "provider": "Ministry of Commerce of the People's Republic of China",
+      "country": "China",
+      "keywords": ["priority-0", "government", "developing-countries", "asia", "africa", "official-url-discovery-required", "pdf-china"]
+    },
+    {
+      "name": "International Chinese Language Teachers Scholarship",
+      "provider": "Center for Language Education and Cooperation",
+      "country": "China",
+      "possible_official_url": "https://www.chinese.cn/page/#/pcpage/project_detail",
+      "keywords": ["priority-1", "government-linked", "language", "funding-review-required", "pdf-china"]
+    },
+    {
+      "name": "Shanghai Government Scholarship",
+      "provider": "Shanghai Municipal Government",
+      "country": "China",
+      "keywords": ["priority-1", "government", "full-and-partial-tracks", "official-url-discovery-required", "pdf-china"]
+    },
+    {
+      "name": "Beijing Government Scholarship",
+      "provider": "Beijing Municipal Government",
+      "country": "China",
+      "keywords": ["priority-1", "government", "full-and-partial-tracks", "official-url-discovery-required", "pdf-china"]
+    },
+    {
+      "name": "Hong Kong PhD Fellowship Scheme",
+      "provider": "Research Grants Council Hong Kong",
+      "country": "Hong Kong",
+      "possible_official_url": "https://cerg1.ugc.edu.hk/hkpfs/index.html",
+      "keywords": ["priority-1", "government", "phd", "stipend", "tuition-review-required", "scholars4dev-discovery"]
+    },
+    {
+      "name": "Joint Japan World Bank Graduate Scholarship Program",
+      "provider": "World Bank",
+      "country": "Multiple Countries",
+      "possible_official_url": "https://www.worldbank.org/en/programs/scholarships",
+      "keywords": ["priority-0", "multilateral", "developing-countries", "asia", "africa", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "McDonnell International Scholars Academy",
+      "provider": "Washington University in St. Louis",
+      "university": "Washington University in St. Louis",
+      "country": "United States",
+      "possible_official_url": "https://mcdonnell.wustl.edu/",
+      "keywords": ["priority-1", "university", "graduate", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Karsh International Scholarship",
+      "provider": "Duke University",
+      "university": "Duke University",
+      "country": "United States",
+      "possible_official_url": "https://ousf.duke.edu/merit-scholarships/karsh-international-scholars-program/",
+      "keywords": ["priority-1", "university", "undergraduate", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Stamps Scholarship",
+      "provider": "University of Miami",
+      "university": "University of Miami",
+      "country": "United States",
+      "possible_official_url": "https://admissions.miami.edu/undergraduate/financial-aid/scholarships/stamps/index.html",
+      "keywords": ["priority-1", "university", "undergraduate", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Emerging Global Leader Scholarship",
+      "provider": "American University",
+      "university": "American University",
+      "country": "United States",
+      "possible_official_url": "https://www.american.edu/admissions/international/au-egls-apply.cfm",
+      "keywords": ["priority-1", "university", "undergraduate", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Presidential Scholarship",
+      "provider": "Clark University",
+      "university": "Clark University",
+      "country": "United States",
+      "keywords": ["priority-1", "university", "undergraduate", "official-url-discovery-required", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Richmond Scholars Program",
+      "provider": "University of Richmond",
+      "university": "University of Richmond",
+      "country": "United States",
+      "possible_official_url": "https://scholars.richmond.edu/",
+      "keywords": ["priority-1", "university", "undergraduate", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Johnson Scholarship",
+      "provider": "Washington and Lee University",
+      "university": "Washington and Lee University",
+      "country": "United States",
+      "possible_official_url": "https://www.wlu.edu/admissions/apply/johnson-scholarship/",
+      "keywords": ["priority-1", "university", "undergraduate", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Hubert H. Humphrey Fellowship Program",
+      "provider": "United States Department of State",
+      "country": "United States",
+      "possible_official_url": "https://www.humphreyfellowship.org/",
+      "keywords": ["priority-1", "government", "non-degree", "asia", "africa", "funding-review-required", "pdf-us"]
+    },
+    {
+      "name": "Australian Government Research Training Program",
+      "provider": "Australian Government Department of Education",
+      "country": "Australia",
+      "possible_official_url": "https://www.education.gov.au/research-block-grants/research-training-program",
+      "keywords": ["priority-1", "government", "research", "university-administered", "funding-review-required", "pdf-australia"]
+    },
+    {
+      "name": "Master Mind Scholarships",
+      "provider": "Government of Flanders",
+      "country": "Belgium",
+      "possible_official_url": "https://www.studyinflanders.be/scholarships/master-mind-scholarships",
+      "keywords": ["priority-1", "government", "masters", "funding-review-required", "scholars4dev-discovery"]
+    },
+    {
+      "name": "Danish Government Scholarships for Non-EU/EEA Students",
+      "provider": "Danish Ministry of Higher Education and Science",
+      "country": "Denmark",
+      "possible_official_url": "https://studyindenmark.dk/study-options/scholarships",
+      "keywords": ["priority-1", "government", "full-and-partial-tracks", "funding-review-required", "scholars4dev-discovery"]
+    },
+    {
+      "name": "Italian Government Grants for Foreign Students",
+      "provider": "Ministry of Foreign Affairs and International Cooperation Italy",
+      "country": "Italy",
+      "possible_official_url": "https://studyinitaly.esteri.it/",
+      "keywords": ["priority-1", "government", "funding-review-required", "scholars4dev-discovery"]
+    },
+    {
+      "name": "France Excellence Eiffel Scholarship Program",
+      "provider": "Campus France",
+      "country": "France",
+      "possible_official_url": "https://www.campusfrance.org/en/the-france-excellence-eiffel-scholarship-program",
+      "keywords": ["priority-2", "government", "famous", "tuition-not-assumed", "stipend", "scholars4dev-discovery"]
+    },
+    {
+      "name": "NL Scholarship",
+      "provider": "Dutch Ministry of Education, Culture and Science",
+      "country": "Netherlands",
+      "possible_official_url": "https://www.studyinnl.org/finances/nl-scholarship",
+      "keywords": ["priority-2", "government", "partial-funding", "does-not-meet-primary-funding-gate", "scholars4dev-discovery"]
+    },
+    {
+      "name": "Darmasiswa Scholarship Program",
+      "provider": "Ministry of Education, Culture, Research, and Technology Indonesia",
+      "country": "Indonesia",
+      "possible_official_url": "https://darmasiswa.kemdikbud.go.id/",
+      "keywords": ["priority-2", "government", "non-degree", "funding-review-required", "pdf-indonesia"]
+    },
+    {
+      "name": "UI GREAT Scholarship",
+      "provider": "Universitas Indonesia",
+      "university": "Universitas Indonesia",
+      "country": "Indonesia",
+      "keywords": ["priority-2", "university", "ambiguous-current-name", "official-url-discovery-required", "funding-review-required", "pdf-indonesia"]
+    },
+    {
+      "name": "UGM International Fellowship",
+      "provider": "Universitas Gadjah Mada",
+      "university": "Universitas Gadjah Mada",
+      "country": "Indonesia",
+      "keywords": ["priority-2", "university", "official-url-discovery-required", "funding-review-required", "pdf-indonesia"]
+    },
+    {
+      "name": "Marshall Scholarship",
+      "provider": "Marshall Aid Commemoration Commission",
+      "country": "United Kingdom",
+      "possible_official_url": "https://www.marshallscholarship.org/",
+      "keywords": ["priority-2", "government", "famous", "us-citizens", "audience-mismatch-review", "funding-review-required", "pdf-uk"]
+    },
+    {
+      "name": "KAUST Fellowship",
+      "provider": "King Abdullah University of Science and Technology",
+      "university": "King Abdullah University of Science and Technology",
+      "country": "Saudi Arabia",
+      "possible_official_url": "https://admissions.kaust.edu.sa/fees-funding",
+      "keywords": ["priority-1", "university", "masters", "phd", "asia", "africa", "funding-review-required"]
+    }
+  ]
+}

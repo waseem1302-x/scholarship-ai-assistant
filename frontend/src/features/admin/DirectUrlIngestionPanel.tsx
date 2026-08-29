@@ -9,7 +9,6 @@ export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }
   const [targetName, setTargetName] = useState("");
   const [university, setUniversity] = useState("");
   const [password, setPassword] = useState("");
-  const [dryRun, setDryRun] = useState(true);
   const [run, setRun] = useState<IngestionRun | null>(null);
   const [candidate, setCandidate] = useState<IngestionCandidate | null>(null);
   const [graph, setGraph] = useState<OpportunityGraph | null>(null);
@@ -24,7 +23,6 @@ export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }
       const result = await acquireOfficialUrl(
         url,
         targetName,
-        dryRun,
         password,
         supportingUrls.filter((item) => item.trim()).map((item) => item.trim()),
         university,
@@ -60,13 +58,14 @@ export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }
       <label>Expected name (optional)<input value={targetName} onChange={(event) => setTargetName(event.target.value)} placeholder="MEXT Scholarship" /></label>
       <label>Expected university (optional)<input value={university} onChange={(event) => setUniversity(event.target.value)} placeholder="Canonical university name" /></label>
       <label>Administrator password<input type="password" required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-      <label className="direct-url-toggle"><input type="checkbox" checked={dryRun} onChange={(event) => setDryRun(event.target.checked)} /> Validate without creating a draft</label>
-      <button className="button button-primary" disabled={loading}>{loading ? "Acquiring..." : "Acquire official record"}</button>
+      <p className="wide">This queues source acquisition only. It cannot call a model or create a public record.</p>
+      <button className="button button-primary" disabled={loading}>{loading ? "Queueing..." : "Queue official sources"}</button>
     </form>
     {error ? <p className="form-error" role="alert">{error}</p> : null}
     {run && candidate ? <div className="acquisition-result" role="status">
       <strong>{candidate.status.replaceAll("_", " ")}</strong>
       <span>Run {run.status.replaceAll("_", " ")}</span>
+      <span>Ceiling: {run.max_model_calls} model calls · {run.max_pages_per_candidate} pages · {run.max_estimated_cost} estimated cost</span>
       {candidate.validation_errors.map((item) => <p key={item}>{item.replaceAll("_", " ")}</p>)}
       {candidate.conflicts.map((item) => <p key={item}>{item.replaceAll("_", " ")}</p>)}
       {candidate.sources?.length ? <ul className="source-bundle-result">{candidate.sources.map((source) => <li key={source.id}>

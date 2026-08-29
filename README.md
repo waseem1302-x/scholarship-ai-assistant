@@ -110,6 +110,9 @@ Implemented so far:
 
 1. Install Python 3.12+ and PostgreSQL 16, or use Docker.
 2. Copy `.env.example` to `.env` and replace every development secret.
+   Catalogue-worker and Azure settings are intentionally isolated; follow
+   [the catalogue configuration guide](config/catalogue/README.md) instead of
+   putting Azure credentials in the application `.env`.
 3. Install `uv` and synchronize the reviewed lock (or use Docker):
 
    ```bash
@@ -563,3 +566,5 @@ storage, retention, provider, incident-response, and production requirements.
 - [Phased implementation roadmap](docs/implementation-roadmap.md)
 - [Architecture decisions](docs/decisions/0001-modular-monolith.md)
 - [Environment template](.env.example)
+- [Catalogue worker and Azure configuration](config/catalogue/README.md)
+- [Documentation index](docs/README.md)

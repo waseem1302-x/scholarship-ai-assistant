@@ -1,5 +1,6 @@
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -153,6 +154,53 @@ def test_run_lease_reclaim_and_fencing_are_enforced_by_postgres(postgres_engine)
     finally:
         worker_one.close()
         worker_two.close()
+        with sessions() as cleanup:
+            persisted = cleanup.get(CatalogueIngestionRun, run_id)
+            if persisted is not None:
+                cleanup.delete(persisted)
+                cleanup.commit()
+
+
+def test_model_budget_reservation_is_atomic_under_postgres_concurrency(postgres_engine) -> None:
+    sessions = sessionmaker(bind=postgres_engine, expire_on_commit=False)
+    with sessions() as setup:
+        repository = CatalogueIngestionRepository(setup)
+        run = _run()
+        run.idempotency_key = f"postgres-budget-{uuid.uuid4().hex}"
+        run.mode = IngestionMode.EXTRACTION
+        run.max_model_calls = 1
+        run.max_estimated_cost = Decimal("0.010")
+        repository.add_run(run)
+        setup.commit()
+        claimed = repository.claim_run(
+            run.id,
+            worker_id="postgres-budget-worker",
+            lease_seconds=60,
+        )
+        assert claimed is not None
+        run_id = run.id
+        lease_token = claimed.lease_token
+        assert lease_token is not None
+
+    def reserve() -> bool:
+        with sessions() as worker:
+            return CatalogueIngestionRepository(worker).reserve_model_budget(
+                run_id,
+                lease_token=lease_token,
+                projected_cost=Decimal("0.005"),
+            )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _index: reserve(), range(2)))
+
+        assert sorted(outcomes) == [False, True]
+        with sessions() as check:
+            persisted = check.get(CatalogueIngestionRun, run_id)
+            assert persisted is not None
+            assert persisted.model_calls == 1
+            assert persisted.estimated_cost == Decimal("0.005000")
+    finally:
         with sessions() as cleanup:
             persisted = cleanup.get(CatalogueIngestionRun, run_id)
             if persisted is not None:

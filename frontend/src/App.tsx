@@ -11,6 +11,8 @@ const PasswordResetPage = lazy(() => import("./auth/AccountLifecycle").then((mod
 const CataloguePage = lazy(() => import("./features/catalogue/CataloguePage").then((module) => ({ default: module.CataloguePage })));
 const OpportunityDetailPage = lazy(() => import("./features/catalogue/OpportunityDetailPage").then((module) => ({ default: module.OpportunityDetailPage })));
 const AdminPage = lazy(() => import("./features/admin/AdminPage").then((module) => ({ default: module.AdminPage })));
+const AdminReviewPage = lazy(() => import("./features/admin/AdminReviewPage").then((module) => ({ default: module.AdminReviewPage })));
+const AdminAcquiredReviewPage = lazy(() => import("./features/admin/AdminAcquiredReviewPage").then((module) => ({ default: module.AdminAcquiredReviewPage })));
 const AdminSecurityPage = lazy(() => import("./features/admin/AdminSecurityPage").then((module) => ({ default: module.AdminSecurityPage })));
 const MatchesPage = lazy(() => import("./features/workspace/MatchesPage").then((module) => ({ default: module.MatchesPage })));
 const ProfilePage = lazy(() => import("./features/workspace/ProfilePage").then((module) => ({ default: module.ProfilePage })));
@@ -254,6 +256,8 @@ function AppRoutes() {
           <Route path="/document-lab" element={<DocumentLabPage />} />
           <Route path="/community" element={<CommunityPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/admin/review/:opportunityId" element={<AdminReviewPage />} />
+          <Route path="/admin/acquired/:candidateId" element={<AdminAcquiredReviewPage />} />
           <Route path="/admin/security" element={<AdminSecurityPage />} />
           <Route path="*" element={<Navigate replace to="/" />} />
         </Routes>

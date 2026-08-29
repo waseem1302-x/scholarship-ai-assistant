@@ -1,6 +1,5 @@
 import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,15 +10,10 @@ from app.modules.auth.models import User, UserRole
 from app.modules.auth.repository import AuthRepository
 from app.modules.opportunities.models import (
     Source,
-    VerificationRecord,
     VerificationStatus,
 )
 from app.modules.opportunities.repository import OpportunityRepository
-from app.modules.opportunities.schemas import (
-    OpportunityCreate,
-    ReviewAction,
-    ReviewActionRequest,
-)
+from app.modules.opportunities.schemas import OpportunityCreate
 from app.modules.opportunities.service import OpportunityService
 
 SEED_DIRECTORY = Path(__file__).resolve().parents[2] / "data" / "seed"
@@ -82,7 +76,12 @@ def seed_verified_opportunities(
     admin = None if dry_run else find_seed_admin(session, admin_email)
     opportunity_service = OpportunityService(session)
     opportunity_repository = OpportunityRepository(session)
-    summary = {"created": 0, "skipped_duplicates": 0, "validated": 0}
+    summary = {
+        "created": 0,
+        "held_for_review": 0,
+        "skipped_duplicates": 0,
+        "validated": 0,
+    }
 
     for raw_record in seed_records:
         record = dict(raw_record)
@@ -107,20 +106,10 @@ def seed_verified_opportunities(
             raise SeedError("Create an admin user before loading verified seed opportunities")
 
         created = opportunity_service.create_opportunity(opportunity_payload, created_by=admin)
-        published = opportunity_service.apply_review_action(
-            created.id,
-            ReviewActionRequest(
-                action=ReviewAction.PUBLISH,
-                source_id=created.sources[0].id,
-                notes="Verified seed dataset source and published curated seed record",
-            ),
-            reviewed_by=admin,
-        )
-        opportunity = opportunity_repository.get_opportunity(published.id)
+        opportunity = opportunity_repository.get_opportunity(created.id)
         if opportunity is None:
-            raise SeedError(f"Created opportunity {published.id} could not be reloaded")
+            raise SeedError(f"Created opportunity {created.id} could not be reloaded")
 
-        checked_at = datetime.now(UTC)
         for additional_source in additional_sources:
             source = Source(
                 opportunity_id=opportunity.id,
@@ -128,24 +117,13 @@ def seed_verified_opportunities(
                 source_type=additional_source.get("source_type", "official"),
                 title=additional_source["title"],
                 relevant_excerpt=additional_source["relevant_excerpt"],
-                verification_status=VerificationStatus.OFFICIALLY_VERIFIED,
-                verified_by_user_id=admin.id,
-                last_verified_at=checked_at,
+                verification_status=VerificationStatus.NEEDS_REVIEW,
             )
             session.add(source)
-            session.flush()
-            session.add(
-                VerificationRecord(
-                    opportunity_id=opportunity.id,
-                    source_id=source.id,
-                    status=VerificationStatus.OFFICIALLY_VERIFIED,
-                    checked_by_user_id=admin.id,
-                    notes="Verified seed dataset source",
-                )
-            )
 
         session.commit()
         summary["created"] += 1
+        summary["held_for_review"] += 1
 
     return summary
 
@@ -172,6 +150,7 @@ def main() -> None:
         f"Verified seed opportunities {mode}: "
         f"{summary['validated']} validated, "
         f"{summary['created']} created, "
+        f"{summary['held_for_review']} held for review, "
         f"{summary['skipped_duplicates']} duplicates skipped"
     )
 

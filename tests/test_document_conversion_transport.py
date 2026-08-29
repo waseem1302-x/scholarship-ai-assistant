@@ -47,6 +47,12 @@ def _wait_for_request(root: Path) -> Path:
     raise AssertionError("transport did not publish a job")
 
 
+def _publish_result_atomically(path: Path, payload: dict[str, str]) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    temporary.replace(path)
+
+
 def test_filesystem_transport_publishes_only_bounded_job_data_and_reads_atomic_result(
     tmp_path: Path,
 ) -> None:
@@ -76,8 +82,9 @@ def test_filesystem_transport_publishes_only_bounded_job_data_and_reads_atomic_r
     }
     assert submitted["deadline_unix_seconds"] >= time.time()
     (tmp_path / "results").mkdir(exist_ok=True)
-    (tmp_path / "results" / f"{request.name}.json").write_text(
-        json.dumps({"status": "ok", "text": "# Converted\n\n| A | B |"}), encoding="utf-8"
+    _publish_result_atomically(
+        tmp_path / "results" / f"{request.name}.json",
+        {"status": "ok", "text": "# Converted\n\n| A | B |"},
     )
     thread.join(timeout=1)
 
@@ -99,8 +106,9 @@ def test_filesystem_transport_returns_only_safe_worker_errors(tmp_path: Path) ->
     thread = threading.Thread(target=submit)
     thread.start()
     request = _wait_for_request(tmp_path)
-    (tmp_path / "results" / f"{request.name}.json").write_text(
-        json.dumps({"status": "error", "code": "document_conversion_failed"}), encoding="utf-8"
+    _publish_result_atomically(
+        tmp_path / "results" / f"{request.name}.json",
+        {"status": "error", "code": "document_conversion_failed"},
     )
     thread.join(timeout=1)
 

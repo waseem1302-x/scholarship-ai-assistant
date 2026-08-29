@@ -22,6 +22,7 @@ from typing import Protocol
 from app.modules.opportunities.source_monitor import NormalizedSourcePayload, SourceFetchError
 
 DOCUMENT_CONVERTER_VERSION = "catalogue-docling-layout.v1"
+LOCAL_PDF_PARSER_VERSION = "catalogue-pypdf-text.v1"
 DEFAULT_DOCUMENT_MODEL_ARTIFACTS_PATH = "/opt/docling/models"
 
 
@@ -277,6 +278,23 @@ class CatalogueDocumentPayloadNormalizer:
 
     def __call__(self, payload: bytes, content_type: str) -> str | NormalizedSourcePayload:
         if content_type == "application/pdf":
+            # Ordinary text PDFs stay in-process.  Only a document whose local
+            # text layer is insufficient crosses the isolated Docling boundary.
+            self.converter._validate_pdf(payload)
+            page_count = self.converter._page_count(payload)
+            from app.modules.opportunities.source_monitor import normalize_source_payload
+
+            local_text = normalize_source_payload(payload, content_type)
+            if self.converter._is_text_sufficient(local_text):
+                return NormalizedSourcePayload(
+                    text=local_text,
+                    parser_version=LOCAL_PDF_PARSER_VERSION,
+                    conversion_metadata={
+                        "document_page_count": page_count,
+                        "document_ocr_decision": "not_used",
+                        "document_ocr_reason": "local_text_sufficient",
+                    },
+                )
             converted = self.converter.convert_pdf(payload, allow_ocr=self.allow_ocr)
             return NormalizedSourcePayload(
                 text=converted.text,
@@ -322,6 +340,7 @@ def _document_worker_environment(
 __all__ = [
     "DEFAULT_DOCUMENT_MODEL_ARTIFACTS_PATH",
     "DOCUMENT_CONVERTER_VERSION",
+    "LOCAL_PDF_PARSER_VERSION",
     "CatalogueDocumentPayloadNormalizer",
     "ConvertedDocument",
     "DocumentConversionError",

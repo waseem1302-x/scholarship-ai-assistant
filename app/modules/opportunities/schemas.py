@@ -29,9 +29,11 @@ from app.modules.opportunities.models import (
     FundingCoverageStatus,
     FundingType,
     OpportunityStatus,
+    PublicationFactState,
     SourceType,
     VerificationStatus,
 )
+from app.modules.opportunities.publication_readiness import PublicationReadiness
 
 EligibilityRuleValue = str | int | float | list[str | int | float]
 SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -100,6 +102,7 @@ class OpportunityCycleCreate(BaseModel):
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
     is_rolling: bool = False
     is_archived: bool = False
+    status: PublicationFactState | None = None
 
     @field_validator("timezone")
     @classmethod
@@ -140,7 +143,9 @@ class OpportunityCreate(BaseModel):
     provider_name: str = Field(min_length=2, max_length=255)
     provider_canonical_id: str | None = Field(default=None, min_length=2, max_length=120)
     programme_family_id: str | None = Field(default=None, min_length=2, max_length=120)
+    programme_route_id: str | None = Field(default=None, min_length=2, max_length=120)
     cycle_id: str | None = Field(default=None, min_length=2, max_length=120)
+    aliases: list[str] = Field(default_factory=list, max_length=30)
     provider_website_url: HttpUrl | None = None
     university_name: str | None = Field(default=None, min_length=2, max_length=255)
     university_website_url: HttpUrl | None = None
@@ -186,6 +191,7 @@ class OpportunityCreate(BaseModel):
         "provider_name",
         "provider_canonical_id",
         "programme_family_id",
+        "programme_route_id",
         "cycle_id",
         "university_name",
         "country",
@@ -200,7 +206,7 @@ class OpportunityCreate(BaseModel):
     def normalize_currency(cls, value: str | None) -> str | None:
         return value.upper() if value else value
 
-    @field_validator("required_documents", "eligibility_warnings")
+    @field_validator("required_documents", "eligibility_warnings", "aliases")
     @classmethod
     def clean_list(cls, values: list[str]) -> list[str]:
         cleaned = [item.strip() for item in values if item.strip()]
@@ -217,21 +223,14 @@ class OpportunityCreate(BaseModel):
         ):
             raise ValueError("Application deadline cannot be before the opening date")
 
-        components = [
-            self.tuition_coverage_status,
-            self.stipend_coverage_status,
-            self.accommodation_coverage_status,
-            self.travel_coverage_status,
-            self.insurance_coverage_status,
-            self.fees_coverage_status,
-        ]
         if self.funding_type is FundingType.FULL and (
             not self.funding_policy
-            or any(component is not FundingCoverageStatus.CONFIRMED for component in components)
+            or self.tuition_coverage_status is not FundingCoverageStatus.CONFIRMED
+            or self.stipend_coverage_status is not FundingCoverageStatus.CONFIRMED
         ):
             raise ValueError(
-                "Full funding requires a documented policy and confirmed tuition, stipend, "
-                "accommodation, travel, insurance, and fee coverage"
+                "Full funding requires a documented policy plus confirmed full tuition "
+                "and stipend coverage"
             )
 
         if self.monthly_stipend_amount is not None and self.monthly_stipend_currency is None:
@@ -301,6 +300,20 @@ class DuplicateSuggestionDecision(BaseModel):
     is_duplicate: bool
 
 
+class DuplicateOpportunitySnapshot(BaseModel):
+    id: uuid.UUID
+    name: str
+    provider_name: str
+    programme_family_id: str | None
+    programme_route_id: str | None
+    university_name: str | None
+    country: str
+    degree_level: DegreeLevel
+    cycle_id: str | None
+    catalogue_identity_key: str | None
+    official_source_urls: list[str]
+
+
 class DuplicateSuggestionResponse(BaseModel):
     id: uuid.UUID
     opportunity_id: uuid.UUID
@@ -309,6 +322,10 @@ class DuplicateSuggestionResponse(BaseModel):
     matched_opportunity_name: str
     score: Decimal
     status: DuplicateSuggestionStatus
+    matching_signals: list[str]
+    conflicting_fields: dict[str, list[str | None]]
+    opportunity: DuplicateOpportunitySnapshot
+    matched_opportunity: DuplicateOpportunitySnapshot
     created_at: datetime
 
 
@@ -433,6 +450,12 @@ class OpportunitySummaryResponse(BaseModel):
     name: str
     provider_name: str
     university_name: str | None
+    programme_family_id: str | None = None
+    programme_route_id: str | None = None
+    catalogue_family_key: str | None = None
+    catalogue_route_key: str | None = None
+    catalogue_identity_key: str | None = None
+    catalogue_identity_policy_version: str | None = None
     country: str
     degree_level: DegreeLevel
     degree_levels: list[DegreeLevel]
@@ -492,8 +515,18 @@ class OpportunityDetailResponse(OpportunitySummaryResponse):
     eligibility_rules: list[EligibilityRuleCreate]
 
 
+class OpportunityFamilyResponse(BaseModel):
+    family_key: str
+    name: str
+    provider_name: str
+    country: str
+    degree_levels: list[DegreeLevel]
+    variants: list[OpportunityDetailResponse]
+
+
 class AdminOpportunityResponse(OpportunityDetailResponse):
     sources: list[SourceResponse]
+    publication_readiness: PublicationReadiness | None = None
 
 
 class AdminOpportunitySearchResponse(BaseModel):
@@ -504,6 +537,16 @@ class AdminOpportunitySearchResponse(BaseModel):
 class ReviewQueueItemResponse(BaseModel):
     opportunity: AdminOpportunityResponse
     reasons: list[DataQualityIssueResponse]
+    publication_readiness: PublicationReadiness
+
+
+class AdminOpportunityFamilyResponse(BaseModel):
+    family_key: str
+    name: str
+    provider_name: str
+    country: str
+    degree_levels: list[DegreeLevel]
+    variants: list[ReviewQueueItemResponse]
 
 
 class ReviewQueueResponse(BaseModel):

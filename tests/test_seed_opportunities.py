@@ -76,19 +76,23 @@ def test_seed_loader_dry_run_validates_without_creating_records(db_session: Sess
     assert db_session.query(Opportunity).count() == 0
 
 
-def test_seed_loader_creates_public_verified_seed_records(db_session: Session) -> None:
+def test_seed_loader_stages_incomplete_records_for_review(db_session: Session) -> None:
     admin = create_admin(db_session)
 
     summary = seed_verified_opportunities(db_session, admin_email=admin.email)
 
     opportunities = db_session.query(Opportunity).all()
     assert summary["created"] == summary["validated"]
+    assert summary["held_for_review"] == summary["validated"]
     assert len(opportunities) == summary["created"]
-    assert all(opportunity.status is OpportunityStatus.ACTIVE for opportunity in opportunities)
+    assert all(opportunity.status is OpportunityStatus.DRAFT for opportunity in opportunities)
     assert all(
-        any(
-            source.verification_status is VerificationStatus.OFFICIALLY_VERIFIED
-            and source.last_verified_at is not None
+        opportunity.publication_completeness == "incomplete"
+        for opportunity in opportunities
+    )
+    assert all(
+        all(
+            source.verification_status is VerificationStatus.NEEDS_REVIEW
             for source in opportunity.sources
         )
         for opportunity in opportunities

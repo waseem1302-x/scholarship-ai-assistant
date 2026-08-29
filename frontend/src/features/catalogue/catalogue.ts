@@ -5,6 +5,7 @@ import {
   type CatalogueAvailability,
   type CatalogueFilters,
   type OpportunityDetail,
+  type OpportunityFamily,
   type OpportunitySearchResponse,
 } from "./types";
 
@@ -92,6 +93,10 @@ export async function searchOpportunities(filters: CatalogueFilters, offset: num
 
 export async function getOpportunity(id: string, signal?: AbortSignal) {
   return apiClient.request<OpportunityDetail>(`/opportunities/${id}`, { signal });
+}
+
+export async function getOpportunityFamily(id: string, signal?: AbortSignal) {
+  return apiClient.request<OpportunityFamily>(`/opportunities/${id}/family`, { signal });
 }
 
 export function isNotFound(error: unknown): boolean {

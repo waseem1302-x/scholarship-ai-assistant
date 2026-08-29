@@ -17,7 +17,9 @@ from app.modules.opportunities.models import (
     OpportunityStatus,
     VerificationStatus,
 )
+from app.modules.opportunities.publication_readiness import PublicationReadiness
 from app.modules.opportunities.schemas import (
+    AdminOpportunityFamilyResponse,
     AdminOpportunityResponse,
     AdminOpportunitySearchResponse,
     DataQualityIssueSearchResponse,
@@ -26,10 +28,12 @@ from app.modules.opportunities.schemas import (
     DuplicateSuggestionSearchResponse,
     OpportunityCreate,
     OpportunityDetailResponse,
+    OpportunityFamilyResponse,
     OpportunityImportRequest,
     OpportunityImportResponse,
     OpportunitySearchResponse,
     ReviewActionRequest,
+    ReviewQueueItemResponse,
     ReviewQueueResponse,
     SourceCheckRequest,
     SourceCheckResponse,
@@ -139,6 +143,19 @@ def get_admin_opportunity_graph(
 
 
 @router.get(
+    "/admin/opportunities/{opportunity_id}/family",
+    response_model=AdminOpportunityFamilyResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE, 404: NOT_FOUND_RESPONSE},
+)
+def get_admin_opportunity_family(
+    opportunity_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> AdminOpportunityFamilyResponse:
+    return service.get_admin_opportunity_family(opportunity_id)
+
+
+@router.get(
     "/admin/review-queue",
     response_model=ReviewQueueResponse,
     responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE},
@@ -150,6 +167,19 @@ def list_review_queue(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> ReviewQueueResponse:
     return service.list_review_queue(limit=limit, offset=offset)
+
+
+@router.get(
+    "/admin/review-queue/{opportunity_id}",
+    response_model=ReviewQueueItemResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE, 404: NOT_FOUND_RESPONSE},
+)
+def get_review_queue_item(
+    opportunity_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> ReviewQueueItemResponse:
+    return service.get_review_queue_item(opportunity_id)
 
 
 @router.get(
@@ -218,6 +248,7 @@ def import_opportunities(
         401: AUTHENTICATION_RESPONSE,
         403: FORBIDDEN_RESPONSE,
         404: NOT_FOUND_RESPONSE,
+        409: CONFLICT_RESPONSE,
         422: VALIDATION_RESPONSE,
     },
 )
@@ -228,6 +259,19 @@ def apply_review_action(
     service: Annotated[OpportunityService, Depends(get_opportunity_service)],
 ) -> AdminOpportunityResponse:
     return service.apply_review_action(opportunity_id, payload, reviewed_by=admin)
+
+
+@router.get(
+    "/admin/opportunities/{opportunity_id}/publication-readiness",
+    response_model=PublicationReadiness,
+    responses={401: AUTHENTICATION_RESPONSE, 403: FORBIDDEN_RESPONSE, 404: NOT_FOUND_RESPONSE},
+)
+def get_publication_readiness(
+    opportunity_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> PublicationReadiness:
+    return service.get_publication_readiness(opportunity_id)
 
 
 @router.post(
@@ -310,6 +354,18 @@ def search_opportunities(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/opportunities/{opportunity_id}/family",
+    response_model=OpportunityFamilyResponse,
+    responses={404: NOT_FOUND_RESPONSE},
+)
+def get_opportunity_family(
+    opportunity_id: uuid.UUID,
+    service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+) -> OpportunityFamilyResponse:
+    return service.get_public_opportunity_family(opportunity_id)
 
 
 @router.get(

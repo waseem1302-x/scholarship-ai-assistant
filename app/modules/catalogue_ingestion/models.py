@@ -270,6 +270,9 @@ class CatalogueCandidate(Base):
         index=True,
     )
     proposed_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    acquisition_bundle: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, server_default="{}"
+    )
     validation_errors: Mapped[list[str]] = mapped_column(JSON, default=list)
     conflicts: Mapped[list[str]] = mapped_column(JSON, default=list)
     duplicate_opportunity_ids: Mapped[list[str]] = mapped_column(JSON, default=list)

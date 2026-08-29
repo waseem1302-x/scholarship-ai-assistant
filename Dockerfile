@@ -21,15 +21,38 @@ WORKDIR /app
 RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock
+
 COPY app ./app
 COPY --from=frontend-build /app/web/frontend-dist ./app/web/frontend-dist
 COPY data ./data
 COPY alembic.ini ./
 COPY alembic ./alembic
 
-RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.lock
-
 USER app
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+# Opt-in catalogue worker. Crawlee is installed from the frozen project lock
+# only in this target; the API/default image keeps the smaller core runtime.
+FROM runtime AS catalogue-worker
+
+USER root
+COPY pyproject.toml uv.lock README.md ./
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    python -m pip install --no-cache-dir uv==0.11.33 \
+    && UV_PROJECT_ENVIRONMENT=/opt/catalogue-venv uv sync --frozen --extra dev --extra crawlee \
+    && /opt/catalogue-venv/bin/python -m playwright install --with-deps chromium \
+    && chown -R app:app /opt/catalogue-venv /ms-playwright
+
+ENV PATH="/opt/catalogue-venv/bin:$PATH"
+USER app
+
+
+# Keep the normal API runtime as the implicit target for `docker build .` and
+# existing Compose services.
+FROM runtime AS final

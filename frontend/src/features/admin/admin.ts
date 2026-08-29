@@ -2,6 +2,8 @@ import { apiClient } from "../../api/client";
 
 import type {
   DataQualityResponse,
+  DuplicateSuggestion,
+  DuplicateSuggestionResponse,
   AdminOpportunityFilters,
   AdminOpportunitySearchResponse,
   ImportResponse,
@@ -10,6 +12,9 @@ import type {
   IngestionCandidateResponse,
   IngestionRun,
   OpportunityGraph,
+  ReviewQueueItem,
+  AcquiredCandidateReview,
+  AdminOpportunityFamily,
 } from "./types";
 
 export const reviewActions: { value: ReviewAction; label: string; needsNotes: boolean }[] = [
@@ -89,7 +94,7 @@ export async function getAdminWorkspace({
   issueOffset = 0,
 }: AdminWorkspacePage = {}, signal?: AbortSignal): Promise<[ReviewQueueResponse, DataQualityResponse]> {
   return Promise.all([
-    apiClient.request<ReviewQueueResponse>(`/admin/review-queue?limit=20&offset=${queueOffset}`, { signal }),
+    apiClient.request<ReviewQueueResponse>(`/admin/review-queue?limit=100&offset=${queueOffset}`, { signal }),
     apiClient.request<DataQualityResponse>(`/admin/data-quality-issues?limit=20&offset=${issueOffset}`, { signal }),
   ]);
 }
@@ -104,6 +109,44 @@ export function adminOpportunitySearch(filters: AdminOpportunityFilters, offset 
 
 export async function getAdminOpportunities(filters: AdminOpportunityFilters, offset = 0, signal?: AbortSignal): Promise<AdminOpportunitySearchResponse> {
   return apiClient.request<AdminOpportunitySearchResponse>(`/admin/opportunities?${adminOpportunitySearch(filters, offset)}`, { signal });
+}
+
+export async function getAdminCatalogueRecords(signal?: AbortSignal): Promise<AdminOpportunitySearchResponse> {
+  return apiClient.request<AdminOpportunitySearchResponse>("/admin/opportunities?limit=100&offset=0", { signal });
+}
+
+export async function getDuplicateSuggestions(signal?: AbortSignal): Promise<DuplicateSuggestionResponse> {
+  return apiClient.request<DuplicateSuggestionResponse>(
+    "/admin/duplicate-suggestions?limit=100&offset=0",
+    { signal },
+  );
+}
+
+export async function getReviewQueueItem(opportunityId: string, signal?: AbortSignal): Promise<ReviewQueueItem> {
+  return apiClient.request<ReviewQueueItem>(`/admin/review-queue/${encodeURIComponent(opportunityId)}`, { signal });
+}
+
+export async function getAdminOpportunityFamily(opportunityId: string, signal?: AbortSignal): Promise<AdminOpportunityFamily> {
+  return apiClient.request<AdminOpportunityFamily>(
+    `/admin/opportunities/${encodeURIComponent(opportunityId)}/family`,
+    { signal },
+  );
+}
+
+export async function getAcquiredCandidates(signal?: AbortSignal): Promise<IngestionCandidateResponse> {
+  return apiClient.request<IngestionCandidateResponse>(
+    "/admin/catalogue-ingestion/candidates?limit=100&offset=0",
+    { signal },
+  );
+}
+
+export async function getAcquiredCandidateReview(candidateId: string, signal?: AbortSignal): Promise<AcquiredCandidateReview> {
+  const encodedId = encodeURIComponent(candidateId);
+  const [candidate, projection] = await Promise.all([
+    apiClient.request<AcquiredCandidateReview["candidate"]>(`/admin/catalogue-ingestion/candidates/${encodedId}`, { signal }),
+    apiClient.request<AcquiredCandidateReview["projection"]>(`/admin/catalogue-ingestion/candidates/${encodedId}/review-projection`, { signal }),
+  ]);
+  return { candidate, projection };
 }
 
 async function adminMutation<T>(
@@ -148,6 +191,18 @@ export async function reverifySource(
   }, password, "PATCH");
 }
 
+export async function reviewDuplicateSuggestion(
+  suggestionId: string,
+  isDuplicate: boolean,
+  password: string,
+): Promise<DuplicateSuggestion> {
+  return adminMutation<DuplicateSuggestion>(
+    `/admin/duplicate-suggestions/${encodeURIComponent(suggestionId)}/decision`,
+    { is_duplicate: isDuplicate },
+    password,
+  );
+}
+
 export async function applyReviewAction(
   opportunityId: string,
   action: ReviewAction,
@@ -180,7 +235,6 @@ export async function importOpportunities(
 export async function acquireOfficialUrl(
   url: string,
   targetName: string,
-  dryRun: boolean,
   password: string,
   supportingUrls: string[] = [],
   university = "",
@@ -190,16 +244,13 @@ export async function acquireOfficialUrl(
     supporting_urls: supportingUrls,
     target_name: targetName.trim() || null,
     university: university.trim() || null,
-    mode: dryRun ? "extraction" : "review_queue",
-    dry_run: dryRun,
-    process_now: true,
+    mode: "candidate_only",
+    dry_run: true,
+    process_now: false,
   }, password);
   const candidates = await apiClient.request<IngestionCandidateResponse>(
     `/admin/catalogue-ingestion/candidates?run_id=${encodeURIComponent(run.id)}&limit=1&offset=0`,
   );
   const candidate = candidates.items[0] ?? null;
-  const graph = candidate?.opportunity_id
-    ? await apiClient.request<OpportunityGraph>(`/admin/opportunities/${candidate.opportunity_id}/graph`)
-    : null;
-  return { run, candidate, graph };
+  return { run, candidate, graph: null };
 }

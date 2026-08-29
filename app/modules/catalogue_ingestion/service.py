@@ -6,7 +6,8 @@ import hashlib
 import json
 import re
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
 
@@ -16,6 +17,13 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.models import AuditLog, User
+from app.modules.catalogue_ingestion.acquisition_bundle import (
+    MAX_ACCEPTED_ARTIFACTS,
+    acquisition_role_metadata,
+    build_acquisition_bundle_summary,
+    classify_acquisition_source,
+)
+from app.modules.catalogue_ingestion.browser_fetcher import BrowserFallbackSourceFetcher
 from app.modules.catalogue_ingestion.claim_provider import (
     CatalogueClaimProvider,
     _normalize_claim_output,
@@ -27,6 +35,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     CLAIM_SCHEMA_VERSION,
     CLAIM_SCHEMA_VERSIONS,
     ClaimEntityType,
+    ClaimExtractionLineage,
     ClaimExtractionOutput,
     ClaimObjective,
     ClaimResolution,
@@ -87,6 +96,7 @@ from app.modules.catalogue_ingestion.schemas import (
     CandidateListResponse,
     CandidateResponse,
     CandidateReviewProjectionResponse,
+    CandidateReviewReadiness,
     CatalogueExtractionOutput,
     IngestionRunListResponse,
     IngestionRunResponse,
@@ -97,6 +107,7 @@ from app.modules.catalogue_ingestion.schemas import (
     OperatorSourceRoutingStatus,
     OperatorSourceStatus,
     ReviewAuditHistoryItem,
+    ReviewClaimExtraction,
     ReviewDecisionHistoryItem,
     ReviewEvidenceBlock,
     ReviewFactScope,
@@ -110,8 +121,11 @@ from app.modules.catalogue_ingestion.seed_parser import (
 )
 from app.modules.catalogue_ingestion.source_routing import (
     SOURCE_ROUTER_VERSION,
+    SourceContentRole,
     SourceCycle,
+    SourceRoutingDecision,
     classify_source,
+    routed_objectives,
 )
 from app.modules.catalogue_ingestion.sources import (
     OfficialSourceClassifier,
@@ -120,6 +134,7 @@ from app.modules.catalogue_ingestion.sources import (
 )
 from app.modules.catalogue_ingestion.url_policy import normalize_discovery_lead_url
 from app.modules.catalogue_ingestion.validation import validate_and_build_proposal
+from app.modules.catalogue_ingestion.worker_safety import WorkerKillSwitchActive
 from app.modules.opportunities.models import Provider, University
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.service import OpportunityService
@@ -151,6 +166,7 @@ class CatalogueIngestionService:
         extractor: CatalogueExtractionProvider | None = None,
         claim_extractor: CatalogueClaimProvider | None = None,
         classifier: OfficialSourceClassifier | None = None,
+        kill_switch: Callable[[], bool] | None = None,
     ) -> None:
         self.session = session
         self.settings = settings
@@ -181,10 +197,15 @@ class CatalogueIngestionService:
                     ),
                     allow_ocr=settings.catalogue_document_ocr_enabled,
                 )
-            self.fetcher = SafeSourceFetcher(
+            safe_fetcher = SafeSourceFetcher(
                 timeout_seconds=settings.catalogue_ai_timeout_seconds,
                 max_bytes=settings.catalogue_source_max_bytes_per_page,
                 payload_normalizer=payload_normalizer,
+            )
+            self.fetcher = (
+                BrowserFallbackSourceFetcher(static_fetcher=safe_fetcher)
+                if settings.catalogue_browser_fetching_enabled
+                else safe_fetcher
             )
         self.evidence_acquirer = select_evidence_acquirer(
             prefer_crawlee_static=settings.catalogue_crawlee_static_enabled,
@@ -193,6 +214,7 @@ class CatalogueIngestionService:
         self.extractor = extractor or get_extraction_provider(settings)
         self.claim_extractor = claim_extractor or get_claim_provider(settings)
         self.classifier = classifier or OfficialSourceClassifier()
+        self.kill_switch = kill_switch or (lambda: False)
         self.metrics = get_catalogue_metrics(settings)
 
     def create_run_from_source(
@@ -268,7 +290,9 @@ class CatalogueIngestionService:
                 )
             canonical_urls.append(canonical_url)
             hosts.append(normalized.normalized.host)
-        if len(canonical_urls) > self.settings.catalogue_ai_max_pages_per_candidate:
+        if len(canonical_urls) > min(
+            self.settings.catalogue_ai_max_pages_per_candidate, MAX_ACCEPTED_ARTIFACTS
+        ):
             raise AppError(
                 "direct_source_budget_exceeded",
                 "The direct source bundle exceeds the configured page budget",
@@ -438,6 +462,16 @@ class CatalogueIngestionService:
                     try:
                         run.stage = IngestionRunStage.ACQUIRING
                         self._process_candidate(run, candidate)
+                    except WorkerKillSwitchActive:
+                        self.repository.release_candidate(candidate)
+                        self.session.commit()
+                        if not self.repository.pause_run_claim(run.id, lease_token=lease_token):
+                            raise AppError(
+                                "ingestion_run_lease_lost", "Run lease expired", 409
+                            ) from None
+                        result = self.repository.get_run(run.id)
+                        assert result is not None
+                        return self._run_response(result)
                     except RunBudgetExhausted:
                         self.repository.release_candidate(candidate)
                         self.session.commit()
@@ -504,6 +538,7 @@ class CatalogueIngestionService:
             candidate_source_id=candidate_source_id,
         )
 
+
     def _process_candidate(self, run: CatalogueIngestionRun, candidate: CatalogueCandidate) -> None:
         if run.input_kind is IngestionInputKind.DIRECT_URL:
             self._process_direct_candidate(run, candidate)
@@ -532,14 +567,13 @@ class CatalogueIngestionService:
             )
             if source is None:
                 source = CatalogueCandidateSource(
-                    candidate_id=candidate.id,
                     url=discovered_url.url,
                     canonical_url=canonical_url,
                     is_official=classification.is_official,
                     trust_tier=classification.trust_tier,
                     classification_reason=classification.reason,
                 )
-                self.session.add(source)
+                candidate.sources.append(source)
                 self.session.flush()
             else:
                 source.is_official = classification.is_official
@@ -562,15 +596,21 @@ class CatalogueIngestionService:
                 crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
                     source.url,
                     budget=CrawlBudget(
-                        max_pages=run.max_pages_per_candidate,
-                        max_depth=2,
+                        max_pages=min(run.max_pages_per_candidate, MAX_ACCEPTED_ARTIFACTS),
+                        max_depth=3,
                         max_total_bytes=min(
                             per_page_bytes * run.max_pages_per_candidate,
-                            20_000_000,
+                            60_000_000,
                         ),
                         per_host_interval_seconds=float(
                             self.settings.source_monitor_per_host_interval_seconds
                         ),
+                    ),
+                    allowed_hosts=_verified_crawl_hosts(
+                        source.url,
+                        provider_url,
+                        university_url,
+                        reviewed=self.settings.catalogue_reviewed_official_domain_set,
                     ),
                 )
                 if not crawl_result.pages:
@@ -620,6 +660,7 @@ class CatalogueIngestionService:
                 self.metrics.add("source_fetch_success", child_successes)
             if crawl_result.failures:
                 self.metrics.add("source_fetch_failure", len(crawl_result.failures))
+        self._refresh_acquisition_bundle(candidate, crawl_result=crawl_result)
         candidate.status = CandidateStatus.SOURCE_FETCHED
         self.session.commit()
 
@@ -629,7 +670,10 @@ class CatalogueIngestionService:
         if not self.settings.catalogue_ai_ingestion_enabled:
             self._manual_review(candidate, "ai_ingestion_disabled")
             return
-        if run.input_kind is IngestionInputKind.DIRECT_URL:
+        if (
+            run.input_kind is IngestionInputKind.DIRECT_URL
+            or self.settings.catalogue_bounded_crawling_enabled
+        ):
             self._process_direct_claims(run, candidate)
             return
         source_text = fetched.normalized_text or fetched.excerpt_text or ""
@@ -649,43 +693,52 @@ class CatalogueIngestionService:
                 reused.candidate_id == candidate.id and reused.source_id == source.id
             )
         else:
-            self._check_budget(run, source_text)
+            reserved_cost = self._reserve_model_budget(run, source_text)
             try:
                 result = self.extractor.extract(
                     source_url=source.final_url or source.url, source_text=source_text
                 )
             except ExtractionSchemaError as exc:
                 self.metrics.add("ai_schema_failures")
-                self.session.add(
+                if exc.usage is not None:
+                    self._reconcile_model_budget(run, reserved_cost, exc.usage)
+                self.repository.save_extraction_attempt(
                     self._attempt(
-                        candidate, source, ExtractionAttemptStatus.SCHEMA_FAILED, exc.code
+                        candidate,
+                        source,
+                        ExtractionAttemptStatus.SCHEMA_FAILED,
+                        exc.code,
+                        usage=exc.usage,
                     )
                 )
                 self._manual_review(candidate, exc.code)
+                if run.estimated_cost > run.max_estimated_cost:
+                    raise RunBudgetExhausted from None
                 return
             except ExtractionProviderError as exc:
                 self.metrics.add("ai_extraction_failures")
-                self.session.add(
+                if exc.usage is not None:
+                    self._reconcile_model_budget(run, reserved_cost, exc.usage)
+                self.repository.save_extraction_attempt(
                     self._attempt(
-                        candidate, source, ExtractionAttemptStatus.PROVIDER_FAILED, exc.code
+                        candidate,
+                        source,
+                        ExtractionAttemptStatus.PROVIDER_FAILED,
+                        exc.code,
+                        usage=exc.usage,
                     )
                 )
                 self._manual_review(candidate, exc.code)
+                if run.estimated_cost > run.max_estimated_cost:
+                    raise RunBudgetExhausted from None
                 return
             output = result.output
-            self.metrics.add("ai_extraction_calls")
-            self.metrics.add("model_input_tokens", result.usage.input_tokens)
-            self.metrics.add("model_output_tokens", result.usage.output_tokens)
-            self.metrics.observe("estimated_ai_cost", float(result.usage.estimated_cost))
             usage = result.usage
+            self._reconcile_model_budget(run, reserved_cost, usage)
             attempt_status = ExtractionAttemptStatus.SUCCEEDED
             reuse_is_current_attempt = False
-            run.model_calls += 1
-            run.input_tokens += usage.input_tokens
-            run.output_tokens += usage.output_tokens
-            run.estimated_cost += usage.estimated_cost
             if run.estimated_cost > run.max_estimated_cost:
-                self.session.add(
+                self.repository.save_extraction_attempt(
                     self._attempt(
                         candidate,
                         source,
@@ -718,7 +771,7 @@ class CatalogueIngestionService:
             usage=usage,
         )
         if not reuse_is_current_attempt:
-            self.session.add(attempt)
+            self.repository.save_extraction_attempt(attempt)
         if validated.payload is None or validation_errors:
             self.metrics.add("validation_failures")
             candidate.status = (
@@ -785,6 +838,7 @@ class CatalogueIngestionService:
         candidate.status = CandidateStatus.OFFICIAL_SOURCE_CANDIDATE
         failures = False
         root_fetched: FetchedSource | None = None
+        crawl_result: CrawlResult | None = None
 
         if len(explicit_sources) == 1 and self.settings.catalogue_bounded_crawling_enabled:
             source = explicit_sources[0]
@@ -801,15 +855,21 @@ class CatalogueIngestionService:
                 crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
                     source.url,
                     budget=CrawlBudget(
-                        max_pages=run.max_pages_per_candidate,
-                        max_depth=2,
+                        max_pages=min(run.max_pages_per_candidate, MAX_ACCEPTED_ARTIFACTS),
+                        max_depth=3,
                         max_total_bytes=min(
                             per_page_bytes * run.max_pages_per_candidate,
-                            20_000_000,
+                            60_000_000,
                         ),
                         per_host_interval_seconds=float(
                             self.settings.source_monitor_per_host_interval_seconds
                         ),
+                    ),
+                    allowed_hosts=_verified_crawl_hosts(
+                        source.url,
+                        provider_url,
+                        university_url,
+                        reviewed=self.settings.catalogue_reviewed_official_domain_set,
                     ),
                 )
                 if not crawl_result.pages:
@@ -868,6 +928,10 @@ class CatalogueIngestionService:
                 ):
                     failures = True
 
+        self._refresh_acquisition_bundle(
+            candidate,
+            crawl_result=crawl_result,
+        )
         if failures:
             self._manual_review(candidate, "direct_source_bundle_incomplete")
             return
@@ -958,10 +1022,23 @@ class CatalogueIngestionService:
             self.metrics.add("source_fetch_failure")
             return False
 
+        content_hash = fetched.normalized_content_hash or fetched.content_hash
+        if any(
+            item.id != source.id
+            and item.content_hash == content_hash
+            and item.status is CandidateSourceStatus.FETCHED
+            for item in candidate.sources
+        ):
+            source.status = CandidateSourceStatus.MANUAL_REVIEW
+            source.failure_code = "direct_source_content_duplicate"
+            source.failure_reason = "Another accepted source has identical normalized content"
+            self.metrics.add("source_fetch_failure")
+            return False
+
         source.canonical_url = final_canonical
         source.status = CandidateSourceStatus.FETCHED
         source.content_type = fetched.content_type
-        source.content_hash = fetched.normalized_content_hash or fetched.content_hash
+        source.content_hash = content_hash
         source.relevant_excerpt = fetched.excerpt_text
         source.bytes_read = fetched.bytes_read
         source.fetched_at = datetime.now(UTC)
@@ -988,6 +1065,18 @@ class CatalogueIngestionService:
             raise AppError("catalogue_candidate_not_found", "Candidate was not found", 404)
         if candidate.status in {CandidateStatus.SUBMITTED_FOR_REVIEW, CandidateStatus.PUBLISHED}:
             raise AppError("catalogue_candidate_not_retryable", "Candidate cannot be retried", 409)
+        run = self.repository.get_run(candidate.run_id)
+        if run is None:
+            raise AppError("ingestion_run_not_found", "Ingestion run was not found", 404)
+        if (
+            run.model_calls >= run.max_model_calls
+            or run.estimated_cost >= run.max_estimated_cost
+        ):
+            raise AppError(
+                "catalogue_run_budget_exhausted",
+                "Increase the bounded run budget before retrying this candidate",
+                409,
+            )
         candidate.status = CandidateStatus.DISCOVERED
         candidate.failure_code = None
         candidate.failure_reason = None
@@ -998,6 +1087,24 @@ class CatalogueIngestionService:
         candidate.next_attempt_at = datetime.now(UTC)
         candidate.claimed_by = None
         candidate.claimed_until = None
+        if run.status in {
+            IngestionRunStatus.COMPLETED,
+            IngestionRunStatus.FAILED,
+            IngestionRunStatus.BUDGET_EXHAUSTED,
+            IngestionRunStatus.DEAD_LETTER,
+        }:
+            run.status = IngestionRunStatus.PENDING
+            run.stage = IngestionRunStage.QUEUED
+            run.checkpoint_cursor = max(0, run.checkpoint_cursor - 1)
+            run.completed_at = None
+            run.next_attempt_at = datetime.now(UTC)
+            run.claimed_by = None
+            run.claimed_at = None
+            run.claimed_until = None
+            run.lease_token = None
+            run.failure_code = None
+            run.last_error_reason = None
+            run.retry_class = None
         self.session.add(
             AuditLog(
                 actor_user_id=actor.id,
@@ -1148,10 +1255,17 @@ class CatalogueIngestionService:
     def _process_direct_claims(
         self, run: CatalogueIngestionRun, candidate: CatalogueCandidate
     ) -> None:
-        extracted: list[tuple[CatalogueSourceArtifact, int, list[ExtractedClaim]]] = []
+        extracted: list[
+            tuple[
+                CatalogueSourceArtifact,
+                int,
+                list[ExtractedClaim],
+                ClaimExtractionLineage,
+            ]
+        ] = []
         unknown_objectives: set[str] = set()
         warnings: set[str] = set()
-        unresolved_objectives: set[ClaimObjective] = set(ClaimObjective)
+        failed_objectives: dict[ClaimObjective, str] = {}
         selected_cycle: tuple[SourceCycle, str | None] | None = None
         coverage_by_objective: dict[ClaimObjective, list[ObjectiveCoverageState]] = {
             objective: [] for objective in ClaimObjective
@@ -1187,6 +1301,7 @@ class CatalogueIngestionService:
             raw_links = artifact.fetch_metadata.get("links", [])
             source_links = raw_links if isinstance(raw_links, list) else []
             objectives: tuple[ClaimObjective, ...] = tuple(ClaimObjective)
+            decision: CatalogueSourceRoutingDecision | None = None
             if self.settings.catalogue_source_routing_enabled:
                 decision = self.repository.routing_decision(
                     artifact=artifact, classifier_version=SOURCE_ROUTER_VERSION
@@ -1214,31 +1329,45 @@ class CatalogueIngestionService:
                     self.session.flush()
                 if decision.requires_manual_review:
                     routing_reason = decision.ambiguity_reason or decision.role
-                    self._manual_review(
-                        candidate,
-                        f"source_routing_manual_review:{source.id}:{routing_reason}",
+                    warnings.add(
+                        f"source_routing_skipped:{source.id}:{routing_reason}"
                     )
-                    return
+                    continue
                 source_cycle = SourceCycle(decision.cycle)
                 source_cycle_identity = _routing_cycle_identity(decision)
                 if source_cycle is not SourceCycle.EVERGREEN:
                     current_cycle = (source_cycle, source_cycle_identity)
                     if selected_cycle is not None and selected_cycle != current_cycle:
-                        self._manual_review(
-                            candidate,
-                            "source_routing_cycle_conflict:"
+                        cycle_message = (
                             f"{source.id}:{selected_cycle[0].value}:"
                             f"{selected_cycle[1] or 'unspecified'}:"
-                            f"{source_cycle.value}:{source_cycle_identity or 'unspecified'}",
+                            f"{source_cycle.value}:{source_cycle_identity or 'unspecified'}"
                         )
-                        return
-                    selected_cycle = current_cycle
-                objectives = tuple(
-                    objective
-                    for objective in (
-                        ClaimObjective(value) for value in decision.applicable_objectives
+                        if any(
+                            str(signal).startswith("authoritative_url_role:")
+                            for signal in decision.deterministic_signals
+                        ):
+                            warnings.add(
+                                "source_routing_cycle_difference_allowed:" + cycle_message
+                            )
+                        else:
+                            warnings.add("source_routing_cycle_skipped:" + cycle_message)
+                            continue
+                    elif selected_cycle is None:
+                        selected_cycle = current_cycle
+                objectives = routed_objectives(
+                    SourceRoutingDecision(
+                        classifier_version=decision.classifier_version,
+                        role=SourceContentRole(decision.role),
+                        cycle=SourceCycle(decision.cycle),
+                        deterministic_signals=tuple(decision.deterministic_signals),
+                        confidence=decision.confidence,
+                        ambiguity_reason=decision.ambiguity_reason,
+                        requires_manual_review=decision.requires_manual_review,
+                        applicable_objectives=tuple(
+                            ClaimObjective(value) for value in decision.applicable_objectives
+                        ),
                     )
-                    if objective in unresolved_objectives
                 )
             for objective in objectives:
                 attempt_schema = _claim_attempt_schema(objective)
@@ -1262,73 +1391,92 @@ class CatalogueIngestionService:
                         reused.candidate_id == candidate.id and reused.source_id == source.id
                     )
                 else:
-                    self._check_budget(run, artifact.normalized_text)
-                    try:
-                        result = self.claim_extractor.extract_claims(
-                            source_url=artifact.final_url,
-                            source_text=artifact.normalized_text,
-                            objective=objective,
-                            source_links=source_links,
-                        )
-                    except ExtractionSchemaError as exc:
-                        self.metrics.add("ai_schema_failures")
-                        if exc.usage is not None:
-                            self._record_claim_usage(run, exc.usage)
-                        self.session.add(
-                            self._claim_attempt(
-                                candidate,
-                                source,
-                                artifact,
-                                ExtractionAttemptStatus.SCHEMA_FAILED,
-                                exc.code,
-                                objective=objective,
-                                usage=exc.usage,
-                            )
-                        )
-                        self._manual_review(candidate, exc.code)
-                        if run.estimated_cost > run.max_estimated_cost:
-                            raise RunBudgetExhausted from None
-                        return
-                    except ExtractionProviderError as exc:
-                        self.metrics.add("ai_extraction_failures")
-                        if exc.usage is not None:
-                            self._record_claim_usage(run, exc.usage)
-                        self.session.add(
-                            self._claim_attempt(
-                                candidate,
-                                source,
-                                artifact,
-                                ExtractionAttemptStatus.PROVIDER_FAILED,
-                                exc.code,
-                                objective=objective,
-                                usage=exc.usage,
-                            )
-                        )
-                        self._manual_review(candidate, exc.code)
-                        if run.estimated_cost > run.max_estimated_cost:
-                            raise RunBudgetExhausted from None
-                        return
-                    output = result.output
-                    usage = result.usage
-                    status = ExtractionAttemptStatus.SUCCEEDED
+                    output = None
+                    usage = None
                     reuse_is_current = False
-                    self._record_claim_usage(run, usage)
-                    if run.estimated_cost > run.max_estimated_cost:
-                        self.session.add(
-                            self._claim_attempt(
-                                candidate,
-                                source,
-                                artifact,
-                                ExtractionAttemptStatus.SUCCEEDED,
-                                None,
-                                objective=objective,
-                                output=output,
-                                usage=usage,
-                            )
+                    status = ExtractionAttemptStatus.PROVIDER_FAILED
+                    for provider_attempt in range(2):
+                        reserved_cost = self._reserve_model_budget(
+                            run, artifact.normalized_text
                         )
-                        raise RunBudgetExhausted
+                        try:
+                            result = self.claim_extractor.extract_claims(
+                                source_url=artifact.final_url,
+                                source_text=artifact.normalized_text,
+                                objective=objective,
+                                source_links=source_links,
+                            )
+                        except ExtractionSchemaError as exc:
+                            self.metrics.add("ai_schema_failures")
+                            if exc.usage is not None:
+                                self._reconcile_model_budget(run, reserved_cost, exc.usage)
+                            self.repository.save_extraction_attempt(
+                                self._claim_attempt(
+                                    candidate,
+                                    source,
+                                    artifact,
+                                    ExtractionAttemptStatus.SCHEMA_FAILED,
+                                    exc.code,
+                                    objective=objective,
+                                    usage=exc.usage,
+                                )
+                            )
+                            failed_objectives[objective] = exc.code
+                            if run.estimated_cost > run.max_estimated_cost:
+                                raise RunBudgetExhausted from None
+                            break
+                        except ExtractionProviderError as exc:
+                            self.metrics.add("ai_extraction_failures")
+                            if exc.usage is not None:
+                                self._reconcile_model_budget(run, reserved_cost, exc.usage)
+                            self.repository.save_extraction_attempt(
+                                self._claim_attempt(
+                                    candidate,
+                                    source,
+                                    artifact,
+                                    ExtractionAttemptStatus.PROVIDER_FAILED,
+                                    exc.code,
+                                    objective=objective,
+                                    usage=exc.usage,
+                                )
+                            )
+                            failed_objectives[objective] = exc.code
+                            if run.estimated_cost > run.max_estimated_cost:
+                                raise RunBudgetExhausted from None
+                            if provider_attempt == 0:
+                                continue
+                            break
+                        # The provider first binds evidence against the length-preserving
+                        # objective mask it sent to the model. Rebind once more against the
+                        # immutable artifact so citations containing masked characters or
+                        # PDF punctuation are exact slices of the stored source text.
+                        output = _normalize_claim_output(
+                            result.output,
+                            artifact.normalized_text,
+                            objective=objective,
+                        )
+                        usage = result.usage
+                        status = ExtractionAttemptStatus.SUCCEEDED
+                        self._reconcile_model_budget(run, reserved_cost, usage)
+                        if run.estimated_cost > run.max_estimated_cost:
+                            self.repository.save_extraction_attempt(
+                                self._claim_attempt(
+                                    candidate,
+                                    source,
+                                    artifact,
+                                    ExtractionAttemptStatus.SUCCEEDED,
+                                    None,
+                                    objective=objective,
+                                    output=output,
+                                    usage=usage,
+                                )
+                            )
+                            raise RunBudgetExhausted
+                        break
+                    if output is None:
+                        continue
                 if not reuse_is_current:
-                    self.session.add(
+                    self.repository.save_extraction_attempt(
                         self._claim_attempt(
                             candidate,
                             source,
@@ -1349,16 +1497,67 @@ class CatalogueIngestionService:
                     f"{artifact.id}:{objective.value}:{item}" for item in output.warnings
                 )
                 coverage_by_objective[objective].append(output.coverage_state)
-                if self.settings.catalogue_source_routing_enabled and output.coverage_state in {
+                if output.coverage_state in {
                     ObjectiveCoverageState.COMPLETE,
                     ObjectiveCoverageState.NOT_APPLICABLE,
                 }:
-                    unresolved_objectives.discard(objective)
-                effective_trust_tier = (source.trust_tier or 99) * 10 + role_order[
-                    source.source_role
-                ]
-                extracted.append((artifact, effective_trust_tier, output.claims))
+                    failed_objectives.pop(objective, None)
+                effective_trust_tier = (
+                    (source.trust_tier or 99) * 100
+                    + _objective_source_authority_rank(
+                        decision.role if decision is not None else None,
+                        objective,
+                    )
+                    * 10
+                    + role_order[source.source_role]
+                )
+                lineage_attempt = (
+                    reused if status is ExtractionAttemptStatus.REUSED else None
+                )
+                # Treat cached extraction output as untrusted input at the resolver
+                # boundary.  A reusable attempt may have been written by an older
+                # normalizer, so apply the current canonicalization once more after
+                # persistence/reuse handling and before claims enter the graph.
+                resolution_output = _normalize_claim_output(
+                    output,
+                    artifact.normalized_text,
+                    objective=objective,
+                )
+                extracted.append(
+                    (
+                        artifact,
+                        effective_trust_tier,
+                        resolution_output.claims,
+                        ClaimExtractionLineage(
+                            objective=objective,
+                            schema_version=(
+                                lineage_attempt.schema_version
+                                if lineage_attempt is not None
+                                else attempt_schema
+                            ),
+                            prompt_hash=(
+                                lineage_attempt.prompt_hash
+                                if lineage_attempt is not None
+                                else claim_extraction_prompt_hash(objective)
+                            ),
+                            provider=(
+                                lineage_attempt.provider
+                                if lineage_attempt is not None
+                                else self.claim_extractor.name
+                            ),
+                            model=(
+                                lineage_attempt.model
+                                if lineage_attempt is not None
+                                else self.claim_extractor.model
+                            ),
+                        ),
+                    )
+                )
 
+        warnings.update(
+            f"objective_extraction_failed:{objective.value}:{code}"
+            for objective, code in failed_objectives.items()
+        )
         candidate.status = CandidateStatus.EXTRACTED
         aggregate_coverage = {
             objective.value: _aggregate_coverage(states).value
@@ -1368,15 +1567,30 @@ class CatalogueIngestionService:
             extracted,
             require_detail=True,
             objective_coverage=aggregate_coverage,
-        ).model_copy(
+        )
+        if resolution.rejected:
+            warnings.add(f"quarantined_claims:{len(resolution.rejected)}")
+        resolution = resolution.model_copy(
             update={
                 "unknown_objectives": sorted(unknown_objectives),
                 "warnings": sorted(warnings),
             }
         )
         candidate.proposed_payload = resolution.model_dump(mode="json")
-        candidate.validation_errors = resolution.rejected + resolution.completeness_errors
+        candidate.validation_errors = resolution.completeness_errors
         candidate.conflicts = sorted(set(candidate.conflicts + resolution.conflicts))
+        unresolved_failures = {
+            objective: code
+            for objective, code in failed_objectives.items()
+            if aggregate_coverage.get(objective.value)
+            not in {
+                ObjectiveCoverageState.COMPLETE.value,
+                ObjectiveCoverageState.NOT_APPLICABLE.value,
+            }
+        }
+        candidate.failure_code = (
+            "objective_extraction_incomplete" if unresolved_failures else None
+        )
         if candidate.conflicts:
             candidate.status = CandidateStatus.CONFLICT_DETECTED
         elif candidate.validation_errors:
@@ -1501,17 +1715,76 @@ class CatalogueIngestionService:
             .where(CatalogueReviewProposal.candidate_id == candidate.id)
             .order_by(CatalogueReviewDecision.created_at.asc(), CatalogueReviewDecision.id.asc())
         ).all()
+        objective_coverage = dict(resolution.objective_coverage) if resolution is not None else {}
+        missing_mandatory_objectives = (
+            _missing_mandatory_objectives(resolution.completeness_errors)
+            if resolution is not None
+            else []
+        )
+        blockers: list[str] = []
+        if resolution is None:
+            blockers.append("extraction_not_available")
+        if candidate.failure_code:
+            blockers.append(candidate.failure_code)
+        if resolution is not None and resolution.conflicts:
+            blockers.append("claim_conflicts")
+        blockers.extend(
+            f"mandatory_objective_missing:{objective}"
+            for objective in missing_mandatory_objectives
+        )
+        if candidate.duplicate_opportunity_ids:
+            blockers.append("duplicate_candidate")
+        acquisition_bundle = (
+            candidate.acquisition_bundle
+            if isinstance(candidate.acquisition_bundle, dict)
+            else {}
+        )
+        warnings = list(resolution.warnings) if resolution is not None else []
+        warnings.extend(
+            f"acquisition_gap:{gap}"
+            for gap in acquisition_bundle.get("gaps", [])
+            if isinstance(gap, str)
+        )
+        supported_count = sum(
+            state
+            in {
+                ObjectiveCoverageState.COMPLETE.value,
+                ObjectiveCoverageState.NOT_APPLICABLE.value,
+            }
+            for state in objective_coverage.values()
+        )
         return CandidateReviewProjectionResponse(
             candidate_id=candidate.id,
             candidate_status=candidate.status,
             proposed_facts=proposed_facts,
             conflicts=resolution.conflicts if resolution is not None else list(candidate.conflicts),
             rejected_claims=resolution.rejected if resolution is not None else [],
-            missing_mandatory_objectives=(
-                _missing_mandatory_objectives(resolution.completeness_errors)
-                if resolution is not None
-                else []
+            missing_mandatory_objectives=missing_mandatory_objectives,
+            objective_coverage=objective_coverage,
+            readiness=CandidateReviewReadiness(
+                ready=(
+                    candidate.status is CandidateStatus.READY_FOR_REVIEW and not blockers
+                ),
+                supported_mandatory_count=supported_count,
+                mandatory_count=len(ClaimObjective),
+                blockers=sorted(set(blockers)),
+                warnings=sorted(set(warnings)),
+                source_freshness=_candidate_source_freshness(candidate.sources),
+                evaluated_at=datetime.now(UTC),
             ),
+            warnings=sorted(set(warnings)),
+            acquisition_bundle=acquisition_bundle,
+            sources=[
+                self._operator_source_status(source)
+                for source in sorted(candidate.sources, key=lambda item: (item.url, item.id))
+            ],
+            extraction_attempts=[
+                self._operator_extraction_attempt_status(attempt)
+                for attempt in sorted(
+                    candidate.extraction_attempts, key=lambda item: (item.created_at, item.id)
+                )
+            ],
+            duplicate_opportunity_ids=list(candidate.duplicate_opportunity_ids),
             decision_history=[
                 ReviewDecisionHistoryItem(
                     proposal_hash=item.proposal.proposal_hash,
@@ -1536,16 +1809,52 @@ class CatalogueIngestionService:
             ],
         )
 
-    def _check_budget(self, run: CatalogueIngestionRun, source_text: str) -> None:
-        if run.model_calls >= run.max_model_calls:
-            raise RunBudgetExhausted
-        projected_input = max(1, len(source_text) // 4)
+    def _reserve_model_budget(
+        self, run: CatalogueIngestionRun, source_text: str
+    ) -> Decimal:
+        if self.kill_switch():
+            raise WorkerKillSwitchActive
+        if not run.lease_token:
+            raise AppError("ingestion_run_lease_lost", "Run lease expired", 409)
+        bounded_text = source_text[: run.max_input_characters]
+        projected_input = max(1, len(bounded_text.encode("utf-8")))
         projected_cost = (
             Decimal(projected_input) * self.settings.catalogue_ai_input_cost_per_million
             + Decimal(run.max_output_tokens) * self.settings.catalogue_ai_output_cost_per_million
         ) / Decimal(1_000_000)
-        if run.estimated_cost + projected_cost > run.max_estimated_cost:
+        if not self.repository.reserve_model_budget(
+            run.id,
+            lease_token=run.lease_token,
+            projected_cost=projected_cost,
+        ):
             raise RunBudgetExhausted
+        return projected_cost
+
+    def _reconcile_model_budget(
+        self,
+        run: CatalogueIngestionRun,
+        reserved_cost: Decimal,
+        usage: object,
+    ) -> None:
+        lease_token = run.lease_token
+        if not lease_token:
+            raise AppError("ingestion_run_lease_lost", "Run lease expired", 409)
+        input_tokens = int(getattr(usage, "input_tokens", 0))
+        output_tokens = int(getattr(usage, "output_tokens", 0))
+        actual_cost = Decimal(str(getattr(usage, "estimated_cost", 0)))
+        if not self.repository.reconcile_model_budget(
+            run.id,
+            lease_token=lease_token,
+            reserved_cost=reserved_cost,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            actual_cost=actual_cost,
+        ):
+            raise AppError("ingestion_run_lease_lost", "Run lease expired", 409)
+        self.metrics.add("ai_extraction_calls")
+        self.metrics.add("model_input_tokens", input_tokens)
+        self.metrics.add("model_output_tokens", output_tokens)
+        self.metrics.observe("estimated_ai_cost", float(actual_cost))
 
     def _persist_crawled_sources(
         self,
@@ -1634,6 +1943,11 @@ class CatalogueIngestionService:
         content_type = fetched.content_type
         extraction_method = "pdf_text" if content_type == "application/pdf" else "normalized_text"
         conversion_metadata = _safe_document_conversion_metadata(fetched.conversion_metadata)
+        acquisition = classify_acquisition_source(
+            source_url=fetched.final_url,
+            source_text=normalized_text,
+            is_root=source.source_role is CandidateSourceRole.PRIMARY,
+        )
         artifact = CatalogueSourceArtifact(
             final_url=fetched.final_url,
             content_type=content_type,
@@ -1646,6 +1960,7 @@ class CatalogueIngestionService:
                 "operator_host": urlsplit(source.url).hostname,
                 "source_role": source.source_role.value,
                 "parser_version": fetched.parser_version,
+                "acquisition_role": acquisition_role_metadata(acquisition),
                 **({"document_conversion": conversion_metadata} if conversion_metadata else {}),
                 "links": [
                     {"url": item.url, "text": item.text, "title": item.title}
@@ -1656,6 +1971,57 @@ class CatalogueIngestionService:
         source.artifacts.append(artifact)
         self.session.flush()
         ensure_evidence_blocks(self.session, artifact)
+
+    def _refresh_acquisition_bundle(
+        self,
+        candidate: CatalogueCandidate,
+        *,
+        crawl_result: CrawlResult | None = None,
+    ) -> None:
+        artifacts: list[dict[str, object]] = []
+        for source in candidate.sources:
+            for artifact in source.artifacts:
+                metadata = (
+                    artifact.fetch_metadata
+                    if isinstance(artifact.fetch_metadata, dict)
+                    else {}
+                )
+                acquisition = metadata.get("acquisition_role")
+                role = acquisition.get("role") if isinstance(acquisition, dict) else "unknown"
+                covered_roles = (
+                    acquisition.get("covered_roles", [])
+                    if isinstance(acquisition, dict)
+                    else []
+                )
+                artifacts.append(
+                    {
+                        "artifact_id": str(artifact.id),
+                        "source_id": str(source.id),
+                        "url": artifact.final_url,
+                        "content_hash": artifact.content_hash,
+                        "content_type": artifact.content_type,
+                        "role": role,
+                        "covered_roles": covered_roles,
+                    }
+                )
+        artifacts.sort(key=lambda item: (str(item["url"]), str(item["artifact_id"])))
+        blocked_urls = [
+            (source.final_url or source.url, source.failure_code or "source_not_accepted")
+            for source in candidate.sources
+            if source.status is CandidateSourceStatus.MANUAL_REVIEW
+        ]
+        if crawl_result is not None:
+            blocked_urls.extend((item.url, item.reason) for item in crawl_result.failures)
+            blocked_urls.extend((item.url, item.reason) for item in crawl_result.rejected)
+            blocked_urls.extend(
+                (url, "duplicate_normalized_content")
+                for url in crawl_result.duplicate_content_urls
+            )
+        candidate.acquisition_bundle = build_acquisition_bundle_summary(
+            artifacts=artifacts[:MAX_ACCEPTED_ARTIFACTS],
+            blocked_urls=blocked_urls,
+            budget_exhausted=bool(crawl_result and crawl_result.budget_exhausted),
+        )
 
     def _manual_review(self, candidate: CatalogueCandidate, code: str) -> None:
         candidate.status = CandidateStatus.NEEDS_REVIEW
@@ -1749,19 +2115,6 @@ class CatalogueIngestionService:
             latency_ms=getattr(usage, "latency_ms", 0),
         )
 
-    def _record_claim_usage(self, run: CatalogueIngestionRun, usage: object) -> None:
-        input_tokens = int(getattr(usage, "input_tokens", 0))
-        output_tokens = int(getattr(usage, "output_tokens", 0))
-        estimated_cost = Decimal(str(getattr(usage, "estimated_cost", 0)))
-        run.model_calls += 1
-        run.input_tokens += input_tokens
-        run.output_tokens += output_tokens
-        run.estimated_cost += estimated_cost
-        self.metrics.add("ai_extraction_calls")
-        self.metrics.add("model_input_tokens", input_tokens)
-        self.metrics.add("model_output_tokens", output_tokens)
-        self.metrics.observe("estimated_ai_cost", float(estimated_cost))
-
     @staticmethod
     def _candidate_response(candidate: CatalogueCandidate) -> CandidateResponse:
         return CandidateResponse.model_validate(candidate)
@@ -1798,26 +2151,17 @@ class CatalogueIngestionService:
             conflict_count=len(payload.get("conflicts", [])),
             objective_coverage=objective_coverage,
             missing_mandatory_objectives=missing_objectives,
+            acquisition_bundle=(
+                candidate.acquisition_bundle
+                if isinstance(candidate.acquisition_bundle, dict)
+                else {}
+            ),
             sources=[
                 CatalogueIngestionService._operator_source_status(source)
                 for source in sorted(candidate.sources, key=lambda item: (item.url, item.id))
             ],
             attempts=[
-                OperatorExtractionAttemptStatus(
-                    id=attempt.id,
-                    source_id=attempt.source_id,
-                    provider=attempt.provider,
-                    model=attempt.model,
-                    schema_version=attempt.schema_version,
-                    prompt_hash=attempt.prompt_hash,
-                    status=attempt.status.value,
-                    error_code=attempt.error_code,
-                    input_tokens=attempt.input_tokens,
-                    output_tokens=attempt.output_tokens,
-                    estimated_cost=attempt.estimated_cost,
-                    latency_ms=attempt.latency_ms,
-                    created_at=attempt.created_at,
-                )
+                CatalogueIngestionService._operator_extraction_attempt_status(attempt)
                 for attempt in sorted(
                     candidate.extraction_attempts, key=lambda item: (item.created_at, item.id)
                 )
@@ -1825,9 +2169,30 @@ class CatalogueIngestionService:
         )
 
     @staticmethod
+    def _operator_extraction_attempt_status(
+        attempt: CatalogueExtractionAttempt,
+    ) -> OperatorExtractionAttemptStatus:
+        return OperatorExtractionAttemptStatus(
+            id=attempt.id,
+            source_id=attempt.source_id,
+            provider=attempt.provider,
+            model=attempt.model,
+            schema_version=attempt.schema_version,
+            prompt_hash=attempt.prompt_hash,
+            status=attempt.status.value,
+            error_code=attempt.error_code,
+            input_tokens=attempt.input_tokens,
+            output_tokens=attempt.output_tokens,
+            estimated_cost=attempt.estimated_cost,
+            latency_ms=attempt.latency_ms,
+            created_at=attempt.created_at,
+        )
+
+    @staticmethod
     def _operator_source_status(source: CatalogueCandidateSource) -> OperatorSourceStatus:
         return OperatorSourceStatus(
             id=source.id,
+            title=_source_title(source),
             url=source.url,
             final_url=source.final_url,
             source_role=source.source_role,
@@ -1835,6 +2200,7 @@ class CatalogueIngestionService:
             is_official=source.is_official,
             trust_tier=source.trust_tier,
             failure_code=source.failure_code,
+            checked_at=source.fetched_at,
             artifacts=[
                 CatalogueIngestionService._operator_artifact_status(artifact)
                 for artifact in sorted(
@@ -1869,6 +2235,8 @@ class CatalogueIngestionService:
         page_count = conversion_metadata.get("document_page_count")
         ocr_decision = conversion_metadata.get("document_ocr_decision")
         ocr_reason = conversion_metadata.get("document_ocr_reason")
+        acquisition = metadata.get("acquisition_role")
+        acquisition_metadata = acquisition if isinstance(acquisition, dict) else {}
         return OperatorArtifactStatus(
             id=artifact.id,
             final_url=artifact.final_url,
@@ -1903,6 +2271,15 @@ class CatalogueIngestionService:
             ),
             browser_decision="not_used",
             browser_reason="browser_acquisition_not_enabled",
+            acquisition_role=str(acquisition_metadata.get("role", "unknown")),
+            acquisition_role_classifier_version=(
+                str(acquisition_metadata["classifier_version"])
+                if isinstance(acquisition_metadata.get("classifier_version"), str)
+                else None
+            ),
+            acquisition_role_requires_manual_review=bool(
+                acquisition_metadata.get("requires_manual_review", True)
+            ),
         )
 
     @staticmethod
@@ -1942,10 +2319,17 @@ class CatalogueIngestionService:
             field_path=item.claim.field_path,
             value=item.claim.value.model_dump(mode="json"),
             scope=ReviewFactScope(**item.claim.scope.model_dump()),
+            source_title=_source_title(source),
             source_url=artifact.final_url,
+            source_checked_at=source.fetched_at,
             source_role=source.source_role,
             source_content_role=decision.role if decision is not None else None,
             authority_tier=_review_authority_tier(source, decision.role if decision else None),
+            extraction=(
+                ReviewClaimExtraction(**item.extraction.model_dump())
+                if item.extraction is not None
+                else None
+            ),
             evidence=ReviewEvidenceBlock(
                 artifact_id=artifact.id,
                 block_id=block.block_id,
@@ -1960,6 +2344,41 @@ class CatalogueIngestionService:
                 text=block.text,
             ),
         )
+
+
+def _source_title(source: CatalogueCandidateSource) -> str:
+    host = urlsplit(source.final_url or source.url).hostname or "official source"
+    return f"Official source — {host}"
+
+
+def _candidate_source_freshness(
+    sources: list[CatalogueCandidateSource],
+) -> str:
+    checked_at = [source.fetched_at for source in sources if source.fetched_at is not None]
+    if not checked_at:
+        return "unknown"
+    freshness_cutoff = datetime.now(UTC) - timedelta(days=90)
+    normalized = [
+        value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        for value in checked_at
+    ]
+    return "fresh" if all(value >= freshness_cutoff for value in normalized) else "stale"
+
+
+def _verified_crawl_hosts(
+    root_url: str,
+    provider_url: str | None,
+    university_url: str | None,
+    *,
+    reviewed: set[str],
+) -> set[str]:
+    root_host = urlsplit(root_url).hostname
+    hosts = {root_host.casefold()} if root_host else set()
+    for url in (provider_url, university_url):
+        host = urlsplit(url).hostname.casefold() if url and urlsplit(url).hostname else None
+        if host and host in reviewed:
+            hosts.add(host)
+    return hosts
 
 
 def _review_authority_tier(
@@ -1990,6 +2409,52 @@ def _routing_authority_tier(source: CatalogueCandidateSource, role: str) -> str:
     if source.trust_tier in {1, 2}:
         return "T0"
     return "unresolved"
+
+
+def _objective_source_authority_rank(role: str | None, objective: ClaimObjective) -> int:
+    """Prefer an official specialist page over a broad overview for its own facts."""
+
+    specialist_objectives = {
+        SourceContentRole.PROVIDER_OVERVIEW.value: {
+            ClaimObjective.IDENTITY,
+            ClaimObjective.PROGRAMMES,
+            ClaimObjective.PROGRAMME_DETAILS,
+        },
+        SourceContentRole.PROGRAMME_DIRECTORY.value: {
+            ClaimObjective.PROGRAMMES,
+            ClaimObjective.PROGRAMME_DETAILS,
+        },
+        SourceContentRole.DEGREE_TRACK.value: {
+            ClaimObjective.PROGRAMMES,
+            ClaimObjective.PROGRAMME_DETAILS,
+            ClaimObjective.ELIGIBILITY,
+        },
+        SourceContentRole.ELIGIBILITY.value: {
+            ClaimObjective.ELIGIBILITY,
+            ClaimObjective.ELIGIBILITY_CONTEXT,
+        },
+        SourceContentRole.FUNDING.value: {ClaimObjective.FUNDING},
+        SourceContentRole.DOCUMENT_CHECKLIST.value: {
+            ClaimObjective.DOCUMENTS_CORE,
+            ClaimObjective.DOCUMENTS_REQUIREMENTS,
+            ClaimObjective.DOCUMENTS_COUNTS,
+            ClaimObjective.DOCUMENTS_FORMAT,
+        },
+        SourceContentRole.DEADLINE_TIMELINE.value: {ClaimObjective.APPLICATION_TIMELINE},
+        SourceContentRole.APPLICATION_PORTAL.value: {ClaimObjective.ROUTES},
+        SourceContentRole.APPLICATION_ROUTE.value: {
+            ClaimObjective.ROUTES,
+            ClaimObjective.APPLICATION_TIMELINE,
+        },
+    }
+    if objective in specialist_objectives.get(role or "", set()):
+        return 0
+    if role in {
+        SourceContentRole.CURRENT_CYCLE_GUIDELINE.value,
+        SourceContentRole.HISTORICAL_GUIDELINE.value,
+    }:
+        return 1
+    return 2
 
 
 def _missing_mandatory_objectives(completeness_errors: list[str]) -> list[str]:
@@ -2072,10 +2537,12 @@ def _claim_attempt_schema(objective: ClaimObjective) -> str:
 
 
 def _aggregate_coverage(states: list[ObjectiveCoverageState]) -> ObjectiveCoverageState:
-    if ObjectiveCoverageState.PARTIAL in states:
-        return ObjectiveCoverageState.PARTIAL
+    if not states:
+        return ObjectiveCoverageState.NOT_STATED
     if ObjectiveCoverageState.COMPLETE in states:
         return ObjectiveCoverageState.COMPLETE
+    if ObjectiveCoverageState.PARTIAL in states:
+        return ObjectiveCoverageState.PARTIAL
     if ObjectiveCoverageState.NOT_STATED in states:
         return ObjectiveCoverageState.NOT_STATED
     return ObjectiveCoverageState.NOT_APPLICABLE
