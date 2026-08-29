@@ -17,6 +17,8 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
+    CatalogueJobState,
+    CatalogueResumableJob,
     ExtractionAttemptStatus,
     IngestionRunStatus,
 )
@@ -35,9 +37,42 @@ PROCESSABLE_STATUSES = {
     CandidateStatus.EXTRACTED,
 }
 
+_TERMINAL_RUN_STATUSES = {
+    IngestionRunStatus.COMPLETED,
+    IngestionRunStatus.COMPLETED_WITH_REVIEW,
+    IngestionRunStatus.COMPLETED_WITH_FAILURES,
+    IngestionRunStatus.FAILED,
+    IngestionRunStatus.CANCELLED,
+    IngestionRunStatus.BUDGET_EXHAUSTED,
+}
+
+_REVIEW_OUTCOMES = {
+    CandidateStatus.CONFLICT_DETECTED,
+    CandidateStatus.DUPLICATE_CANDIDATE,
+    CandidateStatus.NEEDS_REVIEW,
+    CandidateStatus.READY_FOR_REVIEW,
+}
+
+_FAILURE_OUTCOMES = {
+    CandidateStatus.VALIDATION_FAILED,
+    CandidateStatus.REJECTED,
+    CandidateStatus.SOURCE_CHANGED,
+}
+
+_PIPELINE_FAILURE_CODES = {
+    "unexpected_pipeline_failure",
+    "candidate_lease_lost",
+    "run_lease_lost",
+    "provider_configuration_drift",
+}
+
 
 class ProviderBudgetReservationError(RuntimeError):
     """A physical provider attempt cannot be reserved inside the run budget."""
+
+
+class CatalogueLeaseLost(RuntimeError):
+    """The caller no longer owns the current run/candidate fencing epoch."""
 
 
 class CatalogueIngestionRepository:
@@ -50,6 +85,82 @@ class CatalogueIngestionRepository:
 
     def get_run(self, run_id: uuid.UUID) -> CatalogueIngestionRun | None:
         return self.session.get(CatalogueIngestionRun, run_id)
+
+    def acquire_run_lease(
+        self,
+        run_id: uuid.UUID,
+        *,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> str:
+        """Join the current run epoch or create a new epoch after expiry.
+
+        Workers processing different candidates in the same run share the run fencing epoch while
+        each candidate receives its own unique lease token. Once the run epoch expires, a new token
+        fences every stale worker from material state changes.
+        """
+
+        observed_at = now or datetime.now(UTC)
+        run = self.session.scalar(
+            select(CatalogueIngestionRun)
+            .where(CatalogueIngestionRun.id == run_id)
+            .with_for_update()
+        )
+        if run is None:
+            raise CatalogueLeaseLost("ingestion_run_missing")
+        if run.status in _TERMINAL_RUN_STATUSES:
+            raise CatalogueLeaseLost("ingestion_run_terminal")
+        if (
+            run.lease_token is None
+            or run.lease_expires_at is None
+            or run.lease_expires_at < observed_at
+        ):
+            run.lease_token = uuid.uuid4().hex
+        run.lease_expires_at = observed_at + timedelta(seconds=lease_seconds)
+        token = run.lease_token
+        self.session.commit()
+        assert token is not None
+        return token
+
+    def heartbeat_run_lease(
+        self,
+        run_id: uuid.UUID,
+        *,
+        lease_token: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> None:
+        observed_at = now or datetime.now(UTC)
+        run = self.session.scalar(
+            select(CatalogueIngestionRun)
+            .where(CatalogueIngestionRun.id == run_id)
+            .with_for_update()
+        )
+        if (
+            run is None
+            or run.lease_token != lease_token
+            or run.lease_expires_at is None
+            or run.lease_expires_at < observed_at
+            or run.status in _TERMINAL_RUN_STATUSES
+        ):
+            self.session.rollback()
+            raise CatalogueLeaseLost("run_lease_lost")
+        run.lease_expires_at = observed_at + timedelta(seconds=lease_seconds)
+        self.session.commit()
+
+    def release_run_lease(self, run_id: uuid.UUID, *, lease_token: str) -> bool:
+        run = self.session.scalar(
+            select(CatalogueIngestionRun)
+            .where(CatalogueIngestionRun.id == run_id)
+            .with_for_update()
+        )
+        if run is None or run.lease_token != lease_token:
+            self.session.rollback()
+            return False
+        run.lease_token = None
+        run.lease_expires_at = None
+        self.session.commit()
+        return True
 
     def add_seed_candidates(
         self,
@@ -106,12 +217,14 @@ class CatalogueIngestionRepository:
         self,
         *,
         run_id: uuid.UUID,
+        run_lease_token: str,
         worker_id: str,
         limit: int,
         lease_seconds: int,
         now: datetime | None = None,
     ) -> list[CatalogueCandidate]:
         observed_at = now or datetime.now(UTC)
+        self._assert_run_lease(run_id, run_lease_token, observed_at=observed_at)
         statement = (
             select(CatalogueCandidate)
             .where(
@@ -140,9 +253,68 @@ class CatalogueIngestionRepository:
         for candidate in candidates:
             candidate.claimed_by = worker_id
             candidate.claimed_until = claimed_until
+            candidate.lease_token = uuid.uuid4().hex
             candidate.attempt_count += 1
         self.session.commit()
         return candidates
+
+    def heartbeat_candidate(
+        self,
+        candidate_id: uuid.UUID,
+        *,
+        run_lease_token: str,
+        worker_id: str,
+        lease_token: str,
+        lease_seconds: int,
+        now: datetime | None = None,
+    ) -> None:
+        observed_at = now or datetime.now(UTC)
+        candidate = self.session.scalar(
+            select(CatalogueCandidate)
+            .where(CatalogueCandidate.id == candidate_id)
+            .with_for_update()
+        )
+        if candidate is None:
+            self.session.rollback()
+            raise CatalogueLeaseLost("candidate_missing")
+        self._assert_run_lease(candidate.run_id, run_lease_token, observed_at=observed_at)
+        if (
+            candidate.claimed_by != worker_id
+            or candidate.lease_token != lease_token
+            or candidate.claimed_until is None
+            or candidate.claimed_until < observed_at
+        ):
+            self.session.rollback()
+            raise CatalogueLeaseLost("candidate_lease_lost")
+        candidate.claimed_until = observed_at + timedelta(seconds=lease_seconds)
+        self.session.commit()
+
+    def assert_candidate_lease(
+        self,
+        candidate_id: uuid.UUID,
+        *,
+        run_lease_token: str,
+        worker_id: str,
+        lease_token: str,
+        now: datetime | None = None,
+    ) -> CatalogueCandidate:
+        observed_at = now or datetime.now(UTC)
+        candidate = self.session.scalar(
+            select(CatalogueCandidate)
+            .where(CatalogueCandidate.id == candidate_id)
+            .with_for_update()
+        )
+        if candidate is None:
+            raise CatalogueLeaseLost("candidate_missing")
+        self._assert_run_lease(candidate.run_id, run_lease_token, observed_at=observed_at)
+        if (
+            candidate.claimed_by != worker_id
+            or candidate.lease_token != lease_token
+            or candidate.claimed_until is None
+            or candidate.claimed_until < observed_at
+        ):
+            raise CatalogueLeaseLost("candidate_lease_lost")
+        return candidate
 
     def get_candidate(self, candidate_id: uuid.UUID) -> CatalogueCandidate | None:
         return self.session.scalar(
@@ -167,9 +339,131 @@ class CatalogueIngestionRepository:
             .with_for_update()
         )
 
-    def release_candidate(self, candidate: CatalogueCandidate) -> None:
+    def release_candidate(
+        self,
+        candidate: CatalogueCandidate,
+        *,
+        worker_id: str | None = None,
+        lease_token: str | None = None,
+    ) -> bool:
+        """Release only the caller's lease; repeated release is harmless.
+
+        Legacy unleased objects remain releasable so administrator paths that do not participate in
+        worker claiming remain backward compatible.
+        """
+
+        if candidate.lease_token is None and candidate.claimed_by is None:
+            candidate.claimed_until = None
+            return True
+        if worker_id is None or lease_token is None:
+            raise CatalogueLeaseLost("candidate_release_requires_token")
+        if candidate.claimed_by != worker_id or candidate.lease_token != lease_token:
+            return False
         candidate.claimed_by = None
         candidate.claimed_until = None
+        candidate.lease_token = None
+        return True
+
+    def start_or_resume_job(
+        self,
+        *,
+        run_id: uuid.UUID,
+        candidate_id: uuid.UUID,
+        stage: str,
+        job_key: str,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
+        checkpoint: dict[str, object] | None = None,
+    ) -> CatalogueResumableJob:
+        self.assert_candidate_lease(
+            candidate_id,
+            run_lease_token=run_lease_token,
+            worker_id=worker_id,
+            lease_token=candidate_lease_token,
+        )
+        job = self.session.scalar(
+            select(CatalogueResumableJob)
+            .where(CatalogueResumableJob.job_key == job_key)
+            .with_for_update()
+        )
+        if job is None:
+            job = CatalogueResumableJob(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                job_key=job_key,
+                stage=stage,
+                state=CatalogueJobState.RUNNING,
+                checkpoint=dict(checkpoint or {}),
+                worker_id=worker_id,
+                run_lease_token=run_lease_token,
+                candidate_lease_token=candidate_lease_token,
+                attempt_count=1,
+            )
+            self.session.add(job)
+        elif job.state is not CatalogueJobState.SUCCEEDED:
+            job.stage = stage
+            job.state = CatalogueJobState.RUNNING
+            job.worker_id = worker_id
+            job.run_lease_token = run_lease_token
+            job.candidate_lease_token = candidate_lease_token
+            job.attempt_count += 1
+            job.error_code = None
+            job.error_detail = None
+            job.completed_at = None
+            if checkpoint is not None:
+                job.checkpoint = dict(checkpoint)
+        self.session.commit()
+        return job
+
+    def checkpoint_job(
+        self,
+        job_id: uuid.UUID,
+        *,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
+        checkpoint: dict[str, object],
+    ) -> None:
+        job = self._owned_job(
+            job_id,
+            worker_id=worker_id,
+            run_lease_token=run_lease_token,
+            candidate_lease_token=candidate_lease_token,
+        )
+        job.checkpoint = dict(checkpoint)
+        self.session.commit()
+
+    def complete_job(
+        self,
+        job_id: uuid.UUID,
+        *,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
+        checkpoint: dict[str, object] | None = None,
+    ) -> None:
+        job = self._owned_job(
+            job_id,
+            worker_id=worker_id,
+            run_lease_token=run_lease_token,
+            candidate_lease_token=candidate_lease_token,
+        )
+        job.state = CatalogueJobState.SUCCEEDED
+        if checkpoint is not None:
+            job.checkpoint = dict(checkpoint)
+        job.completed_at = datetime.now(UTC)
+        self.session.commit()
+
+    def mark_job_lease_lost(self, job_id: uuid.UUID, *, error_code: str) -> None:
+        job = self.session.get(CatalogueResumableJob, job_id)
+        if job is None or job.state is CatalogueJobState.SUCCEEDED:
+            return
+        job.state = CatalogueJobState.LEASE_LOST
+        job.error_code = error_code[:100]
+        job.error_detail = "work stopped because the fencing lease was no longer current"
+        job.completed_at = datetime.now(UTC)
+        self.session.commit()
 
     def reusable_attempt(
         self,
@@ -201,6 +495,7 @@ class CatalogueIngestionRepository:
         self,
         *,
         run_id: uuid.UUID,
+        run_lease_token: str,
         candidate_id: uuid.UUID,
         source_id: uuid.UUID | None,
         source_artifact_id: uuid.UUID | None,
@@ -215,12 +510,13 @@ class CatalogueIngestionRepository:
         schema_version: str,
         parser_version: str,
         normalizer_version: str,
-        worker_id: str | None,
-        lease_token: str | None,
+        worker_id: str,
+        lease_token: str,
         reserved_cost_upper: Decimal,
     ) -> CatalogueProviderAttempt:
-        """Reserve one physical attempt atomically against call and upper-cost budgets."""
+        """Reserve one physical attempt atomically against lease, call, and cost budgets."""
 
+        observed_at = datetime.now(UTC)
         run = self.session.scalar(
             select(CatalogueIngestionRun)
             .where(CatalogueIngestionRun.id == run_id)
@@ -228,6 +524,22 @@ class CatalogueIngestionRepository:
         )
         if run is None:
             raise ProviderBudgetReservationError("ingestion_run_missing")
+        if not self._run_lease_matches(run, run_lease_token, observed_at=observed_at):
+            raise CatalogueLeaseLost("run_lease_lost")
+        candidate = self.session.scalar(
+            select(CatalogueCandidate)
+            .where(CatalogueCandidate.id == candidate_id)
+            .with_for_update()
+        )
+        if (
+            candidate is None
+            or candidate.run_id != run_id
+            or candidate.claimed_by != worker_id
+            or candidate.lease_token != lease_token
+            or candidate.claimed_until is None
+            or candidate.claimed_until < observed_at
+        ):
+            raise CatalogueLeaseLost("candidate_lease_lost")
 
         existing_call_count = self.session.scalar(
             select(func.count())
@@ -282,6 +594,7 @@ class CatalogueIngestionRepository:
             reserved_cost_upper=reserved_cost_upper,
             cost_lower_bound=Decimal("0"),
             cost_upper_bound=reserved_cost_upper,
+            metadata_json={"run_lease_token": run_lease_token},
         )
         self.session.add(attempt)
         self.session.flush()
@@ -289,7 +602,20 @@ class CatalogueIngestionRepository:
         self.session.commit()
         return attempt
 
-    def mark_provider_attempt_dispatching(self, attempt: CatalogueProviderAttempt) -> None:
+    def mark_provider_attempt_dispatching(
+        self,
+        attempt: CatalogueProviderAttempt,
+        *,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
+    ) -> None:
+        self._assert_provider_attempt_ownership(
+            attempt,
+            worker_id=worker_id,
+            run_lease_token=run_lease_token,
+            candidate_lease_token=candidate_lease_token,
+        )
         attempt.state = ProviderAttemptState.DISPATCHING
         attempt.dispatch_started_at = datetime.now(UTC)
         self.session.commit()
@@ -298,11 +624,20 @@ class CatalogueIngestionRepository:
         self,
         attempt: CatalogueProviderAttempt,
         *,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
         input_tokens: int,
         output_tokens: int,
         exact_cost: Decimal,
         provider_request_id: str | None,
     ) -> None:
+        self._assert_provider_attempt_ownership(
+            attempt,
+            worker_id=worker_id,
+            run_lease_token=run_lease_token,
+            candidate_lease_token=candidate_lease_token,
+        )
         attempt.state = ProviderAttemptState.SUCCEEDED
         attempt.dispatched_at = attempt.dispatched_at or attempt.dispatch_started_at or datetime.now(UTC)
         attempt.completed_at = datetime.now(UTC)
@@ -324,6 +659,9 @@ class CatalogueIngestionRepository:
         self,
         attempt: CatalogueProviderAttempt,
         *,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
         failure_class: ProviderFailureClass,
         error_code: str,
         safe_error_detail: str,
@@ -334,6 +672,12 @@ class CatalogueIngestionRepository:
         output_tokens: int | None = None,
         exact_cost: Decimal | None = None,
     ) -> None:
+        self._assert_provider_attempt_ownership(
+            attempt,
+            worker_id=worker_id,
+            run_lease_token=run_lease_token,
+            candidate_lease_token=candidate_lease_token,
+        )
         attempt.state = ProviderAttemptState.FAILED
         attempt.failure_class = failure_class
         attempt.error_code = error_code[:100]
@@ -361,14 +705,66 @@ class CatalogueIngestionRepository:
             self.refresh_provider_accounting(run)
         self.session.commit()
 
+    def record_provider_attempt_lease_loss(
+        self,
+        attempt: CatalogueProviderAttempt,
+        *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        exact_cost: Decimal | None = None,
+        provider_request_id: str | None = None,
+    ) -> None:
+        """Record lease loss without pretending the stale worker still owns candidate state."""
+
+        current = self.session.scalar(
+            select(CatalogueProviderAttempt)
+            .where(CatalogueProviderAttempt.id == attempt.id)
+            .with_for_update()
+        )
+        if current is None or current.state in {ProviderAttemptState.SUCCEEDED, ProviderAttemptState.FAILED}:
+            self.session.rollback()
+            return
+        current.state = ProviderAttemptState.FAILED
+        current.failure_class = ProviderFailureClass.LEASE_LOSS
+        current.error_code = "provider_lease_lost"
+        current.safe_error_detail = "provider_result_discarded_after_fencing_lease_loss"
+        current.provider_request_id = provider_request_id
+        current.completed_at = datetime.now(UTC)
+        current.dispatched_at = current.dispatched_at or current.dispatch_started_at
+        if exact_cost is not None:
+            current.accounting_state = ProviderAccountingState.EXACT
+            current.cost_lower_bound = exact_cost
+            current.cost_upper_bound = exact_cost
+            current.input_tokens = input_tokens
+            current.output_tokens = output_tokens
+        else:
+            current.accounting_state = ProviderAccountingState.UNKNOWN_POTENTIALLY_BILLABLE
+            current.cost_lower_bound = Decimal("0")
+            current.cost_upper_bound = current.reserved_cost_upper
+        run = self.session.get(CatalogueIngestionRun, current.run_id)
+        if run is not None:
+            self.refresh_provider_accounting(run)
+        self.session.commit()
+
     def link_provider_attempt(
         self,
         provider_attempt_id: uuid.UUID,
         extraction_attempt_id: uuid.UUID,
+        *,
+        worker_id: str | None = None,
+        run_lease_token: str | None = None,
+        candidate_lease_token: str | None = None,
     ) -> None:
         attempt = self.session.get(CatalogueProviderAttempt, provider_attempt_id)
         if attempt is None:
             return
+        if worker_id and run_lease_token and candidate_lease_token:
+            self._assert_provider_attempt_ownership(
+                attempt,
+                worker_id=worker_id,
+                run_lease_token=run_lease_token,
+                candidate_lease_token=candidate_lease_token,
+            )
         attempt.extraction_attempt_id = extraction_attempt_id
         self.session.flush()
 
@@ -483,6 +879,14 @@ class CatalogueIngestionRepository:
             .where(CatalogueCandidate.run_id == run.id)
             .group_by(CatalogueCandidate.status)
         ).all()
+        pipeline_failures = self.session.scalar(
+            select(func.count())
+            .select_from(CatalogueCandidate)
+            .where(
+                CatalogueCandidate.run_id == run.id,
+                CatalogueCandidate.failure_code.in_(_PIPELINE_FAILURE_CODES),
+            )
+        ) or 0
         provider_summary = {
             key: value
             for key, value in (run.aggregate_summary or {}).items()
@@ -490,15 +894,110 @@ class CatalogueIngestionRepository:
         }
         run.aggregate_summary = {
             **{status.value: count for status, count in counts},
+            "pipeline_failures": int(pipeline_failures),
             **provider_summary,
         }
         self.refresh_provider_accounting(run)
-        if (
-            not any(status in PROCESSABLE_STATUSES and count for status, count in counts)
-            and run.status is IngestionRunStatus.RUNNING
-        ):
+        if run.status is not IngestionRunStatus.RUNNING:
+            return
+        if any(status in PROCESSABLE_STATUSES and count for status, count in counts):
+            return
+
+        statuses = {status for status, count in counts if count}
+        if pipeline_failures or statuses & _FAILURE_OUTCOMES:
+            run.status = IngestionRunStatus.COMPLETED_WITH_FAILURES
+        elif statuses & _REVIEW_OUTCOMES:
+            run.status = IngestionRunStatus.COMPLETED_WITH_REVIEW
+        else:
             run.status = IngestionRunStatus.COMPLETED
-            run.completed_at = datetime.now(UTC)
+        run.completed_at = datetime.now(UTC)
+        run.lease_token = None
+        run.lease_expires_at = None
+
+    def _assert_run_lease(
+        self,
+        run_id: uuid.UUID,
+        lease_token: str,
+        *,
+        observed_at: datetime | None = None,
+    ) -> CatalogueIngestionRun:
+        run = self.session.scalar(
+            select(CatalogueIngestionRun)
+            .where(CatalogueIngestionRun.id == run_id)
+            .with_for_update()
+        )
+        if run is None or not self._run_lease_matches(
+            run, lease_token, observed_at=observed_at or datetime.now(UTC)
+        ):
+            raise CatalogueLeaseLost("run_lease_lost")
+        return run
+
+    @staticmethod
+    def _run_lease_matches(
+        run: CatalogueIngestionRun,
+        lease_token: str,
+        *,
+        observed_at: datetime,
+    ) -> bool:
+        return (
+            run.lease_token == lease_token
+            and run.lease_expires_at is not None
+            and run.lease_expires_at >= observed_at
+            and run.status not in _TERMINAL_RUN_STATUSES
+        )
+
+    def _assert_provider_attempt_ownership(
+        self,
+        attempt: CatalogueProviderAttempt,
+        *,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
+    ) -> None:
+        observed_at = datetime.now(UTC)
+        run = self.session.get(CatalogueIngestionRun, attempt.run_id)
+        candidate = self.session.get(CatalogueCandidate, attempt.candidate_id)
+        if (
+            run is None
+            or candidate is None
+            or not self._run_lease_matches(run, run_lease_token, observed_at=observed_at)
+            or candidate.claimed_by != worker_id
+            or candidate.lease_token != candidate_lease_token
+            or candidate.claimed_until is None
+            or candidate.claimed_until < observed_at
+            or attempt.worker_id != worker_id
+            or attempt.lease_token != candidate_lease_token
+            or (attempt.metadata_json or {}).get("run_lease_token") != run_lease_token
+        ):
+            raise CatalogueLeaseLost("provider_attempt_lease_lost")
+
+    def _owned_job(
+        self,
+        job_id: uuid.UUID,
+        *,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
+    ) -> CatalogueResumableJob:
+        job = self.session.scalar(
+            select(CatalogueResumableJob)
+            .where(CatalogueResumableJob.id == job_id)
+            .with_for_update()
+        )
+        if (
+            job is None
+            or job.worker_id != worker_id
+            or job.run_lease_token != run_lease_token
+            or job.candidate_lease_token != candidate_lease_token
+        ):
+            raise CatalogueLeaseLost("resumable_job_lease_lost")
+        self.assert_candidate_lease(
+            job.candidate_id,
+            run_lease_token=run_lease_token,
+            worker_id=worker_id,
+            lease_token=candidate_lease_token,
+        )
+        return job
 
 
 def candidate_idempotency_key(seed: SeedCandidate, *, run_id: uuid.UUID | None = None) -> str:
