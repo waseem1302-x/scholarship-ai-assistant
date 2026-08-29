@@ -304,9 +304,9 @@ class AcquisitionLexicon:
 class CrawlBudget:
     """Independent acquisition limits for one candidate frontier.
 
-    ``max_pages`` is a deprecated compatibility alias. When supplied it tightens both fetch
-    attempts and accepted artifacts, matching the pre-Batch-4 meaning without allowing it to
-    loosen either new limit.
+    ``max_pages`` is a deprecated compatibility alias. When supplied it tightens only the
+    accepted-artifact allowance, preserving the pre-Batch-4 accepted-page meaning while leaving
+    physical fetch attempts independently bounded.
     """
 
     max_fetch_attempts: int = 12
@@ -325,11 +325,6 @@ class CrawlBudget:
         if self.max_pages is not None:
             if not 1 <= self.max_pages <= _MAX_ROOT_PAGES:
                 raise ValueError(f"max_pages must be between 1 and {_MAX_ROOT_PAGES}")
-            object.__setattr__(
-                self,
-                "max_fetch_attempts",
-                min(self.max_fetch_attempts, self.max_pages),
-            )
             object.__setattr__(
                 self,
                 "max_accepted_artifacts",
