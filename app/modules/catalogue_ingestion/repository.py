@@ -283,15 +283,16 @@ class CatalogueIngestionRepository:
         )
 
     def get_candidate_for_update(self, candidate_id: uuid.UUID) -> CatalogueCandidate | None:
-        return self.session.scalar(
-            select(CatalogueCandidate)
-            .where(CatalogueCandidate.id == candidate_id)
-            .options(
-                selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
+        with self.session.no_autoflush:
+            return self.session.scalar(
+                select(CatalogueCandidate)
+                .where(CatalogueCandidate.id == candidate_id)
+                .options(
+                    selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
+                )
+                .execution_options(populate_existing=True)
+                .with_for_update()
             )
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
 
     def release_candidate(
         self,
@@ -351,12 +352,13 @@ class CatalogueIngestionRepository:
             worker_id=worker_id,
             lease_token=candidate_lease_token,
         )
-        job = self.session.scalar(
-            select(CatalogueResumableJob)
-            .where(CatalogueResumableJob.job_key == job_key)
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
+        with self.session.no_autoflush:
+            job = self.session.scalar(
+                select(CatalogueResumableJob)
+                .where(CatalogueResumableJob.job_key == job_key)
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
         if job is None:
             job = CatalogueResumableJob(
                 run_id=run_id,
@@ -426,12 +428,13 @@ class CatalogueIngestionRepository:
         self.session.commit()
 
     def mark_job_lease_lost(self, job_id: uuid.UUID, *, error_code: str) -> None:
-        job = self.session.scalar(
-            select(CatalogueResumableJob)
-            .where(CatalogueResumableJob.id == job_id)
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
+        with self.session.no_autoflush:
+            job = self.session.scalar(
+                select(CatalogueResumableJob)
+                .where(CatalogueResumableJob.id == job_id)
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
         if job is None or job.state is CatalogueJobState.SUCCEEDED:
             self.session.rollback()
             return
@@ -678,12 +681,13 @@ class CatalogueIngestionRepository:
         exact_cost: Decimal | None = None,
         provider_request_id: str | None = None,
     ) -> None:
-        current = self.session.scalar(
-            select(CatalogueProviderAttempt)
-            .where(CatalogueProviderAttempt.id == attempt.id)
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
+        with self.session.no_autoflush:
+            current = self.session.scalar(
+                select(CatalogueProviderAttempt)
+                .where(CatalogueProviderAttempt.id == attempt.id)
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
         if current is None or current.state in {ProviderAttemptState.SUCCEEDED, ProviderAttemptState.FAILED}:
             self.session.rollback()
             return
@@ -718,7 +722,8 @@ class CatalogueIngestionRepository:
         run_lease_token: str | None = None,
         candidate_lease_token: str | None = None,
     ) -> None:
-        attempt = self.session.get(CatalogueProviderAttempt, provider_attempt_id)
+        with self.session.no_autoflush:
+            attempt = self.session.get(CatalogueProviderAttempt, provider_attempt_id)
         if attempt is None:
             return
         if worker_id and run_lease_token and candidate_lease_token:
@@ -868,20 +873,22 @@ class CatalogueIngestionRepository:
         run.lease_expires_at = None
 
     def _run_for_update(self, run_id: uuid.UUID) -> CatalogueIngestionRun | None:
-        return self.session.scalar(
-            select(CatalogueIngestionRun)
-            .where(CatalogueIngestionRun.id == run_id)
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
+        with self.session.no_autoflush:
+            return self.session.scalar(
+                select(CatalogueIngestionRun)
+                .where(CatalogueIngestionRun.id == run_id)
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
 
     def _candidate_for_update(self, candidate_id: uuid.UUID) -> CatalogueCandidate | None:
-        return self.session.scalar(
-            select(CatalogueCandidate)
-            .where(CatalogueCandidate.id == candidate_id)
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
+        with self.session.no_autoflush:
+            return self.session.scalar(
+                select(CatalogueCandidate)
+                .where(CatalogueCandidate.id == candidate_id)
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
 
     def _assert_run_lease(
         self,
@@ -961,12 +968,13 @@ class CatalogueIngestionRepository:
         run_lease_token: str,
         candidate_lease_token: str,
     ) -> CatalogueResumableJob:
-        job = self.session.scalar(
-            select(CatalogueResumableJob)
-            .where(CatalogueResumableJob.id == job_id)
-            .execution_options(populate_existing=True)
-            .with_for_update()
-        )
+        with self.session.no_autoflush:
+            job = self.session.scalar(
+                select(CatalogueResumableJob)
+                .where(CatalogueResumableJob.id == job_id)
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
         if (
             job is None
             or job.worker_id != worker_id
