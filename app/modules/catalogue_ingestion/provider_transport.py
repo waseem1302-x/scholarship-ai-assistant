@@ -14,6 +14,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -125,8 +126,8 @@ def send_json_request(
 ) -> ProviderHttpResponse:
     """Execute at most one provider request.
 
-    Credential acquisition happens before the request object is handed to the HTTP opener.  Any
-    failure there is therefore classified as pre-dispatch/non-billable.  Once ``opener.open`` is
+    Credential acquisition happens before the request object is handed to the HTTP opener. Any
+    failure there is therefore classified as pre-dispatch/non-billable. Once ``opener.open`` is
     invoked, ambiguous transport failures are conservatively treated as potentially billable unless
     the underlying exception proves that connection establishment itself failed.
     """
@@ -179,10 +180,15 @@ def send_json_request(
                 retry_after_seconds=retry_after,
                 dispatch_occurred=True,
             ) from exc
+        failure_class = (
+            "authentication_configuration_error"
+            if exc.code == 404
+            else "unknown_potentially_billable_failure"
+        )
         raise ExtractionProviderError(
             "Catalogue provider rejected the request",
             provider_request_id=request_id,
-            failure_class="authentication_configuration_error" if exc.code == 404 else "unknown_potentially_billable_failure",
+            failure_class=failure_class,
             retryable=False,
             potentially_billable=False,
             dispatch_occurred=True,
@@ -255,7 +261,11 @@ def provider_request_id(headers: Any | None) -> str | None:
     return None
 
 
-def retry_after_seconds(headers: Any | None) -> float | None:
+def retry_after_seconds(
+    headers: Any | None,
+    *,
+    now: Callable[[], datetime] | None = None,
+) -> float | None:
     if headers is None:
         return None
     raw = headers.get("Retry-After")
@@ -268,7 +278,8 @@ def retry_after_seconds(headers: Any | None) -> float | None:
             retry_at = parsedate_to_datetime(raw)
             if retry_at.tzinfo is None:
                 retry_at = retry_at.replace(tzinfo=UTC)
-            delay = (retry_at - datetime.now(UTC)).total_seconds()
+            current = (now or (lambda: datetime.now(UTC)))()
+            delay = (retry_at - current).total_seconds()
         except (TypeError, ValueError, OverflowError):
             return None
     if not math.isfinite(delay):
@@ -281,10 +292,19 @@ def extraction_retry_delay(
     *,
     attempt: int,
     maximum: float,
+    now: Callable[[], datetime] | None = None,
 ) -> float:
-    """Return a bounded orchestration retry delay for one completed attempt."""
+    """Return a bounded orchestration retry delay for one completed attempt.
+
+    The ``now`` argument and direct ``HTTPError`` handling are retained for compatibility with the
+    previous helper contract. Runtime provider adapters no longer retry internally.
+    """
 
     fallback = min(2**attempt, 4)
     if isinstance(error, ExtractionProviderError) and error.retry_after_seconds is not None:
         return min(max(error.retry_after_seconds, 0.0), maximum)
+    if isinstance(error, urllib.error.HTTPError):
+        delay = retry_after_seconds(error.headers, now=now)
+        if delay is not None:
+            return min(delay, maximum)
     return min(float(fallback), maximum)
