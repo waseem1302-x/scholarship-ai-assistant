@@ -152,6 +152,7 @@ class ExtractionUsage(BaseModel):
     output_tokens: int = Field(default=0, ge=0)
     estimated_cost: Decimal = Field(default=Decimal("0"), ge=0)
     latency_ms: int = Field(default=0, ge=0)
+    provider_request_id: str | None = Field(default=None, max_length=255)
 
 
 class ExtractionResult(BaseModel):
@@ -172,6 +173,8 @@ class IngestionRunResponse(BaseModel):
     dry_run: bool
     checkpoint_cursor: int
     max_candidates: int
+    configuration_revision: str | None = None
+    configuration_fingerprint: str | None = None
     model_calls: int
     input_tokens: int
     output_tokens: int
