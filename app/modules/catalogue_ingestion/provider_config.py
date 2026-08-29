@@ -93,13 +93,18 @@ def catalogue_provider_profile(settings: Settings) -> CatalogueProviderProfile:
 
 
 def catalogue_configuration_fingerprint(settings: Settings) -> str:
-    """Hash normalized, non-secret settings that authorize paid catalogue work.
+    """Hash normalized, non-secret settings that authorize paid or privileged catalogue work.
 
-    The endpoint itself is intentionally excluded.  Its SHA-256 digest makes account/endpoint drift
-    detectable without surfacing the hostname to administrator API responses.
+    The endpoint and reviewed-domain values themselves are intentionally excluded. Their SHA-256
+    digests make provider and acquisition-authority drift detectable without surfacing configured
+    hostnames to administrator API responses.
     """
 
     profile = catalogue_provider_profile(settings)
+    reviewed_domains = sorted(settings.catalogue_reviewed_official_domain_set)
+    reviewed_domain_fingerprint = hashlib.sha256(
+        "\n".join(reviewed_domains).encode()
+    ).hexdigest()
     payload = {
         "revision": CATALOGUE_CONFIGURATION_REVISION,
         "provider": profile.provider,
@@ -118,6 +123,7 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
             "bounded_crawling_enabled": settings.catalogue_bounded_crawling_enabled,
             "browser_fetching_enabled": settings.catalogue_browser_fetching_enabled,
             "document_intelligence_enabled": settings.catalogue_document_intelligence_enabled,
+            "reviewed_official_domain_fingerprint": reviewed_domain_fingerprint,
         },
         "limits": {
             "max_candidates_per_run": settings.catalogue_ai_max_candidates_per_run,
@@ -127,6 +133,9 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
             "max_output_tokens": settings.catalogue_ai_max_output_tokens,
             "max_estimated_cost_per_run": str(settings.catalogue_ai_max_estimated_cost_per_run),
             "source_max_bytes_per_page": settings.catalogue_source_max_bytes_per_page,
+            "source_monitor_per_host_interval_seconds": str(
+                settings.source_monitor_per_host_interval_seconds
+            ),
         },
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
