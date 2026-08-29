@@ -45,6 +45,10 @@ from app.modules.catalogue_ingestion.evidence_block_models import (
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
 )
+from app.modules.catalogue_ingestion.extraction_cache_models import (
+    CatalogueExtractionCacheEntry,
+    CatalogueExtractionCacheEvent,
+)
 from app.modules.catalogue_ingestion.models import (
     CatalogueCandidate,
     CatalogueCandidateSource,
@@ -152,6 +156,8 @@ __all__ = [
     "CatalogueEvidenceBlock",
     "CatalogueEvidenceRoute",
     "CatalogueExtractionAttempt",
+    "CatalogueExtractionCacheEntry",
+    "CatalogueExtractionCacheEvent",
     "CatalogueIngestionRun",
     "CatalogueProviderAttempt",
     "CatalogueResumableJob",
