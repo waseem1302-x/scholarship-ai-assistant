@@ -170,6 +170,7 @@ class CatalogueScopeEdge(Base):
         ),
         index=True,
     )
+    objective_keys: Mapped[list[str]] = mapped_column(JSON, default=list)
     source_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("catalogue_source_artifacts.id", ondelete="SET NULL"), index=True
     )
