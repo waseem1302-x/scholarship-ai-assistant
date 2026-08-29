@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -24,7 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.modules.auth.models import enum_values, utc_now
-from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective
+from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective, ScopedCoverageState
 
 
 class ScopeNodeType(StrEnum):
@@ -60,19 +61,6 @@ class ScopeDiscoveryConfidence(StrEnum):
     MEDIUM = "medium"
     COMPATIBILITY = "compatibility"
     UNRESOLVED = "unresolved"
-
-
-class ScopedCoverageState(StrEnum):
-    UNKNOWN = "unknown"
-    NOT_YET_ACQUIRED = "not_yet_acquired"
-    BLOCKED = "blocked"
-    NOT_STATED = "not_stated"
-    NOT_APPLICABLE = "not_applicable"
-    PARTIAL = "partial"
-    COMPLETE = "complete"
-    CONFLICTING = "conflicting"
-    QUARANTINED = "quarantined"
-    FAILED = "failed"
 
 
 class CatalogueScopeNode(Base):
@@ -144,6 +132,10 @@ class CatalogueScopeNode(Base):
 class CatalogueScopeEdge(Base):
     __tablename__ = "catalogue_scope_edges"
     __table_args__ = (
+        CheckConstraint(
+            "parent_node_id != child_node_id",
+            name="ck_catalogue_scope_edges_not_self",
+        ),
         UniqueConstraint(
             "candidate_id",
             "parent_node_id",
