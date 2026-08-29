@@ -36,7 +36,6 @@ PROCESSABLE_STATUSES = {
     CandidateStatus.SOURCE_FETCHED,
     CandidateStatus.EXTRACTED,
 }
-
 _TERMINAL_RUN_STATUSES = {
     IngestionRunStatus.COMPLETED,
     IngestionRunStatus.COMPLETED_WITH_REVIEW,
@@ -45,20 +44,17 @@ _TERMINAL_RUN_STATUSES = {
     IngestionRunStatus.CANCELLED,
     IngestionRunStatus.BUDGET_EXHAUSTED,
 }
-
 _REVIEW_OUTCOMES = {
     CandidateStatus.CONFLICT_DETECTED,
     CandidateStatus.DUPLICATE_CANDIDATE,
     CandidateStatus.NEEDS_REVIEW,
     CandidateStatus.READY_FOR_REVIEW,
 }
-
 _FAILURE_OUTCOMES = {
     CandidateStatus.VALIDATION_FAILED,
     CandidateStatus.REJECTED,
     CandidateStatus.SOURCE_CHANGED,
 }
-
 _PIPELINE_FAILURE_CODES = {
     "unexpected_pipeline_failure",
     "candidate_lease_lost",
@@ -93,28 +89,13 @@ class CatalogueIngestionRepository:
         lease_seconds: int,
         now: datetime | None = None,
     ) -> str:
-        """Join the current run epoch or create a new epoch after expiry.
-
-        Workers processing different candidates in the same run share the run fencing epoch while
-        each candidate receives its own unique lease token. Once the run epoch expires, a new token
-        fences every stale worker from material state changes.
-        """
-
         observed_at = now or datetime.now(UTC)
-        run = self.session.scalar(
-            select(CatalogueIngestionRun)
-            .where(CatalogueIngestionRun.id == run_id)
-            .with_for_update()
-        )
+        run = self._run_for_update(run_id)
         if run is None:
             raise CatalogueLeaseLost("ingestion_run_missing")
         if run.status in _TERMINAL_RUN_STATUSES:
             raise CatalogueLeaseLost("ingestion_run_terminal")
-        if (
-            run.lease_token is None
-            or run.lease_expires_at is None
-            or run.lease_expires_at < observed_at
-        ):
+        if run.lease_token is None or run.lease_expires_at is None or run.lease_expires_at < observed_at:
             run.lease_token = uuid.uuid4().hex
         run.lease_expires_at = observed_at + timedelta(seconds=lease_seconds)
         token = run.lease_token
@@ -131,29 +112,15 @@ class CatalogueIngestionRepository:
         now: datetime | None = None,
     ) -> None:
         observed_at = now or datetime.now(UTC)
-        run = self.session.scalar(
-            select(CatalogueIngestionRun)
-            .where(CatalogueIngestionRun.id == run_id)
-            .with_for_update()
-        )
-        if (
-            run is None
-            or run.lease_token != lease_token
-            or run.lease_expires_at is None
-            or run.lease_expires_at < observed_at
-            or run.status in _TERMINAL_RUN_STATUSES
-        ):
+        run = self._run_for_update(run_id)
+        if run is None or not self._run_lease_matches(run, lease_token, observed_at=observed_at):
             self.session.rollback()
             raise CatalogueLeaseLost("run_lease_lost")
         run.lease_expires_at = observed_at + timedelta(seconds=lease_seconds)
         self.session.commit()
 
     def release_run_lease(self, run_id: uuid.UUID, *, lease_token: str) -> bool:
-        run = self.session.scalar(
-            select(CatalogueIngestionRun)
-            .where(CatalogueIngestionRun.id == run_id)
-            .with_for_update()
-        )
+        run = self._run_for_update(run_id)
         if run is None or run.lease_token != lease_token:
             self.session.rollback()
             return False
@@ -202,9 +169,7 @@ class CatalogueIngestionRepository:
                     seed_country=seed.country,
                     seed_cycle=seed.cycle,
                     seed_intake_year=seed.intake_year,
-                    seed_official_url=(
-                        str(seed.possible_official_url) if seed.possible_official_url else None
-                    ),
+                    seed_official_url=(str(seed.possible_official_url) if seed.possible_official_url else None),
                     identity_hint_is_asserted=identity_hint_is_asserted,
                     seed_keywords=seed.keywords,
                 )
@@ -225,30 +190,30 @@ class CatalogueIngestionRepository:
     ) -> list[CatalogueCandidate]:
         observed_at = now or datetime.now(UTC)
         self._assert_run_lease(run_id, run_lease_token, observed_at=observed_at)
-        statement = (
-            select(CatalogueCandidate)
-            .where(
-                CatalogueCandidate.run_id == run_id,
-                CatalogueCandidate.status.in_(PROCESSABLE_STATUSES),
-                or_(
-                    CatalogueCandidate.next_attempt_at.is_(None),
-                    CatalogueCandidate.next_attempt_at <= observed_at,
-                ),
-                or_(
-                    CatalogueCandidate.claimed_until.is_(None),
-                    CatalogueCandidate.claimed_until < observed_at,
-                ),
-            )
-            .order_by(CatalogueCandidate.seed_index)
-            .limit(limit)
-            .options(
-                selectinload(CatalogueCandidate.sources).selectinload(
-                    CatalogueCandidateSource.artifacts
+        candidates = list(
+            self.session.scalars(
+                select(CatalogueCandidate)
+                .where(
+                    CatalogueCandidate.run_id == run_id,
+                    CatalogueCandidate.status.in_(PROCESSABLE_STATUSES),
+                    or_(
+                        CatalogueCandidate.next_attempt_at.is_(None),
+                        CatalogueCandidate.next_attempt_at <= observed_at,
+                    ),
+                    or_(
+                        CatalogueCandidate.claimed_until.is_(None),
+                        CatalogueCandidate.claimed_until < observed_at,
+                    ),
                 )
+                .order_by(CatalogueCandidate.seed_index)
+                .limit(limit)
+                .options(
+                    selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
+                )
+                .execution_options(populate_existing=True)
+                .with_for_update(skip_locked=True)
             )
-            .with_for_update(skip_locked=True)
         )
-        candidates = list(self.session.scalars(statement))
         claimed_until = observed_at + timedelta(seconds=lease_seconds)
         for candidate in candidates:
             candidate.claimed_by = worker_id
@@ -269,20 +234,16 @@ class CatalogueIngestionRepository:
         now: datetime | None = None,
     ) -> None:
         observed_at = now or datetime.now(UTC)
-        candidate = self.session.scalar(
-            select(CatalogueCandidate)
-            .where(CatalogueCandidate.id == candidate_id)
-            .with_for_update()
-        )
+        candidate = self._candidate_for_update(candidate_id)
         if candidate is None:
             self.session.rollback()
             raise CatalogueLeaseLost("candidate_missing")
         self._assert_run_lease(candidate.run_id, run_lease_token, observed_at=observed_at)
-        if (
-            candidate.claimed_by != worker_id
-            or candidate.lease_token != lease_token
-            or candidate.claimed_until is None
-            or candidate.claimed_until < observed_at
+        if not self._candidate_lease_matches(
+            candidate,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            observed_at=observed_at,
         ):
             self.session.rollback()
             raise CatalogueLeaseLost("candidate_lease_lost")
@@ -299,19 +260,15 @@ class CatalogueIngestionRepository:
         now: datetime | None = None,
     ) -> CatalogueCandidate:
         observed_at = now or datetime.now(UTC)
-        candidate = self.session.scalar(
-            select(CatalogueCandidate)
-            .where(CatalogueCandidate.id == candidate_id)
-            .with_for_update()
-        )
+        candidate = self._candidate_for_update(candidate_id)
         if candidate is None:
             raise CatalogueLeaseLost("candidate_missing")
         self._assert_run_lease(candidate.run_id, run_lease_token, observed_at=observed_at)
-        if (
-            candidate.claimed_by != worker_id
-            or candidate.lease_token != lease_token
-            or candidate.claimed_until is None
-            or candidate.claimed_until < observed_at
+        if not self._candidate_lease_matches(
+            candidate,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            observed_at=observed_at,
         ):
             raise CatalogueLeaseLost("candidate_lease_lost")
         return candidate
@@ -321,9 +278,7 @@ class CatalogueIngestionRepository:
             select(CatalogueCandidate)
             .where(CatalogueCandidate.id == candidate_id)
             .options(
-                selectinload(CatalogueCandidate.sources).selectinload(
-                    CatalogueCandidateSource.artifacts
-                )
+                selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
             )
         )
 
@@ -332,10 +287,9 @@ class CatalogueIngestionRepository:
             select(CatalogueCandidate)
             .where(CatalogueCandidate.id == candidate_id)
             .options(
-                selectinload(CatalogueCandidate.sources).selectinload(
-                    CatalogueCandidateSource.artifacts
-                )
+                selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
             )
+            .execution_options(populate_existing=True)
             .with_for_update()
         )
 
@@ -346,22 +300,19 @@ class CatalogueIngestionRepository:
         worker_id: str | None = None,
         lease_token: str | None = None,
     ) -> bool:
-        """Release only the caller's lease; repeated release is harmless.
-
-        Legacy unleased objects remain releasable so administrator paths that do not participate in
-        worker claiming remain backward compatible.
-        """
-
-        if candidate.lease_token is None and candidate.claimed_by is None:
+        expected_worker = worker_id if worker_id is not None else candidate.claimed_by
+        expected_token = lease_token if lease_token is not None else candidate.lease_token
+        if expected_worker is None and expected_token is None:
             candidate.claimed_until = None
             return True
-        if worker_id is None or lease_token is None:
-            raise CatalogueLeaseLost("candidate_release_requires_token")
-        if candidate.claimed_by != worker_id or candidate.lease_token != lease_token:
-            return False
-        candidate.claimed_by = None
-        candidate.claimed_until = None
-        candidate.lease_token = None
+        current = self._candidate_for_update(candidate.id)
+        if current is None:
+            raise CatalogueLeaseLost("candidate_missing")
+        if current.claimed_by != expected_worker or current.lease_token != expected_token:
+            raise CatalogueLeaseLost("candidate_release_lease_lost")
+        current.claimed_by = None
+        current.claimed_until = None
+        current.lease_token = None
         return True
 
     def start_or_resume_job(
@@ -385,6 +336,7 @@ class CatalogueIngestionRepository:
         job = self.session.scalar(
             select(CatalogueResumableJob)
             .where(CatalogueResumableJob.job_key == job_key)
+            .execution_options(populate_existing=True)
             .with_for_update()
         )
         if job is None:
@@ -456,8 +408,14 @@ class CatalogueIngestionRepository:
         self.session.commit()
 
     def mark_job_lease_lost(self, job_id: uuid.UUID, *, error_code: str) -> None:
-        job = self.session.get(CatalogueResumableJob, job_id)
+        job = self.session.scalar(
+            select(CatalogueResumableJob)
+            .where(CatalogueResumableJob.id == job_id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+        )
         if job is None or job.state is CatalogueJobState.SUCCEEDED:
+            self.session.rollback()
             return
         job.state = CatalogueJobState.LEASE_LOST
         job.error_code = error_code[:100]
@@ -514,30 +472,22 @@ class CatalogueIngestionRepository:
         lease_token: str,
         reserved_cost_upper: Decimal,
     ) -> CatalogueProviderAttempt:
-        """Reserve one physical attempt atomically against lease, call, and cost budgets."""
-
         observed_at = datetime.now(UTC)
-        run = self.session.scalar(
-            select(CatalogueIngestionRun)
-            .where(CatalogueIngestionRun.id == run_id)
-            .with_for_update()
-        )
+        run = self._run_for_update(run_id)
+        candidate = self._candidate_for_update(candidate_id)
         if run is None:
             raise ProviderBudgetReservationError("ingestion_run_missing")
         if not self._run_lease_matches(run, run_lease_token, observed_at=observed_at):
             raise CatalogueLeaseLost("run_lease_lost")
-        candidate = self.session.scalar(
-            select(CatalogueCandidate)
-            .where(CatalogueCandidate.id == candidate_id)
-            .with_for_update()
-        )
         if (
             candidate is None
             or candidate.run_id != run_id
-            or candidate.claimed_by != worker_id
-            or candidate.lease_token != lease_token
-            or candidate.claimed_until is None
-            or candidate.claimed_until < observed_at
+            or not self._candidate_lease_matches(
+                candidate,
+                worker_id=worker_id,
+                lease_token=lease_token,
+                observed_at=observed_at,
+            )
         ):
             raise CatalogueLeaseLost("candidate_lease_lost")
 
@@ -548,23 +498,19 @@ class CatalogueIngestionRepository:
                 CatalogueProviderAttempt.run_id == run_id,
                 ~and_(
                     CatalogueProviderAttempt.state == ProviderAttemptState.FAILED,
-                    CatalogueProviderAttempt.failure_class
-                    == ProviderFailureClass.PRE_DISPATCH_FAILURE,
+                    CatalogueProviderAttempt.failure_class == ProviderFailureClass.PRE_DISPATCH_FAILURE,
                 ),
             )
         ) or 0
         if existing_call_count >= run.max_model_calls:
             raise ProviderBudgetReservationError("provider_call_budget_exhausted")
-
         current_upper = self.session.scalar(
             select(func.coalesce(func.sum(CatalogueProviderAttempt.cost_upper_bound), 0)).where(
                 CatalogueProviderAttempt.run_id == run_id
             )
         )
-        current_upper_decimal = Decimal(str(current_upper or 0))
-        if current_upper_decimal + reserved_cost_upper > run.max_estimated_cost:
+        if Decimal(str(current_upper or 0)) + reserved_cost_upper > run.max_estimated_cost:
             raise ProviderBudgetReservationError("provider_cost_budget_exhausted")
-
         retry_ordinal = self.session.scalar(
             select(func.count())
             .select_from(CatalogueProviderAttempt)
@@ -714,11 +660,10 @@ class CatalogueIngestionRepository:
         exact_cost: Decimal | None = None,
         provider_request_id: str | None = None,
     ) -> None:
-        """Record lease loss without pretending the stale worker still owns candidate state."""
-
         current = self.session.scalar(
             select(CatalogueProviderAttempt)
             .where(CatalogueProviderAttempt.id == attempt.id)
+            .execution_options(populate_existing=True)
             .with_for_update()
         )
         if current is None or current.state in {ProviderAttemptState.SUCCEEDED, ProviderAttemptState.FAILED}:
@@ -776,8 +721,7 @@ class CatalogueIngestionRepository:
                 CatalogueProviderAttempt.run_id == run.id,
                 ~and_(
                     CatalogueProviderAttempt.state == ProviderAttemptState.FAILED,
-                    CatalogueProviderAttempt.failure_class
-                    == ProviderFailureClass.PRE_DISPATCH_FAILURE,
+                    CatalogueProviderAttempt.failure_class == ProviderFailureClass.PRE_DISPATCH_FAILURE,
                 ),
             )
         ) or 0
@@ -806,15 +750,12 @@ class CatalogueIngestionRepository:
             .select_from(CatalogueProviderAttempt)
             .where(
                 CatalogueProviderAttempt.run_id == run.id,
-                CatalogueProviderAttempt.accounting_state
-                == ProviderAccountingState.UNKNOWN_POTENTIALLY_BILLABLE,
+                CatalogueProviderAttempt.accounting_state == ProviderAccountingState.UNKNOWN_POTENTIALLY_BILLABLE,
             )
         ) or 0
-
         run.model_calls = int(count)
         run.input_tokens = int(input_tokens)
         run.output_tokens = int(output_tokens)
-        # Legacy ``estimated_cost`` remains a conservative projection for existing API clients.
         run.estimated_cost = Decimal(str(upper))
         summary = dict(run.aggregate_summary or {})
         summary.update(
@@ -856,21 +797,16 @@ class CatalogueIngestionRepository:
         items = list(
             self.session.scalars(
                 base.options(
-                    selectinload(CatalogueCandidate.sources).selectinload(
-                        CatalogueCandidateSource.artifacts
-                    )
+                    selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
                 )
                 .order_by(CatalogueCandidate.created_at.desc())
                 .offset(offset)
                 .limit(limit)
             )
         )
-        total = (
-            self.session.scalar(
-                select(func.count()).select_from(CatalogueCandidate).where(*filters)
-            )
-            or 0
-        )
+        total = self.session.scalar(
+            select(func.count()).select_from(CatalogueCandidate).where(*filters)
+        ) or 0
         return items, total
 
     def refresh_run_summary(self, run: CatalogueIngestionRun) -> None:
@@ -902,7 +838,6 @@ class CatalogueIngestionRepository:
             return
         if any(status in PROCESSABLE_STATUSES and count for status, count in counts):
             return
-
         statuses = {status for status, count in counts if count}
         if pipeline_failures or statuses & _FAILURE_OUTCOMES:
             run.status = IngestionRunStatus.COMPLETED_WITH_FAILURES
@@ -914,6 +849,22 @@ class CatalogueIngestionRepository:
         run.lease_token = None
         run.lease_expires_at = None
 
+    def _run_for_update(self, run_id: uuid.UUID) -> CatalogueIngestionRun | None:
+        return self.session.scalar(
+            select(CatalogueIngestionRun)
+            .where(CatalogueIngestionRun.id == run_id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+        )
+
+    def _candidate_for_update(self, candidate_id: uuid.UUID) -> CatalogueCandidate | None:
+        return self.session.scalar(
+            select(CatalogueCandidate)
+            .where(CatalogueCandidate.id == candidate_id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+        )
+
     def _assert_run_lease(
         self,
         run_id: uuid.UUID,
@@ -921,11 +872,7 @@ class CatalogueIngestionRepository:
         *,
         observed_at: datetime | None = None,
     ) -> CatalogueIngestionRun:
-        run = self.session.scalar(
-            select(CatalogueIngestionRun)
-            .where(CatalogueIngestionRun.id == run_id)
-            .with_for_update()
-        )
+        run = self._run_for_update(run_id)
         if run is None or not self._run_lease_matches(
             run, lease_token, observed_at=observed_at or datetime.now(UTC)
         ):
@@ -946,6 +893,21 @@ class CatalogueIngestionRepository:
             and run.status not in _TERMINAL_RUN_STATUSES
         )
 
+    @staticmethod
+    def _candidate_lease_matches(
+        candidate: CatalogueCandidate,
+        *,
+        worker_id: str,
+        lease_token: str,
+        observed_at: datetime,
+    ) -> bool:
+        return (
+            candidate.claimed_by == worker_id
+            and candidate.lease_token == lease_token
+            and candidate.claimed_until is not None
+            and candidate.claimed_until >= observed_at
+        )
+
     def _assert_provider_attempt_ownership(
         self,
         attempt: CatalogueProviderAttempt,
@@ -955,16 +917,18 @@ class CatalogueIngestionRepository:
         candidate_lease_token: str,
     ) -> None:
         observed_at = datetime.now(UTC)
-        run = self.session.get(CatalogueIngestionRun, attempt.run_id)
-        candidate = self.session.get(CatalogueCandidate, attempt.candidate_id)
+        run = self._run_for_update(attempt.run_id)
+        candidate = self._candidate_for_update(attempt.candidate_id)
         if (
             run is None
             or candidate is None
             or not self._run_lease_matches(run, run_lease_token, observed_at=observed_at)
-            or candidate.claimed_by != worker_id
-            or candidate.lease_token != candidate_lease_token
-            or candidate.claimed_until is None
-            or candidate.claimed_until < observed_at
+            or not self._candidate_lease_matches(
+                candidate,
+                worker_id=worker_id,
+                lease_token=candidate_lease_token,
+                observed_at=observed_at,
+            )
             or attempt.worker_id != worker_id
             or attempt.lease_token != candidate_lease_token
             or (attempt.metadata_json or {}).get("run_lease_token") != run_lease_token
@@ -982,6 +946,7 @@ class CatalogueIngestionRepository:
         job = self.session.scalar(
             select(CatalogueResumableJob)
             .where(CatalogueResumableJob.id == job_id)
+            .execution_options(populate_existing=True)
             .with_for_update()
         )
         if (
