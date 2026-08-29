@@ -224,6 +224,7 @@ class BoundedOfficialSiteCrawler:
         *,
         budget: CrawlBudget | None = None,
         allowed_hosts: set[str] | None = None,
+        heartbeat: Callable[[], None] | None = None,
     ) -> CrawlResult:
         limits = budget or CrawlBudget()
         normalized_root = normalize_crawl_url(root_url)
@@ -251,8 +252,13 @@ class BoundedOfficialSiteCrawler:
         budget_exhausted = False
         previous_host: str | None = None
 
+        def pulse() -> None:
+            if heartbeat is not None:
+                heartbeat()
+
         def fetch_page(url: str, *, depth: int, score: int, root: bool = False) -> bool:
             nonlocal total_bytes, fetch_attempts, budget_exhausted, previous_host
+            pulse()
             if fetch_attempts >= limits.max_pages:
                 budget_exhausted = True
                 return False
@@ -267,12 +273,16 @@ class BoundedOfficialSiteCrawler:
                 and current_host == previous_host
                 and limits.per_host_interval_seconds > 0
             ):
+                pulse()
                 self.sleeper(limits.per_host_interval_seconds)
+                pulse()
 
             fetch_attempts += 1
+            pulse()
             try:
                 fetched = _fetch_with_limit(self.fetcher, url, max_bytes=remaining_bytes)
             except SourceFetchError as exc:
+                pulse()
                 failure_code = _failure_code(exc)
                 if root:
                     raise
@@ -285,6 +295,7 @@ class BoundedOfficialSiteCrawler:
                     budget_exhausted = True
                     return False
                 return True
+            pulse()
 
             if fetched.bytes_read > remaining_bytes:
                 if root:
@@ -393,6 +404,7 @@ class BoundedOfficialSiteCrawler:
                 )
                 insertion_order += 1
 
+        pulse()
         if not fetch_page(normalized_root, depth=0, score=100, root=True):
             return CrawlResult(
                 root_url=normalized_root,
@@ -406,6 +418,7 @@ class BoundedOfficialSiteCrawler:
             )
 
         while queue and not budget_exhausted:
+            pulse()
             if fetch_attempts >= limits.max_pages:
                 budget_exhausted = True
                 break
@@ -417,6 +430,7 @@ class BoundedOfficialSiteCrawler:
 
         if queue and fetch_attempts >= limits.max_pages:
             budget_exhausted = True
+        pulse()
 
         return CrawlResult(
             root_url=normalized_root,
