@@ -14,15 +14,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, object_session
 
 from app.modules.catalogue_ingestion.claim_schemas import (
-    ClaimConflictRecord,
     ClaimEntityType,
     ClaimObjective,
-    ClaimRejectionRecord,
     ClaimResolution,
     ExtractedClaim,
     ObjectiveCoverageState,
     ResolvedClaim,
     ScopeCoverageDecision,
+    ScopedCoverageState,
 )
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceRole,
@@ -39,7 +38,6 @@ from app.modules.catalogue_ingestion.topology_models import (
     ScopeDiscoveryConfidence,
     ScopeEdgeType,
     ScopeNodeType,
-    ScopedCoverageState,
     SourceScopeRelationship,
 )
 
@@ -63,44 +61,14 @@ _ENTITY_NODE_TYPES: dict[ClaimEntityType, ScopeNodeType] = {
     ClaimEntityType.TRACK: ScopeNodeType.ROUTE,
     ClaimEntityType.INSTITUTION: ScopeNodeType.INSTITUTION,
 }
-_BRANCH_SCOPE_TYPES = {
-    ScopeNodeType.CYCLE,
-    ScopeNodeType.INSTITUTION,
-    ScopeNodeType.ROUTE,
-    ScopeNodeType.PROGRAMME,
-    ScopeNodeType.DEGREE_LEVEL,
-    ScopeNodeType.SUBJECT,
-    ScopeNodeType.AWARD_VARIANT,
-    ScopeNodeType.APPLICATION_CHANNEL,
+_OBJECTIVE_BRANCH_TYPES: dict[ClaimObjective, set[ScopeNodeType]] = {
+    ClaimObjective.PROGRAMMES: {ScopeNodeType.PROGRAMME},
+    ClaimObjective.PROGRAMME_DETAILS: {ScopeNodeType.PROGRAMME},
+    ClaimObjective.ROUTES: {ScopeNodeType.ROUTE},
 }
-_OBJECTIVE_SCOPE_TYPES: dict[ClaimObjective, set[ScopeNodeType]] = {
-    ClaimObjective.IDENTITY: {
-        ScopeNodeType.CYCLE,
-        ScopeNodeType.COUNTRY,
-        ScopeNodeType.INSTITUTION,
-    },
-    ClaimObjective.PROGRAMMES: {ScopeNodeType.CYCLE, ScopeNodeType.PROGRAMME},
-    ClaimObjective.PROGRAMME_DETAILS: {
-        ScopeNodeType.CYCLE,
-        ScopeNodeType.PROGRAMME,
-        ScopeNodeType.DEGREE_LEVEL,
-        ScopeNodeType.SUBJECT,
-    },
-    ClaimObjective.ROUTES: {
-        ScopeNodeType.CYCLE,
-        ScopeNodeType.PROGRAMME,
-        ScopeNodeType.ROUTE,
-        ScopeNodeType.INSTITUTION,
-        ScopeNodeType.APPLICATION_CHANNEL,
-    },
-    ClaimObjective.ELIGIBILITY: set(_BRANCH_SCOPE_TYPES),
-    ClaimObjective.ELIGIBILITY_CONTEXT: set(_BRANCH_SCOPE_TYPES),
-    ClaimObjective.DOCUMENTS_CORE: set(_BRANCH_SCOPE_TYPES),
-    ClaimObjective.DOCUMENTS_REQUIREMENTS: set(_BRANCH_SCOPE_TYPES),
-    ClaimObjective.DOCUMENTS_COUNTS: set(_BRANCH_SCOPE_TYPES),
-    ClaimObjective.DOCUMENTS_FORMAT: set(_BRANCH_SCOPE_TYPES),
-    ClaimObjective.FUNDING: set(_BRANCH_SCOPE_TYPES),
-    ClaimObjective.APPLICATION_TIMELINE: set(_BRANCH_SCOPE_TYPES),
+_ENUMERATED_BRANCH_OBJECTIVES: dict[ClaimObjective, ScopeNodeType] = {
+    ClaimObjective.PROGRAMMES: ScopeNodeType.PROGRAMME,
+    ClaimObjective.ROUTES: ScopeNodeType.ROUTE,
 }
 _FINITE_SCOPE_REQUIREMENTS: dict[
     tuple[ClaimObjective, ScopeNodeType], set[tuple[ClaimEntityType, str]]
@@ -126,9 +94,9 @@ _FINITE_SCOPE_REQUIREMENTS: dict[
         (ClaimEntityType.TRACK, "name")
     },
 }
-_ENUMERATED_BRANCH_OBJECTIVES: dict[ClaimObjective, ScopeNodeType] = {
-    ClaimObjective.PROGRAMMES: ScopeNodeType.PROGRAMME,
-    ClaimObjective.ROUTES: ScopeNodeType.ROUTE,
+_TERMINAL_COMPLETE_STATES = {
+    ScopedCoverageState.COMPLETE,
+    ScopedCoverageState.NOT_APPLICABLE,
 }
 
 
@@ -160,10 +128,10 @@ def evaluate_scoped_completeness(
     resolution: ClaimResolution,
     provider_objective_coverage: dict[str, str] | None = None,
 ) -> ClaimResolution:
-    """Evaluate every objective at explicit topology scopes and persist when attached.
+    """Compute scoped coverage from validated claims and persisted topology.
 
-    Provider coverage is retained as an observation only. It may force a conservative state such
-    as partial, but it never proves ``complete`` or ``not_applicable``.
+    Provider coverage is retained only as a conservative signal. It can keep a cell open, but it
+    cannot by itself establish ``complete`` or ``not_applicable``.
     """
 
     artifact_list = list(artifacts)
@@ -192,43 +160,54 @@ class _PersistentCoverageEvaluator:
         candidate = self.session.get(CatalogueCandidate, candidate_id)
         if candidate is None:
             return _detached_evaluation(resolution, provider_signals)
+
         sources = list(
             self.session.scalars(
                 select(CatalogueCandidateSource).where(
-                    CatalogueCandidateSource.candidate_id == candidate_id
+                    CatalogueCandidateSource.candidate_id == candidate.id
                 )
             )
         )
-        source_by_id = {item.id: item for item in sources}
-        artifact_ids = {uuid.UUID(item.artifact_id) for item in resolution.resolved}
-        artifacts = (
+        source_by_id = {source.id: source for source in sources}
+        all_artifacts = (
             list(
                 self.session.scalars(
                     select(CatalogueSourceArtifact).where(
-                        CatalogueSourceArtifact.id.in_(artifact_ids)
+                        CatalogueSourceArtifact.source_id.in_(source_by_id)
                     )
                 )
             )
-            if artifact_ids
+            if source_by_id
             else []
         )
-        artifact_by_id = {item.id: item for item in artifacts}
+        artifact_by_id = {artifact.id: artifact for artifact in all_artifacts}
+        latest_artifact_by_source: dict[uuid.UUID, CatalogueSourceArtifact] = {}
+        for artifact in all_artifacts:
+            current = latest_artifact_by_source.get(artifact.source_id)
+            if current is None or artifact.created_at > current.created_at:
+                latest_artifact_by_source[artifact.source_id] = artifact
 
         root = self._root_node(candidate)
         nodes: dict[tuple[ScopeNodeType, str, str], CatalogueScopeNode] = {
             (root.node_type, root.canonical_key, root.lifecycle_key): root
         }
-        self._link_candidate_sources_to_root(candidate, root, sources, artifacts)
+        self._link_candidate_sources_to_root(
+            candidate,
+            root,
+            sources,
+            latest_artifact_by_source,
+        )
 
         claim_nodes: dict[str, set[uuid.UUID]] = defaultdict(set)
+        claim_item_by_id: dict[str, ResolvedClaim] = {}
         for item in resolution.resolved:
             claim_id = item.claim_id or _claim_id(item)
+            claim_item_by_id[claim_id] = item
+            claim_nodes[claim_id].add(root.id)
             refs = _scope_refs_for_claim(candidate, item, artifact_by_id)
-            resolved_nodes: list[CatalogueScopeNode] = []
             for ref in refs:
                 node = self._upsert_node(candidate, ref)
                 nodes[(node.node_type, node.canonical_key, node.lifecycle_key)] = node
-                resolved_nodes.append(node)
                 claim_nodes[claim_id].add(node.id)
                 if node.id != root.id:
                     self._upsert_edge(
@@ -242,24 +221,15 @@ class _PersistentCoverageEvaluator:
                     candidate_id=candidate.id,
                     node=node,
                     item=item,
-                    relationship_type=SourceScopeRelationship.SUPPORTS,
+                    relationship_type=_source_relationship_for_claim(item.claim),
                     explicit=node.id != root.id,
                 )
-            entity_node = _entity_node_for_claim(item.claim, resolved_nodes)
-            if entity_node is not None:
-                for node in resolved_nodes:
-                    if node.id == entity_node.id or node.id == root.id:
-                        continue
-                    self._upsert_edge(
-                        candidate_id=candidate.id,
-                        parent=entity_node,
-                        child=node,
-                        relationship_type=ScopeEdgeType.APPLIES_TO,
-                        item=item,
-                    )
-            self._topology_edges_from_value(candidate, item, nodes)
 
         self.session.flush()
+        for item in resolution.resolved:
+            self._topology_edges_from_value(candidate, item, nodes)
+        self.session.flush()
+
         all_nodes = list(
             self.session.scalars(
                 select(CatalogueScopeNode).where(CatalogueScopeNode.candidate_id == candidate.id)
@@ -282,40 +252,34 @@ class _PersistentCoverageEvaluator:
             links_by_node[link.scope_node_id].append(link)
 
         decisions: list[ScopeCoverageDecision] = []
-        cells_by_objective: dict[ClaimObjective, list[tuple[CatalogueScopeNode, _CoverageResult]]] = (
-            defaultdict(list)
-        )
-        non_root_nodes = [node for node in all_nodes if node.id != root.id]
+        root_results: dict[ClaimObjective, _CoverageResult] = {}
         for objective in ClaimObjective:
-            target_nodes = [root]
-            target_nodes.extend(
-                node
-                for node in non_root_nodes
-                if node.node_type in _OBJECTIVE_SCOPE_TYPES[objective]
+            target_nodes = self._target_nodes(
+                root=root,
+                nodes=all_nodes,
+                edges=edges,
+                claim_nodes=claim_nodes,
+                claim_item_by_id=claim_item_by_id,
+                objective=objective,
             )
-            seen_node_ids: set[uuid.UUID] = set()
+            scoped_results: list[tuple[CatalogueScopeNode, _CoverageResult]] = []
             for node in target_nodes:
-                if node.id in seen_node_ids:
-                    continue
-                seen_node_ids.add(node.id)
                 result = self._evaluate_cell(
-                    candidate=candidate,
                     root=root,
                     node=node,
                     objective=objective,
-                    all_nodes=all_nodes,
                     resolution=resolution,
                     claim_nodes=claim_nodes,
+                    claim_item_by_id=claim_item_by_id,
                     links=links_by_node.get(node.id, []),
+                    edges=edges,
                     source_by_id=source_by_id,
                     provider_signal=provider_signals.get(objective.value),
                 )
-                cells_by_objective[objective].append((node, result))
+                scoped_results.append((node, result))
 
-        root_results: dict[ClaimObjective, _CoverageResult] = {}
-        for objective, scoped in cells_by_objective.items():
-            direct_root = next(result for node, result in scoped if node.id == root.id)
-            children = [(node, result) for node, result in scoped if node.id != root.id]
+            direct_root = next(result for node, result in scoped_results if node.id == root.id)
+            children = [(node, result) for node, result in scoped_results if node.id != root.id]
             root_result = self._aggregate_root(
                 root=root,
                 objective=objective,
@@ -323,7 +287,8 @@ class _PersistentCoverageEvaluator:
                 children=children,
             )
             root_results[objective] = root_result
-            for node, result in scoped:
+
+            for node, result in scoped_results:
                 effective = root_result if node.id == root.id else result
                 fingerprint = _coverage_input_fingerprint(
                     candidate_id=candidate.id,
@@ -332,6 +297,7 @@ class _PersistentCoverageEvaluator:
                     resolution=resolution,
                     links=links_by_node.get(node.id, []),
                     edges=edges,
+                    sources=source_by_id,
                     provider_signal=provider_signals.get(objective.value),
                 )
                 cell = self._upsert_cell(
@@ -348,7 +314,7 @@ class _PersistentCoverageEvaluator:
                         scope_key=node.canonical_key,
                         lifecycle_key=node.lifecycle_key or None,
                         objective=objective,
-                        state=effective.state.value,
+                        state=effective.state,
                         required=cell.required,
                         supporting_claim_ids=effective.supporting_claim_ids,
                         supporting_evidence_ids=effective.supporting_evidence_ids,
@@ -363,27 +329,63 @@ class _PersistentCoverageEvaluator:
         completeness_errors = sorted(
             {
                 f"coverage:{decision.scope_type}:{decision.scope_key}:"
-                f"{decision.objective.value}:{decision.state}"
+                f"{decision.objective.value}:{decision.state.value}"
                 for decision in decisions
-                if decision.required
-                and decision.state
-                not in {
-                    ScopedCoverageState.COMPLETE.value,
-                    ScopedCoverageState.NOT_APPLICABLE.value,
-                }
+                if decision.required and decision.state not in _TERMINAL_COMPLETE_STATES
             }
         )
-        root_summary = {
-            objective.value: root_results[objective].state.value for objective in ClaimObjective
-        }
         return resolution.model_copy(
             update={
                 "completeness_errors": completeness_errors,
                 "provider_objective_coverage": provider_signals,
-                "objective_coverage": root_summary,
+                "objective_coverage": {
+                    objective.value: root_results[objective].state.value
+                    for objective in ClaimObjective
+                },
                 "scope_coverage": decisions,
                 "coverage_revision": COVERAGE_EVALUATOR_VERSION,
             }
+        )
+
+    def _target_nodes(
+        self,
+        *,
+        root: CatalogueScopeNode,
+        nodes: list[CatalogueScopeNode],
+        edges: list[CatalogueScopeEdge],
+        claim_nodes: dict[str, set[uuid.UUID]],
+        claim_item_by_id: dict[str, ResolvedClaim],
+        objective: ClaimObjective,
+    ) -> list[CatalogueScopeNode]:
+        selected: dict[uuid.UUID, CatalogueScopeNode] = {root.id: root}
+        branch_types = _OBJECTIVE_BRANCH_TYPES.get(objective, set())
+        for node in nodes:
+            if node.id == root.id:
+                continue
+            if node.node_type in branch_types:
+                selected[node.id] = node
+                continue
+            if _explicit_objective_applicability(node, objective) is not None:
+                selected[node.id] = node
+                continue
+            if _node_has_direct_objective_claim(
+                node.id,
+                objective=objective,
+                claim_nodes=claim_nodes,
+                claim_item_by_id=claim_item_by_id,
+            ):
+                selected[node.id] = node
+                continue
+            if _node_has_objective_inheritance(node.id, objective=objective, edges=edges):
+                selected[node.id] = node
+        return sorted(
+            selected.values(),
+            key=lambda node: (
+                0 if node.id == root.id else 1,
+                node.node_type.value,
+                node.lifecycle_key,
+                node.canonical_key,
+            ),
         )
 
     def _root_node(self, candidate: CatalogueCandidate) -> CatalogueScopeNode:
@@ -478,7 +480,10 @@ class _PersistentCoverageEvaluator:
                 evidence_start=item.claim.excerpt_start,
                 evidence_end=item.claim.excerpt_end,
                 confidence=ScopeDiscoveryConfidence.HIGH,
-                provenance_json={"claim_id": item.claim_id or _claim_id(item)},
+                provenance_json={
+                    "claim_id": item.claim_id or _claim_id(item),
+                    "derived_from": "resolved_claim",
+                },
             )
         )
 
@@ -516,7 +521,10 @@ class _PersistentCoverageEvaluator:
                 evidence_excerpt=item.claim.excerpt,
                 evidence_start=item.claim.excerpt_start,
                 evidence_end=item.claim.excerpt_end,
-                provenance_json={"claim_id": item.claim_id or _claim_id(item)},
+                provenance_json={
+                    "claim_id": item.claim_id or _claim_id(item),
+                    "derived_from": "resolved_claim",
+                },
             )
         )
 
@@ -525,47 +533,46 @@ class _PersistentCoverageEvaluator:
         candidate: CatalogueCandidate,
         root: CatalogueScopeNode,
         sources: list[CatalogueCandidateSource],
-        artifacts: list[CatalogueSourceArtifact],
+        latest_artifact_by_source: dict[uuid.UUID, CatalogueSourceArtifact],
     ) -> None:
-        artifacts_by_source: dict[uuid.UUID, list[CatalogueSourceArtifact]] = defaultdict(list)
-        for artifact in artifacts:
-            artifacts_by_source[artifact.source_id].append(artifact)
         for source in sources:
             relationship = (
                 SourceScopeRelationship.AUTHORITATIVE_FOR
                 if source.is_official and source.source_role is CandidateSourceRole.PRIMARY
                 else SourceScopeRelationship.SUPPORTS
             )
-            source_artifacts = artifacts_by_source.get(source.id) or [None]
-            for artifact in source_artifacts:
-                artifact_id = artifact.id if artifact is not None else None
-                existing = self.session.scalar(
-                    select(CatalogueSourceScopeLink).where(
-                        CatalogueSourceScopeLink.source_id == source.id,
-                        CatalogueSourceScopeLink.scope_node_id == root.id,
-                        CatalogueSourceScopeLink.relationship_type == relationship,
-                        CatalogueSourceScopeLink.source_artifact_id == artifact_id,
-                    )
+            artifact = latest_artifact_by_source.get(source.id)
+            artifact_id = artifact.id if artifact is not None else None
+            existing = self.session.scalar(
+                select(CatalogueSourceScopeLink).where(
+                    CatalogueSourceScopeLink.source_id == source.id,
+                    CatalogueSourceScopeLink.scope_node_id == root.id,
+                    CatalogueSourceScopeLink.relationship_type == relationship,
+                    CatalogueSourceScopeLink.source_artifact_id == artifact_id,
                 )
-                if existing is not None:
-                    continue
-                self.session.add(
-                    CatalogueSourceScopeLink(
-                        candidate_id=candidate.id,
-                        source_id=source.id,
-                        source_artifact_id=artifact_id,
-                        scope_node_id=root.id,
-                        relationship_type=relationship,
-                        confidence=(
-                            ScopeDiscoveryConfidence.ASSERTED
-                            if source.source_role
-                            in {CandidateSourceRole.PRIMARY, CandidateSourceRole.SUPPORTING}
-                            else ScopeDiscoveryConfidence.HIGH
-                        ),
-                        applicability_is_explicit=True,
-                        provenance_json={"source_role": source.source_role.value},
-                    )
+            )
+            if existing is not None:
+                continue
+            self.session.add(
+                CatalogueSourceScopeLink(
+                    candidate_id=candidate.id,
+                    source_id=source.id,
+                    source_artifact_id=artifact_id,
+                    scope_node_id=root.id,
+                    relationship_type=relationship,
+                    confidence=(
+                        ScopeDiscoveryConfidence.ASSERTED
+                        if source.source_role
+                        in {CandidateSourceRole.PRIMARY, CandidateSourceRole.SUPPORTING}
+                        else ScopeDiscoveryConfidence.HIGH
+                    ),
+                    applicability_is_explicit=True,
+                    provenance_json={
+                        "source_role": source.source_role.value,
+                        "derived_from": "candidate_source",
+                    },
                 )
+            )
 
     def _topology_edges_from_value(
         self,
@@ -574,15 +581,20 @@ class _PersistentCoverageEvaluator:
         nodes: dict[tuple[ScopeNodeType, str, str], CatalogueScopeNode],
     ) -> None:
         claim = item.claim
-        lifecycle = claim.scope.cycle_key or (
-            candidate.seed_cycle
-            or (str(candidate.seed_intake_year) if candidate.seed_intake_year is not None else "")
+        lifecycle = claim.scope.cycle_key or candidate.seed_cycle or (
+            str(candidate.seed_intake_year) if candidate.seed_intake_year is not None else ""
         )
         if claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "parent_track_key":
-            parent_key = _canonical_key(str(claim.value.primitive()))
-            child_key = _canonical_key(claim.entity_key)
-            parent = nodes.get((ScopeNodeType.ROUTE, parent_key, lifecycle))
-            child = nodes.get((ScopeNodeType.ROUTE, child_key, lifecycle))
+            parent = nodes.get(
+                (
+                    ScopeNodeType.ROUTE,
+                    _canonical_key(str(claim.value.primitive())),
+                    lifecycle,
+                )
+            )
+            child = nodes.get(
+                (ScopeNodeType.ROUTE, _canonical_key(claim.entity_key), lifecycle)
+            )
             if parent is not None and child is not None:
                 self._upsert_edge(
                     candidate_id=candidate.id,
@@ -616,61 +628,61 @@ class _PersistentCoverageEvaluator:
     def _evaluate_cell(
         self,
         *,
-        candidate: CatalogueCandidate,
         root: CatalogueScopeNode,
         node: CatalogueScopeNode,
         objective: ClaimObjective,
-        all_nodes: list[CatalogueScopeNode],
         resolution: ClaimResolution,
         claim_nodes: dict[str, set[uuid.UUID]],
+        claim_item_by_id: dict[str, ResolvedClaim],
         links: list[CatalogueSourceScopeLink],
+        edges: list[CatalogueScopeEdge],
         source_by_id: dict[uuid.UUID, CatalogueCandidateSource],
         provider_signal: str | None,
     ) -> _CoverageResult:
         supporting = [
             item
-            for item in resolution.resolved
+            for claim_id, item in claim_item_by_id.items()
             if objective in _objectives_for_resolved_claim(item)
-            and _resolved_claim_supports_node(
-                item,
+            and _claim_supports_node(
+                claim_id,
                 node=node,
                 root=root,
+                objective=objective,
                 claim_nodes=claim_nodes,
+                edges=edges,
             )
         ]
         support_ids = sorted({item.claim_id or _claim_id(item) for item in supporting})
         evidence_ids = sorted({_evidence_id(item) for item in supporting})
+
         conflicts = [
             record
             for record in resolution.conflict_records
             if objective in _objectives_for_record(record.entity_type, record.field_path, record.scope)
             and _record_matches_node(record.entity_type, record.entity_key, record.scope, node, root)
         ]
+        if conflicts:
+            return _result(
+                ScopedCoverageState.CONFLICTING,
+                "resolved claims contain an unresolved conflict at this scope",
+                ["resolve_conflicting_claims"],
+                support_ids,
+                evidence_ids,
+            )
+
         rejections = [
             record
             for record in resolution.rejection_records
             if objective in _objectives_for_record(record.entity_type, record.field_path, record.scope)
             and _record_matches_node(record.entity_type, record.entity_key, record.scope, node, root)
         ]
-        if conflicts:
-            return _CoverageResult(
-                state=ScopedCoverageState.CONFLICTING,
-                reason="resolved claims contain an unresolved conflict at this scope",
-                missing_frontier_reasons=["resolve_conflicting_claims"],
-                supporting_claim_ids=support_ids,
-                supporting_evidence_ids=evidence_ids,
-                expected_item_count=None,
-                resolved_item_count=len(support_ids),
-            )
         if rejections:
-            return _CoverageResult(
-                state=ScopedCoverageState.QUARANTINED,
-                reason="one or more candidate claims at this scope failed deterministic validation",
-                missing_frontier_reasons=["review_quarantined_claims"],
-                supporting_claim_ids=support_ids,
-                supporting_evidence_ids=evidence_ids,
-                expected_item_count=None,
-                resolved_item_count=len(support_ids),
+            return _result(
+                ScopedCoverageState.QUARANTINED,
+                "one or more candidate claims at this scope failed deterministic validation",
+                ["review_quarantined_claims"],
+                support_ids,
+                evidence_ids,
             )
 
         applicable_sources = [
@@ -686,31 +698,35 @@ class _PersistentCoverageEvaluator:
             }
         ]
         if not applicable_sources:
-            return _CoverageResult(
-                state=ScopedCoverageState.NOT_YET_ACQUIRED,
-                reason="no acquired source is linked to this topology scope",
-                missing_frontier_reasons=["acquire_official_source_for_scope"],
-                supporting_claim_ids=support_ids,
-                supporting_evidence_ids=evidence_ids,
-                expected_item_count=None,
-                resolved_item_count=len(support_ids),
+            return _result(
+                ScopedCoverageState.NOT_YET_ACQUIRED,
+                "no acquired source is linked to this topology scope",
+                ["acquire_official_source_for_scope"],
+                support_ids,
+                evidence_ids,
+            )
+        if all(source.status is CandidateSourceStatus.FAILED for source in applicable_sources):
+            return _result(
+                ScopedCoverageState.FAILED,
+                "all sources linked to this scope failed acquisition",
+                ["retry_or_replace_failed_sources"],
+                support_ids,
+                evidence_ids,
             )
         if not any(source.status is CandidateSourceStatus.FETCHED for source in applicable_sources):
-            return _CoverageResult(
-                state=ScopedCoverageState.BLOCKED,
-                reason="linked sources exist but none currently has an accepted fetched artifact",
-                missing_frontier_reasons=["resolve_source_acquisition_block"],
-                supporting_claim_ids=support_ids,
-                supporting_evidence_ids=evidence_ids,
-                expected_item_count=None,
-                resolved_item_count=len(support_ids),
+            return _result(
+                ScopedCoverageState.BLOCKED,
+                "linked sources exist but none currently has an accepted fetched artifact",
+                ["resolve_source_acquisition_block"],
+                support_ids,
+                evidence_ids,
             )
 
-        explicit_applicability = _explicit_objective_applicability(node, objective)
-        if explicit_applicability == "not_applicable":
+        applicability = _explicit_objective_applicability(node, objective)
+        if applicability == "not_applicable":
             return _CoverageResult(
                 state=ScopedCoverageState.NOT_APPLICABLE,
-                reason="deterministic topology applicability marks this objective not applicable",
+                reason="explicit typed applicability marks this objective not applicable",
                 missing_frontier_reasons=[],
                 supporting_claim_ids=support_ids,
                 supporting_evidence_ids=evidence_ids,
@@ -726,17 +742,7 @@ class _PersistentCoverageEvaluator:
                 for entity_type, field_path in requirements
                 if (entity_type, field_path) not in present
             )
-            if not missing:
-                if provider_signal == ObjectiveCoverageState.PARTIAL.value:
-                    return _CoverageResult(
-                        state=ScopedCoverageState.PARTIAL,
-                        reason="finite required fields are present but provider reported an incomplete pass",
-                        missing_frontier_reasons=["repeat_or_expand_objective_extraction"],
-                        supporting_claim_ids=support_ids,
-                        supporting_evidence_ids=evidence_ids,
-                        expected_item_count=len(requirements),
-                        resolved_item_count=len(requirements),
-                    )
+            if not missing and provider_signal != ObjectiveCoverageState.PARTIAL.value:
                 return _CoverageResult(
                     state=ScopedCoverageState.COMPLETE,
                     reason="all deterministic required fields for this finite scope are resolved",
@@ -746,10 +752,13 @@ class _PersistentCoverageEvaluator:
                     expected_item_count=len(requirements),
                     resolved_item_count=len(requirements),
                 )
+            frontier = [f"missing_required_field:{item}" for item in missing]
+            if not missing:
+                frontier.append("repeat_or_expand_objective_extraction")
             return _CoverageResult(
                 state=ScopedCoverageState.PARTIAL if supporting else ScopedCoverageState.UNKNOWN,
-                reason="finite required fields remain unresolved at this scope",
-                missing_frontier_reasons=[f"missing_required_field:{item}" for item in missing],
+                reason="finite scope remains open after deterministic validation",
+                missing_frontier_reasons=frontier,
                 supporting_claim_ids=support_ids,
                 supporting_evidence_ids=evidence_ids,
                 expected_item_count=len(requirements),
@@ -757,9 +766,12 @@ class _PersistentCoverageEvaluator:
             )
 
         expected_items = _expected_objective_items(node, objective)
-        if supporting and expected_items is not None:
-            resolved_items = len({_claim_entity_identity(item) for item in supporting})
-            if resolved_items >= expected_items and provider_signal != ObjectiveCoverageState.PARTIAL.value:
+        resolved_items = len({_claim_entity_identity(item) for item in supporting})
+        if expected_items is not None:
+            if (
+                resolved_items >= expected_items
+                and provider_signal != ObjectiveCoverageState.PARTIAL.value
+            ):
                 return _CoverageResult(
                     state=ScopedCoverageState.COMPLETE,
                     reason="resolved scoped items satisfy the deterministic expected item count",
@@ -770,7 +782,7 @@ class _PersistentCoverageEvaluator:
                     resolved_item_count=resolved_items,
                 )
             return _CoverageResult(
-                state=ScopedCoverageState.PARTIAL,
+                state=ScopedCoverageState.PARTIAL if supporting else ScopedCoverageState.UNKNOWN,
                 reason="resolved scoped items do not yet satisfy the deterministic expected item count",
                 missing_frontier_reasons=["acquire_or_resolve_expected_items"],
                 supporting_claim_ids=support_ids,
@@ -778,30 +790,31 @@ class _PersistentCoverageEvaluator:
                 expected_item_count=expected_items,
                 resolved_item_count=resolved_items,
             )
+
         if supporting:
             return _CoverageResult(
                 state=ScopedCoverageState.PARTIAL,
-                reason="validated claims exist but no deterministic expected item count closes this scope",
+                reason="validated claims exist but no deterministic frontier closure proves completeness",
                 missing_frontier_reasons=["establish_expected_item_count_or_applicability"],
                 supporting_claim_ids=support_ids,
                 supporting_evidence_ids=evidence_ids,
                 expected_item_count=None,
-                resolved_item_count=len({_claim_entity_identity(item) for item in supporting}),
+                resolved_item_count=resolved_items,
             )
-        if node.id == root.id and provider_signal == ObjectiveCoverageState.NOT_STATED.value:
+        if provider_signal == ObjectiveCoverageState.NOT_STATED.value:
             return _CoverageResult(
                 state=ScopedCoverageState.NOT_STATED,
-                reason="provider reported no requested facts, retained as an absence signal only",
+                reason="provider absence signal is retained but does not prove semantic completeness",
                 missing_frontier_reasons=["verify_absence_with_deterministic_source_coverage"],
                 supporting_claim_ids=[],
                 supporting_evidence_ids=[],
                 expected_item_count=None,
                 resolved_item_count=0,
             )
-        if node.id == root.id and provider_signal == ObjectiveCoverageState.NOT_APPLICABLE.value:
+        if provider_signal == ObjectiveCoverageState.NOT_APPLICABLE.value:
             return _CoverageResult(
                 state=ScopedCoverageState.UNKNOWN,
-                reason="provider not-applicable output is not accepted without explicit applicability proof",
+                reason="provider not-applicable output lacks explicit typed applicability proof",
                 missing_frontier_reasons=["establish_explicit_not_applicable_relationship"],
                 supporting_claim_ids=[],
                 supporting_evidence_ids=[],
@@ -826,15 +839,29 @@ class _PersistentCoverageEvaluator:
         direct: _CoverageResult,
         children: list[tuple[CatalogueScopeNode, _CoverageResult]],
     ) -> _CoverageResult:
-        enumerated_type = _ENUMERATED_BRANCH_OBJECTIVES.get(objective)
-        relevant_children = (
-            [(node, result) for node, result in children if node.node_type is enumerated_type]
-            if enumerated_type is not None
-            else children
+        aggregate_support_ids = sorted(
+            set(direct.supporting_claim_ids).union(
+                *(set(result.supporting_claim_ids) for _node, result in children)
+            )
         )
-        if not relevant_children:
-            return direct
-        child_states = [result.state for _node, result in relevant_children]
+        aggregate_evidence_ids = sorted(
+            set(direct.supporting_evidence_ids).union(
+                *(set(result.supporting_evidence_ids) for _node, result in children)
+            )
+        )
+        base = _CoverageResult(
+            state=direct.state,
+            reason=direct.reason,
+            missing_frontier_reasons=list(direct.missing_frontier_reasons),
+            supporting_claim_ids=aggregate_support_ids,
+            supporting_evidence_ids=aggregate_evidence_ids,
+            expected_item_count=direct.expected_item_count,
+            resolved_item_count=max(direct.resolved_item_count, len(aggregate_support_ids)),
+        )
+        if not children:
+            return base
+
+        child_states = [result.state for _node, result in children]
         for state in (
             ScopedCoverageState.CONFLICTING,
             ScopedCoverageState.QUARANTINED,
@@ -843,30 +870,29 @@ class _PersistentCoverageEvaluator:
         ):
             if state in child_states:
                 return _aggregate_result(
-                    direct,
+                    base,
                     state=state,
                     reason=f"one or more required child scopes are {state.value}",
                     frontier=[f"resolve_child_scope:{state.value}"],
                 )
-        unresolved = [
-            state
-            for state in child_states
-            if state not in {ScopedCoverageState.COMPLETE, ScopedCoverageState.NOT_APPLICABLE}
-        ]
-        if unresolved:
+        if any(state not in _TERMINAL_COMPLETE_STATES for state in child_states):
             return _aggregate_result(
-                direct,
+                base,
                 state=ScopedCoverageState.PARTIAL,
                 reason="one or more required topology branches remain incomplete",
                 frontier=["resolve_required_child_scopes"],
             )
 
+        enumerated_type = _ENUMERATED_BRANCH_OBJECTIVES.get(objective)
         if enumerated_type is not None:
+            enumerated_children = [
+                node for node, _result in children if node.node_type is enumerated_type
+            ]
             expected = _expected_child_count(root, enumerated_type)
-            actual = len({node.canonical_key for node, _result in relevant_children})
+            actual = len({node.canonical_key for node in enumerated_children})
             if expected is None:
                 return _aggregate_result(
-                    direct,
+                    base,
                     state=ScopedCoverageState.PARTIAL,
                     reason="resolved branches are complete but the authoritative expected branch count is unknown",
                     frontier=[f"establish_expected_child_count:{enumerated_type.value}"],
@@ -875,7 +901,7 @@ class _PersistentCoverageEvaluator:
                 )
             if actual < expected:
                 return _aggregate_result(
-                    direct,
+                    base,
                     state=ScopedCoverageState.PARTIAL,
                     reason="fewer topology branches are resolved than the authoritative expected count",
                     frontier=[f"acquire_missing_child_scope:{enumerated_type.value}"],
@@ -883,34 +909,26 @@ class _PersistentCoverageEvaluator:
                     resolved=actual,
                 )
             return _aggregate_result(
-                direct,
+                base,
                 state=ScopedCoverageState.COMPLETE,
-                reason="all expected topology branches are complete",
+                reason="all authoritative expected topology branches are complete",
                 frontier=[],
                 expected=expected,
                 resolved=actual,
             )
 
-        expected_scope_types = {
-            node.node_type for node, _result in relevant_children if node.node_type in _BRANCH_SCOPE_TYPES
-        }
-        open_types = [
-            node_type.value
-            for node_type in sorted(expected_scope_types, key=lambda item: item.value)
-            if _expected_child_count(root, node_type) is None
-        ]
-        if open_types:
+        if base.state in _TERMINAL_COMPLETE_STATES:
             return _aggregate_result(
-                direct,
-                state=ScopedCoverageState.PARTIAL,
-                reason="child scopes are individually resolved but the topology frontier is not closed",
-                frontier=[f"establish_expected_child_count:{item}" for item in open_types],
+                base,
+                state=base.state,
+                reason="root evidence and every applicable child scope are complete",
+                frontier=[],
             )
         return _aggregate_result(
-            direct,
-            state=ScopedCoverageState.COMPLETE,
-            reason="all required closed child scopes are complete",
-            frontier=[],
+            base,
+            state=ScopedCoverageState.PARTIAL,
+            reason="child scopes are complete but root frontier closure remains unresolved",
+            frontier=["close_root_objective_frontier"],
         )
 
     def _upsert_cell(
@@ -1019,7 +1037,7 @@ def _detached_evaluation(
                 scope_key="scholarship",
                 lifecycle_key=None,
                 objective=objective,
-                state=state.value,
+                state=state,
                 required=True,
                 supporting_claim_ids=[],
                 supporting_evidence_ids=[],
@@ -1030,10 +1048,9 @@ def _detached_evaluation(
             )
         )
     errors = sorted(
-        f"coverage:scholarship_family:scholarship:{item.objective.value}:{item.state}"
+        f"coverage:scholarship_family:scholarship:{item.objective.value}:{item.state.value}"
         for item in decisions
-        if item.state
-        not in {ScopedCoverageState.COMPLETE.value, ScopedCoverageState.NOT_APPLICABLE.value}
+        if item.state not in _TERMINAL_COMPLETE_STATES
     )
     return resolution.model_copy(
         update={
@@ -1062,12 +1079,12 @@ def _scope_refs_for_claim(
 
     entity_type = _ENTITY_NODE_TYPES.get(claim.entity_type)
     if entity_type is not None:
-        key = _canonical_key(claim.entity_key)
-        refs[(entity_type, key, lifecycle)] = _ScopeRef(
+        _add_ref(
+            refs,
             node_type=entity_type,
-            canonical_key=key,
+            raw_key=claim.entity_key,
             display_label=_claim_entity_label(claim),
-            lifecycle_key=lifecycle,
+            lifecycle=lifecycle,
             source_id=source_id,
             artifact_id=artifact_id,
             confidence=ScopeDiscoveryConfidence.HIGH,
@@ -1075,15 +1092,14 @@ def _scope_refs_for_claim(
 
     for field_name, node_type in _SCOPE_FIELD_TYPES.items():
         raw = getattr(claim.scope, field_name, None)
-        if not raw:
+        if not raw or node_type is ScopeNodeType.SCHOLARSHIP_FAMILY:
             continue
-        key = _canonical_key(raw)
-        node_lifecycle = raw if node_type is ScopeNodeType.CYCLE else lifecycle
-        refs[(node_type, key, node_lifecycle)] = _ScopeRef(
+        _add_ref(
+            refs,
             node_type=node_type,
-            canonical_key=key,
+            raw_key=raw,
             display_label=raw,
-            lifecycle_key=node_lifecycle,
+            lifecycle=raw if node_type is ScopeNodeType.CYCLE else lifecycle,
             source_id=source_id,
             artifact_id=artifact_id,
             confidence=ScopeDiscoveryConfidence.ASSERTED,
@@ -1092,12 +1108,12 @@ def _scope_refs_for_claim(
     primitive = claim.value.primitive()
     if claim.entity_type is ClaimEntityType.SCHOLARSHIP and claim.field_path == "country_code":
         raw = str(primitive)
-        key = _canonical_key(raw)
-        refs[(ScopeNodeType.COUNTRY, key, lifecycle)] = _ScopeRef(
+        _add_ref(
+            refs,
             node_type=ScopeNodeType.COUNTRY,
-            canonical_key=key,
+            raw_key=raw,
             display_label=raw.upper(),
-            lifecycle_key=lifecycle,
+            lifecycle=lifecycle,
             source_id=source_id,
             artifact_id=artifact_id,
             confidence=ScopeDiscoveryConfidence.HIGH,
@@ -1114,12 +1130,41 @@ def _scope_refs_for_claim(
         values = primitive if isinstance(primitive, list) else [str(primitive)]
         for raw_value in values:
             raw = str(raw_value)
-            key = _canonical_key(raw)
-            refs[(node_type, key, lifecycle)] = _ScopeRef(
+            _add_ref(
+                refs,
                 node_type=node_type,
-                canonical_key=key,
+                raw_key=raw,
                 display_label=raw,
-                lifecycle_key=lifecycle,
+                lifecycle=lifecycle,
+                source_id=source_id,
+                artifact_id=artifact_id,
+                confidence=ScopeDiscoveryConfidence.HIGH,
+            )
+    if claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "parent_track_key":
+        raw = str(primitive)
+        _add_ref(
+            refs,
+            node_type=ScopeNodeType.ROUTE,
+            raw_key=raw,
+            display_label=raw.replace("_", " ").title(),
+            lifecycle=lifecycle,
+            source_id=source_id,
+            artifact_id=artifact_id,
+            confidence=ScopeDiscoveryConfidence.HIGH,
+        )
+    if (
+        claim.entity_type is ClaimEntityType.PROGRAMME
+        and claim.field_path == "application_route_keys"
+    ):
+        values = primitive if isinstance(primitive, list) else [str(primitive)]
+        for raw_value in values:
+            raw = str(raw_value)
+            _add_ref(
+                refs,
+                node_type=ScopeNodeType.ROUTE,
+                raw_key=raw,
+                display_label=raw.replace("_", " ").title(),
+                lifecycle=lifecycle,
                 source_id=source_id,
                 artifact_id=artifact_id,
                 confidence=ScopeDiscoveryConfidence.HIGH,
@@ -1127,33 +1172,97 @@ def _scope_refs_for_claim(
     return list(refs.values())
 
 
-def _entity_node_for_claim(
-    claim: ExtractedClaim,
-    nodes: list[CatalogueScopeNode],
-) -> CatalogueScopeNode | None:
-    expected_type = _ENTITY_NODE_TYPES.get(claim.entity_type)
-    if expected_type is None:
-        return None
-    key = _canonical_key(claim.entity_key)
-    return next(
-        (node for node in nodes if node.node_type is expected_type and node.canonical_key == key),
-        None,
+def _add_ref(
+    refs: dict[tuple[ScopeNodeType, str, str], _ScopeRef],
+    *,
+    node_type: ScopeNodeType,
+    raw_key: str,
+    display_label: str,
+    lifecycle: str,
+    source_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    confidence: ScopeDiscoveryConfidence,
+) -> None:
+    key = _canonical_key(raw_key)
+    refs[(node_type, key, lifecycle)] = _ScopeRef(
+        node_type=node_type,
+        canonical_key=key,
+        display_label=display_label[:255],
+        lifecycle_key=lifecycle,
+        source_id=source_id,
+        artifact_id=artifact_id,
+        confidence=confidence,
     )
 
 
-def _resolved_claim_supports_node(
-    item: ResolvedClaim,
+def _source_relationship_for_claim(claim: ExtractedClaim) -> SourceScopeRelationship:
+    if (
+        claim.entity_type is ClaimEntityType.PROGRAMME
+        and claim.field_path == "name"
+    ) or (
+        claim.entity_type is ClaimEntityType.TRACK
+        and claim.field_path == "name"
+    ):
+        return SourceScopeRelationship.ENUMERATES
+    return SourceScopeRelationship.SUPPORTS
+
+
+def _node_has_direct_objective_claim(
+    node_id: uuid.UUID,
+    *,
+    objective: ClaimObjective,
+    claim_nodes: dict[str, set[uuid.UUID]],
+    claim_item_by_id: dict[str, ResolvedClaim],
+) -> bool:
+    return any(
+        node_id in claim_nodes.get(claim_id, set())
+        and objective in _objectives_for_resolved_claim(item)
+        for claim_id, item in claim_item_by_id.items()
+    )
+
+
+def _node_has_objective_inheritance(
+    node_id: uuid.UUID,
+    *,
+    objective: ClaimObjective,
+    edges: list[CatalogueScopeEdge],
+) -> bool:
+    return any(
+        edge.child_node_id == node_id
+        and edge.relationship_type is ScopeEdgeType.INHERITS_TO
+        and _edge_allows_objective(edge, objective)
+        for edge in edges
+    )
+
+
+def _claim_supports_node(
+    claim_id: str,
     *,
     node: CatalogueScopeNode,
     root: CatalogueScopeNode,
+    objective: ClaimObjective,
     claim_nodes: dict[str, set[uuid.UUID]],
+    edges: list[CatalogueScopeEdge],
 ) -> bool:
-    claim_id = item.claim_id or _claim_id(item)
-    if node.id == root.id:
+    direct_nodes = claim_nodes.get(claim_id, set())
+    if node.id == root.id or node.id in direct_nodes:
         return True
-    if node.id in claim_nodes.get(claim_id, set()):
-        return True
-    return False
+    return any(
+        edge.parent_node_id in direct_nodes
+        and edge.child_node_id == node.id
+        and edge.relationship_type is ScopeEdgeType.INHERITS_TO
+        and _edge_allows_objective(edge, objective)
+        for edge in edges
+    )
+
+
+def _edge_allows_objective(edge: CatalogueScopeEdge, objective: ClaimObjective) -> bool:
+    provenance = edge.provenance_json or {}
+    objectives = provenance.get("objectives")
+    if not isinstance(objectives, list):
+        return False
+    values = {str(value) for value in objectives}
+    return "*" in values or objective.value in values
 
 
 def _record_matches_node(
@@ -1195,7 +1304,10 @@ def _objectives_for_record(
             return {ClaimObjective.PROGRAMMES}
         return {ClaimObjective.PROGRAMME_DETAILS}
     if entity_type is ClaimEntityType.TRACK:
-        return {ClaimObjective.ROUTES}
+        objectives = {ClaimObjective.ROUTES}
+        if field_path in {"application_url", "application_method"}:
+            objectives.add(ClaimObjective.APPLICATION_TIMELINE)
+        return objectives
     if entity_type is ClaimEntityType.INSTITUTION:
         return (
             {ClaimObjective.ROUTES}
@@ -1301,6 +1413,24 @@ def _explicit_objective_applicability(
     return str(value) if value is not None else None
 
 
+def _result(
+    state: ScopedCoverageState,
+    reason: str,
+    frontier: list[str],
+    claim_ids: list[str],
+    evidence_ids: list[str],
+) -> _CoverageResult:
+    return _CoverageResult(
+        state=state,
+        reason=reason,
+        missing_frontier_reasons=frontier,
+        supporting_claim_ids=claim_ids,
+        supporting_evidence_ids=evidence_ids,
+        expected_item_count=None,
+        resolved_item_count=len(claim_ids),
+    )
+
+
 def _aggregate_result(
     direct: _CoverageResult,
     *,
@@ -1313,9 +1443,7 @@ def _aggregate_result(
     return _CoverageResult(
         state=state,
         reason=reason,
-        missing_frontier_reasons=sorted(
-            set(direct.missing_frontier_reasons + frontier)
-        ),
+        missing_frontier_reasons=sorted(set(direct.missing_frontier_reasons + frontier)),
         supporting_claim_ids=direct.supporting_claim_ids,
         supporting_evidence_ids=direct.supporting_evidence_ids,
         expected_item_count=expected if expected is not None else direct.expected_item_count,
@@ -1331,6 +1459,7 @@ def _coverage_input_fingerprint(
     resolution: ClaimResolution,
     links: list[CatalogueSourceScopeLink],
     edges: list[CatalogueScopeEdge],
+    sources: dict[uuid.UUID, CatalogueCandidateSource],
     provider_signal: str | None,
 ) -> str:
     payload = {
@@ -1342,6 +1471,7 @@ def _coverage_input_fingerprint(
             "key": node.canonical_key,
             "lifecycle": node.lifecycle_key,
             "expected_child_counts": node.expected_child_counts,
+            "expectation_provenance": node.expectation_provenance,
             "provenance": node.provenance_json,
         },
         "objective": objective.value,
@@ -1354,6 +1484,7 @@ def _coverage_input_fingerprint(
                 str(item.source_artifact_id or ""),
                 item.relationship_type.value,
                 item.applicability_is_explicit,
+                sources[item.source_id].status.value if item.source_id in sources else "missing",
             )
             for item in links
         ),
@@ -1363,6 +1494,7 @@ def _coverage_input_fingerprint(
                 str(item.child_node_id),
                 item.relationship_type.value,
                 str(item.source_artifact_id or ""),
+                json.dumps(item.provenance_json or {}, sort_keys=True),
             )
             for item in edges
         ),
