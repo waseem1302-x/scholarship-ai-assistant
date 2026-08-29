@@ -112,6 +112,7 @@ def upgrade() -> None:
             ),
             nullable=False,
         ),
+        sa.Column("objective_keys", sa.JSON(), nullable=False),
         sa.Column("source_artifact_id", sa.Uuid(), nullable=True),
         sa.Column("evidence_excerpt", sa.Text(), nullable=True),
         sa.Column("evidence_start", sa.Integer(), nullable=True),
