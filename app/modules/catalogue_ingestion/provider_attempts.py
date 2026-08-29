@@ -13,7 +13,19 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -57,6 +69,11 @@ class CatalogueProviderAttempt(Base):
 
     __tablename__ = "catalogue_provider_attempts"
     __table_args__ = (
+        UniqueConstraint(
+            "extraction_job_key",
+            "retry_ordinal",
+            name="uq_catalogue_provider_attempt_job_retry",
+        ),
         Index("ix_catalogue_provider_attempts_run_state", "run_id", "state", "created_at"),
         Index(
             "ix_catalogue_provider_attempts_candidate_state",
