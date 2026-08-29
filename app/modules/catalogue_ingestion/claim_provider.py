@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
-import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -22,14 +20,11 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ObjectiveCoverageState,
 )
 from app.modules.catalogue_ingestion.provider import (
-    ExtractionProviderError,
-    ExtractionProviderRateLimited,
-    ExtractionProviderTimeout,
     ExtractionProviderUnavailable,
     ExtractionSchemaError,
     estimate_cost,
-    extraction_retry_delay,
 )
+from app.modules.catalogue_ingestion.provider_transport import send_json_request
 from app.modules.catalogue_ingestion.schemas import ExtractionUsage
 
 CLAIM_SYSTEM_INSTRUCTION = """Extract exhaustive atomic scholarship facts from one official source.
@@ -387,6 +382,8 @@ class FakeClaimProvider:
 
 
 class AzureOpenAIClaimProvider:
+    """One physical Azure request per objective invocation; orchestration owns retries."""
+
     name = "azure_openai"
 
     def __init__(
@@ -395,7 +392,7 @@ class AzureOpenAIClaimProvider:
         *,
         credential: Any | None = None,
         opener: Any | None = None,
-        sleeper: Callable[[float], None] = time.sleep,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         if not settings.catalogue_ai_endpoint or not settings.catalogue_ai_model:
             raise ExtractionProviderUnavailable("Azure catalogue extraction is not configured")
@@ -455,53 +452,31 @@ class AzureOpenAIClaimProvider:
         }
         request_body = json.dumps(body, separators=(",", ":")).encode()
         endpoint = self.settings.catalogue_ai_endpoint.rstrip("/")
-        started = time.perf_counter()
-        last_error: BaseException | None = None
-        for attempt in range(self.settings.catalogue_ai_max_retries + 1):
-            try:
-                token = self.credential.get_token(self.settings.catalogue_ai_token_scope).token
-                request = urllib.request.Request(
-                    f"{endpoint}/openai/v1/chat/completions",
-                    data=request_body,
-                    method="POST",
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json",
-                        "User-Agent": "ScholarshipAI-Catalogue/0.1",
-                    },
-                )
-                with self.opener.open(
-                    request, timeout=self.settings.catalogue_ai_timeout_seconds
-                ) as response:
-                    raw = response.read(self.settings.catalogue_ai_max_response_bytes + 1)
-                if len(raw) > self.settings.catalogue_ai_max_response_bytes:
-                    raise ExtractionSchemaError("AI response exceeded the configured byte limit")
-                result = self._parse(raw, started)
-                result.output = _normalize_claim_output(result.output, bounded, objective=objective)
-                return result
-            except urllib.error.HTTPError as exc:
-                last_error = exc
-                if exc.code < 500 and exc.code != 429:
-                    break
-            except (TimeoutError, urllib.error.URLError) as exc:
-                last_error = exc
-            if attempt < self.settings.catalogue_ai_max_retries:
-                self.sleeper(
-                    extraction_retry_delay(
-                        last_error,
-                        attempt=attempt,
-                        maximum=self.settings.catalogue_ai_max_retry_delay_seconds,
-                    )
-                )
-        if isinstance(last_error, TimeoutError):
-            raise ExtractionProviderTimeout("Azure claim extraction timed out") from last_error
-        if isinstance(last_error, urllib.error.HTTPError) and last_error.code == 429:
-            raise ExtractionProviderRateLimited(
-                "Azure claim extraction rate limit was exhausted"
-            ) from last_error
-        raise ExtractionProviderError("Azure claim extraction request failed") from last_error
+        response = send_json_request(
+            credential=self.credential,
+            token_scope=self.settings.catalogue_ai_token_scope,
+            url=f"{endpoint}/openai/v1/chat/completions",
+            payload=request_body,
+            timeout_seconds=self.settings.catalogue_ai_timeout_seconds,
+            max_response_bytes=self.settings.catalogue_ai_max_response_bytes,
+            opener=self.opener,
+            user_agent="ScholarshipAI-Catalogue/0.1",
+        )
+        result = self._parse(
+            response.raw,
+            latency_ms=response.latency_ms,
+            provider_request_id=response.provider_request_id,
+        )
+        result.output = _normalize_claim_output(result.output, bounded, objective=objective)
+        return result
 
-    def _parse(self, raw: bytes, started: float) -> ClaimExtractionResult:
+    def _parse(
+        self,
+        raw: bytes,
+        *,
+        latency_ms: int,
+        provider_request_id: str | None,
+    ) -> ClaimExtractionResult:
         usage: ExtractionUsage | None = None
         try:
             response = json.loads(raw)
@@ -515,15 +490,23 @@ class AzureOpenAIClaimProvider:
                     input_per_million=self.settings.catalogue_ai_input_cost_per_million,
                     output_per_million=self.settings.catalogue_ai_output_cost_per_million,
                 ),
-                latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                latency_ms=latency_ms,
+                provider_request_id=provider_request_id,
             )
             message = response["choices"][0]["message"]
             if response["choices"][0].get("finish_reason") == "length":
                 raise ClaimOutputTruncated(
-                    "Model output reached the configured token limit", usage=usage
+                    "Model output reached the configured token limit",
+                    usage=usage,
+                    provider_request_id=provider_request_id,
                 )
             if message.get("refusal"):
-                raise ExtractionSchemaError("Model refused the claim extraction", usage=usage)
+                raise ExtractionSchemaError(
+                    "Model refused the claim extraction",
+                    usage=usage,
+                    provider_request_id=provider_request_id,
+                    failure_class="safety_refusal",
+                )
             output_data = json.loads(message["content"])
             output_data, invalid_claims, placeholders = _drop_invalid_atomic_claims(output_data)
             output = ClaimExtractionOutput.model_validate(output_data)
@@ -549,10 +532,13 @@ class AzureOpenAIClaimProvider:
             raise ExtractionSchemaError(
                 f"Azure claim response did not match the strict schema: {diagnostic}",
                 usage=usage,
+                provider_request_id=provider_request_id,
             ) from exc
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ExtractionSchemaError(
-                "Azure claim response did not match the strict schema", usage=usage
+                "Azure claim response did not match the strict schema",
+                usage=usage,
+                provider_request_id=provider_request_id,
             ) from exc
         return ClaimExtractionResult(output=output, usage=usage)
 
