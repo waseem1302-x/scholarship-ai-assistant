@@ -108,6 +108,8 @@ class CatalogueIngestionRun(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     source_label: Mapped[str] = mapped_column(String(255))
     source_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    configuration_revision: Mapped[str | None] = mapped_column(String(100))
+    configuration_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     input_kind: Mapped[IngestionInputKind] = mapped_column(
         Enum(
             IngestionInputKind,
