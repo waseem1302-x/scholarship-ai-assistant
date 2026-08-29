@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from app.modules.catalogue_ingestion.acquisition_planner import AcquisitionFrontierNeed
 from app.modules.catalogue_ingestion.url_policy import (
@@ -189,7 +189,7 @@ _DEFAULT_LEXICON: dict[str, tuple[str, ...]] = {
         "ترجمة",
         "terjemahan",
     ),
-    "documents_counts": ("original", "copies", "copy", "部", "份", "salinan", "copies"),
+    "documents_counts": ("original", "copies", "copy", "部", "份", "salinan"),
     "documents_format": (
         "format",
         "template",
@@ -464,9 +464,7 @@ def score_crawl_link(
         if part
     ).casefold()
     score = 20
-
-    structural = _structural_link_score(link)
-    score += structural
+    score += _structural_link_score(link)
 
     needs = tuple(frontier_needs)
     objectives = tuple(dict.fromkeys(need.objective for need in needs))
@@ -952,7 +950,8 @@ class BoundedOfficialSiteCrawler:
                     kind=AcquisitionEscalationKind.BROWSER_RENDER,
                     reason="static_javascript_shell",
                 )
-            elif (
+                return True
+            if (
                 fetched.content_type.casefold() == "application/pdf"
                 and sufficiency is StaticPageSufficiency.PARTIAL_CONTENT
             ):
@@ -1128,7 +1127,9 @@ def _escalation_for_failure(
     if _looks_like_image(url) or "image/" in lowered:
         return AcquisitionEscalationKind.OCR
     if urlsplit(url).path.casefold().endswith(".pdf") and (
-        "no_extractable_evidence" in lowered or "source_requires_ocr" in lowered
+        "no_extractable_evidence" in lowered
+        or "source_requires_ocr" in lowered
+        or "application/pdf" in lowered
     ):
         return AcquisitionEscalationKind.OCR
     if any(
@@ -1156,7 +1157,11 @@ def _near_duplicate_signature(
     tokens = re.findall(r"[\w\-]{2,}", text.casefold(), flags=re.UNICODE)
     numbers = frozenset(re.findall(r"\b\d+(?:[.,]\d+)?\b", text))
     if len(tokens) < 5:
-        return frozenset(hash(token) for token in tokens), numbers
+        stable_tokens = {
+            int.from_bytes(hashlib.blake2b(token.encode(), digest_size=8).digest(), "big")
+            for token in tokens
+        }
+        return frozenset(stable_tokens), numbers
     shingles = {
         int.from_bytes(
             hashlib.blake2b(" ".join(tokens[index : index + 5]).encode(), digest_size=8).digest(),
