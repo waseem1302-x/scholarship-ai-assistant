@@ -41,6 +41,10 @@ from app.modules.catalogue_ingestion.discovery_models import (
     CatalogueDiscoveryQuery,
     CatalogueDiscoveryRun,
 )
+from app.modules.catalogue_ingestion.evidence_block_models import (
+    CatalogueEvidenceBlock,
+    CatalogueEvidenceRoute,
+)
 from app.modules.catalogue_ingestion.models import (
     CatalogueCandidate,
     CatalogueCandidateSource,
@@ -145,6 +149,8 @@ __all__ = [
     "CatalogueDiscoveryPromotion",
     "CatalogueDiscoveryQuery",
     "CatalogueDiscoveryRun",
+    "CatalogueEvidenceBlock",
+    "CatalogueEvidenceRoute",
     "CatalogueExtractionAttempt",
     "CatalogueIngestionRun",
     "CatalogueProviderAttempt",
