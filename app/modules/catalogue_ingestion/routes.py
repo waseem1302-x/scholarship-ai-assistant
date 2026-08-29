@@ -10,8 +10,8 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.modules.auth.dependencies import require_admin_step_up, require_roles
 from app.modules.auth.models import User, UserRole
-from app.modules.catalogue_ingestion.hardened_service import HardenedCatalogueIngestionService
 from app.modules.catalogue_ingestion.models import CandidateStatus
+from app.modules.catalogue_ingestion.production_service import ProductionCatalogueIngestionService
 from app.modules.catalogue_ingestion.schemas import (
     CandidateListResponse,
     CandidateResponse,
@@ -32,7 +32,7 @@ def get_service(
     session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> CatalogueIngestionService:
-    return HardenedCatalogueIngestionService(session, settings)
+    return ProductionCatalogueIngestionService(session, settings)
 
 
 @router.post("/runs/url", response_model=IngestionRunResponse)
