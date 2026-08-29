@@ -64,6 +64,15 @@ from app.modules.catalogue_ingestion.provider import (
     extraction_prompt_hash,
     get_extraction_provider,
 )
+from app.modules.catalogue_ingestion.provider_config import (
+    CATALOGUE_CONFIGURATION_REVISION,
+    catalogue_configuration_fingerprint,
+)
+from app.modules.catalogue_ingestion.provider_execution import (
+    CatalogueProviderExecutor,
+    ProviderConfigurationDrift,
+    ProviderExecutionBudgetExhausted,
+)
 from app.modules.catalogue_ingestion.repository import CatalogueIngestionRepository
 from app.modules.catalogue_ingestion.schemas import (
     EXTRACTION_SCHEMA_VERSION,
@@ -132,6 +141,7 @@ class CatalogueIngestionService:
         self.claim_extractor = claim_extractor or get_claim_provider(settings)
         self.classifier = classifier or OfficialSourceClassifier()
         self.metrics = get_catalogue_metrics(settings)
+        self.provider_executor = CatalogueProviderExecutor(self.repository, settings)
 
     def create_run_from_source(
         self,
@@ -160,6 +170,8 @@ class CatalogueIngestionService:
             max_input_characters=self.settings.catalogue_ai_max_input_characters,
             max_output_tokens=self.settings.catalogue_ai_max_output_tokens,
             max_estimated_cost=self.settings.catalogue_ai_max_estimated_cost_per_run,
+            configuration_revision=CATALOGUE_CONFIGURATION_REVISION,
+            configuration_fingerprint=catalogue_configuration_fingerprint(self.settings),
         )
         self.repository.add_run(run)
         self.repository.add_seed_candidates(run, seeds[:maximum])
@@ -223,6 +235,8 @@ class CatalogueIngestionService:
             max_input_characters=self.settings.catalogue_ai_max_input_characters,
             max_output_tokens=self.settings.catalogue_ai_max_output_tokens,
             max_estimated_cost=self.settings.catalogue_ai_max_estimated_cost_per_run,
+            configuration_revision=CATALOGUE_CONFIGURATION_REVISION,
+            configuration_fingerprint=catalogue_configuration_fingerprint(self.settings),
         )
         self.repository.add_run(run)
         self.repository.add_seed_candidates(
@@ -296,11 +310,20 @@ class CatalogueIngestionService:
             for candidate in candidates:
                 try:
                     self._process_candidate(run, candidate)
-                except RunBudgetExhausted:
+                except (RunBudgetExhausted, ProviderExecutionBudgetExhausted):
                     run.status = IngestionRunStatus.BUDGET_EXHAUSTED
                     run.failure_code = "run_budget_exhausted"
                     self.repository.release_candidate(candidate)
+                    self.repository.refresh_run_summary(run)
                     self.session.commit()
+                    return IngestionRunResponse.model_validate(run)
+                except ProviderConfigurationDrift:
+                    run.status = IngestionRunStatus.FAILED
+                    run.failure_code = "provider_configuration_drift"
+                    candidate.status = CandidateStatus.NEEDS_REVIEW
+                    candidate.failure_code = "provider_configuration_drift"
+                    candidate.failure_reason = "Effective provider configuration differs from run receipt"
+                    self.repository.release_candidate(candidate)
                     self.repository.refresh_run_summary(run)
                     self.session.commit()
                     return IngestionRunResponse.model_validate(run)
@@ -472,6 +495,7 @@ class CatalogueIngestionService:
             provider=self.extractor.name,
             model=self.extractor.model,
         )
+        provider_attempt_id: uuid.UUID | None = None
         if reused is not None and reused.output_json is not None:
             output = CatalogueExtractionOutput.model_validate(reused.output_json)
             attempt_status = ExtractionAttemptStatus.REUSED
@@ -480,53 +504,62 @@ class CatalogueIngestionService:
                 reused.candidate_id == candidate.id and reused.source_id == source.id
             )
         else:
-            self._check_budget(run, source_text)
+            artifact = max(source.artifacts, key=lambda item: item.created_at) if source.artifacts else None
             try:
-                result = self.extractor.extract(
-                    source_url=source.final_url or source.url, source_text=source_text
+                execution = self.provider_executor.execute(
+                    run=run,
+                    candidate=candidate,
+                    source=source,
+                    artifact=artifact,
+                    provider=self.extractor,
+                    schema_version=EXTRACTION_SCHEMA_VERSION,
+                    prompt_hash=extraction_prompt_hash(),
+                    content_hash=source.content_hash or hashlib.sha256(b"").hexdigest(),
+                    source_text=source_text,
+                    invoke=lambda: self.extractor.extract(
+                        source_url=source.final_url or source.url,
+                        source_text=source_text,
+                    ),
                 )
             except ExtractionSchemaError as exc:
                 self.metrics.add("ai_schema_failures")
-                self.session.add(
-                    self._attempt(
-                        candidate, source, ExtractionAttemptStatus.SCHEMA_FAILED, exc.code
-                    )
+                self._observe_provider_usage(exc.usage)
+                attempt = self._attempt(
+                    candidate,
+                    source,
+                    ExtractionAttemptStatus.SCHEMA_FAILED,
+                    exc.code,
+                    usage=exc.usage,
+                )
+                self._persist_and_link_attempt(
+                    attempt,
+                    getattr(exc, "provider_attempt_id", None),
                 )
                 self._manual_review(candidate, exc.code)
                 return
             except ExtractionProviderError as exc:
                 self.metrics.add("ai_extraction_failures")
-                self.session.add(
-                    self._attempt(
-                        candidate, source, ExtractionAttemptStatus.PROVIDER_FAILED, exc.code
-                    )
+                self._observe_provider_usage(exc.usage)
+                attempt = self._attempt(
+                    candidate,
+                    source,
+                    ExtractionAttemptStatus.PROVIDER_FAILED,
+                    exc.code,
+                    usage=exc.usage,
+                )
+                self._persist_and_link_attempt(
+                    attempt,
+                    getattr(exc, "provider_attempt_id", None),
                 )
                 self._manual_review(candidate, exc.code)
                 return
+            result = execution.result
+            provider_attempt_id = execution.provider_attempt_id
             output = result.output
-            self.metrics.add("ai_extraction_calls")
-            self.metrics.add("model_input_tokens", result.usage.input_tokens)
-            self.metrics.add("model_output_tokens", result.usage.output_tokens)
-            self.metrics.observe("estimated_ai_cost", float(result.usage.estimated_cost))
             usage = result.usage
+            self._observe_provider_usage(usage)
             attempt_status = ExtractionAttemptStatus.SUCCEEDED
             reuse_is_current_attempt = False
-            run.model_calls += 1
-            run.input_tokens += usage.input_tokens
-            run.output_tokens += usage.output_tokens
-            run.estimated_cost += usage.estimated_cost
-            if run.estimated_cost > run.max_estimated_cost:
-                self.session.add(
-                    self._attempt(
-                        candidate,
-                        source,
-                        ExtractionAttemptStatus.SUCCEEDED,
-                        None,
-                        output=output,
-                        usage=usage,
-                    )
-                )
-                raise RunBudgetExhausted
 
         candidate.status = CandidateStatus.EXTRACTED
         trust_tier = final_classification.trust_tier
@@ -549,7 +582,7 @@ class CatalogueIngestionService:
             usage=usage,
         )
         if not reuse_is_current_attempt:
-            self.session.add(attempt)
+            self._persist_and_link_attempt(attempt, provider_attempt_id)
         if validated.payload is None or validation_errors:
             self.metrics.add("validation_failures")
             candidate.status = (
@@ -934,6 +967,7 @@ class CatalogueIngestionService:
                     provider=self.claim_extractor.name,
                     model=self.claim_extractor.model,
                 )
+                provider_attempt_id: uuid.UUID | None = None
                 if reused is not None and reused.output_json is not None:
                     output = _normalize_claim_output(
                         ClaimExtractionOutput.model_validate(reused.output_json),
@@ -946,84 +980,82 @@ class CatalogueIngestionService:
                         reused.candidate_id == candidate.id and reused.source_id == source.id
                     )
                 else:
-                    self._check_budget(run, artifact.normalized_text)
                     try:
-                        result = self.claim_extractor.extract_claims(
-                            source_url=artifact.final_url,
+                        execution = self.provider_executor.execute(
+                            run=run,
+                            candidate=candidate,
+                            source=source,
+                            artifact=artifact,
+                            provider=self.claim_extractor,
+                            schema_version=attempt_schema,
+                            prompt_hash=claim_extraction_prompt_hash(objective),
+                            content_hash=artifact.content_hash,
                             source_text=artifact.normalized_text,
-                            objective=objective,
-                            source_links=source_links,
+                            objective=objective.value,
+                            objective_bundle=[objective.value],
+                            evidence_block_keys=[str(artifact.id)],
+                            invoke=lambda objective=objective: self.claim_extractor.extract_claims(
+                                source_url=artifact.final_url,
+                                source_text=artifact.normalized_text,
+                                objective=objective,
+                                source_links=source_links,
+                            ),
                         )
                     except ExtractionSchemaError as exc:
                         self.metrics.add("ai_schema_failures")
-                        if exc.usage is not None:
-                            self._record_claim_usage(run, exc.usage)
-                        self.session.add(
-                            self._claim_attempt(
-                                candidate,
-                                source,
-                                artifact,
-                                ExtractionAttemptStatus.SCHEMA_FAILED,
-                                exc.code,
-                                objective=objective,
-                                usage=exc.usage,
-                            )
+                        self._observe_provider_usage(exc.usage)
+                        attempt = self._claim_attempt(
+                            candidate,
+                            source,
+                            artifact,
+                            ExtractionAttemptStatus.SCHEMA_FAILED,
+                            exc.code,
+                            objective=objective,
+                            usage=exc.usage,
+                        )
+                        self._persist_and_link_attempt(
+                            attempt,
+                            getattr(exc, "provider_attempt_id", None),
                         )
                         self._manual_review(candidate, exc.code)
-                        if run.estimated_cost > run.max_estimated_cost:
-                            raise RunBudgetExhausted from None
                         return
                     except ExtractionProviderError as exc:
                         self.metrics.add("ai_extraction_failures")
-                        if exc.usage is not None:
-                            self._record_claim_usage(run, exc.usage)
-                        self.session.add(
-                            self._claim_attempt(
-                                candidate,
-                                source,
-                                artifact,
-                                ExtractionAttemptStatus.PROVIDER_FAILED,
-                                exc.code,
-                                objective=objective,
-                                usage=exc.usage,
-                            )
+                        self._observe_provider_usage(exc.usage)
+                        attempt = self._claim_attempt(
+                            candidate,
+                            source,
+                            artifact,
+                            ExtractionAttemptStatus.PROVIDER_FAILED,
+                            exc.code,
+                            objective=objective,
+                            usage=exc.usage,
+                        )
+                        self._persist_and_link_attempt(
+                            attempt,
+                            getattr(exc, "provider_attempt_id", None),
                         )
                         self._manual_review(candidate, exc.code)
-                        if run.estimated_cost > run.max_estimated_cost:
-                            raise RunBudgetExhausted from None
                         return
+                    result = execution.result
+                    provider_attempt_id = execution.provider_attempt_id
                     output = result.output
                     usage = result.usage
                     status = ExtractionAttemptStatus.SUCCEEDED
                     reuse_is_current = False
-                    self._record_claim_usage(run, usage)
-                    if run.estimated_cost > run.max_estimated_cost:
-                        self.session.add(
-                            self._claim_attempt(
-                                candidate,
-                                source,
-                                artifact,
-                                ExtractionAttemptStatus.SUCCEEDED,
-                                None,
-                                objective=objective,
-                                output=output,
-                                usage=usage,
-                            )
-                        )
-                        raise RunBudgetExhausted
+                    self._observe_provider_usage(usage)
                 if not reuse_is_current:
-                    self.session.add(
-                        self._claim_attempt(
-                            candidate,
-                            source,
-                            artifact,
-                            status,
-                            None,
-                            objective=objective,
-                            output=output,
-                            usage=usage,
-                        )
+                    attempt = self._claim_attempt(
+                        candidate,
+                        source,
+                        artifact,
+                        status,
+                        None,
+                        objective=objective,
+                        output=output,
+                        usage=usage,
                     )
+                    self._persist_and_link_attempt(attempt, provider_attempt_id)
                 if output.conflicts:
                     candidate.conflicts.extend(output.conflicts)
                 unknown_objectives.update(
@@ -1113,6 +1145,10 @@ class CatalogueIngestionService:
         return self._candidate_response(candidate)
 
     def _check_budget(self, run: CatalogueIngestionRun, source_text: str) -> None:
+        """Legacy conservative check retained for non-provider call sites.
+
+        Paid provider execution uses the atomic reservation ledger instead.
+        """
         if run.model_calls >= run.max_model_calls:
             raise RunBudgetExhausted
         projected_input = max(1, len(source_text) // 4)
@@ -1320,14 +1356,22 @@ class CatalogueIngestionService:
             latency_ms=getattr(usage, "latency_ms", 0),
         )
 
-    def _record_claim_usage(self, run: CatalogueIngestionRun, usage: object) -> None:
+    def _persist_and_link_attempt(
+        self,
+        attempt: CatalogueExtractionAttempt,
+        provider_attempt_id: uuid.UUID | None,
+    ) -> None:
+        self.session.add(attempt)
+        self.session.flush()
+        if provider_attempt_id is not None:
+            self.repository.link_provider_attempt(provider_attempt_id, attempt.id)
+
+    def _observe_provider_usage(self, usage: object | None) -> None:
+        if usage is None:
+            return
         input_tokens = int(getattr(usage, "input_tokens", 0))
         output_tokens = int(getattr(usage, "output_tokens", 0))
         estimated_cost = Decimal(str(getattr(usage, "estimated_cost", 0)))
-        run.model_calls += 1
-        run.input_tokens += input_tokens
-        run.output_tokens += output_tokens
-        run.estimated_cost += estimated_cost
         self.metrics.add("ai_extraction_calls")
         self.metrics.add("model_input_tokens", input_tokens)
         self.metrics.add("model_output_tokens", output_tokens)
