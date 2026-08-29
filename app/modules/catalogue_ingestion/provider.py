@@ -4,19 +4,26 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
-import time
-import urllib.error
 import urllib.request
 from collections.abc import Callable
-from datetime import UTC, datetime
 from decimal import Decimal
-from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 from pydantic import ValidationError
 
 from app.core.config import Settings
+from app.modules.catalogue_ingestion.provider_transport import (
+    ExtractionProviderConnectionError,
+    ExtractionProviderError,
+    ExtractionProviderRateLimited,
+    ExtractionProviderResponseInterrupted,
+    ExtractionProviderServerError,
+    ExtractionProviderTimeout,
+    ExtractionProviderUnavailable,
+    ExtractionSchemaError,
+    extraction_retry_delay,
+    send_json_request,
+)
 from app.modules.catalogue_ingestion.schemas import (
     CatalogueExtractionOutput,
     ExtractionResult,
@@ -114,35 +121,6 @@ entry is mandatory for every populated decision-critical field listed above.
 Report conflicts and warnings; do not resolve conflicting official statements silently."""
 
 
-class ExtractionProviderError(RuntimeError):
-    code = "ai_extraction_failed"
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        usage: ExtractionUsage | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.usage = usage
-
-
-class ExtractionProviderRateLimited(ExtractionProviderError):
-    code = "ai_rate_limited"
-
-
-class ExtractionProviderUnavailable(ExtractionProviderError):
-    code = "ai_provider_unavailable"
-
-
-class ExtractionProviderTimeout(ExtractionProviderError):
-    code = "ai_provider_timeout"
-
-
-class ExtractionSchemaError(ExtractionProviderError):
-    code = "ai_schema_failed"
-
-
 class CatalogueExtractionProvider(Protocol):
     name: str
     model: str
@@ -188,6 +166,8 @@ class FakeExtractionProvider:
 
 
 class AzureOpenAIExtractionProvider:
+    """One physical Azure request per ``extract`` invocation; orchestration owns retries."""
+
     name = "azure_openai"
 
     def __init__(
@@ -196,7 +176,7 @@ class AzureOpenAIExtractionProvider:
         *,
         credential: Any | None = None,
         opener: Any | None = None,
-        sleeper: Callable[[float], None] = time.sleep,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         if not settings.catalogue_ai_endpoint or not settings.catalogue_ai_model:
             raise ExtractionProviderUnavailable("Azure catalogue extraction is not configured")
@@ -204,6 +184,8 @@ class AzureOpenAIExtractionProvider:
         self.model = settings.catalogue_ai_model
         self.credential = credential or self._default_credential()
         self.opener = opener or urllib.request.build_opener()
+        # Retained only for constructor compatibility with existing callers.  It is intentionally
+        # unused: retries now belong to the durable orchestration layer.
         self.sleeper = sleeper
 
     @staticmethod
@@ -238,59 +220,42 @@ class AzureOpenAIExtractionProvider:
         }
         payload = json.dumps(body, separators=(",", ":")).encode()
         endpoint = self.settings.catalogue_ai_endpoint.rstrip("/")
-        url = f"{endpoint}/openai/v1/chat/completions"
-        started = time.perf_counter()
-        last_error: BaseException | None = None
-        for attempt in range(self.settings.catalogue_ai_max_retries + 1):
-            try:
-                token = self.credential.get_token(self.settings.catalogue_ai_token_scope).token
-                request = urllib.request.Request(
-                    url,
-                    data=payload,
-                    method="POST",
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json",
-                        "User-Agent": "ScholarshipAI-Catalogue/0.1",
-                    },
-                )
-                with self.opener.open(
-                    request, timeout=self.settings.catalogue_ai_timeout_seconds
-                ) as response:
-                    raw = response.read(self.settings.catalogue_ai_max_response_bytes + 1)
-                if len(raw) > self.settings.catalogue_ai_max_response_bytes:
-                    raise ExtractionSchemaError("AI response exceeded the configured byte limit")
-                return self._parse_response(raw, started)
-            except urllib.error.HTTPError as exc:
-                last_error = exc
-                if exc.code < 500 and exc.code != 429:
-                    break
-            except (TimeoutError, urllib.error.URLError) as exc:
-                last_error = exc
-            if attempt < self.settings.catalogue_ai_max_retries:
-                self.sleeper(
-                    extraction_retry_delay(
-                        last_error,
-                        attempt=attempt,
-                        maximum=self.settings.catalogue_ai_max_retry_delay_seconds,
-                    )
-                )
-        if isinstance(last_error, TimeoutError):
-            raise ExtractionProviderTimeout("Azure extraction timed out") from last_error
-        if isinstance(last_error, urllib.error.HTTPError) and last_error.code == 429:
-            raise ExtractionProviderRateLimited("Azure extraction rate limit was exhausted") from (
-                last_error
-            )
-        raise ExtractionProviderError("Azure extraction request failed") from last_error
+        response = send_json_request(
+            credential=self.credential,
+            token_scope=self.settings.catalogue_ai_token_scope,
+            url=f"{endpoint}/openai/v1/chat/completions",
+            payload=payload,
+            timeout_seconds=self.settings.catalogue_ai_timeout_seconds,
+            max_response_bytes=self.settings.catalogue_ai_max_response_bytes,
+            opener=self.opener,
+            user_agent="ScholarshipAI-Catalogue/0.1",
+        )
+        return self._parse_response(
+            response.raw,
+            latency_ms=response.latency_ms,
+            provider_request_id=response.provider_request_id,
+        )
 
-    def _parse_response(self, raw: bytes, started: float) -> ExtractionResult:
+    def _parse_response(
+        self,
+        raw: bytes,
+        *,
+        latency_ms: int,
+        provider_request_id: str | None,
+    ) -> ExtractionResult:
         try:
             response = json.loads(raw)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ExtractionSchemaError("Azure response was not valid JSON") from exc
+            raise ExtractionSchemaError(
+                "Azure response was not valid JSON",
+                provider_request_id=provider_request_id,
+            ) from exc
 
         if not isinstance(response, dict):
-            raise ExtractionSchemaError("Azure response did not match the strict schema")
+            raise ExtractionSchemaError(
+                "Azure response did not match the strict schema",
+                provider_request_id=provider_request_id,
+            )
 
         try:
             usage_payload = response["usage"]
@@ -309,10 +274,14 @@ class AzureOpenAIExtractionProvider:
                     input_per_million=self.settings.catalogue_ai_input_cost_per_million,
                     output_per_million=self.settings.catalogue_ai_output_cost_per_million,
                 ),
-                latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                latency_ms=latency_ms,
+                provider_request_id=provider_request_id,
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise ExtractionSchemaError("Azure response usage was missing or invalid") from exc
+            raise ExtractionSchemaError(
+                "Azure response usage was missing or invalid",
+                provider_request_id=provider_request_id,
+            ) from exc
 
         try:
             message = response["choices"][0]["message"]
@@ -320,6 +289,8 @@ class AzureOpenAIExtractionProvider:
                 raise ExtractionSchemaError(
                     "Model refused the extraction request",
                     usage=usage,
+                    provider_request_id=provider_request_id,
+                    failure_class="safety_refusal",
                 )
             output = CatalogueExtractionOutput.model_validate_json(message["content"])
         except ExtractionSchemaError:
@@ -335,17 +306,16 @@ class AzureOpenAIExtractionProvider:
             raise ExtractionSchemaError(
                 f"Azure response did not match the strict schema: {diagnostic}",
                 usage=usage,
+                provider_request_id=provider_request_id,
             ) from exc
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ExtractionSchemaError(
                 "Azure response did not match the strict schema",
                 usage=usage,
+                provider_request_id=provider_request_id,
             ) from exc
 
-        return ExtractionResult(
-            output=output,
-            usage=usage,
-        )
+        return ExtractionResult(output=output, usage=usage)
 
 
 def azure_structured_output_schema() -> dict[str, Any]:
@@ -419,37 +389,6 @@ def estimate_cost(
         Decimal(input_tokens) * input_per_million + Decimal(output_tokens) * output_per_million
     ) / Decimal(1_000_000)
     return cost.quantize(Decimal("0.000001"))
-
-
-def extraction_retry_delay(
-    error: BaseException | None,
-    *,
-    attempt: int,
-    maximum: float,
-    now: Callable[[], datetime] | None = None,
-) -> float:
-    """Honor provider Retry-After guidance while keeping worker waits bounded."""
-
-    fallback = min(2**attempt, 4)
-    if not isinstance(error, urllib.error.HTTPError) or error.headers is None:
-        return min(float(fallback), maximum)
-    raw = error.headers.get("Retry-After")
-    if not raw:
-        return min(float(fallback), maximum)
-    try:
-        delay = float(raw)
-    except ValueError:
-        try:
-            retry_at = parsedate_to_datetime(raw)
-            if retry_at.tzinfo is None:
-                retry_at = retry_at.replace(tzinfo=UTC)
-            current = (now or (lambda: datetime.now(UTC)))()
-            delay = (retry_at - current).total_seconds()
-        except (TypeError, ValueError, OverflowError):
-            return min(float(fallback), maximum)
-    if not math.isfinite(delay):
-        return min(float(fallback), maximum)
-    return min(max(delay, 0.0), maximum)
 
 
 def extraction_prompt_hash() -> str:
