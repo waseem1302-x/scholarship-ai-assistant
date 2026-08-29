@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -331,3 +332,96 @@ class CatalogueCoverageCell(Base):
         server_default=func.now(),
         onupdate=utc_now,
     )
+
+
+def _proof_record_is_trusted(value: object) -> bool:
+    return isinstance(value, dict) and bool(
+        value.get("source_artifact_id")
+        or value.get("reviewed") is True
+        or value.get("asserted_candidate_seed") is True
+        or value.get("asserted") is True
+    )
+
+
+@event.listens_for(CatalogueScopeNode, "before_insert", propagate=True)
+@event.listens_for(CatalogueScopeNode, "before_update", propagate=True)
+def _validate_scope_node_proofs(*args: object) -> None:
+    target = args[-1]
+    if not isinstance(target, CatalogueScopeNode):
+        return
+    expected = dict(target.expected_child_counts or {})
+    provenance = dict(target.expectation_provenance or {})
+    for key, raw_count in expected.items():
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid topology expected count for {key}") from exc
+        if count < 0:
+            raise ValueError(f"negative topology expected count for {key}")
+        if not _proof_record_is_trusted(provenance.get(key)):
+            raise ValueError(f"topology expected count lacks trusted provenance for {key}")
+
+    node_provenance = dict(target.provenance_json or {})
+    applicability = node_provenance.get("objective_applicability", {})
+    if not applicability:
+        return
+    if not isinstance(applicability, dict):
+        raise ValueError("objective_applicability must be an object")
+    evidence = node_provenance.get("objective_applicability_evidence", {})
+    if not isinstance(evidence, dict):
+        raise ValueError("objective_applicability_evidence must be an object")
+    valid_objectives = {objective.value for objective in ClaimObjective}
+    for objective, state in applicability.items():
+        if objective not in valid_objectives:
+            raise ValueError(f"unknown objective applicability key: {objective}")
+        if state not in {"applies", "not_applicable"}:
+            raise ValueError(f"invalid objective applicability state: {state}")
+        if not _proof_record_is_trusted(evidence.get(objective)):
+            raise ValueError(f"objective applicability lacks trusted provenance for {objective}")
+
+
+@event.listens_for(CatalogueScopeEdge, "before_insert", propagate=True)
+@event.listens_for(CatalogueScopeEdge, "before_update", propagate=True)
+def _validate_scope_edge_objectives(*args: object) -> None:
+    target = args[-1]
+    if not isinstance(target, CatalogueScopeEdge):
+        return
+    provenance = dict(target.provenance_json or {})
+    legacy_objectives = provenance.get("objectives")
+    keys = set(target.objective_keys or [])
+    if isinstance(legacy_objectives, list):
+        keys.update(str(value) for value in legacy_objectives)
+    valid_objectives = {objective.value for objective in ClaimObjective}
+    invalid = sorted(keys - valid_objectives - {"*"})
+    if invalid:
+        raise ValueError(f"unknown topology edge objectives: {','.join(invalid)}")
+    target.objective_keys = sorted(keys)
+    provenance["objectives"] = list(target.objective_keys)
+    target.provenance_json = provenance
+
+    if target.relationship_type is not ScopeEdgeType.INHERITS_TO:
+        return
+    if not target.objective_keys:
+        raise ValueError("inherits_to edges require explicit objective keys")
+    if target.confidence is ScopeDiscoveryConfidence.UNRESOLVED:
+        raise ValueError("inherits_to edges require resolved confidence")
+    if not (
+        target.source_artifact_id is not None
+        or provenance.get("reviewed") is True
+        or provenance.get("asserted") is True
+    ):
+        raise ValueError("inherits_to edges require evidence or reviewed provenance")
+
+
+@event.listens_for(CatalogueSourceScopeLink, "before_insert", propagate=True)
+@event.listens_for(CatalogueSourceScopeLink, "before_update", propagate=True)
+def _validate_explicit_source_scope_link(*args: object) -> None:
+    target = args[-1]
+    if not isinstance(target, CatalogueSourceScopeLink) or not target.applicability_is_explicit:
+        return
+    provenance = dict(target.provenance_json or {})
+    if target.source_artifact_id is not None or provenance.get("source_role"):
+        return
+    if provenance.get("reviewed") is True or provenance.get("asserted") is True:
+        return
+    raise ValueError("explicit source-scope applicability requires evidence or reviewed provenance")
