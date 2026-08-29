@@ -1,7 +1,8 @@
-"""Deterministic claim validation, conflict handling, and MEXT completeness gates."""
+"""Deterministic claim validation, conflict handling, and scoped completeness gates."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections import defaultdict
@@ -9,12 +10,15 @@ from collections.abc import Iterable
 
 from app.modules.catalogue_ingestion.claim_schemas import (
     SUPPORTED_CLAIM_FIELDS,
+    ClaimConflictRecord,
     ClaimEntityType,
+    ClaimRejectionRecord,
     ClaimResolution,
     ExtractedClaim,
     ResolvedClaim,
 )
 from app.modules.catalogue_ingestion.models import CatalogueSourceArtifact
+from app.modules.catalogue_ingestion.scoped_completeness import evaluate_scoped_completeness
 
 
 def resolve_claims(
@@ -27,18 +31,41 @@ def resolve_claims(
     cycle_aliases = _cycle_aliases(extracted_items)
     candidates: dict[tuple[str, str, str, str], list[ResolvedClaim]] = defaultdict(list)
     rejected: list[str] = []
+    rejection_records: list[ClaimRejectionRecord] = []
     for artifact, trust_tier, claims in extracted_items:
         for claim in claims:
             if claim.field_path not in SUPPORTED_CLAIM_FIELDS[claim.entity_type]:
+                reason = "unsupported_field_path"
                 rejected.append(
                     f"{artifact.id}:{claim.entity_type.value}:{claim.entity_key}:"
-                    f"{claim.field_path}:unsupported_field_path"
+                    f"{claim.field_path}:{reason}"
+                )
+                rejection_records.append(
+                    ClaimRejectionRecord(
+                        artifact_id=str(artifact.id),
+                        entity_type=claim.entity_type,
+                        entity_key=claim.entity_key,
+                        field_path=claim.field_path,
+                        scope=claim.scope,
+                        reason=reason,
+                    )
                 )
                 continue
             if not _valid_evidence_span(artifact.normalized_text, claim):
+                reason = "evidence_span_invalid"
                 rejected.append(
                     f"{artifact.id}:{claim.entity_type.value}:{claim.entity_key}:"
-                    f"{claim.field_path}:evidence_span_invalid"
+                    f"{claim.field_path}:{reason}"
+                )
+                rejection_records.append(
+                    ClaimRejectionRecord(
+                        artifact_id=str(artifact.id),
+                        entity_type=claim.entity_type,
+                        entity_key=claim.entity_key,
+                        field_path=claim.field_path,
+                        scope=claim.scope,
+                        reason=reason,
+                    )
                 )
                 continue
             semantic_error = _semantic_claim_error(claim, artifact=artifact)
@@ -47,23 +74,34 @@ def resolve_claims(
                     f"{artifact.id}:{claim.entity_type.value}:{claim.entity_key}:"
                     f"{claim.field_path}:{semantic_error}"
                 )
+                rejection_records.append(
+                    ClaimRejectionRecord(
+                        artifact_id=str(artifact.id),
+                        entity_type=claim.entity_type,
+                        entity_key=claim.entity_key,
+                        field_path=claim.field_path,
+                        scope=claim.scope,
+                        reason=semantic_error,
+                    )
+                )
                 continue
             claim = _canonicalize_cycle_aliases(claim, cycle_aliases)
             scope_key = json.dumps(claim.scope.model_dump(), sort_keys=True)
             key = (claim.entity_type.value, claim.entity_key, claim.field_path, scope_key)
-            candidates[key].append(
-                ResolvedClaim(
-                    claim=claim,
-                    artifact_id=str(artifact.id),
-                    source_id=str(artifact.source_id),
-                    source_url=artifact.final_url,
-                    content_hash=artifact.content_hash,
-                    trust_tier=trust_tier,
-                )
+            resolved = ResolvedClaim(
+                claim=claim,
+                artifact_id=str(artifact.id),
+                source_id=str(artifact.source_id),
+                source_url=artifact.final_url,
+                content_hash=artifact.content_hash,
+                trust_tier=trust_tier,
             )
+            resolved.claim_id = _resolved_claim_id(resolved)
+            candidates[key].append(resolved)
 
-    resolved: list[ResolvedClaim] = []
+    resolved_claims: list[ResolvedClaim] = []
     conflicts: list[str] = []
+    conflict_records: list[ClaimConflictRecord] = []
     for key in sorted(candidates):
         values = candidates[key]
         best_tier = min(item.trust_tier for item in values)
@@ -75,12 +113,22 @@ def resolve_claims(
             )
             by_value[normalized].append(item)
         if len(by_value) > 1 and not _allows_multiple_values(best[0].claim):
-            conflicts.append(":".join(key[:3]) + ":same_tier_conflict")
+            conflict_code = ":".join(key[:3]) + ":same_tier_conflict"
+            conflicts.append(conflict_code)
+            conflict_records.append(
+                ClaimConflictRecord(
+                    entity_type=best[0].claim.entity_type,
+                    entity_key=best[0].claim.entity_key,
+                    field_path=best[0].claim.field_path,
+                    scope=best[0].claim.scope,
+                    reason="same_tier_conflict",
+                )
+            )
             continue
         selected_groups = (
             by_value.values() if len(by_value) > 1 else [next(iter(by_value.values()))]
         )
-        seen_evidence: set[tuple[str, int, int]] = set()
+        seen_evidence: dict[tuple[str, int, int], ResolvedClaim] = {}
         for group in selected_groups:
             for item in group:
                 evidence_key = (
@@ -88,9 +136,14 @@ def resolve_claims(
                     item.claim.excerpt_start,
                     item.claim.excerpt_end,
                 )
-                if evidence_key not in seen_evidence:
-                    resolved.append(item)
-                    seen_evidence.add(evidence_key)
+                existing = seen_evidence.get(evidence_key)
+                if existing is None:
+                    resolved_claims.append(item)
+                    seen_evidence[evidence_key] = item
+                elif item.objectives:
+                    existing.objectives = sorted(
+                        set(existing.objectives + item.objectives), key=lambda value: value.value
+                    )
 
     scoped_types = {
         ClaimEntityType.DEADLINE,
@@ -99,7 +152,7 @@ def resolve_claims(
         ClaimEntityType.STEP,
     }
     scopes_by_key: dict[tuple[ClaimEntityType, str, str], set[str]] = defaultdict(set)
-    for item in resolved:
+    for item in resolved_claims:
         claim = item.claim
         if claim.entity_type in scoped_types:
             scopes_by_key[(claim.entity_type, claim.entity_key, claim.field_path)].add(
@@ -111,32 +164,75 @@ def resolve_claims(
         ):
             if len(scopes) > 1:
                 conflicts.append(f"{key[0].value}:{key[1]}:{key[2]}:ambiguous_scope_key")
+                sample = next(
+                    item
+                    for item in resolved_claims
+                    if item.claim.entity_type is key[0]
+                    and item.claim.entity_key == key[1]
+                    and item.claim.field_path == key[2]
+                )
+                conflict_records.append(
+                    ClaimConflictRecord(
+                        entity_type=key[0],
+                        entity_key=key[1],
+                        field_path=key[2],
+                        scope=sample.claim.scope,
+                        reason="ambiguous_scope_key",
+                    )
+                )
 
     intake_years = {
         str(item.claim.value.primitive())
-        for item in resolved
+        for item in resolved_claims
         if item.claim.entity_type is ClaimEntityType.CYCLE
         and item.claim.field_path == "intake_year"
     }
     scoped_cycles = {
-        item.claim.scope.cycle_key for item in resolved if item.claim.scope.cycle_key is not None
+        item.claim.scope.cycle_key
+        for item in resolved_claims
+        if item.claim.scope.cycle_key is not None
     }
     if len(intake_years) > 1:
         conflicts.append("cycle:intake_year:multiple_cycles")
+        sample = next(
+            item
+            for item in resolved_claims
+            if item.claim.entity_type is ClaimEntityType.CYCLE
+            and item.claim.field_path == "intake_year"
+        )
+        conflict_records.append(
+            ClaimConflictRecord(
+                entity_type=ClaimEntityType.CYCLE,
+                entity_key=sample.claim.entity_key,
+                field_path="intake_year",
+                scope=sample.claim.scope,
+                reason="multiple_cycles",
+            )
+        )
     if len(scoped_cycles) > 1:
         conflicts.append("cycle:scope:multiple_cycles")
 
+    provider_signals = dict(objective_coverage or {})
     completeness = (
-        detail_completeness_errors(resolved, objective_coverage or {})
+        ["scoped_coverage_not_evaluated"]
         if require_detail
-        else mext_completeness_errors(resolved)
+        else legacy_claim_completeness_errors(resolved_claims)
     )
-    return ClaimResolution(
-        resolved=resolved,
+    resolution = ClaimResolution(
+        resolved=resolved_claims,
         conflicts=sorted(set(conflicts)),
-        rejected=rejected,
+        rejected=sorted(set(rejected)),
         completeness_errors=completeness,
-        objective_coverage=objective_coverage or {},
+        provider_objective_coverage=provider_signals,
+        conflict_records=conflict_records,
+        rejection_records=rejection_records,
+    )
+    if not require_detail:
+        return resolution
+    return evaluate_scoped_completeness(
+        artifacts=[artifact for artifact, _trust_tier, _claims in extracted_items],
+        resolution=resolution,
+        provider_objective_coverage=provider_signals,
     )
 
 
@@ -174,30 +270,26 @@ def _canonicalize_cycle_aliases(
     return claim.model_copy(update={"entity_key": entity_key, "scope": scope})
 
 
-def mext_completeness_errors(claims: list[ResolvedClaim]) -> list[str]:
+def legacy_claim_completeness_errors(claims: list[ResolvedClaim]) -> list[str]:
+    """Compatibility gate for legacy, non-scoped claim consumers.
+
+    This deliberately avoids scholarship-specific route names. New detailed ingestion uses the
+    scoped coverage engine instead.
+    """
+
     present = {(item.claim.entity_type, item.claim.field_path) for item in claims}
     errors: list[str] = []
     required = {
         (ClaimEntityType.SCHOLARSHIP, "name"),
         (ClaimEntityType.SCHOLARSHIP, "provider_name"),
         (ClaimEntityType.SCHOLARSHIP, "country_code"),
-        (ClaimEntityType.SCHOLARSHIP, "degree_levels"),
         (ClaimEntityType.CYCLE, "intake_year"),
     }
     for entity_type, field_path in sorted(required, key=lambda item: (item[0].value, item[1])):
         if (entity_type, field_path) not in present:
             errors.append(f"missing:{entity_type.value}.{field_path}")
-
-    track_keys = {
-        item.claim.entity_key
-        for item in claims
-        if item.claim.entity_type is ClaimEntityType.TRACK and item.claim.field_path == "name"
-    }
-    for route in ("embassy_recommendation", "university_recommendation"):
-        if route not in track_keys:
-            errors.append(f"missing:track.{route}")
-
     for entity_type in (
+        ClaimEntityType.TRACK,
         ClaimEntityType.FUNDING,
         ClaimEntityType.DOCUMENT,
         ClaimEntityType.STEP,
@@ -207,74 +299,37 @@ def mext_completeness_errors(claims: list[ResolvedClaim]) -> list[str]:
     return errors
 
 
+def mext_completeness_errors(claims: list[ResolvedClaim]) -> list[str]:
+    """Deprecated compatibility alias; no longer contains MEXT-specific branch assumptions."""
+
+    return legacy_claim_completeness_errors(claims)
+
+
 def detail_completeness_errors(
     claims: list[ResolvedClaim], objective_coverage: dict[str, str]
 ) -> list[str]:
-    present = {(item.claim.entity_type, item.claim.field_path) for item in claims}
-    errors: list[str] = []
-    required_fields = {
-        (ClaimEntityType.SCHOLARSHIP, "name"),
-        (ClaimEntityType.SCHOLARSHIP, "provider_name"),
-        (ClaimEntityType.SCHOLARSHIP, "country_code"),
-        (ClaimEntityType.CYCLE, "intake_year"),
-        (ClaimEntityType.PROGRAMME, "name"),
-        (ClaimEntityType.PROGRAMME, "degree_levels"),
-        (ClaimEntityType.TRACK, "name"),
-        (ClaimEntityType.ELIGIBILITY, "rule_type"),
-        (ClaimEntityType.ELIGIBILITY, "value"),
-        (ClaimEntityType.FUNDING, "component_type"),
-        (ClaimEntityType.DOCUMENT, "name"),
-        (ClaimEntityType.DEADLINE, "deadline_type"),
-        (ClaimEntityType.STEP, "title"),
+    """Deprecated fail-closed adapter for callers not using an attached topology context."""
+
+    del objective_coverage
+    errors = legacy_claim_completeness_errors(claims)
+    errors.append("scoped_coverage_not_evaluated")
+    return sorted(set(errors))
+
+
+def _resolved_claim_id(item: ResolvedClaim) -> str:
+    payload = {
+        "artifact_id": item.artifact_id,
+        "entity_type": item.claim.entity_type.value,
+        "entity_key": item.claim.entity_key,
+        "field_path": item.claim.field_path,
+        "scope": item.claim.scope.model_dump(mode="json"),
+        "value": item.claim.value.model_dump(mode="json"),
+        "excerpt_start": item.claim.excerpt_start,
+        "excerpt_end": item.claim.excerpt_end,
     }
-    for entity_type, field_path in sorted(
-        required_fields, key=lambda item: (item[0].value, item[1])
-    ):
-        if (entity_type, field_path) not in present:
-            errors.append(f"missing:{entity_type.value}.{field_path}")
-
-    programme_fields: dict[str, set[str]] = defaultdict(set)
-    for item in claims:
-        if item.claim.entity_type is ClaimEntityType.PROGRAMME:
-            programme_fields[item.claim.entity_key].add(item.claim.field_path)
-    for programme_key, fields in sorted(programme_fields.items()):
-        for field_path in ("name", "degree_levels"):
-            if field_path not in fields:
-                errors.append(f"missing:programme.{programme_key}.{field_path}")
-
-    if len(programme_fields) > 1:
-        scoped_requirements = {
-            ClaimEntityType.ELIGIBILITY: "eligibility",
-            ClaimEntityType.DOCUMENT: "document",
-            ClaimEntityType.FUNDING: "funding",
-            ClaimEntityType.STEP: "step",
-        }
-        for programme_key in sorted(programme_fields):
-            for entity_type, label in scoped_requirements.items():
-                if not any(
-                    item.claim.entity_type is entity_type
-                    and item.claim.scope.programme_key == programme_key
-                    for item in claims
-                ):
-                    errors.append(f"missing:programme.{programme_key}.{label}")
-
-    for objective in (
-        "identity",
-        "programmes",
-        "programme_details",
-        "routes",
-        "eligibility",
-        "eligibility_context",
-        "documents_core",
-        "documents_requirements",
-        "documents_counts",
-        "documents_format",
-        "funding",
-        "application_timeline",
-    ):
-        if objective_coverage.get(objective) not in {"complete", "not_applicable"}:
-            errors.append(f"incomplete_objective:{objective}")
-    return errors
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _valid_evidence_span(text: str, claim: ExtractedClaim) -> bool:
