@@ -19,6 +19,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
 )
 from app.modules.catalogue_ingestion.models import CatalogueSourceArtifact
 from app.modules.catalogue_ingestion.scoped_completeness import evaluate_scoped_completeness
+from app.modules.catalogue_ingestion.topology_recompute import reset_derived_topology_for_artifacts
 
 
 def resolve_claims(
@@ -211,6 +212,18 @@ def resolve_claims(
         )
     if len(scoped_cycles) > 1:
         conflicts.append("cycle:scope:multiple_cycles")
+        sample = next(
+            item for item in resolved_claims if item.claim.scope.cycle_key is not None
+        )
+        conflict_records.append(
+            ClaimConflictRecord(
+                entity_type=sample.claim.entity_type,
+                entity_key=sample.claim.entity_key,
+                field_path=sample.claim.field_path,
+                scope=sample.claim.scope,
+                reason="multiple_scope_cycles",
+            )
+        )
 
     provider_signals = dict(objective_coverage or {})
     completeness = (
@@ -229,8 +242,10 @@ def resolve_claims(
     )
     if not require_detail:
         return resolution
+    artifacts = [artifact for artifact, _trust_tier, _claims in extracted_items]
+    reset_derived_topology_for_artifacts(artifacts)
     return evaluate_scoped_completeness(
-        artifacts=[artifact for artifact, _trust_tier, _claims in extracted_items],
+        artifacts=artifacts,
         resolution=resolution,
         provider_objective_coverage=provider_signals,
     )
