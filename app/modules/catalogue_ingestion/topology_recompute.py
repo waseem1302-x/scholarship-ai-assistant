@@ -68,6 +68,8 @@ def reset_derived_topology_for_artifacts(
         select(CatalogueScopeNode).where(CatalogueScopeNode.candidate_id == candidate_id)
     ):
         provenance = node.provenance_json or {}
+        if _node_has_reviewed_state(node):
+            protected_node_ids.add(node.id)
         if (
             provenance.get("derived_from") == "resolved_claim"
             and node.id not in protected_node_ids
@@ -75,6 +77,18 @@ def reset_derived_topology_for_artifacts(
             session.delete(node)
     session.flush()
     return candidate_id
+
+
+def _node_has_reviewed_state(node: CatalogueScopeNode) -> bool:
+    provenance = node.provenance_json or {}
+    return bool(
+        node.expected_child_counts
+        or node.expectation_provenance
+        or provenance.get("objective_applicability")
+        or provenance.get("objective_applicability_provenance")
+        or provenance.get("reviewed")
+        or provenance.get("manual")
+    )
 
 
 def _candidate_context(
