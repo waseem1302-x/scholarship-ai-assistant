@@ -30,6 +30,7 @@ _OPEN_COVERAGE_STATES = frozenset(
         ScopedCoverageState.UNKNOWN,
         ScopedCoverageState.NOT_YET_ACQUIRED,
         ScopedCoverageState.BLOCKED,
+        ScopedCoverageState.NOT_STATED,
         ScopedCoverageState.PARTIAL,
         ScopedCoverageState.CONFLICTING,
         ScopedCoverageState.QUARANTINED,
@@ -43,8 +44,8 @@ _DEFAULT_SELECTION_THRESHOLD = 18
 class EvidenceRouteDecision:
     route_key: str
     block_id: uuid.UUID
-    coverage_cell_id: uuid.UUID
-    scope_node_id: uuid.UUID
+    coverage_cell_id: uuid.UUID | None
+    scope_node_id: uuid.UUID | None
     objective: ClaimObjective
     scope_type: str
     scope_key: str
@@ -53,6 +54,28 @@ class EvidenceRouteDecision:
     selected: bool
     coverage_input_fingerprint: str
     router_version: str = EVIDENCE_ROUTER_VERSION
+
+
+@dataclass(frozen=True, slots=True)
+class _RouteTarget:
+    coverage_cell_id: uuid.UUID | None
+    scope_node_id: uuid.UUID | None
+    objective: ClaimObjective
+    state: ScopedCoverageState
+    scope_type: str
+    scope_key: str
+    display_label: str
+    lifecycle_key: str
+    missing_frontier_reasons: tuple[str, ...]
+    expected_item_count: int | None
+    resolved_item_count: int
+    input_fingerprint: str
+
+    @property
+    def identity(self) -> str:
+        if self.coverage_cell_id is not None:
+            return str(self.coverage_cell_id)
+        return f"initial:{self.objective.value}:{self.scope_type}:{self.scope_key}"
 
 
 class CatalogueEvidenceRouter:
@@ -85,34 +108,21 @@ class CatalogueEvidenceRouter:
         if not blocks:
             return ()
 
-        cells = list(
-            self.session.scalars(
-                select(CatalogueCoverageCell)
-                .where(
-                    CatalogueCoverageCell.candidate_id == candidate_id,
-                    CatalogueCoverageCell.required.is_(True),
-                    CatalogueCoverageCell.state.in_(_OPEN_COVERAGE_STATES),
-                )
-                .order_by(CatalogueCoverageCell.objective, CatalogueCoverageCell.scope_node_id)
-            )
-        )
-        if not cells:
+        targets = self._targets(candidate_id)
+        if not targets:
             return ()
-
-        scope_ids = {cell.scope_node_id for cell in cells}
-        scopes = {
-            scope.id: scope
-            for scope in self.session.scalars(
-                select(CatalogueScopeNode).where(CatalogueScopeNode.id.in_(scope_ids))
-            )
-        }
-        links = list(
-            self.session.scalars(
-                select(CatalogueSourceScopeLink).where(
-                    CatalogueSourceScopeLink.candidate_id == candidate_id,
-                    CatalogueSourceScopeLink.scope_node_id.in_(scope_ids),
+        scope_ids = {target.scope_node_id for target in targets if target.scope_node_id is not None}
+        links = (
+            list(
+                self.session.scalars(
+                    select(CatalogueSourceScopeLink).where(
+                        CatalogueSourceScopeLink.candidate_id == candidate_id,
+                        CatalogueSourceScopeLink.scope_node_id.in_(scope_ids),
+                    )
                 )
             )
+            if scope_ids
+            else []
         )
         linked_scopes = {(link.source_id, link.scope_node_id) for link in links}
         explicit_scopes = {
@@ -123,33 +133,32 @@ class CatalogueEvidenceRouter:
 
         decisions: list[EvidenceRouteDecision] = []
         for block in blocks:
-            for cell in cells:
-                scope = scopes.get(cell.scope_node_id)
-                if scope is None:
-                    continue
+            for target in targets:
+                link_key = (block.source_id, target.scope_node_id)
                 score, reasons, scope_signal = _score_block(
                     block,
-                    cell,
-                    scope,
-                    terms=self.lexicon.terms_by_objective.get(cell.objective.value, ()),
-                    source_linked=(block.source_id, scope.id) in linked_scopes,
-                    applicability_explicit=(block.source_id, scope.id) in explicit_scopes,
+                    target,
+                    terms=self.lexicon.terms_by_objective.get(target.objective.value, ()),
+                    source_linked=target.scope_node_id is not None and link_key in linked_scopes,
+                    applicability_explicit=(
+                        target.scope_node_id is not None and link_key in explicit_scopes
+                    ),
                 )
                 selected = score >= self.selection_threshold and (
-                    scope.node_type is ScopeNodeType.SCHOLARSHIP_FAMILY
+                    target.scope_type == ScopeNodeType.SCHOLARSHIP_FAMILY.value
                     or scope_signal
-                    or cell.state is ScopedCoverageState.CONFLICTING
+                    or target.state is ScopedCoverageState.CONFLICTING
                 )
-                fingerprint = _coverage_route_fingerprint(cell, scope)
+                fingerprint = _coverage_route_fingerprint(target)
                 decisions.append(
                     EvidenceRouteDecision(
-                        route_key=_route_key(block.block_key, cell.id, fingerprint),
+                        route_key=_route_key(block.block_key, target.identity, fingerprint),
                         block_id=block.id,
-                        coverage_cell_id=cell.id,
-                        scope_node_id=scope.id,
-                        objective=cell.objective,
-                        scope_type=scope.node_type.value,
-                        scope_key=scope.canonical_key,
+                        coverage_cell_id=target.coverage_cell_id,
+                        scope_node_id=target.scope_node_id,
+                        objective=target.objective,
+                        scope_type=target.scope_type,
+                        scope_key=target.scope_key,
                         relevance_score=score,
                         relevance_reasons=tuple(sorted(reasons)),
                         selected=selected,
@@ -193,11 +202,75 @@ class CatalogueEvidenceRouter:
         self.session.flush()
         return records
 
+    def _targets(self, candidate_id: uuid.UUID) -> tuple[_RouteTarget, ...]:
+        all_cells = list(
+            self.session.scalars(
+                select(CatalogueCoverageCell)
+                .where(
+                    CatalogueCoverageCell.candidate_id == candidate_id,
+                    CatalogueCoverageCell.required.is_(True),
+                )
+                .order_by(CatalogueCoverageCell.objective, CatalogueCoverageCell.scope_node_id)
+            )
+        )
+        if not all_cells:
+            return tuple(_initial_target(candidate_id, objective) for objective in ClaimObjective)
+
+        cells = [cell for cell in all_cells if cell.state in _OPEN_COVERAGE_STATES]
+        if not cells:
+            return ()
+        scope_ids = {cell.scope_node_id for cell in cells}
+        scopes = {
+            scope.id: scope
+            for scope in self.session.scalars(
+                select(CatalogueScopeNode).where(CatalogueScopeNode.id.in_(scope_ids))
+            )
+        }
+        targets: list[_RouteTarget] = []
+        for cell in cells:
+            scope = scopes.get(cell.scope_node_id)
+            if scope is None:
+                continue
+            targets.append(
+                _RouteTarget(
+                    coverage_cell_id=cell.id,
+                    scope_node_id=scope.id,
+                    objective=cell.objective,
+                    state=cell.state,
+                    scope_type=scope.node_type.value,
+                    scope_key=scope.canonical_key,
+                    display_label=scope.display_label,
+                    lifecycle_key=scope.lifecycle_key,
+                    missing_frontier_reasons=tuple(cell.missing_frontier_reasons or (cell.reason,)),
+                    expected_item_count=cell.expected_item_count,
+                    resolved_item_count=cell.resolved_item_count,
+                    input_fingerprint=cell.input_fingerprint,
+                )
+            )
+        return tuple(targets)
+
+
+def _initial_target(candidate_id: uuid.UUID, objective: ClaimObjective) -> _RouteTarget:
+    seed = f"{candidate_id}|{objective.value}|initial_unknown|{EVIDENCE_ROUTER_VERSION}"
+    return _RouteTarget(
+        coverage_cell_id=None,
+        scope_node_id=None,
+        objective=objective,
+        state=ScopedCoverageState.UNKNOWN,
+        scope_type=ScopeNodeType.SCHOLARSHIP_FAMILY.value,
+        scope_key="scholarship",
+        display_label="Scholarship",
+        lifecycle_key="",
+        missing_frontier_reasons=("initial_extraction_frontier",),
+        expected_item_count=None,
+        resolved_item_count=0,
+        input_fingerprint=hashlib.sha256(seed.encode("utf-8")).hexdigest(),
+    )
+
 
 def _score_block(
     block: CatalogueEvidenceBlock,
-    cell: CatalogueCoverageCell,
-    scope: CatalogueScopeNode,
+    target: _RouteTarget,
     *,
     terms: Iterable[str],
     source_linked: bool,
@@ -234,7 +307,7 @@ def _score_block(
         score += min(heading_matches, 3) * 8
         reasons.add("objective_heading_match")
 
-    scope_tokens = _scope_tokens(scope)
+    scope_tokens = _scope_tokens(target)
     matched_scope_tokens = {token for token in scope_tokens if token in text}
     scope_signal = False
     if matched_scope_tokens:
@@ -249,21 +322,20 @@ def _score_block(
         score += 28
         reasons.add("explicit_scope_applicability")
         scope_signal = True
-    if scope.node_type is ScopeNodeType.SCHOLARSHIP_FAMILY:
+    if target.scope_type == ScopeNodeType.SCHOLARSHIP_FAMILY.value:
         score += 6
         reasons.add("scholarship_family_scope")
         scope_signal = True
-    if cell.state is ScopedCoverageState.PARTIAL:
+    if target.state is ScopedCoverageState.PARTIAL:
         score += 6
         reasons.add("partial_coverage")
-    if cell.state is ScopedCoverageState.CONFLICTING:
+    if target.state is ScopedCoverageState.CONFLICTING:
         score += 16
         reasons.add("conflict_resolution")
-    if cell.missing_frontier_reasons:
-        missing_terms = _reason_tokens(cell.missing_frontier_reasons)
-        if any(token in text for token in missing_terms):
-            score += 12
-            reasons.add("missing_frontier_match")
+    missing_terms = _reason_tokens(target.missing_frontier_reasons)
+    if missing_terms and any(token in text for token in missing_terms):
+        score += 12
+        reasons.add("missing_frontier_match")
     if block.source_role in {"primary", "supporting"}:
         score += 3
         reasons.add("explicit_source_role")
@@ -272,8 +344,8 @@ def _score_block(
     return score, reasons, scope_signal
 
 
-def _scope_tokens(scope: CatalogueScopeNode) -> set[str]:
-    values = [scope.canonical_key, scope.display_label, scope.lifecycle_key]
+def _scope_tokens(target: _RouteTarget) -> set[str]:
+    values = [target.scope_key, target.display_label, target.lifecycle_key]
     tokens: set[str] = set()
     for value in values:
         if not value:
@@ -298,29 +370,25 @@ def _reason_tokens(reasons: Iterable[str]) -> set[str]:
     }
 
 
-def _coverage_route_fingerprint(
-    cell: CatalogueCoverageCell,
-    scope: CatalogueScopeNode,
-) -> str:
+def _coverage_route_fingerprint(target: _RouteTarget) -> str:
     payload = "|".join(
         (
-            cell.input_fingerprint,
-            cell.objective.value,
-            cell.state.value,
-            str(cell.required),
-            str(cell.expected_item_count or ""),
-            str(cell.resolved_item_count),
-            scope.node_type.value,
-            scope.canonical_key,
-            scope.lifecycle_key,
+            target.input_fingerprint,
+            target.objective.value,
+            target.state.value,
+            str(target.expected_item_count or ""),
+            str(target.resolved_item_count),
+            target.scope_type,
+            target.scope_key,
+            target.lifecycle_key,
             EVIDENCE_ROUTER_VERSION,
         )
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _route_key(block_key: str, coverage_cell_id: uuid.UUID, fingerprint: str) -> str:
-    payload = f"{block_key}|{coverage_cell_id}|{fingerprint}|{EVIDENCE_ROUTER_VERSION}"
+def _route_key(block_key: str, target_identity: str, fingerprint: str) -> str:
+    payload = f"{block_key}|{target_identity}|{fingerprint}|{EVIDENCE_ROUTER_VERSION}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
