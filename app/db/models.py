@@ -45,6 +45,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
+    CatalogueResumableJob,
     ClassificationDecision,
 )
 from app.modules.catalogue_ingestion.provider_attempts import CatalogueProviderAttempt
@@ -138,6 +139,7 @@ __all__ = [
     "CatalogueExtractionAttempt",
     "CatalogueIngestionRun",
     "CatalogueProviderAttempt",
+    "CatalogueResumableJob",
     "ClassificationDecision",
     "CommunityBlock",
     "CommunityBookmark",
