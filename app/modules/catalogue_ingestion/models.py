@@ -33,7 +33,10 @@ class IngestionRunStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    COMPLETED_WITH_REVIEW = "completed_with_review"
+    COMPLETED_WITH_FAILURES = "completed_with_failures"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     BUDGET_EXHAUSTED = "budget_exhausted"
 
 
@@ -86,6 +89,15 @@ class ExtractionAttemptStatus(StrEnum):
     SCHEMA_FAILED = "schema_failed"
     VALIDATION_FAILED = "validation_failed"
     REUSED = "reused"
+
+
+class CatalogueJobState(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    LEASE_LOST = "lease_lost"
+    CANCELLED = "cancelled"
 
 
 class ClassificationConfidenceBand(StrEnum):
@@ -157,6 +169,8 @@ class CatalogueIngestionRun(Base):
     estimated_cost: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0"))
     aggregate_summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     failure_code: Mapped[str | None] = mapped_column(String(100))
+    lease_token: Mapped[str | None] = mapped_column(String(64), index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
@@ -164,6 +178,9 @@ class CatalogueIngestionRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     candidates: Mapped[list["CatalogueCandidate"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    resumable_jobs: Mapped[list["CatalogueResumableJob"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
 
@@ -220,6 +237,7 @@ class CatalogueCandidate(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     claimed_by: Mapped[str | None] = mapped_column(String(100))
     claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), index=True)
     opportunity_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("opportunities.id", ondelete="SET NULL"), index=True
     )
@@ -238,6 +256,9 @@ class CatalogueCandidate(Base):
         back_populates="candidate", cascade="all, delete-orphan"
     )
     extraction_attempts: Mapped[list["CatalogueExtractionAttempt"]] = relationship(
+        back_populates="candidate", cascade="all, delete-orphan"
+    )
+    resumable_jobs: Mapped[list["CatalogueResumableJob"]] = relationship(
         back_populates="candidate", cascade="all, delete-orphan"
     )
     classification_decisions: Mapped[list["ClassificationDecision"]] = relationship(
@@ -348,6 +369,63 @@ def _prevent_source_artifact_update(*_: object) -> None:
 @event.listens_for(CatalogueSourceArtifact, "before_delete", propagate=True)
 def _prevent_source_artifact_delete(*_: object) -> None:
     raise RuntimeError("catalogue source artifacts cannot be deleted")
+
+
+class CatalogueResumableJob(Base):
+    """Durable stage checkpoint used to resume a candidate after interruption or lease loss."""
+
+    __tablename__ = "catalogue_resumable_jobs"
+    __table_args__ = (
+        UniqueConstraint("job_key", name="uq_catalogue_resumable_jobs_key"),
+        Index("ix_catalogue_resumable_jobs_run_state", "run_id", "state", "updated_at"),
+        Index(
+            "ix_catalogue_resumable_jobs_candidate_stage",
+            "candidate_id",
+            "stage",
+            "updated_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalogue_ingestion_runs.id", ondelete="CASCADE"), index=True
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalogue_candidates.id", ondelete="CASCADE"), index=True
+    )
+    job_key: Mapped[str] = mapped_column(String(128), index=True)
+    stage: Mapped[str] = mapped_column(String(100), index=True)
+    state: Mapped[CatalogueJobState] = mapped_column(
+        Enum(
+            CatalogueJobState,
+            name="catalogue_resumable_job_state",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        default=CatalogueJobState.PENDING,
+        index=True,
+    )
+    checkpoint: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    worker_id: Mapped[str | None] = mapped_column(String(100))
+    run_lease_token: Mapped[str | None] = mapped_column(String(64))
+    candidate_lease_token: Mapped[str | None] = mapped_column(String(64))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        server_default=func.now(),
+        onupdate=utc_now,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    run: Mapped[CatalogueIngestionRun] = relationship(back_populates="resumable_jobs")
+    candidate: Mapped[CatalogueCandidate] = relationship(back_populates="resumable_jobs")
 
 
 class CatalogueExtractionAttempt(Base):
