@@ -31,6 +31,7 @@ from app.modules.auth.models import (
     WebAuthnCredential,
 )
 from app.modules.beta.models import BetaInvitation, BetaLegalAcceptance
+from app.modules.catalogue_ingestion.acquisition_models import CatalogueAcquisitionSnapshot
 from app.modules.catalogue_ingestion.discovery_models import (
     CatalogueDiscoveryAssessment,
     CatalogueDiscoveryAttempt,
@@ -133,6 +134,7 @@ __all__ = [
     "AuditLog",
     "BetaInvitation",
     "BetaLegalAcceptance",
+    "CatalogueAcquisitionSnapshot",
     "CatalogueCandidate",
     "CatalogueCandidateSource",
     "CatalogueCoverageCell",
