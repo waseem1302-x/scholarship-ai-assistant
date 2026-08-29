@@ -436,6 +436,7 @@ class CatalogueExtractionAttempt(Base):
             "source_id",
             "content_hash",
             "schema_version",
+            "prompt_hash",
             "provider",
             "model",
             name="uq_catalogue_extraction_version",
