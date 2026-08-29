@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.modules.catalogue_ingestion.models import (
@@ -300,19 +300,37 @@ class CatalogueIngestionRepository:
         worker_id: str | None = None,
         lease_token: str | None = None,
     ) -> bool:
+        """Release the current candidate lease with an atomic fencing predicate.
+
+        The conditional UPDATE executes with autoflush suppressed, so dirty candidate results are
+        not written before ownership is proven. The UPDATE then holds the row lock until the caller's
+        transaction commits, allowing the caller to flush its already-produced result safely.
+        """
+
         expected_worker = worker_id if worker_id is not None else candidate.claimed_by
         expected_token = lease_token if lease_token is not None else candidate.lease_token
         if expected_worker is None and expected_token is None:
             candidate.claimed_until = None
             return True
-        current = self._candidate_for_update(candidate.id)
-        if current is None:
-            raise CatalogueLeaseLost("candidate_missing")
-        if current.claimed_by != expected_worker or current.lease_token != expected_token:
+        if expected_worker is None or expected_token is None:
+            raise CatalogueLeaseLost("candidate_release_requires_complete_lease")
+        with self.session.no_autoflush:
+            result = self.session.execute(
+                update(CatalogueCandidate)
+                .where(
+                    CatalogueCandidate.id == candidate.id,
+                    CatalogueCandidate.claimed_by == expected_worker,
+                    CatalogueCandidate.lease_token == expected_token,
+                )
+                .values(claimed_by=None, claimed_until=None, lease_token=None)
+                .execution_options(synchronize_session=False)
+            )
+        if result.rowcount != 1:
+            self.session.rollback()
             raise CatalogueLeaseLost("candidate_release_lease_lost")
-        current.claimed_by = None
-        current.claimed_until = None
-        current.lease_token = None
+        candidate.claimed_by = None
+        candidate.claimed_until = None
+        candidate.lease_token = None
         return True
 
     def start_or_resume_job(
