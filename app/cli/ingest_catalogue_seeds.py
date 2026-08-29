@@ -7,8 +7,8 @@ import uuid
 
 from app.core.config import get_settings
 from app.db.session import SystemSessionLocal
-from app.modules.catalogue_ingestion.hardened_service import HardenedCatalogueIngestionService
 from app.modules.catalogue_ingestion.models import IngestionMode, IngestionRunStatus
+from app.modules.catalogue_ingestion.production_service import ProductionCatalogueIngestionService
 from app.modules.catalogue_ingestion.schemas import IngestionRunResponse
 from app.modules.catalogue_ingestion.service import RunBudgetExhausted
 from app.modules.operations.service import OperationalJobService
@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> None:
     with SystemSessionLocal() as session:
         health = OperationalJobService(session)
         health.started("catalogue_ingestion")
-        service = HardenedCatalogueIngestionService(session, settings)
+        service = ProductionCatalogueIngestionService(session, settings)
         try:
             if args.resume:
                 run_id = args.resume
