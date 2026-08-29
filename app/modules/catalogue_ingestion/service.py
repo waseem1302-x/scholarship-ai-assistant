@@ -72,8 +72,13 @@ from app.modules.catalogue_ingestion.provider_execution import (
     CatalogueProviderExecutor,
     ProviderConfigurationDrift,
     ProviderExecutionBudgetExhausted,
+    ProviderExecutionCancelled,
+    ProviderExecutionLeaseLost,
 )
-from app.modules.catalogue_ingestion.repository import CatalogueIngestionRepository
+from app.modules.catalogue_ingestion.repository import (
+    CatalogueIngestionRepository,
+    CatalogueLeaseLost,
+)
 from app.modules.catalogue_ingestion.schemas import (
     EXTRACTION_SCHEMA_VERSION,
     CandidateListResponse,
@@ -112,6 +117,14 @@ class RunBudgetExhausted(RuntimeError):
 
 
 _MEXT_TOPIC_MARKER = re.compile(r"\b(?:mext|monbukagakusho)\b", re.IGNORECASE)
+_TERMINAL_RUN_STATUSES = {
+    IngestionRunStatus.COMPLETED,
+    IngestionRunStatus.COMPLETED_WITH_REVIEW,
+    IngestionRunStatus.COMPLETED_WITH_FAILURES,
+    IngestionRunStatus.FAILED,
+    IngestionRunStatus.CANCELLED,
+    IngestionRunStatus.BUDGET_EXHAUSTED,
+}
 
 
 class CatalogueIngestionService:
@@ -198,9 +211,7 @@ class CatalogueIngestionService:
         for raw_url in [url, *(supporting_urls or [])]:
             normalized = normalize_discovery_lead_url(raw_url)
             if normalized.normalized is None:
-                code = (
-                    normalized.rejection_code.value if normalized.rejection_code else "url_invalid"
-                )
+                code = normalized.rejection_code.value if normalized.rejection_code else "url_invalid"
                 raise AppError(code, "A direct catalogue source URL is not permitted", 422)
             canonical_url = normalized.normalized.value
             if canonical_url in canonical_urls:
@@ -265,11 +276,7 @@ class CatalogueIngestionService:
                 CatalogueCandidateSource(
                     url=source_url,
                     canonical_url=self.opportunities.canonicalize_url(source_url),
-                    source_role=(
-                        CandidateSourceRole.PRIMARY
-                        if index == 0
-                        else CandidateSourceRole.SUPPORTING
-                    ),
+                    source_role=(CandidateSourceRole.PRIMARY if index == 0 else CandidateSourceRole.SUPPORTING),
                     is_official=classification.is_official,
                     trust_tier=classification.trust_tier,
                     classification_reason=classification.reason,
@@ -291,51 +298,121 @@ class CatalogueIngestionService:
         run = self.repository.get_run(run_id)
         if run is None:
             raise AppError("ingestion_run_not_found", "Ingestion run was not found", 404)
-        if run.status in {IngestionRunStatus.COMPLETED, IngestionRunStatus.FAILED}:
+        if run.status in _TERMINAL_RUN_STATUSES:
             return IngestionRunResponse.model_validate(run)
+
+        try:
+            run_lease_token = self.repository.acquire_run_lease(
+                run.id,
+                lease_seconds=self.settings.catalogue_worker_claim_seconds,
+            )
+        except CatalogueLeaseLost:
+            self.session.rollback()
+            current = self.repository.get_run(run_id)
+            if current is None:
+                raise AppError("ingestion_run_not_found", "Ingestion run was not found", 404) from None
+            return IngestionRunResponse.model_validate(current)
+
+        run = self.repository.get_run(run_id)
+        assert run is not None
+        self._heartbeat_run(run, run_lease_token)
         run.status = IngestionRunStatus.RUNNING
         run.failure_code = None
         run.started_at = run.started_at or datetime.now(UTC)
         self.session.commit()
 
         while True:
-            candidates = self.repository.claim_candidates(
-                run_id=run.id,
-                worker_id=worker_id,
-                limit=min(batch_size, 100),
-                lease_seconds=self.settings.catalogue_worker_claim_seconds,
-            )
+            try:
+                self._heartbeat_run(run, run_lease_token)
+                candidates = self.repository.claim_candidates(
+                    run_id=run.id,
+                    run_lease_token=run_lease_token,
+                    worker_id=worker_id,
+                    limit=min(batch_size, 100),
+                    lease_seconds=self.settings.catalogue_worker_claim_seconds,
+                )
+            except CatalogueLeaseLost:
+                return self._run_after_lease_loss(run_id)
             if not candidates:
                 break
+
             for candidate in candidates:
                 try:
-                    self._process_candidate(run, candidate)
+                    self._heartbeat_candidate(run, candidate, run_lease_token)
+                    self._process_candidate(run, candidate, run_lease_token)
+                except (CatalogueLeaseLost, ProviderExecutionLeaseLost):
+                    return self._run_after_lease_loss(run_id)
+                except ProviderExecutionCancelled:
+                    try:
+                        self._heartbeat_candidate(run, candidate, run_lease_token)
+                        candidate.status = CandidateStatus.NEEDS_REVIEW
+                        candidate.failure_code = "cancelled_by_kill_switch"
+                        candidate.failure_reason = "Catalogue AI ingestion was disabled before a retry"
+                        self.repository.release_candidate(candidate)
+                        run.status = IngestionRunStatus.CANCELLED
+                        run.failure_code = "cancelled_by_kill_switch"
+                        run.completed_at = datetime.now(UTC)
+                        run.lease_token = None
+                        run.lease_expires_at = None
+                        self.session.commit()
+                    except CatalogueLeaseLost:
+                        return self._run_after_lease_loss(run_id)
+                    return IngestionRunResponse.model_validate(run)
                 except (RunBudgetExhausted, ProviderExecutionBudgetExhausted):
-                    run.status = IngestionRunStatus.BUDGET_EXHAUSTED
-                    run.failure_code = "run_budget_exhausted"
-                    self.repository.release_candidate(candidate)
-                    self.repository.refresh_run_summary(run)
-                    self.session.commit()
+                    try:
+                        self._heartbeat_candidate(run, candidate, run_lease_token)
+                        self.repository.release_candidate(candidate)
+                        run.status = IngestionRunStatus.BUDGET_EXHAUSTED
+                        run.failure_code = "run_budget_exhausted"
+                        run.completed_at = datetime.now(UTC)
+                        run.lease_token = None
+                        run.lease_expires_at = None
+                        self.repository.refresh_run_summary(run)
+                        self.session.commit()
+                    except CatalogueLeaseLost:
+                        return self._run_after_lease_loss(run_id)
                     return IngestionRunResponse.model_validate(run)
                 except ProviderConfigurationDrift:
-                    run.status = IngestionRunStatus.FAILED
-                    run.failure_code = "provider_configuration_drift"
-                    candidate.status = CandidateStatus.NEEDS_REVIEW
-                    candidate.failure_code = "provider_configuration_drift"
-                    candidate.failure_reason = "Effective provider configuration differs from run receipt"
-                    self.repository.release_candidate(candidate)
-                    self.repository.refresh_run_summary(run)
-                    self.session.commit()
+                    try:
+                        self._heartbeat_candidate(run, candidate, run_lease_token)
+                        candidate.status = CandidateStatus.NEEDS_REVIEW
+                        candidate.failure_code = "provider_configuration_drift"
+                        candidate.failure_reason = (
+                            "Effective provider configuration differs from run receipt"
+                        )
+                        self.repository.release_candidate(candidate)
+                        run.status = IngestionRunStatus.FAILED
+                        run.failure_code = "provider_configuration_drift"
+                        run.completed_at = datetime.now(UTC)
+                        run.lease_token = None
+                        run.lease_expires_at = None
+                        self.repository.refresh_run_summary(run)
+                        self.session.commit()
+                    except CatalogueLeaseLost:
+                        return self._run_after_lease_loss(run_id)
                     return IngestionRunResponse.model_validate(run)
                 except Exception as exc:
-                    candidate.status = CandidateStatus.NEEDS_REVIEW
-                    candidate.failure_code = "unexpected_pipeline_failure"
-                    candidate.failure_reason = type(exc).__name__
-                    self.repository.release_candidate(candidate)
-                    self.session.commit()
+                    try:
+                        self._heartbeat_candidate(run, candidate, run_lease_token)
+                        candidate.status = CandidateStatus.NEEDS_REVIEW
+                        candidate.failure_code = "unexpected_pipeline_failure"
+                        candidate.failure_reason = type(exc).__name__
+                        self.repository.release_candidate(candidate)
+                        self.session.commit()
+                    except CatalogueLeaseLost:
+                        return self._run_after_lease_loss(run_id)
+
+            try:
+                self._heartbeat_run(run, run_lease_token)
+            except CatalogueLeaseLost:
+                return self._run_after_lease_loss(run_id)
             run.checkpoint_cursor += len(candidates)
             self.session.commit()
 
+        try:
+            self._heartbeat_run(run, run_lease_token)
+        except CatalogueLeaseLost:
+            return self._run_after_lease_loss(run_id)
         self.repository.refresh_run_summary(run)
         self.session.commit()
         return IngestionRunResponse.model_validate(run)
@@ -358,17 +435,24 @@ class CatalogueIngestionService:
             candidate_source_id=candidate_source_id,
         )
 
-    def _process_candidate(self, run: CatalogueIngestionRun, candidate: CatalogueCandidate) -> None:
+    def _process_candidate(
+        self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+        run_lease_token: str,
+    ) -> None:
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         if run.input_kind is IngestionInputKind.DIRECT_URL:
-            self._process_direct_candidate(run, candidate)
+            self._process_direct_candidate(run, candidate, run_lease_token)
             return
 
         discovered = self.discovery.discover(
             self._seed(candidate), limit=run.max_pages_per_candidate
         )
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         if not discovered:
             self.metrics.add("official_sources_missing")
-            self._manual_review(candidate, "official_source_not_found")
+            self._manual_review(run, candidate, "official_source_not_found", run_lease_token)
             return
 
         provider_url, university_url = self._known_identity_urls(candidate)
@@ -403,7 +487,7 @@ class CatalogueIngestionService:
                 chosen = (source, classification)
         if chosen is None:
             self.metrics.add("official_sources_missing")
-            self._manual_review(candidate, "official_source_not_found")
+            self._manual_review(run, candidate, "official_source_not_found", run_lease_token)
             return
 
         source, classification = chosen
@@ -411,6 +495,7 @@ class CatalogueIngestionService:
         candidate.status = CandidateStatus.OFFICIAL_SOURCE_CANDIDATE
         crawl_result: CrawlResult | None = None
         try:
+            self._heartbeat_candidate(run, candidate, run_lease_token)
             if self.settings.catalogue_bounded_crawling_enabled:
                 per_page_bytes = self.settings.catalogue_source_max_bytes_per_page
                 crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
@@ -426,19 +511,24 @@ class CatalogueIngestionService:
                             self.settings.source_monitor_per_host_interval_seconds
                         ),
                     ),
+                    heartbeat=lambda: self._heartbeat_candidate(
+                        run, candidate, run_lease_token
+                    ),
                 )
                 if not crawl_result.pages:
                     raise SourceFetchError("crawler_returned_no_pages")
                 fetched = crawl_result.pages[0].fetched
             else:
                 fetched = self.fetcher.fetch(source.url)
+            self._heartbeat_candidate(run, candidate, run_lease_token)
         except SourceFetchError as exc:
             self.metrics.add("source_fetch_failure")
             source.status = CandidateSourceStatus.MANUAL_REVIEW
             source.failure_code = _safe_failure_code(str(exc))
             source.failure_reason = str(exc)[:1000]
-            self._manual_review(candidate, source.failure_code)
+            self._manual_review(run, candidate, source.failure_code, run_lease_token)
             return
+
         final_classification = self.classifier.classify(
             fetched.final_url,
             provider_website_url=provider_url,
@@ -453,7 +543,7 @@ class CatalogueIngestionService:
         source.classification_reason = final_classification.reason
         if not final_classification.is_official:
             source.status = CandidateSourceStatus.MANUAL_REVIEW
-            self._manual_review(candidate, "redirected_to_unofficial_source")
+            self._manual_review(run, candidate, "redirected_to_unofficial_source", run_lease_token)
             return
         source.status = CandidateSourceStatus.FETCHED
         source.content_type = fetched.content_type
@@ -468,6 +558,7 @@ class CatalogueIngestionService:
                 crawl_result,
                 provider_url=provider_url,
                 university_url=university_url,
+                heartbeat=lambda: self._heartbeat_candidate(run, candidate, run_lease_token),
             )
             child_successes = max(0, len(crawl_result.pages) - 1)
             if child_successes:
@@ -475,17 +566,15 @@ class CatalogueIngestionService:
             if crawl_result.failures:
                 self.metrics.add("source_fetch_failure", len(crawl_result.failures))
         candidate.status = CandidateStatus.SOURCE_FETCHED
-        self.session.commit()
+        self._heartbeat_candidate(run, candidate, run_lease_token)
 
         if run.mode is IngestionMode.CANDIDATE_ONLY:
-            self._manual_review(candidate, "candidate_only_complete")
+            self._manual_review(run, candidate, "candidate_only_complete", run_lease_token)
             return
         if not self.settings.catalogue_ai_ingestion_enabled:
-            self._manual_review(candidate, "ai_ingestion_disabled")
+            self._manual_review(run, candidate, "ai_ingestion_disabled", run_lease_token)
             return
-        if run.input_kind is IngestionInputKind.DIRECT_URL:
-            self._process_direct_claims(run, candidate)
-            return
+
         source_text = fetched.normalized_text or fetched.excerpt_text or ""
         reused = self.repository.reusable_attempt(
             canonical_url=source.canonical_url,
@@ -508,6 +597,7 @@ class CatalogueIngestionService:
             try:
                 execution = self.provider_executor.execute(
                     run=run,
+                    run_lease_token=run_lease_token,
                     candidate=candidate,
                     source=source,
                     artifact=artifact,
@@ -519,6 +609,9 @@ class CatalogueIngestionService:
                     invoke=lambda: self.extractor.extract(
                         source_url=source.final_url or source.url,
                         source_text=source_text,
+                    ),
+                    heartbeat=lambda: self._heartbeat_candidate(
+                        run, candidate, run_lease_token
                     ),
                 )
             except ExtractionSchemaError as exc:
@@ -532,10 +625,13 @@ class CatalogueIngestionService:
                     usage=exc.usage,
                 )
                 self._persist_and_link_attempt(
+                    run,
+                    candidate,
+                    run_lease_token,
                     attempt,
                     getattr(exc, "provider_attempt_id", None),
                 )
-                self._manual_review(candidate, exc.code)
+                self._manual_review(run, candidate, exc.code, run_lease_token)
                 return
             except ExtractionProviderError as exc:
                 self.metrics.add("ai_extraction_failures")
@@ -548,10 +644,13 @@ class CatalogueIngestionService:
                     usage=exc.usage,
                 )
                 self._persist_and_link_attempt(
+                    run,
+                    candidate,
+                    run_lease_token,
                     attempt,
                     getattr(exc, "provider_attempt_id", None),
                 )
-                self._manual_review(candidate, exc.code)
+                self._manual_review(run, candidate, exc.code, run_lease_token)
                 return
             result = execution.result
             provider_attempt_id = execution.provider_attempt_id
@@ -561,6 +660,7 @@ class CatalogueIngestionService:
             attempt_status = ExtractionAttemptStatus.SUCCEEDED
             reuse_is_current_attempt = False
 
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         candidate.status = CandidateStatus.EXTRACTED
         trust_tier = final_classification.trust_tier
         assert trust_tier is not None
@@ -572,6 +672,7 @@ class CatalogueIngestionService:
             content_hash=source.content_hash,
             trust_tier=trust_tier,
         )
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         validation_errors = _identity_resolution_errors(candidate, output) + validated.errors
         attempt = self._attempt(
             candidate,
@@ -582,7 +683,13 @@ class CatalogueIngestionService:
             usage=usage,
         )
         if not reuse_is_current_attempt:
-            self._persist_and_link_attempt(attempt, provider_attempt_id)
+            self._persist_and_link_attempt(
+                run,
+                candidate,
+                run_lease_token,
+                attempt,
+                provider_attempt_id,
+            )
         if validated.payload is None or validation_errors:
             self.metrics.add("validation_failures")
             candidate.status = (
@@ -610,15 +717,23 @@ class CatalogueIngestionService:
         candidate.status = CandidateStatus.READY_FOR_REVIEW
         self.metrics.add("candidates_ready_for_review")
         if run.mode is IngestionMode.REVIEW_QUEUE and not run.dry_run:
-            created = OpportunityService(self.session).stage_opportunity_for_review(payload)
+            self._heartbeat_candidate(run, candidate, run_lease_token)
+            created = OpportunityService(self.session).stage_opportunity_for_review(
+                payload, commit=False
+            )
+            self._heartbeat_candidate(run, candidate, run_lease_token)
             candidate.opportunity_id = created.id
             candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
         self.repository.release_candidate(candidate)
         self.session.commit()
 
     def _process_direct_candidate(
-        self, run: CatalogueIngestionRun, candidate: CatalogueCandidate
+        self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+        run_lease_token: str,
     ) -> None:
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         explicit_sources = [
             source
             for source in candidate.sources
@@ -631,18 +746,12 @@ class CatalogueIngestionService:
             )
         )
         if (
-            len(
-                [
-                    item
-                    for item in explicit_sources
-                    if item.source_role is CandidateSourceRole.PRIMARY
-                ]
-            )
+            len([item for item in explicit_sources if item.source_role is CandidateSourceRole.PRIMARY])
             != 1
             or not explicit_sources
             or len(explicit_sources) > run.max_pages_per_candidate
         ):
-            self._manual_review(candidate, "direct_source_bundle_invalid")
+            self._manual_review(run, candidate, "direct_source_bundle_invalid", run_lease_token)
             return
 
         provider_url, university_url = self._known_identity_urls(candidate)
@@ -658,9 +767,10 @@ class CatalogueIngestionService:
                 university_url=university_url,
             )
             if not classification:
-                self._manual_review(candidate, "direct_source_bundle_incomplete")
+                self._manual_review(run, candidate, "direct_source_bundle_incomplete", run_lease_token)
                 return
             try:
+                self._heartbeat_candidate(run, candidate, run_lease_token)
                 per_page_bytes = self.settings.catalogue_source_max_bytes_per_page
                 crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
                     source.url,
@@ -675,13 +785,17 @@ class CatalogueIngestionService:
                             self.settings.source_monitor_per_host_interval_seconds
                         ),
                     ),
+                    heartbeat=lambda: self._heartbeat_candidate(
+                        run, candidate, run_lease_token
+                    ),
                 )
                 if not crawl_result.pages:
                     raise SourceFetchError("crawler_returned_no_pages")
                 root_fetched = crawl_result.pages[0].fetched
+                self._heartbeat_candidate(run, candidate, run_lease_token)
             except SourceFetchError as exc:
                 self._record_direct_fetch_failure(source, exc)
-                self._manual_review(candidate, "direct_source_bundle_incomplete")
+                self._manual_review(run, candidate, "direct_source_bundle_incomplete", run_lease_token)
                 return
             if not self._accept_direct_source(
                 candidate,
@@ -690,13 +804,14 @@ class CatalogueIngestionService:
                 provider_url=provider_url,
                 university_url=university_url,
             ):
-                self._manual_review(candidate, "direct_source_bundle_incomplete")
+                self._manual_review(run, candidate, "direct_source_bundle_incomplete", run_lease_token)
                 return
             self._persist_crawled_sources(
                 candidate,
                 crawl_result,
                 provider_url=provider_url,
                 university_url=university_url,
+                heartbeat=lambda: self._heartbeat_candidate(run, candidate, run_lease_token),
             )
             if len(crawl_result.pages) > 1:
                 self.metrics.add("source_fetch_success", len(crawl_result.pages) - 1)
@@ -704,6 +819,7 @@ class CatalogueIngestionService:
                 self.metrics.add("source_fetch_failure", len(crawl_result.failures))
         else:
             for source in explicit_sources:
+                self._heartbeat_candidate(run, candidate, run_lease_token)
                 classification = self._classify_direct_source(
                     source,
                     provider_url=provider_url,
@@ -713,7 +829,9 @@ class CatalogueIngestionService:
                     failures = True
                     continue
                 try:
+                    self._heartbeat_candidate(run, candidate, run_lease_token)
                     fetched = self.fetcher.fetch(source.url)
+                    self._heartbeat_candidate(run, candidate, run_lease_token)
                 except SourceFetchError as exc:
                     self._record_direct_fetch_failure(source, exc)
                     failures = True
@@ -731,17 +849,17 @@ class CatalogueIngestionService:
                     failures = True
 
         if failures:
-            self._manual_review(candidate, "direct_source_bundle_incomplete")
+            self._manual_review(run, candidate, "direct_source_bundle_incomplete", run_lease_token)
             return
         candidate.status = CandidateStatus.SOURCE_FETCHED
-        self.session.commit()
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         if run.mode is IngestionMode.CANDIDATE_ONLY:
-            self._manual_review(candidate, "candidate_only_complete")
+            self._manual_review(run, candidate, "candidate_only_complete", run_lease_token)
             return
         if not self.settings.catalogue_ai_ingestion_enabled:
-            self._manual_review(candidate, "ai_ingestion_disabled")
+            self._manual_review(run, candidate, "ai_ingestion_disabled", run_lease_token)
             return
-        self._process_direct_claims(run, candidate)
+        self._process_direct_claims(run, candidate, run_lease_token)
 
     def _classify_direct_source(
         self,
@@ -801,9 +919,7 @@ class CatalogueIngestionService:
         ):
             source.status = CandidateSourceStatus.MANUAL_REVIEW
             source.failure_code = "direct_source_redirect_duplicate"
-            source.failure_reason = (
-                "Another source in this bundle resolves to the same canonical URL"
-            )
+            source.failure_reason = "Another source in this bundle resolves to the same canonical URL"
             self.metrics.add("source_fetch_failure")
             return False
         if (
@@ -814,8 +930,7 @@ class CatalogueIngestionService:
             source.status = CandidateSourceStatus.MANUAL_REVIEW
             source.failure_code = "operator_source_topic_mismatch"
             source.failure_reason = (
-                "Supporting source does not contain the MEXT identity marker "
-                "from the primary source"
+                "Supporting source does not contain the MEXT identity marker from the primary source"
             )
             self.metrics.add("source_fetch_failure")
             return False
@@ -860,6 +975,7 @@ class CatalogueIngestionService:
         candidate.next_attempt_at = datetime.now(UTC)
         candidate.claimed_by = None
         candidate.claimed_until = None
+        candidate.lease_token = None
         self.session.add(
             AuditLog(
                 actor_user_id=actor.id,
@@ -878,10 +994,7 @@ class CatalogueIngestionService:
         candidate = self.repository.get_candidate_for_update(candidate_id)
         if candidate is None:
             raise AppError("catalogue_candidate_not_found", "Candidate was not found", 404)
-        if (
-            candidate.status is not CandidateStatus.READY_FOR_REVIEW
-            or not candidate.proposed_payload
-        ):
+        if candidate.status is not CandidateStatus.READY_FOR_REVIEW or not candidate.proposed_payload:
             raise AppError(
                 "catalogue_candidate_not_ready", "Candidate has not passed review gates", 409
             )
@@ -890,8 +1003,7 @@ class CatalogueIngestionService:
             if not _legacy_graph_compatible(resolution):
                 raise AppError(
                     "catalogue_detail_extraction_review_only",
-                    "Expanded programme-scoped extraction is review-only until graph "
-                    "architecture is added",
+                    "Expanded programme-scoped extraction is review-only until graph architecture is added",
                     409,
                 )
             created = MextGraphMaterializer(self.session).materialize(resolution)
@@ -920,8 +1032,12 @@ class CatalogueIngestionService:
         return self._candidate_response(candidate)
 
     def _process_direct_claims(
-        self, run: CatalogueIngestionRun, candidate: CatalogueCandidate
+        self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+        run_lease_token: str,
     ) -> None:
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         extracted: list[tuple[CatalogueSourceArtifact, int, list[ExtractedClaim]]] = []
         unknown_objectives: set[str] = set()
         warnings: set[str] = set()
@@ -954,10 +1070,12 @@ class CatalogueIngestionService:
             )
         )
         for source in sources:
+            self._heartbeat_candidate(run, candidate, run_lease_token)
             artifact = max(source.artifacts, key=lambda item: item.created_at)
             raw_links = artifact.fetch_metadata.get("links", [])
             source_links = raw_links if isinstance(raw_links, list) else []
             for objective in ClaimObjective:
+                self._heartbeat_candidate(run, candidate, run_lease_token)
                 attempt_schema = _claim_attempt_schema(objective)
                 reused = self.repository.reusable_attempt(
                     canonical_url=source.canonical_url,
@@ -983,6 +1101,7 @@ class CatalogueIngestionService:
                     try:
                         execution = self.provider_executor.execute(
                             run=run,
+                            run_lease_token=run_lease_token,
                             candidate=candidate,
                             source=source,
                             artifact=artifact,
@@ -1000,6 +1119,9 @@ class CatalogueIngestionService:
                                 objective=objective,
                                 source_links=source_links,
                             ),
+                            heartbeat=lambda: self._heartbeat_candidate(
+                                run, candidate, run_lease_token
+                            ),
                         )
                     except ExtractionSchemaError as exc:
                         self.metrics.add("ai_schema_failures")
@@ -1014,10 +1136,13 @@ class CatalogueIngestionService:
                             usage=exc.usage,
                         )
                         self._persist_and_link_attempt(
+                            run,
+                            candidate,
+                            run_lease_token,
                             attempt,
                             getattr(exc, "provider_attempt_id", None),
                         )
-                        self._manual_review(candidate, exc.code)
+                        self._manual_review(run, candidate, exc.code, run_lease_token)
                         return
                     except ExtractionProviderError as exc:
                         self.metrics.add("ai_extraction_failures")
@@ -1032,10 +1157,13 @@ class CatalogueIngestionService:
                             usage=exc.usage,
                         )
                         self._persist_and_link_attempt(
+                            run,
+                            candidate,
+                            run_lease_token,
                             attempt,
                             getattr(exc, "provider_attempt_id", None),
                         )
-                        self._manual_review(candidate, exc.code)
+                        self._manual_review(run, candidate, exc.code, run_lease_token)
                         return
                     result = execution.result
                     provider_attempt_id = execution.provider_attempt_id
@@ -1055,7 +1183,13 @@ class CatalogueIngestionService:
                         output=output,
                         usage=usage,
                     )
-                    self._persist_and_link_attempt(attempt, provider_attempt_id)
+                    self._persist_and_link_attempt(
+                        run,
+                        candidate,
+                        run_lease_token,
+                        attempt,
+                        provider_attempt_id,
+                    )
                 if output.conflicts:
                     candidate.conflicts.extend(output.conflicts)
                 unknown_objectives.update(
@@ -1065,11 +1199,10 @@ class CatalogueIngestionService:
                     f"{artifact.id}:{objective.value}:{item}" for item in output.warnings
                 )
                 coverage_by_objective[objective].append(output.coverage_state)
-                effective_trust_tier = (source.trust_tier or 99) * 10 + role_order[
-                    source.source_role
-                ]
+                effective_trust_tier = (source.trust_tier or 99) * 10 + role_order[source.source_role]
                 extracted.append((artifact, effective_trust_tier, output.claims))
 
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         candidate.status = CandidateStatus.EXTRACTED
         aggregate_coverage = {
             objective.value: _aggregate_coverage(states).value
@@ -1085,6 +1218,7 @@ class CatalogueIngestionService:
                 "warnings": sorted(warnings),
             }
         )
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         candidate.proposed_payload = resolution.model_dump(mode="json")
         candidate.validation_errors = resolution.rejected + resolution.completeness_errors
         candidate.conflicts = sorted(set(candidate.conflicts + resolution.conflicts))
@@ -1096,9 +1230,7 @@ class CatalogueIngestionService:
             duplicate_ids = {
                 str(item.id)
                 for source in sources
-                for item in self.opportunities.find_opportunities_by_canonical_url(
-                    source.canonical_url
-                )
+                for item in self.opportunities.find_opportunities_by_canonical_url(source.canonical_url)
             }
             if duplicate_ids:
                 candidate.status = CandidateStatus.DUPLICATE_CANDIDATE
@@ -1111,7 +1243,9 @@ class CatalogueIngestionService:
                     and not run.dry_run
                     and _legacy_graph_compatible(resolution)
                 ):
+                    self._heartbeat_candidate(run, candidate, run_lease_token)
                     created = MextGraphMaterializer(self.session).materialize(resolution)
+                    self._heartbeat_candidate(run, candidate, run_lease_token)
                     candidate.opportunity_id = created.id
                     candidate.status = CandidateStatus.SUBMITTED_FOR_REVIEW
         self.repository.release_candidate(candidate)
@@ -1166,10 +1300,13 @@ class CatalogueIngestionService:
         *,
         provider_url: str | None,
         university_url: str | None,
+        heartbeat: object | None = None,
     ) -> None:
         fetched_at = datetime.now(UTC)
         root = crawl_result.pages[0].fetched
         for page in crawl_result.pages[1:]:
+            if callable(heartbeat):
+                heartbeat()
             fetched = page.fetched
             classification = self.classifier.classify(
                 fetched.final_url,
@@ -1226,6 +1363,8 @@ class CatalogueIngestionService:
                     if classification.is_official
                     else classification.reason[:1000]
                 )
+        if callable(heartbeat):
+            heartbeat()
 
     def _persist_source_artifact(
         self, source: CatalogueCandidateSource, fetched: FetchedSource
@@ -1264,11 +1403,55 @@ class CatalogueIngestionService:
             )
         )
 
-    def _manual_review(self, candidate: CatalogueCandidate, code: str) -> None:
+    def _manual_review(
+        self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+        code: str,
+        run_lease_token: str,
+    ) -> None:
+        self._heartbeat_candidate(run, candidate, run_lease_token)
         candidate.status = CandidateStatus.NEEDS_REVIEW
         candidate.failure_code = code[:100]
         self.repository.release_candidate(candidate)
         self.session.commit()
+
+    def _heartbeat_run(self, run: CatalogueIngestionRun, run_lease_token: str) -> None:
+        self.repository.heartbeat_run_lease(
+            run.id,
+            lease_token=run_lease_token,
+            lease_seconds=self.settings.catalogue_worker_claim_seconds,
+        )
+
+    def _heartbeat_candidate(
+        self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+        run_lease_token: str,
+    ) -> None:
+        worker_id = candidate.claimed_by
+        candidate_lease_token = candidate.lease_token
+        if worker_id is None or candidate_lease_token is None:
+            raise CatalogueLeaseLost("candidate_has_no_active_lease")
+        self.repository.heartbeat_candidate(
+            candidate.id,
+            run_lease_token=run_lease_token,
+            worker_id=worker_id,
+            lease_token=candidate_lease_token,
+            lease_seconds=self.settings.catalogue_worker_claim_seconds,
+        )
+        self.repository.heartbeat_run_lease(
+            run.id,
+            lease_token=run_lease_token,
+            lease_seconds=self.settings.catalogue_worker_claim_seconds,
+        )
+
+    def _run_after_lease_loss(self, run_id: uuid.UUID) -> IngestionRunResponse:
+        self.session.rollback()
+        current = self.repository.get_run(run_id)
+        if current is None:
+            raise AppError("ingestion_run_not_found", "Ingestion run was not found", 404)
+        return IngestionRunResponse.model_validate(current)
 
     def _known_identity_urls(self, candidate: CatalogueCandidate) -> tuple[str | None, str | None]:
         provider_url = None
@@ -1358,13 +1541,27 @@ class CatalogueIngestionService:
 
     def _persist_and_link_attempt(
         self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+        run_lease_token: str,
         attempt: CatalogueExtractionAttempt,
         provider_attempt_id: uuid.UUID | None,
     ) -> None:
+        self._heartbeat_candidate(run, candidate, run_lease_token)
+        worker_id = candidate.claimed_by
+        candidate_lease_token = candidate.lease_token
+        if worker_id is None or candidate_lease_token is None:
+            raise CatalogueLeaseLost("candidate_has_no_active_lease")
         self.session.add(attempt)
         self.session.flush()
         if provider_attempt_id is not None:
-            self.repository.link_provider_attempt(provider_attempt_id, attempt.id)
+            self.repository.link_provider_attempt(
+                provider_attempt_id,
+                attempt.id,
+                worker_id=worker_id,
+                run_lease_token=run_lease_token,
+                candidate_lease_token=candidate_lease_token,
+            )
 
     def _observe_provider_usage(self, usage: object | None) -> None:
         if usage is None:
@@ -1429,21 +1626,14 @@ def _identity_resolution_errors(
         errors.append("extracted university identity conflicts with the seed candidate")
     seed_country = canonical_country_code(candidate.seed_country)
     extracted_country = identity.country_code or canonical_country_code(identity.country)
-    if (
-        seed_country
-        and extracted_country
-        and seed_country.casefold() != extracted_country.casefold()
-    ):
+    if seed_country and extracted_country and seed_country.casefold() != extracted_country.casefold():
         errors.append("extracted country conflicts with the seed candidate")
     if (
         candidate.seed_cycle
         and candidate.seed_cycle.casefold() != (output.study.cycle_id or "").casefold()
     ):
         errors.append("extracted cycle conflicts with the seed candidate")
-    if (
-        candidate.seed_intake_year is not None
-        and candidate.seed_intake_year != output.study.intake_year
-    ):
+    if candidate.seed_intake_year is not None and candidate.seed_intake_year != output.study.intake_year:
         errors.append("extracted intake year conflicts with the seed candidate")
     return errors
 
@@ -1474,7 +1664,6 @@ def _canonical_identity_name(expected: str, actual: str) -> str:
         ]
         if len(matching_segments) == 1:
             return matching_segments[0]
-
     return actual
 
 
@@ -1502,28 +1691,20 @@ def _identity_name_matches(expected: str, actual: str | None) -> bool:
     def token_sets_match(expected_tokens: set[str], actual_tokens: set[str]) -> bool:
         if not expected_tokens or not actual_tokens:
             return False
-
         if expected_tokens == actual_tokens:
             return True
-
         if min(len(expected_tokens), len(actual_tokens)) >= 2 and (
             expected_tokens <= actual_tokens or actual_tokens <= expected_tokens
         ):
             return True
-
         overlap = expected_tokens & actual_tokens
         return len(overlap) / len(expected_tokens | actual_tokens) >= 0.6
 
     expected_tokens = identity_tokens(expected)
     actual_tokens = identity_tokens(actual)
-
     if token_sets_match(expected_tokens, actual_tokens):
         return True
 
-    # Official sites commonly wrap the programme name in a page title such as:
-    # "About us - Chevening Scholarship Programme - GOV.UK".
-    # Compare separator-delimited title segments rather than globally ignoring
-    # wrapper words, which would make unrelated programme names easier to match.
     title_segments = [
         segment.strip()
         for segment in re.split(r"\s+(?:-|\u2013|\u2014|\|)\s+", actual)
@@ -1536,5 +1717,4 @@ def _identity_name_matches(expected: str, actual: str | None) -> bool:
 
     if not expected_tokens or not actual_tokens:
         return expected.strip().casefold() == actual.strip().casefold()
-
     return False
