@@ -47,6 +47,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueIngestionRun,
     ClassificationDecision,
 )
+from app.modules.catalogue_ingestion.provider_attempts import CatalogueProviderAttempt
 from app.modules.community.models import (
     CommunityBlock,
     CommunityBookmark,
@@ -136,6 +137,7 @@ __all__ = [
     "CatalogueDiscoveryRun",
     "CatalogueExtractionAttempt",
     "CatalogueIngestionRun",
+    "CatalogueProviderAttempt",
     "ClassificationDecision",
     "CommunityBlock",
     "CommunityBookmark",
