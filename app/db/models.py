@@ -49,6 +49,12 @@ from app.modules.catalogue_ingestion.models import (
     ClassificationDecision,
 )
 from app.modules.catalogue_ingestion.provider_attempts import CatalogueProviderAttempt
+from app.modules.catalogue_ingestion.topology_models import (
+    CatalogueCoverageCell,
+    CatalogueScopeEdge,
+    CatalogueScopeNode,
+    CatalogueSourceScopeLink,
+)
 from app.modules.community.models import (
     CommunityBlock,
     CommunityBookmark,
@@ -129,6 +135,7 @@ __all__ = [
     "BetaLegalAcceptance",
     "CatalogueCandidate",
     "CatalogueCandidateSource",
+    "CatalogueCoverageCell",
     "CatalogueDiscoveryAssessment",
     "CatalogueDiscoveryAttempt",
     "CatalogueDiscoveryLead",
@@ -140,6 +147,9 @@ __all__ = [
     "CatalogueIngestionRun",
     "CatalogueProviderAttempt",
     "CatalogueResumableJob",
+    "CatalogueScopeEdge",
+    "CatalogueScopeNode",
+    "CatalogueSourceScopeLink",
     "ClassificationDecision",
     "CommunityBlock",
     "CommunityBookmark",
