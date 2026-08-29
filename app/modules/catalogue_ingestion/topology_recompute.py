@@ -16,6 +16,8 @@ from app.modules.catalogue_ingestion.topology_models import (
     CatalogueSourceScopeLink,
 )
 
+_DERIVED_TOPOLOGY_ORIGINS = {"resolved_claim", "candidate_source"}
+
 
 def reset_derived_topology_for_artifacts(
     artifacts: Iterable[CatalogueSourceArtifact],
@@ -43,7 +45,7 @@ def reset_derived_topology_for_artifacts(
         )
     ):
         provenance = link.provenance_json or {}
-        if provenance.get("claim_id") or provenance.get("source_role"):
+        if provenance.get("derived_from") in _DERIVED_TOPOLOGY_ORIGINS:
             session.delete(link)
         else:
             remaining_links.append(link)
@@ -53,7 +55,7 @@ def reset_derived_topology_for_artifacts(
         select(CatalogueScopeEdge).where(CatalogueScopeEdge.candidate_id == candidate_id)
     ):
         provenance = edge.provenance_json or {}
-        if provenance.get("claim_id"):
+        if provenance.get("derived_from") in _DERIVED_TOPOLOGY_ORIGINS:
             session.delete(edge)
         else:
             remaining_edges.append(edge)
