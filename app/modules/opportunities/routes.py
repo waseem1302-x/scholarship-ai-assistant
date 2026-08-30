@@ -9,6 +9,9 @@ from app.core.errors import ErrorResponse
 from app.db.session import get_db
 from app.modules.auth.dependencies import require_admin_step_up, require_roles
 from app.modules.auth.models import User, UserRole
+from app.modules.catalogue_ingestion.opportunity_publication_guard import (
+    CatalogueAwareOpportunityService,
+)
 from app.modules.opportunities.graph_schemas import OpportunityGraphResponse
 from app.modules.opportunities.models import (
     ApplicationWindowState,
@@ -64,7 +67,10 @@ CONFLICT_RESPONSE = {
 def get_opportunity_service(
     session: Annotated[Session, Depends(get_db)],
 ) -> OpportunityService:
-    return OpportunityService(session)
+    # Manual opportunities retain the existing service behavior. Opportunities created by
+    # catalogue ingestion gain an additional publication-readiness guard before the same
+    # authorized review transition is invoked.
+    return CatalogueAwareOpportunityService(session)
 
 
 AdminUser = Annotated[User, Depends(require_admin_step_up)]
