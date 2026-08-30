@@ -63,6 +63,8 @@ from app.modules.opportunities.service import OpportunityService
 CATALOGUE_GRAPH_MATERIALIZER_VERSION = "catalogue-rich-graph.v1"
 
 _GroupKey = tuple[ClaimEntityType, str, str]
+_FieldEntityKey = tuple[_GroupKey, str]
+_FieldEntityTarget = tuple[object, str]
 
 
 class CatalogueGraphMaterializer:
@@ -159,6 +161,7 @@ class CatalogueGraphMaterializer:
 
         groups = _claim_groups(resolution.resolved)
         group_entity: dict[_GroupKey, object] = {}
+        field_entity: dict[_FieldEntityKey, _FieldEntityTarget] = {}
         for key in groups:
             if key[0] is ClaimEntityType.SCHOLARSHIP:
                 group_entity[key] = opportunity
@@ -174,6 +177,7 @@ class CatalogueGraphMaterializer:
             track_by_key=track_by_key,
             institution_by_key=institution_by_key,
             source_by_artifact=source_by_artifact,
+            field_entity=field_entity,
         )
         programmes_by_key = self._materialize_programmes(
             candidate_id,
@@ -204,6 +208,7 @@ class CatalogueGraphMaterializer:
             proposal_hash=proposal_hash,
             resolution=resolution,
             group_entity=group_entity,
+            field_entity=field_entity,
             snapshot_by_artifact=snapshot_by_artifact,
         )
         self.session.flush()
@@ -232,7 +237,11 @@ class CatalogueGraphMaterializer:
 
         ordered_artifacts = sorted(
             artifacts.values(),
-            key=lambda item: (item.source_id != primary_artifact.source_id, str(item.source_id), str(item.id)),
+            key=lambda item: (
+                item.source_id != primary_artifact.source_id,
+                str(item.source_id),
+                str(item.id),
+            ),
         )
         for artifact in ordered_artifacts:
             source = source_by_candidate_source.get(artifact.source_id)
@@ -388,9 +397,13 @@ class CatalogueGraphMaterializer:
         track_by_key: dict[str, ApplicationTrack],
         institution_by_key: dict[str, Institution],
         source_by_artifact: dict[str, Source],
+        field_entity: dict[_FieldEntityKey, _FieldEntityTarget],
     ) -> None:
-        seen: set[tuple[uuid.UUID, uuid.UUID, str]] = set()
-        for key, items in sorted(groups.items(), key=lambda value: (value[0][0].value, value[0][1], value[0][2])):
+        seen: dict[tuple[uuid.UUID, uuid.UUID, str], InstitutionParticipation] = {}
+        for key, items in sorted(
+            groups.items(),
+            key=lambda value: (value[0][0].value, value[0][1], value[0][2]),
+        ):
             if key[0] is not ClaimEntityType.INSTITUTION:
                 continue
             scope = items[0].claim.scope
@@ -403,12 +416,10 @@ class CatalogueGraphMaterializer:
             fields = _fields(items)
             role = _optional_single_text(fields, "role") or "participating"
             identity = (track.id, institution.id, role)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            support = min(items, key=lambda item: (item.trust_tier, item.artifact_id))
-            self.session.add(
-                InstitutionParticipation(
+            participation = seen.get(identity)
+            if participation is None:
+                support = min(items, key=lambda item: (item.trust_tier, item.artifact_id))
+                participation = InstitutionParticipation(
                     scholarship_id=opportunity.id,
                     cycle_id=cycle.id,
                     track_id=track.id,
@@ -418,7 +429,15 @@ class CatalogueGraphMaterializer:
                     application_url=_optional_single_text(fields, "application_url"),
                     source_id=source_by_artifact[support.artifact_id].id,
                 )
-            )
+                self.session.add(participation)
+                self.session.flush()
+                seen[identity] = participation
+            for relationship_field in ("role", "application_url"):
+                if fields.get(relationship_field):
+                    field_entity[(key, relationship_field)] = (
+                        participation,
+                        "institution_participation",
+                    )
 
     def _materialize_programmes(
         self,
@@ -433,7 +452,10 @@ class CatalogueGraphMaterializer:
         institution_by_key: dict[str, Institution],
     ) -> dict[str, list[tuple[ClaimScope, ScholarshipProgramme]]]:
         programmes_by_key: dict[str, list[tuple[ClaimScope, ScholarshipProgramme]]] = defaultdict(list)
-        for key, items in sorted(groups.items(), key=lambda value: (value[0][0].value, value[0][1], value[0][2])):
+        for key, items in sorted(
+            groups.items(),
+            key=lambda value: (value[0][0].value, value[0][1], value[0][2]),
+        ):
             if key[0] is not ClaimEntityType.PROGRAMME:
                 continue
             fields = _fields(items)
@@ -498,7 +520,10 @@ class CatalogueGraphMaterializer:
             ClaimEntityType.STEP,
             ClaimEntityType.RESOURCE,
         }
-        for key, items in sorted(groups.items(), key=lambda value: (value[0][0].value, value[0][1], value[0][2])):
+        for key, items in sorted(
+            groups.items(),
+            key=lambda value: (value[0][0].value, value[0][1], value[0][2]),
+        ):
             entity_type, entity_key, _scope_json = key
             if entity_type not in supported:
                 continue
@@ -676,11 +701,17 @@ class CatalogueGraphMaterializer:
         proposal_hash: str,
         resolution: ClaimResolution,
         group_entity: dict[_GroupKey, object],
+        field_entity: dict[_FieldEntityKey, _FieldEntityTarget],
         snapshot_by_artifact: dict[str, SourceSnapshot],
     ) -> None:
         for item in resolution.resolved:
             key = _group_key(item)
-            entity = group_entity.get(key)
+            override = field_entity.get((key, item.claim.field_path))
+            if override is not None:
+                entity, evidence_entity_type = override
+            else:
+                entity = group_entity.get(key)
+                evidence_entity_type = item.claim.entity_type.value
             if entity is None:
                 raise ValueError(
                     f"No operational entity for claim {item.claim.entity_type.value}:"
@@ -694,7 +725,7 @@ class CatalogueGraphMaterializer:
                 raise ValueError(f"Claim references unmapped source artifact {item.artifact_id}")
             evidence = self.session.scalar(
                 select(FieldEvidence).where(
-                    FieldEvidence.entity_type == item.claim.entity_type.value,
+                    FieldEvidence.entity_type == evidence_entity_type,
                     FieldEvidence.entity_id == entity_id,
                     FieldEvidence.field_path == item.claim.field_path,
                     FieldEvidence.source_snapshot_id == snapshot.id,
@@ -705,7 +736,7 @@ class CatalogueGraphMaterializer:
             )
             if evidence is None:
                 evidence = FieldEvidence(
-                    entity_type=item.claim.entity_type.value,
+                    entity_type=evidence_entity_type,
                     entity_id=entity_id,
                     field_path=item.claim.field_path,
                     source_snapshot_id=snapshot.id,
@@ -733,11 +764,13 @@ class CatalogueGraphMaterializer:
                         review_id=review_id,
                         proposal_hash=proposal_hash,
                         claim_id=claim_id,
-                        entity_type=item.claim.entity_type.value,
+                        entity_type=evidence_entity_type,
                         entity_id=entity_id,
                         field_path=item.claim.field_path,
                         field_evidence_id=evidence.id,
                         provenance_json={
+                            "claim_entity_type": item.claim.entity_type.value,
+                            "claim_entity_key": item.claim.entity_key,
                             "artifact_id": item.artifact_id,
                             "source_id": item.source_id,
                             "source_url": item.source_url,
