@@ -439,6 +439,7 @@ class CatalogueExtractionAttempt(Base):
             "prompt_hash",
             "provider",
             "model",
+            "extraction_job_key",
             name="uq_catalogue_extraction_version",
         ),
         Index("ix_catalogue_extraction_attempts_status_created", "status", "created_at"),
@@ -456,6 +457,9 @@ class CatalogueExtractionAttempt(Base):
     schema_version: Mapped[str] = mapped_column(String(100))
     content_hash: Mapped[str] = mapped_column(String(64))
     prompt_hash: Mapped[str] = mapped_column(String(64))
+    extraction_job_key: Mapped[str] = mapped_column(
+        String(64), default="", server_default="", index=True
+    )
     status: Mapped[ExtractionAttemptStatus] = mapped_column(
         Enum(
             ExtractionAttemptStatus,
