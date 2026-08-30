@@ -112,6 +112,7 @@ from app.modules.opportunities.materialization_models import (
     CatalogueMaterializedClaimLink,
     OpportunityEvent,
     OpportunityResource,
+    ScholarshipEligibilityRule,
     ScholarshipProgramme,
 )
 from app.modules.opportunities.models import (
@@ -210,6 +211,7 @@ __all__ = [
     "RequiredDocument",
     "SavedOpportunity",
     "ScholarshipAlias",
+    "ScholarshipEligibilityRule",
     "ScholarshipProgramme",
     "ScholarshipRelationship",
     "ScopedDeadline",
