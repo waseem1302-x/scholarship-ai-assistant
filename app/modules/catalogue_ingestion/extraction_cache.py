@@ -105,7 +105,9 @@ class CatalogueExtractionCache:
             raise ValueError("cache artifact does not belong to source")
         if any(block.source_artifact_id != artifact.id for block in blocks):
             raise ValueError("cache evidence block does not belong to artifact")
-        objective_bundle = tuple(sorted({str(value).strip() for value in objectives if str(value).strip()}))
+        objective_bundle = tuple(
+            sorted({str(value).strip() for value in objectives if str(value).strip()})
+        )
         if not objective_bundle:
             raise ValueError("cache objective bundle cannot be empty")
         return ExtractionCacheIdentity(
@@ -142,6 +144,11 @@ class CatalogueExtractionCache:
                 CatalogueExtractionCacheEntry.cache_key == identity.cache_key
             )
         )
+        hit_reason = "all_cache_identity_dimensions_match"
+        if entry is None:
+            entry = self._resolver_compatible_entry(identity)
+            if entry is not None:
+                hit_reason = "resolver_version_changed_revalidated"
         if entry is None:
             self.record_event(
                 identity.cache_key,
@@ -165,17 +172,25 @@ class CatalogueExtractionCache:
                     run_id=run_id,
                     candidate_id=candidate_id,
                     source_artifact_id=source_artifact_id,
-                    detail={"entry_id": str(entry.id)},
+                    detail={
+                        "entry_id": str(entry.id),
+                        "entry_resolver_version": entry.resolver_version,
+                        "requested_resolver_version": identity.resolver_version,
+                    },
                 )
                 return None
         self.record_event(
             identity.cache_key,
             decision=ExtractionCacheDecision.HIT,
-            reason="all_cache_identity_dimensions_match",
+            reason=hit_reason,
             run_id=run_id,
             candidate_id=candidate_id,
             source_artifact_id=source_artifact_id,
-            detail={"entry_id": str(entry.id)},
+            detail={
+                "entry_id": str(entry.id),
+                "entry_resolver_version": entry.resolver_version,
+                "requested_resolver_version": identity.resolver_version,
+            },
         )
         return entry
 
@@ -248,6 +263,38 @@ class CatalogueExtractionCache:
         self.session.flush()
         return event
 
+    def _resolver_compatible_entry(
+        self,
+        identity: ExtractionCacheIdentity,
+    ) -> CatalogueExtractionCacheEntry | None:
+        """Reuse raw extraction when only downstream resolution rules changed."""
+
+        return self.session.scalar(
+            select(CatalogueExtractionCacheEntry)
+            .where(
+                CatalogueExtractionCacheEntry.normalized_content_hash
+                == identity.normalized_content_hash,
+                CatalogueExtractionCacheEntry.authority_context_hash
+                == identity.authority_context_hash,
+                CatalogueExtractionCacheEntry.evidence_block_set_hash
+                == identity.evidence_block_set_hash,
+                CatalogueExtractionCacheEntry.scope_fingerprint == identity.scope_fingerprint,
+                CatalogueExtractionCacheEntry.objective_bundle_hash
+                == identity.objective_bundle_hash,
+                CatalogueExtractionCacheEntry.prompt_hash == identity.prompt_hash,
+                CatalogueExtractionCacheEntry.schema_version == identity.schema_version,
+                CatalogueExtractionCacheEntry.parser_version == identity.parser_version,
+                CatalogueExtractionCacheEntry.normalizer_version == identity.normalizer_version,
+                CatalogueExtractionCacheEntry.validator_version == identity.validator_version,
+                CatalogueExtractionCacheEntry.provider == identity.provider,
+                CatalogueExtractionCacheEntry.model == identity.model,
+                CatalogueExtractionCacheEntry.capability_identity_hash
+                == identity.capability_identity_hash,
+                CatalogueExtractionCacheEntry.cache_version == identity.cache_version,
+            )
+            .order_by(CatalogueExtractionCacheEntry.created_at.desc())
+        )
+
     def _authority_context_hash(
         self,
         source: CatalogueCandidateSource,
@@ -256,7 +303,10 @@ class CatalogueExtractionCache:
         links = list(
             self.session.execute(
                 select(CatalogueSourceScopeLink, CatalogueScopeNode)
-                .join(CatalogueScopeNode, CatalogueScopeNode.id == CatalogueSourceScopeLink.scope_node_id)
+                .join(
+                    CatalogueScopeNode,
+                    CatalogueScopeNode.id == CatalogueSourceScopeLink.scope_node_id,
+                )
                 .where(
                     CatalogueSourceScopeLink.source_id == source.id,
                     (
