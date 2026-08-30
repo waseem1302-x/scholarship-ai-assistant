@@ -63,21 +63,18 @@ from app.modules.catalogue_ingestion.models import (
     ExtractionAttemptStatus,
     IngestionMode,
 )
+from app.modules.catalogue_ingestion.pipeline_versions import (
+    BUNDLE_NORMALIZER_VERSION,
+    BUNDLE_PROVIDER_PARSER_VERSION,
+    BUNDLE_RESOLVER_VERSION,
+    BUNDLE_VALIDATOR_VERSION,
+)
 from app.modules.catalogue_ingestion.provider import (
     ExtractionProviderError,
     ExtractionSchemaError,
 )
-from app.modules.catalogue_ingestion.provider_execution import (
-    CATALOGUE_PROVIDER_NORMALIZER_VERSION,
-    CATALOGUE_PROVIDER_PARSER_VERSION,
-    ProviderExecutionBudgetExhausted,
-)
+from app.modules.catalogue_ingestion.provider_execution import ProviderExecutionBudgetExhausted
 from app.modules.opportunities.source_monitor import FetchedSource
-
-BUNDLE_PROVIDER_PARSER_VERSION = f"{CATALOGUE_PROVIDER_PARSER_VERSION}.claim-bundle.v1"
-BUNDLE_NORMALIZER_VERSION = f"{CATALOGUE_PROVIDER_NORMALIZER_VERSION}.claim-bundle.v1"
-BUNDLE_RESOLVER_VERSION = "catalogue-claim-resolution.v1"
-BUNDLE_VALIDATOR_VERSION = "catalogue-claim-bundle-validation.v1"
 
 
 @dataclass(slots=True)
@@ -306,7 +303,12 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             if resumable.state is CatalogueJobState.SUCCEEDED:
                 outcome = str((resumable.checkpoint or {}).get("outcome") or "")
                 if outcome == "split":
-                    children = self._split_job(job, blocks_by_id=blocks_by_id, routes=job_routes, run=run)
+                    children = self._split_job(
+                        job,
+                        blocks_by_id=blocks_by_id,
+                        routes=job_routes,
+                        run=run,
+                    )
                     expected = list((resumable.checkpoint or {}).get("child_job_keys") or [])
                     actual = [child.job_key for child in children]
                     if expected and expected != actual:
@@ -773,33 +775,50 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         group: _BundleGroupAccumulator,
     ) -> None:
         self._heartbeat_candidate(run, candidate, run_lease_token)
-        attempt = CatalogueExtractionAttempt(
-            candidate_id=candidate.id,
-            source_id=group.source.id,
-            provider=self.bundle_claim_extractor.name,
-            model=self.bundle_claim_extractor.model,
-            schema_version=CLAIM_BUNDLE_SCHEMA_VERSION,
-            content_hash=group.artifact.content_hash,
-            prompt_hash=bundle_claim_prompt_hash(group.objectives),
-            status=(
-                ExtractionAttemptStatus.SUCCEEDED
-                if group.provider_attempt_ids
-                else ExtractionAttemptStatus.REUSED
-            ),
-            output_json={
-                "schema_version": CLAIM_BUNDLE_SCHEMA_VERSION,
-                "objectives": [item.value for item in group.objectives],
-                "cache_keys": list(dict.fromkeys(group.cache_keys)),
-                "chunks": group.chunk_outputs,
-            },
-            error_code=None,
-            input_tokens=0,
-            output_tokens=0,
-            estimated_cost=Decimal("0"),
-            latency_ms=0,
+        prompt_hash = bundle_claim_prompt_hash(group.objectives)
+        extraction_job_key = self._bundle_group_job_key(candidate.id, group)
+        attempt = self.session.scalar(
+            select(CatalogueExtractionAttempt).where(
+                CatalogueExtractionAttempt.candidate_id == candidate.id,
+                CatalogueExtractionAttempt.source_id == group.source.id,
+                CatalogueExtractionAttempt.content_hash == group.artifact.content_hash,
+                CatalogueExtractionAttempt.schema_version == CLAIM_BUNDLE_SCHEMA_VERSION,
+                CatalogueExtractionAttempt.prompt_hash == prompt_hash,
+                CatalogueExtractionAttempt.provider == self.bundle_claim_extractor.name,
+                CatalogueExtractionAttempt.model == self.bundle_claim_extractor.model,
+                CatalogueExtractionAttempt.extraction_job_key == extraction_job_key,
+            )
         )
-        self.session.add(attempt)
-        self.session.flush()
+        if attempt is None:
+            attempt = CatalogueExtractionAttempt(
+                candidate_id=candidate.id,
+                source_id=group.source.id,
+                provider=self.bundle_claim_extractor.name,
+                model=self.bundle_claim_extractor.model,
+                schema_version=CLAIM_BUNDLE_SCHEMA_VERSION,
+                content_hash=group.artifact.content_hash,
+                prompt_hash=prompt_hash,
+                extraction_job_key=extraction_job_key,
+                status=(
+                    ExtractionAttemptStatus.SUCCEEDED
+                    if group.provider_attempt_ids
+                    else ExtractionAttemptStatus.REUSED
+                ),
+                output_json={
+                    "schema_version": CLAIM_BUNDLE_SCHEMA_VERSION,
+                    "objectives": [item.value for item in group.objectives],
+                    "cache_keys": sorted(set(group.cache_keys)),
+                    "chunks": group.chunk_outputs,
+                },
+                error_code=None,
+                input_tokens=0,
+                output_tokens=0,
+                estimated_cost=Decimal("0"),
+                latency_ms=0,
+            )
+            self.session.add(attempt)
+            self.session.flush()
+
         worker_id = candidate.claimed_by
         candidate_lease_token = candidate.lease_token
         if worker_id is None or candidate_lease_token is None:
@@ -969,6 +988,29 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             f"claim-bundle-provider|{candidate_id}|{cache_key}".encode("utf-8")
         ).hexdigest()
 
+    def _bundle_group_job_key(
+        self,
+        candidate_id: uuid.UUID,
+        group: _BundleGroupAccumulator,
+    ) -> str:
+        payload = "|".join(
+            (
+                "claim-bundle-attempt-v1",
+                str(candidate_id),
+                str(group.source.id),
+                group.artifact.content_hash,
+                CLAIM_BUNDLE_SCHEMA_VERSION,
+                bundle_claim_prompt_hash(group.objectives),
+                BUNDLE_PROVIDER_PARSER_VERSION,
+                BUNDLE_NORMALIZER_VERSION,
+                BUNDLE_RESOLVER_VERSION,
+                BUNDLE_VALIDATOR_VERSION,
+                *(item.value for item in group.objectives),
+                *sorted(set(group.cache_keys)),
+            )
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     @staticmethod
     def _legacy_graph_compatible(resolution) -> bool:
         from app.modules.catalogue_ingestion.claim_schemas import ClaimEntityType
@@ -983,9 +1025,5 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
 
 
 __all__ = [
-    "BUNDLE_NORMALIZER_VERSION",
-    "BUNDLE_PROVIDER_PARSER_VERSION",
-    "BUNDLE_RESOLVER_VERSION",
-    "BUNDLE_VALIDATOR_VERSION",
     "ProductionCatalogueIngestionService",
 ]
