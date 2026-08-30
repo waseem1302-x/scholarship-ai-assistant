@@ -10,9 +10,13 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.modules.auth.dependencies import require_admin_step_up, require_roles
 from app.modules.auth.models import User, UserRole
+from app.modules.catalogue_ingestion.extraction_preflight import (
+    build_candidate_extraction_preflight,
+)
 from app.modules.catalogue_ingestion.models import CandidateStatus
 from app.modules.catalogue_ingestion.production_service import ProductionCatalogueIngestionService
 from app.modules.catalogue_ingestion.schemas import (
+    CandidateExtractionPlanResponse,
     CandidateListResponse,
     CandidateResponse,
     CandidateRetryRequest,
@@ -31,7 +35,7 @@ AdminUser = Annotated[User, Depends(require_admin_step_up)]
 def get_service(
     session: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> CatalogueIngestionService:
+) -> ProductionCatalogueIngestionService:
     return ProductionCatalogueIngestionService(session, settings)
 
 
@@ -76,6 +80,18 @@ def list_candidates(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> CandidateListResponse:
     return service.list_candidates(status=status, run_id=run_id, limit=limit, offset=offset)
+
+
+@router.get(
+    "/candidates/{candidate_id}/extraction-plan",
+    response_model=CandidateExtractionPlanResponse,
+)
+def extraction_plan(
+    candidate_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[ProductionCatalogueIngestionService, Depends(get_service)],
+) -> CandidateExtractionPlanResponse:
+    return build_candidate_extraction_preflight(service, candidate_id)
 
 
 @router.get("/candidates/{candidate_id}", response_model=CandidateResponse)
