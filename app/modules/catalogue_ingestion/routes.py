@@ -1,4 +1,4 @@
-"""Minimal administrator visibility and handoff actions for staged catalogue candidates."""
+"""Administrator visibility, review, and publication actions for catalogue ingestion."""
 
 import uuid
 from typing import Annotated
@@ -15,6 +15,13 @@ from app.modules.catalogue_ingestion.extraction_preflight import (
 )
 from app.modules.catalogue_ingestion.models import CandidateStatus
 from app.modules.catalogue_ingestion.production_service import ProductionCatalogueIngestionService
+from app.modules.catalogue_ingestion.review_schemas import (
+    CatalogueCandidateReviewResponse,
+    CatalogueProposalReasonRequest,
+    CatalogueProposalVersionRequest,
+    CataloguePublicationReadinessResponse,
+)
+from app.modules.catalogue_ingestion.review_workflow import CatalogueReviewWorkflow
 from app.modules.catalogue_ingestion.schemas import (
     CandidateExtractionPlanResponse,
     CandidateListResponse,
@@ -37,6 +44,12 @@ def get_service(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ProductionCatalogueIngestionService:
     return ProductionCatalogueIngestionService(session, settings)
+
+
+def get_review_workflow(
+    session: Annotated[Session, Depends(get_db)],
+) -> CatalogueReviewWorkflow:
+    return CatalogueReviewWorkflow(session)
 
 
 @router.post("/runs/url", response_model=IngestionRunResponse)
@@ -119,5 +132,139 @@ def submit_candidate(
     payload: CandidateSubmitRequest,
     admin: AdminUser,
     service: Annotated[CatalogueIngestionService, Depends(get_service)],
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
 ) -> CandidateResponse:
-    return service.submit_candidate(candidate_id, notes=payload.notes, actor=admin)
+    # Preserve the existing endpoint/response contract while routing rich and legacy proposals
+    # through the durable review state machine instead of the old MEXT compatibility blocker.
+    workflow.submit(candidate_id, notes=payload.notes, actor=admin)
+    return service.candidate(candidate_id)
+
+
+@router.get(
+    "/candidates/{candidate_id}/review",
+    response_model=CatalogueCandidateReviewResponse,
+)
+def get_candidate_review(
+    candidate_id: uuid.UUID,
+    _admin: AdminReader,
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
+) -> CatalogueCandidateReviewResponse:
+    return workflow.review(candidate_id)
+
+
+@router.post(
+    "/candidates/{candidate_id}/review/approve",
+    response_model=CatalogueCandidateReviewResponse,
+)
+def approve_candidate_proposal(
+    candidate_id: uuid.UUID,
+    payload: CatalogueProposalVersionRequest,
+    admin: AdminUser,
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
+) -> CatalogueCandidateReviewResponse:
+    return workflow.approve(
+        candidate_id,
+        expected_proposal_hash=payload.expected_proposal_hash,
+        notes=payload.notes,
+        actor=admin,
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/review/reject",
+    response_model=CatalogueCandidateReviewResponse,
+)
+def reject_candidate_proposal(
+    candidate_id: uuid.UUID,
+    payload: CatalogueProposalReasonRequest,
+    admin: AdminUser,
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
+) -> CatalogueCandidateReviewResponse:
+    return workflow.reject(
+        candidate_id,
+        expected_proposal_hash=payload.expected_proposal_hash,
+        reason=payload.reason,
+        actor=admin,
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/review/request-changes",
+    response_model=CatalogueCandidateReviewResponse,
+)
+def request_candidate_proposal_changes(
+    candidate_id: uuid.UUID,
+    payload: CatalogueProposalReasonRequest,
+    admin: AdminUser,
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
+) -> CatalogueCandidateReviewResponse:
+    return workflow.request_changes(
+        candidate_id,
+        expected_proposal_hash=payload.expected_proposal_hash,
+        reason=payload.reason,
+        actor=admin,
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/review/retry-materialization",
+    response_model=CatalogueCandidateReviewResponse,
+)
+def retry_candidate_materialization(
+    candidate_id: uuid.UUID,
+    payload: CatalogueProposalVersionRequest,
+    admin: AdminUser,
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
+) -> CatalogueCandidateReviewResponse:
+    return workflow.retry_materialization(
+        candidate_id,
+        expected_proposal_hash=payload.expected_proposal_hash,
+        actor=admin,
+    )
+
+
+@router.get(
+    "/candidates/{candidate_id}/review/publication-readiness",
+    response_model=CataloguePublicationReadinessResponse,
+)
+def candidate_publication_readiness(
+    candidate_id: uuid.UUID,
+    _admin: AdminReader,
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
+) -> CataloguePublicationReadinessResponse:
+    return workflow.publication_readiness(candidate_id)
+
+
+@router.post(
+    "/candidates/{candidate_id}/review/mark-publication-ready",
+    response_model=CatalogueCandidateReviewResponse,
+)
+def mark_candidate_publication_ready(
+    candidate_id: uuid.UUID,
+    payload: CatalogueProposalVersionRequest,
+    admin: AdminUser,
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
+) -> CatalogueCandidateReviewResponse:
+    return workflow.mark_publication_ready(
+        candidate_id,
+        expected_proposal_hash=payload.expected_proposal_hash,
+        actor=admin,
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/review/publish",
+    response_model=CatalogueCandidateReviewResponse,
+)
+def publish_candidate_proposal(
+    candidate_id: uuid.UUID,
+    payload: CatalogueProposalVersionRequest,
+    admin: AdminUser,
+    workflow: Annotated[CatalogueReviewWorkflow, Depends(get_review_workflow)],
+) -> CatalogueCandidateReviewResponse:
+    return workflow.publish(
+        candidate_id,
+        expected_proposal_hash=payload.expected_proposal_hash,
+        notes=payload.notes,
+        actor=admin,
+    )
