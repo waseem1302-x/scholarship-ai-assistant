@@ -175,7 +175,7 @@ class FieldEvidence(Base):
     )
 
 
-def _scope_constraints(table_name: str) -> tuple[CheckConstraint, CheckConstraint]:
+def _scope_constraints(table_name: str) -> tuple[CheckConstraint, ...]:
     return (
         CheckConstraint(
             "track_id IS NULL OR cycle_id IS NOT NULL",
@@ -184,6 +184,14 @@ def _scope_constraints(table_name: str) -> tuple[CheckConstraint, CheckConstrain
         CheckConstraint(
             "programme_id IS NULL OR institution_id IS NOT NULL",
             name=f"ck_{table_name}_programme_requires_institution",
+        ),
+        CheckConstraint(
+            "scholarship_programme_id IS NULL OR cycle_id IS NOT NULL",
+            name=f"ck_{table_name}_scholarship_programme_requires_cycle",
+        ),
+        CheckConstraint(
+            "programme_id IS NULL OR scholarship_programme_id IS NULL",
+            name=f"ck_{table_name}_programme_domain_exclusive",
         ),
     )
 
@@ -196,6 +204,7 @@ def _scope_index(table_name: str) -> Index:
         "track_id",
         "institution_id",
         "programme_id",
+        "scholarship_programme_id",
     )
 
 
@@ -219,13 +228,18 @@ class ScopedDeadline(Base):
     programme_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("academic_programmes.id", ondelete="CASCADE"), index=True
     )
+    scholarship_programme_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("scholarship_programmes.id", ondelete="CASCADE"), index=True
+    )
     deadline_type: Mapped[str] = mapped_column(String(64), index=True)
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deadline_text: Mapped[str | None] = mapped_column(String(500))
     local_date: Mapped[date | None] = mapped_column(Date)
     deadline_precision: Mapped[str] = mapped_column(
         String(16), default="datetime", server_default="datetime"
     )
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", server_default="UTC")
+    varies_by: Mapped[str | None] = mapped_column(String(255))
     label: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -259,6 +273,9 @@ class FundingComponent(Base):
     )
     programme_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("academic_programmes.id", ondelete="CASCADE"), index=True
+    )
+    scholarship_programme_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("scholarship_programmes.id", ondelete="CASCADE"), index=True
     )
     component_type: Mapped[str] = mapped_column(String(64), index=True)
     coverage_status: Mapped[str] = mapped_column(String(32), index=True)
@@ -298,9 +315,19 @@ class RequiredDocument(Base):
     programme_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("academic_programmes.id", ondelete="CASCADE"), index=True
     )
+    scholarship_programme_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("scholarship_programmes.id", ondelete="CASCADE"), index=True
+    )
     document_key: Mapped[str] = mapped_column(String(120), index=True)
     name: Mapped[str] = mapped_column(String(255))
     required: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    condition: Mapped[str | None] = mapped_column(Text)
+    submission_stage: Mapped[str | None] = mapped_column(String(100), index=True)
+    original_count: Mapped[int | None] = mapped_column(Integer)
+    copy_count: Mapped[int | None] = mapped_column(Integer)
+    translation_requirement: Mapped[str | None] = mapped_column(Text)
+    certification_requirement: Mapped[str | None] = mapped_column(Text)
+    form_year: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
     display_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
@@ -334,6 +361,9 @@ class ApplicationStep(Base):
     )
     programme_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("academic_programmes.id", ondelete="CASCADE"), index=True
+    )
+    scholarship_programme_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("scholarship_programmes.id", ondelete="CASCADE"), index=True
     )
     step_code: Mapped[str] = mapped_column(String(120), index=True)
     title: Mapped[str] = mapped_column(String(255))
