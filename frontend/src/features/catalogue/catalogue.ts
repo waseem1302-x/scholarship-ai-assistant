@@ -76,7 +76,11 @@ export function deadlineLabel(value: string | null): string {
   if (!value) {
     return "Deadline varies";
   }
-  const days = Math.ceil((new Date(value).getTime() - Date.now()) / 86_400_000);
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) {
+    return "Deadline varies";
+  }
+  const days = Math.ceil((timestamp - Date.now()) / 86_400_000);
   if (days < 0) {
     return `Closed ${formatDate(value)}`;
   }
@@ -84,6 +88,65 @@ export function deadlineLabel(value: string | null): string {
     return `${days} days left`;
   }
   return `Deadline ${formatDate(value)}`;
+}
+
+export type UrgencyTier = "critical" | "soon" | "comfortable" | "relaxed" | "closed" | "varies";
+
+export interface DeadlineUrgency {
+  label: string;
+  tier: UrgencyTier;
+  icon: string;
+}
+
+export function getDeadlineUrgency(value: string | null): DeadlineUrgency {
+  if (!value) {
+    return { label: "Deadline varies", tier: "varies", icon: "🗓️" };
+  }
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) {
+    return { label: "Deadline varies", tier: "varies", icon: "🗓️" };
+  }
+  const days = Math.ceil((timestamp - Date.now()) / 86_400_000);
+  if (days < 0) {
+    return { label: `Closed ${formatDate(value)}`, tier: "closed", icon: "⚫" };
+  }
+  if (days === 0) {
+    return { label: "Closes today", tier: "critical", icon: "⏰" };
+  }
+  if (days === 1) {
+    return { label: "1 day left", tier: "critical", icon: "⏰" };
+  }
+  if (days <= 7) {
+    return { label: `${days} days left`, tier: "critical", icon: "⏰" };
+  }
+  if (days <= 30) {
+    return { label: `${days} days left`, tier: "soon", icon: "⚠" };
+  }
+  const months = Math.max(1, Math.round(days / 30));
+  if (months <= 3) {
+    return { label: `${months} ${months === 1 ? "month" : "months"} left`, tier: "comfortable", icon: "🟢" };
+  }
+  return { label: `${months} months left`, tier: "relaxed", icon: "🟢" };
+}
+
+export function getCountryFlag(country: string | null | undefined): string {
+  if (!country) return "🌐";
+  const normalized = country.toLowerCase();
+  if (normalized.includes("united kingdom") || normalized === "uk" || normalized.includes("britain")) return "🇬🇧";
+  if (normalized.includes("japan")) return "🇯🇵";
+  if (normalized.includes("malaysia")) return "🇲🇾";
+  if (normalized.includes("australia")) return "🇦🇺";
+  if (normalized.includes("united states") || normalized === "usa" || normalized === "us") return "🇺🇸";
+  if (normalized.includes("germany")) return "🇩🇪";
+  if (normalized.includes("canada")) return "🇨🇦";
+  if (normalized.includes("europe") || normalized.includes("eu") || normalized.includes("erasmus")) return "🇪🇺";
+  if (normalized.includes("singapore")) return "🇸🇬";
+  if (normalized.includes("france")) return "🇫🇷";
+  if (normalized.includes("netherlands")) return "🇳🇱";
+  if (normalized.includes("china")) return "🇨🇳";
+  if (normalized.includes("korea")) return "🇰🇷";
+  if (normalized.includes("pakistan")) return "🇵🇰";
+  return "🌐";
 }
 
 export async function searchOpportunities(filters: CatalogueFilters, offset: number, signal?: AbortSignal) {

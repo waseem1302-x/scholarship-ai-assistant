@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { catalogueSearch, deadlineLabel, filtersFromSearch } from "./catalogue";
-import { defaultCatalogueFilters } from "./types";
+import {
 
 describe("catalogue query contract", () => {
   it("keeps open-now enabled and includes only selected structured filters", () => {
@@ -49,4 +48,4 @@ describe("catalogue query contract", () => {
     expect(deadlineLabel(null)).toBe("Deadline varies");
     expect(deadlineLabel(new Date(Date.now() + 86_400_000).toISOString())).toBe("1 days left");
   });
-});
+
