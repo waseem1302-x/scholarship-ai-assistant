@@ -58,6 +58,7 @@ from app.modules.catalogue_ingestion.models import (
     ClassificationDecision,
 )
 from app.modules.catalogue_ingestion.provider_attempts import CatalogueProviderAttempt
+from app.modules.catalogue_ingestion.review_models import CatalogueCandidateReview
 from app.modules.catalogue_ingestion.topology_models import (
     CatalogueCoverageCell,
     CatalogueScopeEdge,
@@ -144,6 +145,7 @@ __all__ = [
     "BetaLegalAcceptance",
     "CatalogueAcquisitionSnapshot",
     "CatalogueCandidate",
+    "CatalogueCandidateReview",
     "CatalogueCandidateSource",
     "CatalogueCoverageCell",
     "CatalogueDiscoveryAssessment",
