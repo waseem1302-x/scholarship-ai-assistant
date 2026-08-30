@@ -170,6 +170,9 @@ class FieldEvidence(Base):
         server_default=EvidenceValidatorStatus.PENDING.value,
         index=True,
     )
+    # New evidence writes persist an explicit named trust domain. Historical rows remain NULL
+    # rather than being reinterpreted from legacy metadata without proof.
+    trust_domain: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )
@@ -281,7 +284,10 @@ class FundingComponent(Base):
     coverage_status: Mapped[str] = mapped_column(String(32), index=True)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     currency: Mapped[str | None] = mapped_column(String(3))
-    frequency: Mapped[str | None] = mapped_column(String(32))
+    frequency: Mapped[str | None] = mapped_column(String(32), index=True)
+    unit: Mapped[str | None] = mapped_column(String(64))
+    qualifier: Mapped[str | None] = mapped_column(Text)
+    original_text: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
@@ -367,6 +373,12 @@ class ApplicationStep(Base):
     )
     step_code: Mapped[str] = mapped_column(String(120), index=True)
     title: Mapped[str] = mapped_column(String(255))
+    stage_type: Mapped[str | None] = mapped_column(String(100), index=True)
+    required: Mapped[bool | None] = mapped_column(Boolean)
+    actor_type: Mapped[str | None] = mapped_column(String(100))
+    actor_name: Mapped[str | None] = mapped_column(String(255))
+    outcome: Mapped[str | None] = mapped_column(Text)
+    original_text: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     application_url: Mapped[str | None] = mapped_column(String(2048))
     display_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
