@@ -20,6 +20,12 @@ from app.modules.catalogue_ingestion.claim_schemas import (
 from app.modules.catalogue_ingestion.models import CatalogueSourceArtifact
 from app.modules.catalogue_ingestion.scoped_completeness import evaluate_scoped_completeness
 from app.modules.catalogue_ingestion.topology_recompute import reset_derived_topology_for_artifacts
+from app.modules.catalogue_ingestion.trust_domains import (
+    OFFICIAL_FACTUAL_DOMAINS,
+    EvidenceTrustDomain,
+    trust_domain_for_source_tier,
+    trust_domain_rank,
+)
 
 
 def resolve_claims(
@@ -34,7 +40,25 @@ def resolve_claims(
     rejected: list[str] = []
     rejection_records: list[ClaimRejectionRecord] = []
     for artifact, trust_tier, claims in extracted_items:
+        trust_domain = _artifact_trust_domain(artifact, trust_tier)
         for claim in claims:
+            if trust_domain not in OFFICIAL_FACTUAL_DOMAINS:
+                reason = f"non_factual_trust_domain:{trust_domain.value}"
+                rejected.append(
+                    f"{artifact.id}:{claim.entity_type.value}:{claim.entity_key}:"
+                    f"{claim.field_path}:{reason}"
+                )
+                rejection_records.append(
+                    ClaimRejectionRecord(
+                        artifact_id=str(artifact.id),
+                        entity_type=claim.entity_type,
+                        entity_key=claim.entity_key,
+                        field_path=claim.field_path,
+                        scope=claim.scope,
+                        reason=reason,
+                    )
+                )
+                continue
             if claim.field_path not in SUPPORTED_CLAIM_FIELDS[claim.entity_type]:
                 reason = "unsupported_field_path"
                 rejected.append(
@@ -96,6 +120,7 @@ def resolve_claims(
                 source_url=artifact.final_url,
                 content_hash=artifact.content_hash,
                 trust_tier=trust_tier,
+                trust_domain=trust_domain,
             )
             resolved.claim_id = _resolved_claim_id(resolved)
             candidates[key].append(resolved)
@@ -105,8 +130,14 @@ def resolve_claims(
     conflict_records: list[ClaimConflictRecord] = []
     for key in sorted(candidates):
         values = candidates[key]
-        best_tier = min(item.trust_tier for item in values)
-        best = [item for item in values if item.trust_tier == best_tier]
+        best_authority = min(
+            (trust_domain_rank(item.trust_domain), item.trust_tier) for item in values
+        )
+        best = [
+            item
+            for item in values
+            if (trust_domain_rank(item.trust_domain), item.trust_tier) == best_authority
+        ]
         by_value: dict[str, list[ResolvedClaim]] = defaultdict(list)
         for item in best:
             normalized = json.dumps(
@@ -147,10 +178,13 @@ def resolve_claims(
                     )
 
     scoped_types = {
+        ClaimEntityType.ELIGIBILITY,
         ClaimEntityType.DEADLINE,
+        ClaimEntityType.EVENT,
         ClaimEntityType.FUNDING,
         ClaimEntityType.DOCUMENT,
         ClaimEntityType.STEP,
+        ClaimEntityType.RESOURCE,
     }
     scopes_by_key: dict[tuple[ClaimEntityType, str, str], set[str]] = defaultdict(set)
     for item in resolved_claims:
@@ -251,11 +285,32 @@ def resolve_claims(
     )
 
 
+def _artifact_trust_domain(
+    artifact: CatalogueSourceArtifact,
+    effective_trust_tier: int,
+) -> EvidenceTrustDomain:
+    source = getattr(artifact, "source", None)
+    if source is not None:
+        return trust_domain_for_source_tier(
+            is_official=bool(source.is_official),
+            trust_tier=source.trust_tier,
+        )
+    # Detached compatibility callers historically pass either the base tier or the production
+    # base-tier×10 effective rank. This fallback is deliberately limited to the reviewed 1–3 tiers.
+    base_tier = effective_trust_tier // 10 if effective_trust_tier >= 10 else effective_trust_tier
+    return trust_domain_for_source_tier(
+        is_official=base_tier in {1, 2, 3},
+        trust_tier=base_tier if base_tier in {1, 2, 3} else None,
+    )
+
+
 def _cycle_aliases(
     extracted: list[tuple[CatalogueSourceArtifact, int, list[ExtractedClaim]]],
 ) -> dict[str, int]:
     years_by_alias: dict[str, set[int]] = defaultdict(set)
-    for artifact, _trust_tier, claims in extracted:
+    for artifact, trust_tier, claims in extracted:
+        if _artifact_trust_domain(artifact, trust_tier) not in OFFICIAL_FACTUAL_DOMAINS:
+            continue
         for claim in claims:
             if (
                 claim.entity_type is ClaimEntityType.CYCLE
@@ -341,6 +396,7 @@ def _resolved_claim_id(item: ResolvedClaim) -> str:
         "value": item.claim.value.model_dump(mode="json"),
         "excerpt_start": item.claim.excerpt_start,
         "excerpt_end": item.claim.excerpt_end,
+        "trust_domain": item.trust_domain.value if item.trust_domain else None,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -426,12 +482,18 @@ def _allows_multiple_values(claim: ExtractedClaim) -> bool:
         (ClaimEntityType.PROGRAMME, "fields_of_study"),
         (ClaimEntityType.PROGRAMME, "application_route_keys"),
         (ClaimEntityType.ELIGIBILITY, "condition"),
+        (ClaimEntityType.ELIGIBILITY, "original_text"),
         (ClaimEntityType.ELIGIBILITY, "notes"),
+        (ClaimEntityType.FUNDING, "qualifier"),
+        (ClaimEntityType.FUNDING, "original_text"),
         (ClaimEntityType.FUNDING, "description"),
         (ClaimEntityType.DOCUMENT, "condition"),
         (ClaimEntityType.DOCUMENT, "notes"),
         (ClaimEntityType.DEADLINE, "notes"),
         (ClaimEntityType.EVENT, "notes"),
+        (ClaimEntityType.STEP, "outcome"),
+        (ClaimEntityType.STEP, "original_text"),
         (ClaimEntityType.STEP, "description"),
+        (ClaimEntityType.RESOURCE, "original_text"),
         (ClaimEntityType.RESOURCE, "notes"),
     }
