@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 
 import { ApiError, apiClient } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
@@ -42,11 +42,12 @@ type Preferences = {
 type Conversation = { id: string; title: string | null; created_at: string };
 type ConversationDetail = Conversation & { answers: Answer[] };
 
-const suggestions = [
-  "Find master's scholarships in Malaysia",
-  "What funding is listed for computer science scholarships?",
-  "Which requirements should I confirm before applying?",
-  "Show my application progress",
+const scholarshipTools = [
+  { id: "advisor", icon: "💬", label: "General Advisor", defaultPrompt: "" },
+  { id: "auditor", icon: "🎯", label: "Eligibility Auditor", defaultPrompt: "Evaluate my GPA, nationality, and degree level eligibility for " },
+  { id: "essay", icon: "✍️", label: "Essay & SOP Lab", defaultPrompt: "Help me outline a 500-word leadership essay using the STAR framework for " },
+  { id: "documents", icon: "📁", label: "Document Reviewer", defaultPrompt: "What specific academic transcripts and documents are required for " },
+  { id: "interview", icon: "🎙️", label: "Interview Coach", defaultPrompt: "Simulate top 5 interview questions and model answers for " },
 ];
 
 function assistantErrorMessage(error: unknown): string {
@@ -58,15 +59,26 @@ function assistantErrorMessage(error: unknown): string {
 
 function CitationRefs({ ids, citations }: { ids: string[]; citations: Citation[] }) {
   if (!ids.length) return null;
-  return <span className="citation-refs">{ids.map((id) => {
-    const index = citations.findIndex((citation) => citation.id === id);
-    const citation = citations[index];
-    return citation ? <a key={id} href={citation.source_url} target="_blank" rel="noreferrer">[{index + 1}]</a> : <span key={id}>[?]</span>;
-  })}</span>;
+  return (
+    <span className="citation-refs">
+      {ids.map((id) => {
+        const index = citations.findIndex((citation) => citation.id === id);
+        const citation = citations[index];
+        return citation ? (
+          <a key={id} href={citation.source_url} target="_blank" rel="noreferrer">
+            [{index + 1}]
+          </a>
+        ) : (
+          <span key={id}>[?]</span>
+        );
+      })}
+    </span>
+  );
 }
 
 export function AssistantPage() {
   const { user, isRestoring } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [loading, setLoading] = useState(false);
@@ -75,6 +87,16 @@ export function AssistantPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [useProfile, setUseProfile] = useState(false);
   const [useApplicationData, setUseApplicationData] = useState(false);
+  const [activeTool, setActiveTool] = useState("advisor");
+  const [activeFocus, setActiveFocus] = useState<string | null>(searchParams.get("opportunity"));
+  const [searchFilter, setSearchFilter] = useState("");
+
+  useEffect(() => {
+    const initialPrompt = searchParams.get("prompt");
+    if (initialPrompt) {
+      setQuestion(initialPrompt);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (user) {
@@ -144,9 +166,10 @@ export function AssistantPage() {
     setLoading(true);
     setNotice(null);
     try {
+      const fullQuestion = activeFocus ? `[Regarding ${activeFocus}]: ${question}` : question;
       const result = await apiClient.request<Answer>("/assistant/answers", {
         method: "POST",
-        body: JSON.stringify({ question, use_profile: useProfile, use_application_data: useApplicationData }),
+        body: JSON.stringify({ question: fullQuestion, use_profile: useProfile, use_application_data: useApplicationData }),
       });
       setAnswer(result);
       if (result.status === "failed") {
@@ -190,49 +213,443 @@ export function AssistantPage() {
     setNotice("Thanks—your feedback was recorded.");
   }
 
-  return <main className="assistant-page page-width">
-    <section className="assistant-intro">
-      <p className="eyebrow">Private citation-first assistant</p>
-      <h1>Research scholarships with evidence in view.</h1>
-      <p>Answers use verified scholarship sources. Always confirm requirements, deadlines, funding, and eligibility directly with the provider.</p>
-    </section>
-    <section className="assistant-panel">
-      {!preferences ? <p>Loading privacy settings…</p> : !preferences.consented ? <div className="assistant-warning" role="alert">
-        <strong>Data-use notice</strong>
-        <p>The assistant uses your question and, only when selected, your profile or application workspace to search verified scholarship sources. Chat history is retained for {preferences.history_retention_days} days; feedback for {preferences.feedback_retention_days} days. It never reads documents, notes, or another student’s data.</p>
-        <button className="button button-primary" type="button" onClick={consent}>I understand and agree</button>
-      </div> : <div className="assistant-settings">
-        <span>History: {preferences.history_enabled ? "enabled" : "disabled"}</span>
-        <button type="button" onClick={toggleHistory}>{preferences.history_enabled ? "Disable assistant history" : "Enable assistant history"}</button>
-        <button type="button" onClick={exportData}>Export assistant data</button>
-        <button type="button" className="button-danger" onClick={deleteAllData}>Delete assistant data</button>
-      </div>}
-      <form onSubmit={ask} className="assistant-form">
-        <label htmlFor="assistant-question">Ask about scholarships, requirements, funding, deadlines, or your progress</label>
-        <textarea id="assistant-question" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={4000} required placeholder="For example: Find master's scholarships in Malaysia" />
-        <label className="assistant-opt-in"><input type="checkbox" checked={useProfile} onChange={(event) => setUseProfile(event.target.checked)} /> Use my profile for this question</label>
-        <label className="assistant-opt-in"><input type="checkbox" checked={useApplicationData} onChange={(event) => setUseApplicationData(event.target.checked)} /> Use my private application workspace for progress or priority questions</label>
-        <div><button className="button button-primary" disabled={loading || !preferences?.consented}>{loading ? "Checking verified sources…" : "Ask assistant"}</button></div>
-      </form>
-      <div className="assistant-suggestions" aria-label="Supported question suggestions">{suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div>
-      {notice ? <p className="form-success" role="status">{notice}</p> : null}
-    </section>
-    {conversations.length ? <section className="assistant-conversations" aria-label="Assistant conversations">
-      <h2>Conversation history</h2><ul>{conversations.map((conversation) => <li key={conversation.id}>
-        <button type="button" className="assistant-conversation-open" onClick={() => openConversation(conversation.id)}>{conversation.title || `Conversation from ${new Date(conversation.created_at).toLocaleDateString()}`}</button>
-        <button type="button" onClick={() => deleteConversation(conversation.id)} aria-label="Delete conversation">Delete</button>
-      </li>)}</ul>
-    </section> : null}
-    {answer ? <section className="assistant-answer" aria-live="polite">
-      <div className="assistant-answer-head"><div><p className="eyebrow">{answer.status === "completed" ? "Source-backed response" : "Transparent uncertainty"}</p><h2>{answer.response.answer}</h2><p>Evidence confidence: {answer.response.confidence}</p></div>{answer.status === "completed" ? <button className="button button-quiet" type="button" onClick={save} disabled={answer.saved_to_workspace}>{answer.saved_to_workspace ? "Saved" : "Save result"}</button> : null}</div>
-      {answer.response.warnings.length ? <div className="assistant-warning" role="alert"><strong>Check before acting</strong><ul>{answer.response.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div> : null}
-      {answer.response.facts.length ? <div className="assistant-section"><h3>Verified facts</h3><ul>{answer.response.facts.map((fact) => <li key={fact.text}>{fact.text} <CitationRefs ids={fact.citation_ids} citations={answer.response.citations} /></li>)}</ul></div> : null}
-      {answer.response.possible_matches.length ? <div className="assistant-section"><h3>Possible matches</h3>{answer.response.possible_matches.map((match) => <article key={match.opportunity_id}><Link to={`/catalogue/${match.opportunity_id}`}>{match.name}</Link><p>{match.reason} <CitationRefs ids={match.citation_ids} citations={answer.response.citations} /></p><button type="button" onClick={() => startApplication(match.opportunity_id, match.name)}>Create application plan</button></article>)}</div> : null}
-      {answer.response.requirements_to_check.length ? <div className="assistant-section"><h3>Requirements to confirm</h3><ul>{answer.response.requirements_to_check.map((item) => <li key={item.text}>{item.text} <CitationRefs ids={item.citation_ids} citations={answer.response.citations} /></li>)}</ul></div> : null}
-      {answer.response.private_progress.length ? <div className="assistant-section"><h3>Private application progress</h3><ul>{answer.response.private_progress.map((item) => <li key={item.opportunity_id}><strong>{item.name}</strong>: {item.lifecycle}; {item.outstanding_tasks} outstanding task(s).</li>)}</ul></div> : null}
-      {answer.response.next_actions.length ? <div className="assistant-section"><h3>Suggested next steps</h3><ol>{answer.response.next_actions.map((item) => <li key={item}>{item}</li>)}</ol></div> : null}
-      {answer.response.citations.length ? <div className="assistant-section"><h3>Official citations</h3>{answer.response.citations.map((citation) => <article className="assistant-citation" key={citation.id}><div><strong>{citation.source_title}</strong><p>{citation.excerpt}</p><small>{citation.freshness} {citation.last_verified_at ? `· verified ${new Date(citation.last_verified_at).toLocaleDateString()}` : ""}</small></div><a className="button button-quiet" href={citation.source_url} target="_blank" rel="noreferrer" aria-label={`Open official source: ${citation.source_title}`}>Open source</a></article>)}</div> : null}
-      <footer className="assistant-feedback"><span>Was this response useful?</span>{["helpful", "not_helpful", "incorrect", "outdated", "missing_citation"].map((kind) => <button type="button" key={kind} onClick={() => feedback(kind)}>{kind.replaceAll("_", " ")}</button>)}</footer>
-    </section> : null}
-  </main>;
+  function handleToolClick(toolId: string, defaultPrompt: string) {
+    setActiveTool(toolId);
+    if (defaultPrompt) {
+      setQuestion(defaultPrompt + (activeFocus ? ` ${activeFocus}` : ""));
+    }
+  }
+
+  const filteredConversations = conversations.filter((c) =>
+    searchFilter ? (c.title || "").toLowerCase().includes(searchFilter.toLowerCase()) : true,
+  );
+
+  return (
+    <div className="copilot-page-wrapper">
+      <div className="copilot-app-window">
+        
+        {/* 1. LEFT NAVIGATION SIDEBAR */}
+        <aside className="copilot-sidebar">
+          <div className="sidebar-top-section">
+            
+            {/* Branding */}
+            <div className="copilot-brand-row">
+              <div className="copilot-brand-badge">
+                <div className="copilot-brand-logo">S/</div>
+                <div>
+                  <span className="copilot-brand-name">Scholarship AI</span>
+                  <span className="copilot-brand-tag">Official RAG Copilot</span>
+                </div>
+              </div>
+              <button
+                className="copilot-new-chat-btn"
+                type="button"
+                onClick={() => {
+                  setAnswer(null);
+                  setQuestion("");
+                  setActiveFocus(null);
+                  setSearchParams({});
+                }}
+                title="New Scholarship Session"
+              >
+                ✏️
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="copilot-search-box">
+              <span className="search-icon">🔍</span>
+              <input
+                type="text"
+                placeholder="Search sessions..."
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                className="copilot-search-input"
+              />
+            </div>
+
+            {/* Scholarship Tools Nav */}
+            <nav className="copilot-tools-nav">
+              <span className="nav-group-title">Scholarship Tools</span>
+              {scholarshipTools.map((tool) => (
+                <button
+                  key={tool.id}
+                  type="button"
+                  onClick={() => handleToolClick(tool.id, tool.defaultPrompt)}
+                  className={`copilot-tool-btn ${activeTool === tool.id ? "active" : ""}`}
+                >
+                  <span className="tool-btn-icon">{tool.icon}</span>
+                  <span className="tool-btn-label">{tool.label}</span>
+                  {activeTool === tool.id ? <span className="active-dot" /> : null}
+                </button>
+              ))}
+            </nav>
+
+            {/* Conversations History */}
+            {filteredConversations.length ? (
+              <div className="copilot-history-group">
+                <span className="nav-group-title">Recent Inquiries</span>
+                <div className="history-list">
+                  {filteredConversations.map((conversation) => (
+                    <div key={conversation.id} className="history-item-row">
+                      <button
+                        type="button"
+                        className="history-open-btn"
+                        onClick={() => openConversation(conversation.id)}
+                      >
+                        {conversation.title || `Inquiry from ${new Date(conversation.created_at).toLocaleDateString()}`}
+                      </button>
+                      <button
+                        type="button"
+                        className="history-delete-btn"
+                        onClick={() => deleteConversation(conversation.id)}
+                        title="Delete inquiry"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+          </div>
+
+          {/* Student Profile Footer */}
+          <div className="copilot-user-footer">
+            <div className="user-profile-summary">
+              <div className="user-avatar-pill">{user.email.slice(0, 2).toUpperCase()}</div>
+              <div className="user-text-meta">
+                <span className="user-display-email">{user.email}</span>
+                <span className="user-role-badge">Student Profile</span>
+              </div>
+            </div>
+            <Link className="profile-link-btn" to="/profile">
+              Profile ➔
+            </Link>
+          </div>
+        </aside>
+
+        {/* 2. RIGHT MAIN WORKSPACE */}
+        <main className="copilot-main-workspace">
+          
+          {/* Top Control Bar */}
+          <div className="copilot-top-bar">
+            {activeFocus ? (
+              <div className="copilot-focus-ribbon">
+                <span className="focus-label">Focus Context:</span>
+                <span className="focus-tag">
+                  <span>🎓</span> {activeFocus}
+                  <button
+                    type="button"
+                    className="focus-remove-btn"
+                    onClick={() => {
+                      setActiveFocus(null);
+                      setSearchParams({});
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              </div>
+            ) : (
+              <span className="copilot-session-status">Scholarship Assistant · Evidence-First</span>
+            )}
+
+            <div className="top-bar-right-controls">
+              <div className="source-scope-toggle">
+                <button type="button" className="scope-btn active">
+                  ✓ Verified Government RAG
+                </button>
+                <button type="button" className="scope-btn">
+                  🌐 Global Edu Web
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Privacy Notice Banner if not consented */}
+          {!preferences?.consented ? (
+            <div className="assistant-warning copilot-consent-banner" role="alert">
+              <strong>Data-use notice</strong>
+              <p>
+                The assistant uses your question and, only when selected, your profile or application workspace to search verified scholarship sources. Chat history is retained for {preferences?.history_retention_days ?? 30} days. It never reads documents, notes, or another student’s data.
+              </p>
+              <button className="button button-primary" type="button" onClick={consent}>
+                I understand and agree
+              </button>
+            </div>
+          ) : null}
+
+          {/* Content Area: Empty State Hero or Active Answer */}
+          <div className="copilot-content-area">
+            {!answer ? (
+              <div className="copilot-hero-empty-state">
+                <div className="hero-greeting-stack">
+                  <h1 className="hero-heading">
+                    Hi, what scholarship are we preparing today?
+                  </h1>
+                  <p className="hero-subheading">
+                    Connected to your student profile credentials and 450+ verified official awards.
+                  </p>
+                </div>
+
+                {/* 3 Quick-Starter Action Cards */}
+                <div className="copilot-action-cards-grid">
+                  <div
+                    className="copilot-starter-card"
+                    onClick={() =>
+                      setQuestion(
+                        "Audit my GPA, degree level, and work experience against Chevening 2026 criteria",
+                      )
+                    }
+                  >
+                    <div className="starter-card-top">
+                      <span className="starter-icon">📊</span>
+                      <span className="starter-badge badge-teal">Fit Audit</span>
+                    </div>
+                    <p className="starter-title">
+                      Audit my GPA & work experience for <strong className="text-blue">Chevening 2026</strong>
+                    </p>
+                    <span className="starter-subtext">Audits 6 statutory rules</span>
+                  </div>
+
+                  <div
+                    className="copilot-starter-card"
+                    onClick={() =>
+                      setQuestion(
+                        "Draft a 500-word Leadership Essay using the STAR framework for Commonwealth Scholarship",
+                      )
+                    }
+                  >
+                    <div className="starter-card-top">
+                      <span className="starter-icon">✍️</span>
+                      <span className="starter-badge badge-blue">Essay Lab</span>
+                    </div>
+                    <p className="starter-title">
+                      Draft 500-word Leadership Essay for <strong className="text-blue">Commonwealth</strong>
+                    </p>
+                    <span className="starter-subtext">Uses STAR framework</span>
+                  </div>
+
+                  <div
+                    className="copilot-starter-card"
+                    onClick={() =>
+                      setQuestion(
+                        "Generate a week-by-week application preparation plan for Fulbright 2026",
+                      )
+                    }
+                  >
+                    <div className="starter-card-top">
+                      <span className="starter-icon">📅</span>
+                      <span className="starter-badge badge-coral">Radar</span>
+                    </div>
+                    <p className="starter-title">
+                      Generate preparation milestones for <strong className="text-blue">Fulbright 2026</strong>
+                    </p>
+                    <span className="starter-subtext">Syncs with Tracker</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <section className="assistant-answer copilot-answer-view" aria-live="polite">
+                <div className="assistant-answer-head">
+                  <div>
+                    <p className="eyebrow">
+                      {answer.status === "completed" ? "Source-backed response" : "Transparent uncertainty"}
+                    </p>
+                    <h2>{answer.response.answer}</h2>
+                    <p>Evidence confidence: {answer.response.confidence}</p>
+                  </div>
+                  {answer.status === "completed" ? (
+                    <button
+                      className="button button-quiet"
+                      type="button"
+                      onClick={save}
+                      disabled={answer.saved_to_workspace}
+                    >
+                      {answer.saved_to_workspace ? "Saved to Workspace" : "Save result"}
+                    </button>
+                  ) : null}
+                </div>
+
+                {answer.response.warnings.length ? (
+                  <div className="assistant-warning" role="alert">
+                    <strong>Check before acting</strong>
+                    <ul>
+                      {answer.response.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {answer.response.facts.length ? (
+                  <div className="assistant-section">
+                    <h3>Verified facts</h3>
+                    <ul>
+                      {answer.response.facts.map((fact) => (
+                        <li key={fact.text}>
+                          {fact.text}{" "}
+                          <CitationRefs ids={fact.citation_ids} citations={answer.response.citations} />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {answer.response.possible_matches.length ? (
+                  <div className="assistant-section">
+                    <h3>Possible matches</h3>
+                    {answer.response.possible_matches.map((m) => (
+                      <article key={m.opportunity_id}>
+                        <Link to={`/catalogue/${m.opportunity_id}`}>{m.name}</Link>
+                        <p>
+                          {m.reason} <CitationRefs ids={m.citation_ids} citations={answer.response.citations} />
+                        </p>
+                        <button type="button" onClick={() => startApplication(m.opportunity_id, m.name)}>
+                          Create application plan
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
+                {answer.response.requirements_to_check.length ? (
+                  <div className="assistant-section">
+                    <h3>Requirements to confirm</h3>
+                    <ul>
+                      {answer.response.requirements_to_check.map((item) => (
+                        <li key={item.text}>
+                          {item.text}{" "}
+                          <CitationRefs ids={item.citation_ids} citations={answer.response.citations} />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {answer.response.private_progress.length ? (
+                  <div className="assistant-section">
+                    <h3>Private application progress</h3>
+                    <ul>
+                      {answer.response.private_progress.map((item) => (
+                        <li key={item.opportunity_id}>
+                          <strong>{item.name}</strong>: {item.lifecycle}; {item.outstanding_tasks} outstanding task(s).
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {answer.response.next_actions.length ? (
+                  <div className="assistant-section">
+                    <h3>Suggested next steps</h3>
+                    <ol>
+                      {answer.response.next_actions.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ol>
+                  </div>
+                ) : null}
+
+                {answer.response.citations.length ? (
+                  <div className="assistant-section">
+                    <h3>Official citations</h3>
+                    {answer.response.citations.map((citation) => (
+                      <article className="assistant-citation" key={citation.id}>
+                        <div>
+                          <strong>{citation.source_title}</strong>
+                          <p>{citation.excerpt}</p>
+                          <small>
+                            {citation.freshness}{" "}
+                            {citation.last_verified_at
+                              ? `· verified ${new Date(citation.last_verified_at).toLocaleDateString()}`
+                              : ""}
+                          </small>
+                        </div>
+                        <a
+                          className="button button-quiet"
+                          href={citation.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Open official source: ${citation.source_title}`}
+                        >
+                          Open source ↗
+                        </a>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+
+                <footer className="assistant-feedback">
+                  <span>Was this response useful?</span>
+                  {["helpful", "not_helpful", "incorrect", "outdated", "missing_citation"].map((kind) => (
+                    <button type="button" key={kind} onClick={() => feedback(kind)}>
+                      {kind.replaceAll("_", " ")}
+                    </button>
+                  ))}
+                </footer>
+              </section>
+            )}
+          </div>
+
+          {/* Floating Input Capsule Section */}
+          <div className="copilot-input-container">
+            <form onSubmit={ask} className="copilot-input-form">
+              <label htmlFor="assistant-question" className="sr-only">
+                Ask about scholarships, requirements, funding, deadlines, or your progress
+              </label>
+              <textarea
+                id="assistant-question"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                maxLength={4000}
+                required
+                placeholder="Ask about eligibility rules, draft essays, evaluate GPA match, or track deadlines..."
+                className="copilot-textarea"
+                rows={2}
+              />
+
+              <div className="copilot-input-controls-row">
+                <div className="input-opt-ins">
+                  <label className="assistant-opt-in">
+                    <input
+                      type="checkbox"
+                      checked={useProfile}
+                      onChange={(e) => setUseProfile(e.target.checked)}
+                    />
+                    Use my profile for this question
+                  </label>
+                  <label className="assistant-opt-in">
+                    <input
+                      type="checkbox"
+                      checked={useApplicationData}
+                      onChange={(e) => setUseApplicationData(e.target.checked)}
+                    />
+                    Use my private application workspace for progress or priority questions
+                  </label>
+                </div>
+
+                <div className="input-action-buttons">
+                  <button
+                    className="button button-primary copilot-submit-btn"
+                    disabled={loading || !preferences?.consented}
+                  >
+                    {loading ? "Checking verified sources…" : "Ask assistant"}
+                  </button>
+                </div>
+              </div>
+            </form>
+            {notice ? (
+              <p className="form-success copilot-notice" role="status">
+                {notice}
+              </p>
+            ) : null}
+          </div>
+
+        </main>
+      </div>
+    </div>
+  );
 }
