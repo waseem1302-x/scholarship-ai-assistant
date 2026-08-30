@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event, func
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -55,7 +55,7 @@ class ScholarshipProgramme(Base):
 
 
 class ScholarshipEligibilityRule(Base):
-    """Eligibility rule scoped to scholarship graph entities, including scholarship programmes."""
+    """Eligibility, award-condition, quota, obligation, and continuation rule."""
 
     __tablename__ = "scholarship_eligibility_rules"
     __table_args__ = (
@@ -64,6 +64,12 @@ class ScholarshipEligibilityRule(Base):
             "ix_scholarship_eligibility_rules_scope",
             "scholarship_id",
             "cycle_id",
+            "rule_type",
+        ),
+        Index(
+            "ix_scholarship_eligibility_rules_critical",
+            "scholarship_id",
+            "critical",
             "rule_type",
         ),
     )
@@ -93,6 +99,8 @@ class ScholarshipEligibilityRule(Base):
     required: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     condition: Mapped[str | None] = mapped_column(Text)
     is_exclusion: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    critical: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    original_text: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
     display_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
@@ -105,7 +113,7 @@ class ScholarshipEligibilityRule(Base):
 
 
 class OpportunityEvent(Base):
-    """Application, selection, interview, result, and other scholarship lifecycle events."""
+    """Application, nomination, interview, examination, selection, and result lifecycle events."""
 
     __tablename__ = "opportunity_events"
     __table_args__ = (
@@ -150,12 +158,17 @@ class OpportunityEvent(Base):
 
 
 class OpportunityResource(Base):
-    """Official forms, guidance, portals, links, and other application resources."""
+    """Official forms, portals, links, and structured official contact resources."""
 
     __tablename__ = "opportunity_resources"
     __table_args__ = (
         UniqueConstraint("identity_key", name="uq_opportunity_resources_identity"),
         Index("ix_opportunity_resources_scope", "scholarship_id", "cycle_id", "resource_type"),
+        Index("ix_opportunity_resources_contact_type", "contact_type"),
+        CheckConstraint(
+            "url IS NOT NULL OR email IS NOT NULL OR phone IS NOT NULL OR address IS NOT NULL",
+            name="ck_opportunity_resources_locator_present",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -178,7 +191,14 @@ class OpportunityResource(Base):
     resource_key: Mapped[str] = mapped_column(String(120), index=True)
     title: Mapped[str] = mapped_column(String(255))
     resource_type: Mapped[str] = mapped_column(String(100), index=True)
-    url: Mapped[str] = mapped_column(String(2048))
+    url: Mapped[str | None] = mapped_column(String(2048))
+    contact_type: Mapped[str | None] = mapped_column(String(100))
+    organization: Mapped[str | None] = mapped_column(String(255))
+    contact_name: Mapped[str | None] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(100))
+    address: Mapped[str | None] = mapped_column(Text)
+    original_text: Mapped[str | None] = mapped_column(Text)
     required: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     notes: Mapped[str | None] = mapped_column(Text)
     display_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -222,6 +242,7 @@ class CatalogueMaterializedClaimLink(Base):
     field_evidence_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("field_evidence.id", ondelete="RESTRICT"), index=True
     )
+    trust_domain: Mapped[str | None] = mapped_column(String(64), index=True)
     provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
