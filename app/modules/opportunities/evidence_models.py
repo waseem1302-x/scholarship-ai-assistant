@@ -232,7 +232,7 @@ class ScopedDeadline(Base):
         ForeignKey("scholarship_programmes.id", ondelete="CASCADE"), index=True
     )
     deadline_type: Mapped[str] = mapped_column(String(64), index=True)
-    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deadline_text: Mapped[str | None] = mapped_column(String(500))
     local_date: Mapped[date | None] = mapped_column(Date)
     deadline_precision: Mapped[str] = mapped_column(
