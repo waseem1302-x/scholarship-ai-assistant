@@ -244,6 +244,39 @@ class CandidateResponse(BaseModel):
     updated_at: datetime
 
 
+class ExtractionPlanJobResponse(BaseModel):
+    job_key: str
+    source_id: uuid.UUID
+    source_artifact_id: uuid.UUID
+    objectives: list[str]
+    scope_target_count: int
+    evidence_block_keys: list[str]
+    evidence_character_count: int
+    estimated_input_tokens: int
+    max_output_tokens: int
+    estimated_cost_upper: Decimal
+
+
+class CandidateExtractionPlanResponse(BaseModel):
+    candidate_id: uuid.UUID
+    run_id: uuid.UUID
+    planner_version: str
+    configuration_revision: str
+    configuration_fingerprint: str
+    run_configuration_matches: bool
+    ready_for_paid_execution: bool
+    refusal_reasons: list[str]
+    estimated_calls: int
+    estimated_input_tokens: int
+    estimated_output_tokens_upper: int
+    estimated_cost_upper: Decimal
+    maximum_physical_calls_with_split_and_retry: int
+    maximum_cost_upper_with_split_and_retry: Decimal
+    remaining_call_budget: int
+    remaining_cost_budget: Decimal
+    jobs: list[ExtractionPlanJobResponse]
+
+
 class IngestionRunListResponse(BaseModel):
     items: list[IngestionRunResponse]
     total: int
