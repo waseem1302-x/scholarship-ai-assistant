@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.modules.auth.models import User
 from app.modules.catalogue_ingestion.models import CatalogueCandidate
 from app.modules.catalogue_ingestion.review_models import CatalogueCandidateReview, CatalogueProposalState
 from app.modules.catalogue_ingestion.review_workflow import CatalogueReviewWorkflow
 from app.modules.opportunities.schemas import AdminOpportunityResponse, ReviewAction, ReviewActionRequest
 from app.modules.opportunities.service import OpportunityService
-from app.modules.auth.models import User
 
 
 class CatalogueAwareOpportunityService(OpportunityService):
@@ -29,7 +30,10 @@ class CatalogueAwareOpportunityService(OpportunityService):
         *,
         reviewed_by: User,
     ) -> AdminOpportunityResponse:
-        if payload.action in {ReviewAction.PUBLISH, ReviewAction.RESOLVE_CONFLICT}:
+        candidate: CatalogueCandidate | None = None
+        review: CatalogueCandidateReview | None = None
+        activating = payload.action in {ReviewAction.PUBLISH, ReviewAction.RESOLVE_CONFLICT}
+        if activating:
             candidate = self.session.scalar(
                 select(CatalogueCandidate).where(
                     CatalogueCandidate.opportunity_id == opportunity_id
@@ -58,11 +62,27 @@ class CatalogueAwareOpportunityService(OpportunityService):
                         + "; ".join(readiness.blockers[:8]),
                         409,
                     )
-        return super().apply_review_action(
+
+        result = super().apply_review_action(
             opportunity_id,
             payload,
             reviewed_by=reviewed_by,
         )
+
+        if activating and candidate is not None and review is not None:
+            # The base service commits the authorized opportunity/source transition. Keep the
+            # ingestion review receipt convergent so publishing from either admin surface is
+            # idempotent and does not leave a stale PUBLICATION_READY record behind.
+            review = self.session.scalar(
+                select(CatalogueCandidateReview)
+                .where(CatalogueCandidateReview.id == review.id)
+                .with_for_update()
+            )
+            if review is not None and review.state is not CatalogueProposalState.PUBLISHED:
+                review.state = CatalogueProposalState.PUBLISHED
+                review.published_at = datetime.now(UTC)
+                self.session.commit()
+        return result
 
 
 __all__ = ["CatalogueAwareOpportunityService"]
