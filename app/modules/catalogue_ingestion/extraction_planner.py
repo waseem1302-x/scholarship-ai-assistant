@@ -17,6 +17,10 @@ from app.modules.catalogue_ingestion.evidence_block_models import (
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
 )
+from app.modules.catalogue_ingestion.models import (
+    CandidateSourceStatus,
+    CatalogueCandidateSource,
+)
 from app.modules.catalogue_ingestion.topology_models import CatalogueCoverageCell
 
 EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v1"
@@ -124,7 +128,19 @@ class CatalogueExtractionPlanner:
         blocks = list(
             self.session.scalars(
                 select(CatalogueEvidenceBlock)
-                .where(CatalogueEvidenceBlock.candidate_id == candidate_id)
+                .join(
+                    CatalogueCandidateSource,
+                    CatalogueCandidateSource.id == CatalogueEvidenceBlock.source_id,
+                )
+                .where(
+                    CatalogueEvidenceBlock.candidate_id == candidate_id,
+                    CatalogueCandidateSource.candidate_id == candidate_id,
+                    CatalogueCandidateSource.is_official.is_(True),
+                    CatalogueCandidateSource.status == CandidateSourceStatus.FETCHED,
+                    CatalogueCandidateSource.content_hash.is_not(None),
+                    CatalogueEvidenceBlock.source_content_hash
+                    == CatalogueCandidateSource.content_hash,
+                )
                 .order_by(
                     CatalogueEvidenceBlock.source_artifact_id,
                     CatalogueEvidenceBlock.block_index,
@@ -235,6 +251,7 @@ def split_extraction_job(
     midpoint = len(blocks) // 2
     parts = (blocks[:midpoint], blocks[midpoint:])
     children: list[ExtractionJobPlan] = []
+    objective_set = set(job.objectives)
     for part in parts:
         part_ids = {block.id for block in part}
         part_routes = [
@@ -242,7 +259,7 @@ def split_extraction_job(
             for route in routes
             if route.selected
             and route.evidence_block_id in part_ids
-            and route.objective in set(job.objectives)
+            and route.objective in objective_set
         ]
         objectives = tuple(
             objective
