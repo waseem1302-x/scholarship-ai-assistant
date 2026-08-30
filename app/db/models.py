@@ -108,6 +108,12 @@ from app.modules.opportunities.graph_models import (
     ScholarshipRelationship,
     TrackProgramme,
 )
+from app.modules.opportunities.materialization_models import (
+    CatalogueMaterializedClaimLink,
+    OpportunityEvent,
+    OpportunityResource,
+    ScholarshipProgramme,
+)
 from app.modules.opportunities.models import (
     EligibilityRule,
     Opportunity,
@@ -161,6 +167,7 @@ __all__ = [
     "CatalogueExtractionCacheEntry",
     "CatalogueExtractionCacheEvent",
     "CatalogueIngestionRun",
+    "CatalogueMaterializedClaimLink",
     "CatalogueProviderAttempt",
     "CatalogueResumableJob",
     "CatalogueScopeEdge",
@@ -194,6 +201,8 @@ __all__ = [
     "OperationalJobHealth",
     "Opportunity",
     "OpportunityCycle",
+    "OpportunityEvent",
+    "OpportunityResource",
     "PasswordResetToken",
     "Provider",
     "RefreshToken",
@@ -201,6 +210,7 @@ __all__ = [
     "RequiredDocument",
     "SavedOpportunity",
     "ScholarshipAlias",
+    "ScholarshipProgramme",
     "ScholarshipRelationship",
     "ScopedDeadline",
     "Source",
