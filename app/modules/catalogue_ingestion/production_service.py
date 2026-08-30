@@ -220,8 +220,10 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             refusal_reasons=plan.refusal_reasons,
             estimated_calls=plan.estimated_calls,
             estimated_cost=plan.estimated_cost_upper,
-            maximum_calls=min(maximum_calls, remaining_calls),
-            maximum_cost=min(maximum_cost, remaining_cost),
+            maximum_calls=maximum_calls,
+            maximum_cost=maximum_cost,
+            remaining_calls=remaining_calls,
+            remaining_cost=remaining_cost,
         )
         if plan.refusal_reasons:
             self._manual_review(run, candidate, plan.refusal_reasons[0], run_lease_token)
@@ -844,6 +846,8 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         estimated_cost: Decimal,
         maximum_calls: int,
         maximum_cost: Decimal,
+        remaining_calls: int,
+        remaining_cost: Decimal,
     ) -> None:
         key_payload = "|".join(
             (
@@ -879,6 +883,8 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                 "estimated_cost_upper": str(estimated_cost),
                 "maximum_physical_calls_with_split_and_retry": maximum_calls,
                 "maximum_cost_upper_with_split_and_retry": str(maximum_cost),
+                "remaining_model_calls_at_planning": remaining_calls,
+                "remaining_estimated_cost_at_planning": str(remaining_cost),
                 "refusal_reasons": list(refusal_reasons),
                 "job_keys": [job.job_key for job in plan_jobs],
             },
