@@ -1,4 +1,4 @@
-"""add scholarship-scoped programmes, events, resources, and claim provenance links
+"""add scholarship programmes, eligibility, events, resources, and provenance links
 
 Revision ID: 20260830_0054
 Revises: 20260830_0053
@@ -52,6 +52,38 @@ def upgrade() -> None:
     for column in ("scholarship_id", "cycle_id", "track_id", "institution_id", "identity_key", "programme_key", "programme_type"):
         op.create_index(op.f(f"ix_scholarship_programmes_{column}"), "scholarship_programmes", [column], unique=False)
     op.create_index("ix_scholarship_programmes_scope", "scholarship_programmes", ["scholarship_id", "cycle_id", "programme_key"], unique=False)
+
+    op.create_table(
+        "scholarship_eligibility_rules",
+        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("scholarship_id", sa.Uuid(), nullable=False),
+        sa.Column("cycle_id", sa.Uuid(), nullable=False),
+        sa.Column("track_id", sa.Uuid(), nullable=True),
+        sa.Column("institution_id", sa.Uuid(), nullable=True),
+        sa.Column("programme_id", sa.Uuid(), nullable=True),
+        sa.Column("identity_key", sa.String(length=64), nullable=False),
+        sa.Column("rule_key", sa.String(length=120), nullable=False),
+        sa.Column("rule_type", sa.String(length=100), nullable=False),
+        sa.Column("operator", sa.String(length=32), nullable=False),
+        sa.Column("value_json", sa.JSON(), nullable=False),
+        sa.Column("unit", sa.String(length=64), nullable=True),
+        sa.Column("required", sa.Boolean(), server_default=sa.true(), nullable=False),
+        sa.Column("condition", sa.Text(), nullable=True),
+        sa.Column("is_exclusion", sa.Boolean(), server_default=sa.false(), nullable=False),
+        sa.Column("notes", sa.Text(), nullable=True),
+        sa.Column("display_order", sa.Integer(), server_default="0", nullable=False),
+        *_timestamps(),
+        sa.ForeignKeyConstraint(["scholarship_id"], ["opportunities.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["cycle_id"], ["opportunity_cycles.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["track_id"], ["application_tracks.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["institution_id"], ["institutions.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["programme_id"], ["scholarship_programmes.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("identity_key", name="uq_scholarship_eligibility_rules_identity"),
+    )
+    for column in ("scholarship_id", "cycle_id", "track_id", "institution_id", "programme_id", "identity_key", "rule_key", "rule_type", "operator"):
+        op.create_index(op.f(f"ix_scholarship_eligibility_rules_{column}"), "scholarship_eligibility_rules", [column], unique=False)
+    op.create_index("ix_scholarship_eligibility_rules_scope", "scholarship_eligibility_rules", ["scholarship_id", "cycle_id", "rule_type"], unique=False)
 
     op.create_table(
         "opportunity_events",
@@ -143,4 +175,5 @@ def downgrade() -> None:
     op.drop_table("catalogue_materialized_claim_links")
     op.drop_table("opportunity_resources")
     op.drop_table("opportunity_events")
+    op.drop_table("scholarship_eligibility_rules")
     op.drop_table("scholarship_programmes")
