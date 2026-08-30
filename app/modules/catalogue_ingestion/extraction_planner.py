@@ -7,6 +7,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Mapping, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from app.modules.catalogue_ingestion.evidence_block_models import (
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
 )
+from app.modules.catalogue_ingestion.topology_models import CatalogueCoverageCell
 
 EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v1"
 _DEFAULT_PROMPT_RESERVE_CHARS = 8_000
@@ -129,14 +131,20 @@ class CatalogueExtractionPlanner:
                 )
             )
         )
-        routes = list(
-            self.session.scalars(
-                select(CatalogueEvidenceRoute).where(
-                    CatalogueEvidenceRoute.candidate_id == candidate_id,
-                    CatalogueEvidenceRoute.selected.is_(True),
-                )
-            )
+        has_current_coverage = self.session.scalar(
+            select(CatalogueCoverageCell.id)
+            .where(CatalogueCoverageCell.candidate_id == candidate_id)
+            .limit(1)
+        ) is not None
+        route_query = select(CatalogueEvidenceRoute).where(
+            CatalogueEvidenceRoute.candidate_id == candidate_id,
+            CatalogueEvidenceRoute.selected.is_(True),
         )
+        if has_current_coverage:
+            route_query = route_query.where(CatalogueEvidenceRoute.coverage_cell_id.is_not(None))
+        else:
+            route_query = route_query.where(CatalogueEvidenceRoute.coverage_cell_id.is_(None))
+        routes = list(self.session.scalars(route_query))
         if not blocks or not routes:
             return CandidateExtractionPlan(
                 candidate_id=candidate_id,
@@ -210,6 +218,52 @@ class CatalogueExtractionPlanner:
         )
 
 
+def split_extraction_job(
+    job: ExtractionJobPlan,
+    *,
+    blocks_by_id: Mapping[uuid.UUID, CatalogueEvidenceBlock],
+    routes: Sequence[CatalogueEvidenceRoute],
+    run_max_output_tokens: int,
+    input_cost_per_million: Decimal,
+    output_cost_per_million: Decimal,
+) -> tuple[ExtractionJobPlan, ...]:
+    """Deterministically split one truncated job on existing evidence-block boundaries."""
+
+    blocks = tuple(blocks_by_id[item.block_id] for item in job.evidence)
+    if len(blocks) <= 1:
+        return ()
+    midpoint = len(blocks) // 2
+    parts = (blocks[:midpoint], blocks[midpoint:])
+    children: list[ExtractionJobPlan] = []
+    for part in parts:
+        part_ids = {block.id for block in part}
+        part_routes = [
+            route
+            for route in routes
+            if route.selected
+            and route.evidence_block_id in part_ids
+            and route.objective in set(job.objectives)
+        ]
+        objectives = tuple(
+            objective
+            for objective in job.objectives
+            if any(route.objective is objective for route in part_routes)
+        )
+        if not objectives:
+            continue
+        children.append(
+            _build_job(
+                part,
+                part_routes,
+                objectives=objectives,
+                run_max_output_tokens=run_max_output_tokens,
+                input_cost_per_million=input_cost_per_million,
+                output_cost_per_million=output_cost_per_million,
+            )
+        )
+    return tuple(children)
+
+
 def _chunk_blocks(
     blocks: list[CatalogueEvidenceBlock],
     *,
@@ -219,7 +273,7 @@ def _chunk_blocks(
     current: list[CatalogueEvidenceBlock] = []
     current_chars = 0
     for block in blocks:
-        block_chars = len(block.block_text)
+        block_chars = len(_render_block(block))
         if block_chars > max_evidence_chars:
             raise ValueError("evidence block exceeds configured provider evidence budget")
         if current and current_chars + block_chars > max_evidence_chars:
@@ -297,7 +351,7 @@ def _build_job(
         objectives=objectives,
         scopes=scopes,
         evidence_text=evidence_text,
-        evidence_character_count=sum(len(block.block_text) for block in blocks),
+        evidence_character_count=len(evidence_text),
         estimated_input_tokens=estimated_input_tokens,
         max_output_tokens=max_output_tokens,
         estimated_cost_upper=estimated_cost_upper,
@@ -358,4 +412,5 @@ __all__ = [
     "ExtractionEvidenceRef",
     "ExtractionJobPlan",
     "ExtractionScopeTarget",
+    "split_extraction_job",
 ]
