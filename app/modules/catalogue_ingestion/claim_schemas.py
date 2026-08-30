@@ -8,11 +8,19 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CLAIM_SCHEMA_VERSION = "catalogue-claims.v4"
-PREVIOUS_CLAIM_SCHEMA_VERSION = "catalogue-claims.v3"
+from app.modules.catalogue_ingestion.trust_domains import EvidenceTrustDomain
+
+CLAIM_SCHEMA_VERSION = "catalogue-claims.v5"
+PREVIOUS_CLAIM_SCHEMA_VERSION = "catalogue-claims.v4"
+V3_CLAIM_SCHEMA_VERSION = "catalogue-claims.v3"
 LEGACY_CLAIM_SCHEMA_VERSION = "catalogue-claims.v2"
 CLAIM_SCHEMA_VERSIONS = frozenset(
-    {LEGACY_CLAIM_SCHEMA_VERSION, PREVIOUS_CLAIM_SCHEMA_VERSION, CLAIM_SCHEMA_VERSION}
+    {
+        LEGACY_CLAIM_SCHEMA_VERSION,
+        V3_CLAIM_SCHEMA_VERSION,
+        PREVIOUS_CLAIM_SCHEMA_VERSION,
+        CLAIM_SCHEMA_VERSION,
+    }
 )
 
 
@@ -112,6 +120,8 @@ SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
             "required",
             "condition",
             "is_exclusion",
+            "critical",
+            "original_text",
             "notes",
             "display_order",
         }
@@ -148,6 +158,9 @@ SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
             "amount",
             "currency",
             "frequency",
+            "unit",
+            "qualifier",
+            "original_text",
             "description",
         }
     ),
@@ -166,9 +179,36 @@ SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
             "display_order",
         }
     ),
-    ClaimEntityType.STEP: frozenset({"title", "description", "application_url", "display_order"}),
+    ClaimEntityType.STEP: frozenset(
+        {
+            "title",
+            "stage_type",
+            "required",
+            "actor_type",
+            "actor_name",
+            "outcome",
+            "original_text",
+            "description",
+            "application_url",
+            "display_order",
+        }
+    ),
     ClaimEntityType.RESOURCE: frozenset(
-        {"title", "resource_type", "url", "required", "notes", "display_order"}
+        {
+            "title",
+            "resource_type",
+            "url",
+            "contact_type",
+            "organization",
+            "contact_name",
+            "email",
+            "phone",
+            "address",
+            "original_text",
+            "required",
+            "notes",
+            "display_order",
+        }
     ),
 }
 
@@ -195,9 +235,22 @@ CLAIM_FIELD_ALIASES: dict[ClaimEntityType, dict[str, str]] = {
         "component_amount": "amount",
         "component_description": "description",
         "component_frequency": "frequency",
+        "payment_frequency": "frequency",
+        "payment_unit": "unit",
     },
-    ClaimEntityType.STEP: {"label": "title", "order": "display_order"},
-    ClaimEntityType.RESOURCE: {"label": "title", "link": "url"},
+    ClaimEntityType.STEP: {
+        "label": "title",
+        "order": "display_order",
+        "step_type": "stage_type",
+        "stage": "stage_type",
+    },
+    ClaimEntityType.RESOURCE: {
+        "label": "title",
+        "link": "url",
+        "email_address": "email",
+        "telephone": "phone",
+        "contact_person": "contact_name",
+    },
 }
 
 
@@ -226,7 +279,7 @@ class ClaimValue(StrictClaimModel):
     string_list_value: list[str] | None
 
     @model_validator(mode="after")
-    def exactly_one_value(self) -> ClaimValue:
+    def exactly_one_value(self) -> "ClaimValue":
         if self.string_list_value == []:
             self.string_list_value = None
         values = (
@@ -265,7 +318,7 @@ class ExtractedClaim(StrictClaimModel):
     basis: Literal["explicit", "normalized"]
 
     @model_validator(mode="after")
-    def valid_span(self) -> ExtractedClaim:
+    def valid_span(self) -> "ExtractedClaim":
         field_path = self.field_path.strip().casefold()
         if field_path not in SUPPORTED_CLAIM_FIELDS[self.entity_type]:
             for separator in (".", " ", "_", "/"):
@@ -296,6 +349,7 @@ class ResolvedClaim(StrictClaimModel):
     source_url: str
     content_hash: str
     trust_tier: int = Field(ge=1)
+    trust_domain: EvidenceTrustDomain | None = None
     claim_id: str | None = None
     objectives: list[ClaimObjective] = Field(default_factory=list)
 
@@ -338,6 +392,7 @@ class ClaimResolution(StrictClaimModel):
         "catalogue-claims.v2",
         "catalogue-claims.v3",
         "catalogue-claims.v4",
+        "catalogue-claims.v5",
     ] = CLAIM_SCHEMA_VERSION
     resolved: list[ResolvedClaim]
     conflicts: list[str]
