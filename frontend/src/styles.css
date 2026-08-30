@@ -119,278 +119,373 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .button-quiet { background: var(--surface); border-color: var(--line); color: var(--ink); }
 .button-quiet:hover:not(:disabled) { border-color: #b8c6db; background: #fbfcff; }
 
-.home-page { background: #fbfcf9; color: #172235; }
-.home-page h1, .home-page h2, .home-page h3 { letter-spacing: 0; }
-.home-hero {
-  padding: 32px 0 42px;
-  border-bottom: 1px solid #e3e7df;
-  background:
-    radial-gradient(circle at 14% 12%, rgba(8, 121, 108, .1), transparent 28%),
-    linear-gradient(180deg, #ffffff 0%, #f5f8f3 100%);
+/* Airbnb-Style Homepage Discovery Layout */
+.airbnb-home-page {
+  background: #ffffff;
+  color: #0f172a;
+  min-height: 100vh;
+  overflow-x: hidden;
 }
-.home-hero-inner { display: grid; gap: 26px; }
-.home-hero-copy { max-width: 980px; padding-top: 38px; }
-.home-hero-copy h1 {
-  max-width: 900px;
-  margin-bottom: 17px;
-  font-size: clamp(2.7rem, 6.4vw, 5.8rem);
-  line-height: .95;
+
+/* 1. Hero Search Omnibar */
+.airbnb-hero-section {
+  padding: 40px 0 36px;
+  background: radial-gradient(circle at 50% 0%, rgba(13, 136, 123, 0.06), transparent 50%), linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border-bottom: 1px solid #e2e8f0;
 }
-.home-hero-copy .lead { max-width: 760px; color: #566479; }
-.home-search-panel {
-  display: grid;
-  grid-template-columns: 1.05fr .8fr 1.05fr .85fr auto;
+.airbnb-hero-inner {
+  width: min(1760px, calc(100% - 64px));
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 1px;
-  padding: 10px;
-  border: 1px solid #dbe2d6;
-  border-radius: 999px;
-  background: #fff;
-  box-shadow: 0 22px 55px rgba(24, 39, 58, .12);
+  gap: 28px;
+  text-align: center;
 }
-.home-search-panel label {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 8px 22px;
-  border-right: 1px solid #e3e8ee;
-}
-.home-search-panel label:nth-of-type(4) { border-right: 0; }
-.home-search-panel span {
-  color: #15243a;
-  font-size: .76rem;
-  font-weight: 850;
-}
-.home-search-panel input, .home-search-panel select {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: #566479;
-  outline: 0;
-  font-size: .95rem;
-}
-.home-search-button {
-  width: 74px;
-  min-height: 58px;
-  border: 0;
-  border-radius: 999px;
-  background: #e43d57;
-  color: #fff;
-  cursor: pointer;
-  font-size: .86rem;
-  font-weight: 850;
-  box-shadow: 0 12px 22px rgba(228, 61, 87, .22);
-}
-.home-search-button:hover { background: #cf2f49; }
-.home-category-rail {
-  display: grid;
-  grid-template-columns: repeat(9, minmax(78px, 1fr));
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-.home-category-rail a {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-  min-height: 40px;
-  min-width: 82px;
-  padding: 12px 8px 10px;
-  border-bottom: 3px solid transparent;
-  color: #647083;
-  font-size: .82rem;
-  font-weight: 800;
-}
-.home-category-rail a:hover { color: #172235; border-bottom-color: #172235; }
-.home-category-rail span {
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  background:
-    linear-gradient(135deg, rgba(228, 61, 87, .2), rgba(8, 121, 108, .2)),
-    #fff;
-  border: 1px solid #dce4df;
-}
-.home-market { padding-block: 54px; }
-.home-market-compact { padding-top: 10px; }
-.home-section-heading {
+.airbnb-hero-copy {
+  max-width: 780px;
   display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 23px;
-}
-.home-section-heading h2 {
-  max-width: 760px;
-  margin: 0;
-  font-size: clamp(1.65rem, 3vw, 2.35rem);
-  line-height: 1.08;
-}
-.home-stats-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1px;
-  overflow: hidden;
-  margin-bottom: 24px;
-  border: 1px solid #dce4df;
-  border-radius: 8px;
-  background: #dce4df;
-}
-.home-stats-row article { padding: 18px 20px; background: #fff; }
-.home-stats-row strong { display: block; margin-bottom: 5px; color: #08796c; font-size: .9rem; }
-.home-stats-row span { color: #59697d; font-size: .86rem; line-height: 1.45; }
-.home-card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-}
-.home-card-grid-compact { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.home-opportunity-card {
-  overflow: hidden;
-  min-width: 0;
-  border: 1px solid #dfe6df;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 12px 28px rgba(24, 39, 58, .07);
-  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
-}
-.home-opportunity-card:hover {
-  border-color: #bccabc;
-  box-shadow: 0 16px 34px rgba(24, 39, 58, .1);
-  transform: translateY(-2px);
-}
-.scholarship-visual {
-  position: relative;
-  display: flex;
-  align-items: end;
-  min-height: 172px;
-  padding: 18px;
-  color: #fff;
-  isolation: isolate;
-}
-.scholarship-visual::before, .scholarship-visual::after {
-  position: absolute;
-  content: "";
-  border-radius: 999px;
-  z-index: -1;
-}
-.scholarship-visual::before {
-  width: 180px;
-  height: 180px;
-  right: -50px;
-  top: -54px;
-  background: rgba(255, 255, 255, .18);
-}
-.scholarship-visual::after {
-  width: 120px;
-  height: 120px;
-  left: -36px;
-  bottom: -44px;
-  border: 22px solid rgba(255, 255, 255, .2);
-}
-.scholarship-visual span {
-  max-width: 82%;
-  padding: 7px 10px;
-  border-radius: 999px;
-  background: rgba(7, 18, 33, .36);
-  font-size: .78rem;
-  font-weight: 850;
-  line-height: 1.2;
-}
-.scholarship-visual-uk { background: linear-gradient(135deg, #30435f 0%, #8a9fb5 100%); }
-.scholarship-visual-usa { background: linear-gradient(135deg, #1d4f80 0%, #d64b5a 100%); }
-.scholarship-visual-canada { background: linear-gradient(135deg, #b93743 0%, #f1b8ae 100%); }
-.scholarship-visual-australia { background: linear-gradient(135deg, #0e6f75 0%, #e6b55f 100%); }
-.scholarship-visual-malaysia { background: linear-gradient(135deg, #0f5f83 0%, #f0c756 100%); }
-.scholarship-visual-europe { background: linear-gradient(135deg, #365b79 0%, #7fb6aa 100%); }
-.scholarship-visual-global { background: linear-gradient(135deg, #2d4f49 0%, #9a7a49 100%); }
-.home-card-body { display: grid; gap: 11px; padding: 17px; }
-.home-card-meta, .home-card-actions {
-  display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
-.home-card-meta span {
-  color: #08796c;
-  font-size: .72rem;
+.airbnb-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #effaf8;
+  border: 1px solid #bce5de;
+  color: var(--teal);
+  font-size: 0.75rem;
+  font-weight: 800;
+  box-shadow: 0 1px 3px rgba(13, 136, 123, 0.08);
+}
+.airbnb-hero-copy h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 4.5vw, 3.8rem);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  color: var(--navy);
+  line-height: 1.05;
+}
+.airbnb-hero-copy .lead {
+  margin: 0;
+  font-size: clamp(0.9rem, 1.4vw, 1.05rem);
+  color: var(--muted);
+  max-width: 600px;
+  line-height: 1.5;
+}
+
+/* Airbnb Omnibar Search Capsule */
+.airbnb-hero-search-bar {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  padding: 6px 8px 6px 12px;
+  box-shadow: 0 4px 16px rgba(16, 40, 72, 0.08), 0 1px 3px rgba(0, 0, 0, 0.02);
+  width: min(740px, 100%);
+  transition: box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+}
+.airbnb-hero-search-bar:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 8px 24px rgba(16, 40, 72, 0.12);
+}
+.search-segment {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 16px;
+  border-radius: 9999px;
+  cursor: pointer;
+  min-width: 0;
+  transition: background 0.15s ease;
+}
+.search-segment:hover {
+  background: #f8fafc;
+}
+.segment-label {
+  font-size: 0.65rem;
   font-weight: 850;
   text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--navy);
 }
-.home-card-meta span:first-child { color: #9a5a00; }
-.home-opportunity-card h3 {
-  min-height: 2.55em;
-  margin: 0;
-  color: #172235;
-  font-size: 1.02rem;
-  line-height: 1.25;
+.segment-input, .segment-select {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  outline: none;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--ink);
+  width: 100%;
+  cursor: pointer;
 }
-.home-card-body p {
-  margin: 0;
-  color: #61718a;
-  font-size: .86rem;
-  line-height: 1.45;
+.segment-input::placeholder {
+  color: #94a3b8;
+  font-weight: 600;
 }
-.home-card-tags {
+.segment-divider {
+  width: 1px;
+  height: 28px;
+  background: #e2e8f0;
+  flex-shrink: 0;
+}
+.airbnb-search-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--navy);
+  border: 0;
+  color: #ffffff;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(16, 40, 72, 0.2);
+  transition: background 0.15s ease, transform 0.15s ease;
 }
-.home-card-tags span {
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: #f0f4f0;
-  color: #3e4d5f;
-  font-size: .72rem;
-  font-weight: 750;
+.airbnb-search-btn:hover {
+  background: #071324;
+  transform: scale(1.05);
 }
-.home-card-funding {
-  min-height: 3.8em;
-  display: -webkit-box;
+
+/* 2. Main Rows Container */
+.airbnb-rows-container {
+  width: min(1760px, calc(100% - 64px));
+  margin-inline: auto;
+  padding-block: 40px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+.airbnb-section-row {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.airbnb-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.airbnb-row-title-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--navy);
+}
+.airbnb-row-title-link:hover h2 {
+  text-decoration: underline;
+}
+.airbnb-row-title-link h2 {
+  margin: 0;
+  font-size: clamp(1.25rem, 2.2vw, 1.6rem);
+  font-weight: 850;
+  letter-spacing: -0.02em;
+  color: var(--navy);
+}
+.title-arrow {
+  font-size: 1.1rem;
+  color: var(--blue);
+  transition: transform 0.15s ease;
+}
+.airbnb-row-title-link:hover .title-arrow {
+  transform: translateX(3px);
+}
+.airbnb-nav-arrows {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nav-circle-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: var(--navy);
+  font-size: 0.9rem;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.nav-circle-btn:hover {
+  border-color: var(--navy);
+  box-shadow: 0 2px 6px rgba(16, 40, 72, 0.08);
+}
+
+/* 3. Strictly 1 Single-Row Grid (6 Columns) */
+.airbnb-single-row-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+@media (max-width: 1200px) {
+  .airbnb-single-row-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 680px) {
+  .airbnb-single-row-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 4. Scholarship Card Item */
+.airbnb-scholarship-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  min-width: 0;
+  position: relative;
+}
+.airbnb-card-media {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 16px;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  box-shadow: 0 2px 8px rgba(16, 40, 72, 0.04);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 10px;
+  isolation: isolate;
 }
-.home-card-actions { margin-top: 3px; }
-.home-card-actions .button { min-height: 36px; padding-inline: 12px; font-size: .78rem; }
-.home-card-actions > span {
-  color: #7a8797;
-  font-size: .72rem;
-  line-height: 1.35;
-  text-align: right;
+.airbnb-scholarship-card:hover .airbnb-card-media {
+  box-shadow: 0 8px 20px rgba(16, 40, 72, 0.12);
 }
-.home-card-loading .home-card-body span {
-  display: block;
-  height: 13px;
+.airbnb-top-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(6px);
+  padding: 3px 8px;
   border-radius: 999px;
-  background: #edf1f4;
+  font-size: 0.65rem;
+  font-weight: 850;
+  color: var(--teal);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 }
-.home-card-loading .home-card-body span:nth-child(1) { width: 44%; }
-.home-card-loading .home-card-body span:nth-child(2) { width: 86%; height: 22px; }
-.home-card-loading .home-card-body span:nth-child(3) { width: 62%; }
-.home-country-band {
-  padding-block: 48px;
-  border-block: 1px solid #dfe6df;
-  background: #f0f5ef;
+.airbnb-heart-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.15s ease;
 }
-.home-country-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 14px;
+.airbnb-heart-btn:hover {
+  transform: scale(1.15);
 }
-.home-country-card {
-  display: grid;
-  align-content: end;
-  min-height: 190px;
-  padding: 18px;
-  border-radius: 8px;
-  color: #fff;
-  box-shadow: inset 0 -80px 90px rgba(7, 18, 33, .24);
+.heart-svg {
+  width: 20px;
+  height: 20px;
+  fill: rgba(0, 0, 0, 0.35);
+  stroke: #ffffff;
+  stroke-width: 2px;
 }
-.home-country-card span { font-size: 1.15rem; font-weight: 900; line-height: 1.15; }
-.home-country-card strong { margin-top: 8px; font-size: .78rem; line-height: 1.35; }
+.airbnb-media-content {
+  margin-top: auto;
+}
+.media-country-tag {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #ffffff;
+  background: rgba(16, 40, 72, 0.6);
+  backdrop-filter: blur(6px);
+  padding: 3px 8px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+/* Card Typography Info */
+.airbnb-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.78rem;
+}
+.airbnb-card-title {
+  font-size: 0.86rem;
+  font-weight: 850;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.airbnb-card-subtitle {
+  font-size: 0.74rem;
+  color: var(--muted);
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.airbnb-card-price-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 3px;
+}
+.airbnb-card-price {
+  font-size: 0.84rem;
+  font-weight: 900;
+  color: var(--navy);
+}
+.airbnb-card-rating {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--teal);
+}
+
+/* Shimmer Loading State */
+.shimmer-line {
+  background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite linear;
+  border-radius: 4px;
+  display: block;
+}
+.title-shimmer {
+  width: 260px;
+  height: 28px;
+}
+.card-loading-shimmer .airbnb-card-media {
+  background: #f1f5f9;
+}
+
+/* Visual Tone Gradients */
+.scholarship-visual-uk { background: linear-gradient(135deg, #102848 0%, #1e3a8a 100%); }
+.scholarship-visual-usa { background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); }
+.scholarship-visual-canada { background: linear-gradient(135deg, #881337 0%, #be123c 100%); }
+.scholarship-visual-australia { background: linear-gradient(135deg, #064e3b 0%, #047857 100%); }
+.scholarship-visual-malaysia { background: linear-gradient(135deg, #075985 0%, #0284c7 100%); }
+.scholarship-visual-europe { background: linear-gradient(135deg, #134e4a 0%, #0d9488 100%); }
+.scholarship-visual-japan { background: linear-gradient(135deg, #4c0519 0%, #9f1239 100%); }
+.scholarship-visual-turkey { background: linear-gradient(135deg, #701a75 0%, #a21caf 100%); }
+.scholarship-visual-global { background: linear-gradient(135deg, #1e293b 0%, #334155 100%); }
 .home-ai-strip {
   display: flex;
   align-items: center;
