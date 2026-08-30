@@ -1,11 +1,10 @@
 """Non-secret effective provider configuration for catalogue ingestion.
 
-The application ``Settings`` object remains the environment/config injection boundary.  This
-module translates the legacy catalogue AI settings into a typed capability profile so provider
-identity, deployment selection, retry behaviour, pricing, and safety limits have one normalized
-representation.  The profile deliberately contains no credentials and never exposes the endpoint
-value through API serializers; only its hash participates in the effective configuration
-fingerprint.
+The application ``Settings`` object remains the environment/config injection boundary. This module
+translates catalogue AI settings and paid-pipeline contract versions into one normalized receipt so
+provider identity, retry behaviour, pricing, prompt/schema/parser drift, and safety limits can fail
+closed on resume. The receipt contains no credentials; configured endpoints and reviewed domains
+participate only through SHA-256 fingerprints.
 """
 
 from __future__ import annotations
@@ -17,8 +16,18 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import Settings
+from app.modules.catalogue_ingestion.claim_bundle_provider import bundle_claim_prompt_hash
+from app.modules.catalogue_ingestion.claim_bundle_schemas import CLAIM_BUNDLE_SCHEMA_VERSION
+from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective
+from app.modules.catalogue_ingestion.extraction_planner import EXTRACTION_JOB_PLANNER_VERSION
+from app.modules.catalogue_ingestion.pipeline_versions import (
+    BUNDLE_NORMALIZER_VERSION,
+    BUNDLE_PROVIDER_PARSER_VERSION,
+    BUNDLE_RESOLVER_VERSION,
+    BUNDLE_VALIDATOR_VERSION,
+)
 
-CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v1"
+CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v2"
 
 
 class CatalogueDeploymentMap(BaseModel):
@@ -67,7 +76,11 @@ class CatalogueProviderProfile(BaseModel):
 def catalogue_provider_profile(settings: Settings) -> CatalogueProviderProfile:
     """Build the effective profile without reading or materializing credential values."""
 
-    endpoint = settings.catalogue_ai_endpoint.strip().rstrip("/") if settings.catalogue_ai_endpoint else None
+    endpoint = (
+        settings.catalogue_ai_endpoint.strip().rstrip("/")
+        if settings.catalogue_ai_endpoint
+        else None
+    )
     deployment = settings.catalogue_ai_model.strip()
     if not deployment or deployment.casefold() == "unconfigured":
         deployment = ""
@@ -93,18 +106,14 @@ def catalogue_provider_profile(settings: Settings) -> CatalogueProviderProfile:
 
 
 def catalogue_configuration_fingerprint(settings: Settings) -> str:
-    """Hash normalized, non-secret settings that authorize paid or privileged catalogue work.
-
-    The endpoint and reviewed-domain values themselves are intentionally excluded. Their SHA-256
-    digests make provider and acquisition-authority drift detectable without surfacing configured
-    hostnames to administrator API responses.
-    """
+    """Hash normalized, non-secret settings and paid extraction contract versions."""
 
     profile = catalogue_provider_profile(settings)
     reviewed_domains = sorted(settings.catalogue_reviewed_official_domain_set)
     reviewed_domain_fingerprint = hashlib.sha256(
         "\n".join(reviewed_domains).encode()
     ).hexdigest()
+    bundle_prompt_family_hash = bundle_claim_prompt_hash(tuple(ClaimObjective))
     payload = {
         "revision": CATALOGUE_CONFIGURATION_REVISION,
         "provider": profile.provider,
@@ -117,6 +126,15 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
         "pricing": {
             "input_cost_per_million": str(profile.pricing.input_cost_per_million),
             "output_cost_per_million": str(profile.pricing.output_cost_per_million),
+        },
+        "paid_pipeline_contract": {
+            "bundle_prompt_family_hash": bundle_prompt_family_hash,
+            "bundle_schema_version": CLAIM_BUNDLE_SCHEMA_VERSION,
+            "extraction_job_planner_version": EXTRACTION_JOB_PLANNER_VERSION,
+            "provider_parser_version": BUNDLE_PROVIDER_PARSER_VERSION,
+            "normalizer_version": BUNDLE_NORMALIZER_VERSION,
+            "resolver_version": BUNDLE_RESOLVER_VERSION,
+            "validator_version": BUNDLE_VALIDATOR_VERSION,
         },
         "safety": {
             "ai_ingestion_enabled": settings.catalogue_ai_ingestion_enabled,
@@ -131,7 +149,9 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
             "max_calls_per_run": settings.catalogue_ai_max_calls_per_run,
             "max_input_characters": settings.catalogue_ai_max_input_characters,
             "max_output_tokens": settings.catalogue_ai_max_output_tokens,
-            "max_estimated_cost_per_run": str(settings.catalogue_ai_max_estimated_cost_per_run),
+            "max_estimated_cost_per_run": str(
+                settings.catalogue_ai_max_estimated_cost_per_run
+            ),
             "source_max_bytes_per_page": settings.catalogue_source_max_bytes_per_page,
             "source_monitor_per_host_interval_seconds": str(
                 settings.source_monitor_per_host_interval_seconds
