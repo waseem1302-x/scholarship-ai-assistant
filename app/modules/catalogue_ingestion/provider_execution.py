@@ -98,11 +98,18 @@ class CatalogueProviderExecutor:
         objective: str | None = None,
         objective_bundle: list[str] | None = None,
         evidence_block_keys: list[str] | None = None,
+        logical_job_key: str | None = None,
+        max_output_tokens: int | None = None,
         parser_version: str = CATALOGUE_PROVIDER_PARSER_VERSION,
         normalizer_version: str = CATALOGUE_PROVIDER_NORMALIZER_VERSION,
         heartbeat: Callable[[], None] | None = None,
     ) -> ProviderExecutionResult:
-        """Execute a logical job with orchestration-owned retries and fenced accounting."""
+        """Execute a logical job with orchestration-owned retries and fenced accounting.
+
+        ``logical_job_key`` and ``max_output_tokens`` are optional Batch-5 planner inputs. Their
+        absence preserves the historical single-objective job identity and conservative run-level
+        output reservation used by older attempts and resumptions.
+        """
 
         if provider.name == "azure_openai":
             self._require_approved_configuration(run)
@@ -111,21 +118,31 @@ class CatalogueProviderExecutor:
         if not worker_id or not candidate_lease_token:
             raise ProviderExecutionLeaseLost("candidate has no active fencing lease")
 
-        job_key = provider_job_key(
-            candidate_id=candidate.id,
-            source_id=source.id,
-            source_artifact_id=artifact.id if artifact is not None else None,
-            content_hash=content_hash,
-            schema_version=schema_version,
-            prompt_hash=prompt_hash,
-            objective=objective,
-        )
+        if logical_job_key is not None:
+            job_key = logical_job_key.strip()
+            if not job_key or len(job_key) > 128:
+                raise ValueError("logical provider job key must be 1-128 characters")
+        else:
+            job_key = provider_job_key(
+                candidate_id=candidate.id,
+                source_id=source.id,
+                source_artifact_id=artifact.id if artifact is not None else None,
+                content_hash=content_hash,
+                schema_version=schema_version,
+                prompt_hash=prompt_hash,
+                objective=objective,
+            )
+
+        output_ceiling = run.max_output_tokens if max_output_tokens is None else max_output_tokens
+        if output_ceiling < 1 or output_ceiling > run.max_output_tokens:
+            raise ProviderExecutionBudgetExhausted("provider_output_token_budget_invalid")
+
         max_retries = self.settings.catalogue_ai_max_retries if provider.name == "azure_openai" else 0
         profile = catalogue_provider_profile(self.settings)
         projected_input_tokens = max(1, min(len(source_text), run.max_input_characters) // 4)
         reserved_cost_upper = estimate_cost(
             projected_input_tokens,
-            run.max_output_tokens,
+            output_ceiling,
             input_per_million=self.settings.catalogue_ai_input_cost_per_million,
             output_per_million=self.settings.catalogue_ai_output_cost_per_million,
         )
