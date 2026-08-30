@@ -54,6 +54,56 @@ class ScholarshipProgramme(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 
+class ScholarshipEligibilityRule(Base):
+    """Eligibility rule scoped to scholarship graph entities, including scholarship programmes."""
+
+    __tablename__ = "scholarship_eligibility_rules"
+    __table_args__ = (
+        UniqueConstraint("identity_key", name="uq_scholarship_eligibility_rules_identity"),
+        Index(
+            "ix_scholarship_eligibility_rules_scope",
+            "scholarship_id",
+            "cycle_id",
+            "rule_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    scholarship_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), index=True
+    )
+    cycle_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("opportunity_cycles.id", ondelete="CASCADE"), index=True
+    )
+    track_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("application_tracks.id", ondelete="CASCADE"), index=True
+    )
+    institution_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("institutions.id", ondelete="CASCADE"), index=True
+    )
+    programme_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("scholarship_programmes.id", ondelete="CASCADE"), index=True
+    )
+    identity_key: Mapped[str] = mapped_column(String(64), index=True)
+    rule_key: Mapped[str] = mapped_column(String(120), index=True)
+    rule_type: Mapped[str] = mapped_column(String(100), index=True)
+    operator: Mapped[str] = mapped_column(String(32), index=True)
+    value_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    unit: Mapped[str | None] = mapped_column(String(64))
+    required: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    condition: Mapped[str | None] = mapped_column(Text)
+    is_exclusion: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    notes: Mapped[str | None] = mapped_column(Text)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, server_default=func.now(), onupdate=utc_now
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+
 class OpportunityEvent(Base):
     """Application, selection, interview, result, and other scholarship lifecycle events."""
 
@@ -192,5 +242,6 @@ __all__ = [
     "CatalogueMaterializedClaimLink",
     "OpportunityEvent",
     "OpportunityResource",
+    "ScholarshipEligibilityRule",
     "ScholarshipProgramme",
 ]
