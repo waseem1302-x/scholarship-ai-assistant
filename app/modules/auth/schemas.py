@@ -135,3 +135,21 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: UserResponse
+
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str = Field(
+        min_length=10, max_length=8192, description="Google OAuth2 ID Token from GIS SDK"
+    )
+
+
+class FacebookAuthRequest(BaseModel):
+    access_token: str = Field(
+        min_length=10, max_length=8192, description="Meta / Facebook User Access Token"
+    )
+
+
+class OAuthAccountResponse(BaseModel):
+    provider: str
+    provider_email: str | None
+    created_at: datetime

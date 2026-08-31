@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     operations_health_token: SecretStr | None = Field(default=None, repr=False)
     metrics_backend: Literal["in_memory", "external"] = "in_memory"
 
+    # OAuth2 Social Login Configuration (Optional)
+    google_client_id: str | None = None
+    facebook_app_id: str | None = None
+
     # Phase 9 beta and capability controls. These remain server-side so that a
     # high-risk capability can be paused without a frontend release.
     beta_enabled: bool = False
@@ -120,12 +124,21 @@ class Settings(BaseSettings):
     catalogue_bounded_crawling_enabled: bool = False
     catalogue_browser_fetching_enabled: bool = False
     catalogue_document_intelligence_enabled: bool = False
+    catalogue_docling_enabled: bool = True
+    catalogue_docling_models_dir: str = ".docling-models"
+    catalogue_docling_do_ocr: bool = True
+    catalogue_docling_table_mode: Literal["fast", "accurate"] = "fast"
+    catalogue_auto_publish_high_confidence: bool = False
     catalogue_scheduled_ingestion_enabled: bool = False
     catalogue_reviewed_official_domains: str = ""
     catalogue_worker_claim_seconds: int = Field(default=900, ge=30, le=3600)
     source_monitor_batch_limit: int = Field(default=100, ge=1, le=1_000)
     source_monitor_claim_seconds: int = Field(default=900, ge=30, le=3600)
     source_monitor_per_host_interval_seconds: Decimal = Field(default=Decimal("1.0"), ge=0, le=60)
+    catalogue_provider_max_concurrency_per_deployment: int = Field(default=4, ge=1, le=100)
+    catalogue_provider_circuit_failure_threshold: int = Field(default=3, ge=1, le=50)
+    catalogue_provider_circuit_open_seconds: int = Field(default=300, ge=1, le=86400)
+    catalogue_scheduler_max_provider_calls_per_candidate_slice: int = Field(default=5, ge=1, le=50)
     # High-risk capabilities begin disabled. A beta deployment opts in only
     # after the corresponding release gate has been evidenced.
     assistant_enabled: bool = False

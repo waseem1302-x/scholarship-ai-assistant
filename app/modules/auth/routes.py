@@ -11,11 +11,14 @@ from app.core.errors import ErrorResponse
 from app.db.session import get_db
 from app.modules.auth.dependencies import CurrentUser, require_admin_step_up, require_roles
 from app.modules.auth.models import User, UserRole
+from app.modules.auth.oauth_service import OAuthService
 from app.modules.auth.schemas import (
     AccountClosureRequest,
     AccountTokenDeliveryResponse,
     AdminStepUpRequest,
     AdminStepUpResponse,
+    FacebookAuthRequest,
+    GoogleAuthRequest,
     LoginRequest,
     LogoutRequest,
     PasswordResetConfirmRequest,
@@ -105,6 +108,59 @@ def login(
     settings: Annotated[Settings, Depends(get_settings)],
 ):
     result = service.login(str(payload.email), payload.password)
+    _set_refresh_cookies(response, result.refresh_token, settings)
+    return to_token_response(result, include_refresh_token=settings.env != "production")
+
+
+# ==============================================================================
+# OAUTH2 SOCIAL AUTHENTICATION: GOOGLE & FACEBOOK
+# ==============================================================================
+
+
+@router.post(
+    "/oauth/google",
+    response_model=TokenResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 422: VALIDATION_RESPONSE},
+    summary="Login or register 1-click student account via Google ID Token",
+)
+def oauth_google(
+    payload: GoogleAuthRequest,
+    response: Response,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TokenResponse:
+    oauth_svc = OAuthService(session, settings)
+    profile_data = oauth_svc.verify_google_id_token(payload.id_token)
+    result = oauth_svc.authenticate_or_register_social_user(
+        provider="google",
+        provider_user_id=profile_data["provider_user_id"],
+        email=profile_data["email"],
+        full_name=profile_data.get("name"),
+    )
+    _set_refresh_cookies(response, result.refresh_token, settings)
+    return to_token_response(result, include_refresh_token=settings.env != "production")
+
+
+@router.post(
+    "/oauth/facebook",
+    response_model=TokenResponse,
+    responses={401: AUTHENTICATION_RESPONSE, 422: VALIDATION_RESPONSE},
+    summary="Login or register 1-click student account via Meta / Facebook Access Token",
+)
+def oauth_facebook(
+    payload: FacebookAuthRequest,
+    response: Response,
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TokenResponse:
+    oauth_svc = OAuthService(session, settings)
+    profile_data = oauth_svc.verify_facebook_token(payload.access_token)
+    result = oauth_svc.authenticate_or_register_social_user(
+        provider="facebook",
+        provider_user_id=profile_data["provider_user_id"],
+        email=profile_data["email"],
+        full_name=profile_data.get("name"),
+    )
     _set_refresh_cookies(response, result.refresh_token, settings)
     return to_token_response(result, include_refresh_token=settings.env != "production")
 
