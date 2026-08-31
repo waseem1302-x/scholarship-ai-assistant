@@ -2,11 +2,14 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ErrorResponse
 from app.db.session import get_db, get_system_db
 from app.modules.applications.command_service import ApplicationCommandService
+from app.modules.applications.models import Application, ApplicationTask, TaskStatus
+from app.modules.applications.pipeline import PipelineSummaryResponse, build_pipeline_summary
 from app.modules.applications.schemas import (
     ApplicationCreate,
     ApplicationDocumentCreate,
@@ -31,6 +34,7 @@ from app.modules.applications.schemas import (
 )
 from app.modules.auth.dependencies import require_roles, require_verified_student
 from app.modules.auth.models import User, UserRole
+from app.modules.opportunities.models import Opportunity
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 StudentUser = Annotated[User, Depends(require_roles(UserRole.STUDENT))]
@@ -314,3 +318,34 @@ def update_document(
     application_service: CommandService,
 ) -> ApplicationDocumentResponse:
     return application_service.update_document(application_id, document_id, payload, user=user)
+
+
+# ==============================================================================
+# PRODUCTION LAUNCH: APPLICATION KANBAN PIPELINE TRACKER
+# ==============================================================================
+
+
+@router.get(
+    "/pipeline",
+    response_model=PipelineSummaryResponse,
+    responses=Errors,
+    summary="Get user's multi-scholarship Kanban application pipeline lanes",
+)
+def get_application_pipeline(
+    user: VerifiedStudentUser,
+    session: Annotated[Session, Depends(get_db)],
+) -> PipelineSummaryResponse:
+    applications = list(session.scalars(select(Application).where(Application.user_id == user.id)))
+
+    data: list[tuple[Application, Opportunity, int, int]] = []
+    for app in applications:
+        opp = session.scalar(select(Opportunity).where(Opportunity.id == app.opportunity_id))
+        if opp is None:
+            continue
+        tasks = list(
+            session.scalars(select(ApplicationTask).where(ApplicationTask.application_id == app.id))
+        )
+        done_count = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
+        data.append((app, opp, done_count, len(tasks)))
+
+    return build_pipeline_summary(data)
