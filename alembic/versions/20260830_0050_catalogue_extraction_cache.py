@@ -7,6 +7,7 @@ Revises: 20260830_0049
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "20260830_0050"
@@ -41,7 +42,9 @@ def upgrade() -> None:
         sa.Column("capability_identity_hash", sa.String(length=64), nullable=False),
         sa.Column("output_json", sa.JSON(), nullable=False),
         sa.Column("cache_version", sa.String(length=100), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.ForeignKeyConstraint(
             ["origin_candidate_id"], ["catalogue_candidates.id"], ondelete="SET NULL"
         ),
@@ -104,13 +107,11 @@ def upgrade() -> None:
         sa.Column("decision", sa.String(length=32), nullable=False),
         sa.Column("reason", sa.String(length=100), nullable=False),
         sa.Column("detail_json", sa.JSON(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["run_id"], ["catalogue_ingestion_runs.id"], ondelete="SET NULL"
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["run_id"], ["catalogue_ingestion_runs.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(
             ["source_artifact_id"], ["catalogue_source_artifacts.id"], ondelete="SET NULL"
         ),

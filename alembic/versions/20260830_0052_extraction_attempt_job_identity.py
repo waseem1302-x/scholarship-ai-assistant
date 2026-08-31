@@ -7,6 +7,7 @@ Revises: 20260830_0051
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "20260830_0052"
@@ -39,20 +40,14 @@ def upgrade() -> None:
         ["extraction_job_key"],
         unique=False,
     )
-    op.drop_constraint(_CONSTRAINT, "catalogue_extraction_attempts", type_="unique")
-    op.create_unique_constraint(
-        _CONSTRAINT,
-        "catalogue_extraction_attempts",
-        list(_NEW_COLUMNS),
-    )
+    with op.batch_alter_table("catalogue_extraction_attempts") as batch_op:
+        batch_op.drop_constraint(_CONSTRAINT, type_="unique")
+        batch_op.create_unique_constraint(_CONSTRAINT, list(_NEW_COLUMNS))
 
 
 def downgrade() -> None:
-    op.drop_constraint(_CONSTRAINT, "catalogue_extraction_attempts", type_="unique")
-    op.create_unique_constraint(
-        _CONSTRAINT,
-        "catalogue_extraction_attempts",
-        list(_OLD_COLUMNS),
-    )
+    with op.batch_alter_table("catalogue_extraction_attempts") as batch_op:
+        batch_op.drop_constraint(_CONSTRAINT, type_="unique")
+        batch_op.create_unique_constraint(_CONSTRAINT, list(_OLD_COLUMNS))
     op.drop_index(_INDEX, table_name="catalogue_extraction_attempts")
     op.drop_column("catalogue_extraction_attempts", "extraction_job_key")

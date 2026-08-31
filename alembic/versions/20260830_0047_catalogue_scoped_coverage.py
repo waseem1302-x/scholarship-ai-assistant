@@ -69,9 +69,7 @@ def upgrade() -> None:
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["source_id"], ["catalogue_candidate_sources.id"], ondelete="SET NULL"
         ),
@@ -88,7 +86,9 @@ def upgrade() -> None:
         ),
     )
     for column in ("candidate_id", "node_type", "source_id", "source_artifact_id"):
-        op.create_index(op.f(f"ix_catalogue_scope_nodes_{column}"), "catalogue_scope_nodes", [column])
+        op.create_index(
+            op.f(f"ix_catalogue_scope_nodes_{column}"), "catalogue_scope_nodes", [column]
+        )
     op.create_index(
         "ix_catalogue_scope_nodes_candidate_type",
         "catalogue_scope_nodes",
@@ -136,10 +136,10 @@ def upgrade() -> None:
         sa.Column(
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.CheckConstraint("parent_node_id != child_node_id", name="ck_catalogue_scope_edges_not_self"),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
+        sa.CheckConstraint(
+            "parent_node_id != child_node_id", name="ck_catalogue_scope_edges_not_self"
         ),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["parent_node_id"], ["catalogue_scope_nodes.id"], ondelete="CASCADE"
         ),
@@ -165,7 +165,9 @@ def upgrade() -> None:
         "relationship_type",
         "source_artifact_id",
     ):
-        op.create_index(op.f(f"ix_catalogue_scope_edges_{column}"), "catalogue_scope_edges", [column])
+        op.create_index(
+            op.f(f"ix_catalogue_scope_edges_{column}"), "catalogue_scope_edges", [column]
+        )
     op.create_index(
         "ix_catalogue_scope_edges_candidate_relationship",
         "catalogue_scope_edges",
@@ -202,7 +204,9 @@ def upgrade() -> None:
             ),
             nullable=False,
         ),
-        sa.Column("applicability_is_explicit", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column(
+            "applicability_is_explicit", sa.Boolean(), nullable=False, server_default=sa.false()
+        ),
         sa.Column("evidence_excerpt", sa.Text(), nullable=True),
         sa.Column("evidence_start", sa.Integer(), nullable=True),
         sa.Column("evidence_end", sa.Integer(), nullable=True),
@@ -213,9 +217,7 @@ def upgrade() -> None:
         sa.Column(
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["source_id"], ["catalogue_candidate_sources.id"], ondelete="CASCADE"
         ),
@@ -311,9 +313,7 @@ def upgrade() -> None:
         sa.Column(
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["scope_node_id"], ["catalogue_scope_nodes.id"], ondelete="CASCADE"
         ),

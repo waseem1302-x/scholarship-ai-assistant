@@ -48,7 +48,9 @@ def upgrade() -> None:
             "status IN (" + ", ".join(f"'{value}'" for value in _RUN_STATUS_VALUES) + ")",
         )
         batch_op.add_column(sa.Column("lease_token", sa.String(length=64), nullable=True))
-        batch_op.add_column(sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(
+            sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True)
+        )
         batch_op.create_index(
             "ix_catalogue_ingestion_runs_lease_token", ["lease_token"], unique=False
         )
@@ -94,12 +96,8 @@ def upgrade() -> None:
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["run_id"], ["catalogue_ingestion_runs.id"], ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["run_id"], ["catalogue_ingestion_runs.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("job_key", name="uq_catalogue_resumable_jobs_key"),
     )

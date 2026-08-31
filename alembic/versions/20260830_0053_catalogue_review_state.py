@@ -7,6 +7,7 @@ Revises: 20260830_0052
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "20260830_0053"
@@ -50,7 +51,9 @@ def upgrade() -> None:
         sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("review_reason", sa.Text(), nullable=True),
         sa.Column("materialization_revision", sa.String(length=100), nullable=True),
-        sa.Column("materialization_attempt_count", sa.Integer(), server_default="0", nullable=False),
+        sa.Column(
+            "materialization_attempt_count", sa.Integer(), server_default="0", nullable=False
+        ),
         sa.Column("materialization_failure_code", sa.String(length=100), nullable=True),
         sa.Column("materialization_failure_reason", sa.Text(), nullable=True),
         sa.Column("materialized_at", sa.DateTime(timezone=True), nullable=True),
@@ -67,11 +70,9 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "materialization_attempt_count >= 0",
-            name="ck_catalogue_candidate_reviews_materialization_attempt_non_negative",
+            name="ck_candidate_reviews_attempt_non_negative",
         ),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["reviewed_by_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("candidate_id", name="uq_catalogue_candidate_reviews_candidate"),

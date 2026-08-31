@@ -7,6 +7,7 @@ Revises: 20260830_0053
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "20260830_0054"
@@ -20,6 +21,10 @@ _SCOPED_FACT_TABLES = (
     "required_documents",
     "application_steps",
 )
+
+
+def _scoped_fact_foreign_key_name(table_name: str) -> str:
+    return f"fk_{table_name}_programme_id"
 
 
 def _timestamps() -> list[sa.Column]:
@@ -39,7 +44,7 @@ def _extend_scoped_fact_table(table_name: str) -> None:
         batch_op.drop_index(f"ix_{table_name}_scope")
         batch_op.add_column(sa.Column("scholarship_programme_id", sa.Uuid(), nullable=True))
         batch_op.create_foreign_key(
-            f"fk_{table_name}_scholarship_programme_id_scholarship_programmes",
+            _scoped_fact_foreign_key_name(table_name),
             "scholarship_programmes",
             ["scholarship_programme_id"],
             ["id"],
@@ -76,14 +81,12 @@ def _restore_scoped_fact_table(table_name: str) -> None:
     with op.batch_alter_table(table_name) as batch_op:
         batch_op.drop_index(f"ix_{table_name}_scope")
         batch_op.drop_index(f"ix_{table_name}_scholarship_programme_id")
-        batch_op.drop_constraint(
-            f"ck_{table_name}_programme_domain_exclusive", type_="check"
-        )
+        batch_op.drop_constraint(f"ck_{table_name}_programme_domain_exclusive", type_="check")
         batch_op.drop_constraint(
             f"ck_{table_name}_scholarship_programme_requires_cycle", type_="check"
         )
         batch_op.drop_constraint(
-            f"fk_{table_name}_scholarship_programme_id_scholarship_programmes",
+            _scoped_fact_foreign_key_name(table_name),
             type_="foreignkey",
         )
         batch_op.drop_column("scholarship_programme_id")
@@ -185,7 +188,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["cycle_id"], ["opportunity_cycles.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["track_id"], ["application_tracks.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["institution_id"], ["institutions.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["programme_id"], ["scholarship_programmes.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["programme_id"], ["scholarship_programmes.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("identity_key", name="uq_scholarship_eligibility_rules_identity"),
     )
@@ -237,7 +242,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["cycle_id"], ["opportunity_cycles.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["track_id"], ["application_tracks.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["institution_id"], ["institutions.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["programme_id"], ["scholarship_programmes.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["programme_id"], ["scholarship_programmes.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("identity_key", name="uq_opportunity_events_identity"),
     )
@@ -285,7 +292,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["cycle_id"], ["opportunity_cycles.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["track_id"], ["application_tracks.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["institution_id"], ["institutions.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["programme_id"], ["scholarship_programmes.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["programme_id"], ["scholarship_programmes.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("identity_key", name="uq_opportunity_resources_identity"),
     )
@@ -327,9 +336,7 @@ def upgrade() -> None:
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["review_id"], ["catalogue_candidate_reviews.id"], ondelete="CASCADE"
         ),

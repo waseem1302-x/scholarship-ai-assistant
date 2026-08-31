@@ -7,6 +7,7 @@ Revises: 20260830_0048
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "20260830_0049"
@@ -51,10 +52,10 @@ def upgrade() -> None:
         sa.Column("language_hints", sa.JSON(), nullable=False),
         sa.Column("source_role", sa.String(length=32), nullable=False),
         sa.Column("builder_version", sa.String(length=100), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["source_id"], ["catalogue_candidate_sources.id"], ondelete="CASCADE"
         ),
@@ -144,10 +145,10 @@ def upgrade() -> None:
         sa.Column("selected", sa.Boolean(), nullable=False),
         sa.Column("router_version", sa.String(length=100), nullable=False),
         sa.Column("coverage_input_fingerprint", sa.String(length=64), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
+        sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["evidence_block_id"], ["catalogue_evidence_blocks.id"], ondelete="RESTRICT"
         ),
@@ -191,7 +192,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_catalogue_evidence_routes_block_scope", table_name="catalogue_evidence_routes")
+    op.drop_index(
+        "ix_catalogue_evidence_routes_block_scope", table_name="catalogue_evidence_routes"
+    )
     op.drop_index(
         "ix_catalogue_evidence_routes_candidate_selected", table_name="catalogue_evidence_routes"
     )
@@ -213,7 +216,9 @@ def downgrade() -> None:
         )
     op.drop_table("catalogue_evidence_routes")
 
-    op.drop_index("ix_catalogue_evidence_blocks_content_hash", table_name="catalogue_evidence_blocks")
+    op.drop_index(
+        "ix_catalogue_evidence_blocks_content_hash", table_name="catalogue_evidence_blocks"
+    )
     op.drop_index(
         "ix_catalogue_evidence_blocks_candidate_artifact", table_name="catalogue_evidence_blocks"
     )

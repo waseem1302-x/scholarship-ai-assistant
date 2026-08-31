@@ -22,8 +22,12 @@ def _enum(name: str, *values: str) -> sa.Enum:
 
 def upgrade() -> None:
     with op.batch_alter_table("catalogue_ingestion_runs") as batch_op:
-        batch_op.add_column(sa.Column("configuration_revision", sa.String(length=100), nullable=True))
-        batch_op.add_column(sa.Column("configuration_fingerprint", sa.String(length=64), nullable=True))
+        batch_op.add_column(
+            sa.Column("configuration_revision", sa.String(length=100), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("configuration_fingerprint", sa.String(length=64), nullable=True)
+        )
         batch_op.create_index(
             "ix_catalogue_ingestion_runs_configuration_fingerprint",
             ["configuration_fingerprint"],
@@ -111,9 +115,7 @@ def upgrade() -> None:
         sa.Column("dispatch_started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("dispatched_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["run_id"], ["catalogue_ingestion_runs.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["run_id"], ["catalogue_ingestion_runs.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["candidate_id"], ["catalogue_candidates.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["extraction_attempt_id"], ["catalogue_extraction_attempts.id"], ondelete="SET NULL"
@@ -164,7 +166,7 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
-        "ix_catalogue_provider_attempts_objective",
+        "ix_catalogue_provider_attempts_candidate_objective",
         "catalogue_provider_attempts",
         ["candidate_id", "objective", "created_at"],
         unique=False,

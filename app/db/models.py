@@ -59,6 +59,11 @@ from app.modules.catalogue_ingestion.models import (
 )
 from app.modules.catalogue_ingestion.provider_attempts import CatalogueProviderAttempt
 from app.modules.catalogue_ingestion.review_models import CatalogueCandidateReview
+from app.modules.catalogue_ingestion.scheduling_models import (
+    CatalogueProviderCircuit,
+    CatalogueProviderLane,
+    CatalogueSchedulingDecision,
+)
 from app.modules.catalogue_ingestion.topology_models import (
     CatalogueCoverageCell,
     CatalogueScopeEdge,
@@ -170,7 +175,10 @@ __all__ = [
     "CatalogueIngestionRun",
     "CatalogueMaterializedClaimLink",
     "CatalogueProviderAttempt",
+    "CatalogueProviderCircuit",
+    "CatalogueProviderLane",
     "CatalogueResumableJob",
+    "CatalogueSchedulingDecision",
     "CatalogueScopeEdge",
     "CatalogueScopeNode",
     "CatalogueSourceScopeLink",

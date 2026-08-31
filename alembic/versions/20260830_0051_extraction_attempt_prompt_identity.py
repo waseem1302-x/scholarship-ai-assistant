@@ -34,18 +34,14 @@ _NEW_COLUMNS = (
 
 
 def upgrade() -> None:
-    op.drop_constraint(_CONSTRAINT, "catalogue_extraction_attempts", type_="unique")
-    op.create_unique_constraint(
-        _CONSTRAINT,
-        "catalogue_extraction_attempts",
-        list(_NEW_COLUMNS),
-    )
+    # SQLite cannot ALTER a UNIQUE constraint in place.  Batch mode uses a safe
+    # copy-and-move there while retaining native ALTER behavior on PostgreSQL.
+    with op.batch_alter_table("catalogue_extraction_attempts") as batch_op:
+        batch_op.drop_constraint(_CONSTRAINT, type_="unique")
+        batch_op.create_unique_constraint(_CONSTRAINT, list(_NEW_COLUMNS))
 
 
 def downgrade() -> None:
-    op.drop_constraint(_CONSTRAINT, "catalogue_extraction_attempts", type_="unique")
-    op.create_unique_constraint(
-        _CONSTRAINT,
-        "catalogue_extraction_attempts",
-        list(_OLD_COLUMNS),
-    )
+    with op.batch_alter_table("catalogue_extraction_attempts") as batch_op:
+        batch_op.drop_constraint(_CONSTRAINT, type_="unique")
+        batch_op.create_unique_constraint(_CONSTRAINT, list(_OLD_COLUMNS))
