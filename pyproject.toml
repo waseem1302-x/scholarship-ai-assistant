@@ -41,6 +41,11 @@ dev = [
 crawlee = [
   "crawlee>=1.9,<2",
 ]
+# Optional layout-aware PDF extraction (Phase 1b).
+docling = [
+  "docling>=2.120,<3",
+  "docling-core>=2.0,<3",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

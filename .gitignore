@@ -23,3 +23,14 @@ build/
 *.db
 .idea/
 .vscode/
+
+# Local catalogue/runtime caches and operator credentials; never commit these.
+.catalogue-local/
+.docling-models/
+.local/
+.uv-cache-docs/
+
+# Local document/assignment QA helpers, not application source.
+/tools/
+pytest_temp/
+
