@@ -82,7 +82,7 @@ class CatalogueProviderAttempt(Base):
             "created_at",
         ),
         Index(
-            "ix_catalogue_provider_attempts_objective",
+            "ix_catalogue_provider_attempts_candidate_objective",
             "candidate_id",
             "objective",
             "created_at",

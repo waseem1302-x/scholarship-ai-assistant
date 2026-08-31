@@ -76,6 +76,12 @@ class DiscoveryOfficialityStatus(StrEnum):
     REJECTED_URL_POLICY = "rejected_url_policy"
 
 
+class DiscoveryLeadReviewStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class CatalogueDiscoveryRun(Base):
     __tablename__ = "catalogue_discovery_runs"
     __table_args__ = (
@@ -291,6 +297,22 @@ class CatalogueDiscoveryLead(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    review_status: Mapped[DiscoveryLeadReviewStatus] = mapped_column(
+        Enum(
+            DiscoveryLeadReviewStatus,
+            name="catalogue_discovery_lead_review_status",
+            native_enum=False,
+            values_callable=enum_values,
+            create_constraint=True,
+        ),
+        default=DiscoveryLeadReviewStatus.PENDING,
+        index=True,
+    )
+    review_reason: Mapped[str | None] = mapped_column(String(500))
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, server_default=func.now()
     )

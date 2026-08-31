@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, inspect, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.modules.catalogue_ingestion.models import (
@@ -36,13 +36,40 @@ PROCESSABLE_STATUSES = {
     CandidateStatus.SOURCE_FETCHED,
     CandidateStatus.EXTRACTED,
 }
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Normalize database-returned timestamps before Python-side lease comparisons.
+
+    PostgreSQL preserves timezone information, while SQLite (used by the fast test suite) returns
+    ``DateTime(timezone=True)`` values as naive datetimes. Treating a naive value as UTC keeps the
+    fencing checks identical across both backends.
+    """
+
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _refresh_clean_columns(instance: object, row: object) -> None:
+    """Refresh only clean ORM attributes after a locking read.
+
+    A lease check must observe the database row, but ``populate_existing`` would overwrite a
+    caller's uncommitted candidate/proposal changes.  Refreshing only attributes without pending
+    history preserves those changes while still updating stale lease fields before fencing.
+    """
+
+    state = inspect(instance)
+    for column in instance.__table__.columns:  # type: ignore[attr-defined]
+        attribute = state.attrs[column.key]
+        if not attribute.history.has_changes():
+            setattr(instance, column.key, row[column.key])  # type: ignore[index]
+
+
 _TERMINAL_RUN_STATUSES = {
     IngestionRunStatus.COMPLETED,
     IngestionRunStatus.COMPLETED_WITH_REVIEW,
     IngestionRunStatus.COMPLETED_WITH_FAILURES,
     IngestionRunStatus.FAILED,
     IngestionRunStatus.CANCELLED,
-    IngestionRunStatus.BUDGET_EXHAUSTED,
 }
 _REVIEW_OUTCOMES = {
     CandidateStatus.CONFLICT_DETECTED,
@@ -95,7 +122,11 @@ class CatalogueIngestionRepository:
             raise CatalogueLeaseLost("ingestion_run_missing")
         if run.status in _TERMINAL_RUN_STATUSES:
             raise CatalogueLeaseLost("ingestion_run_terminal")
-        if run.lease_token is None or run.lease_expires_at is None or run.lease_expires_at < observed_at:
+        if (
+            run.lease_token is None
+            or run.lease_expires_at is None
+            or _as_utc(run.lease_expires_at) < _as_utc(observed_at)
+        ):
             run.lease_token = uuid.uuid4().hex
         run.lease_expires_at = observed_at + timedelta(seconds=lease_seconds)
         token = run.lease_token
@@ -169,7 +200,9 @@ class CatalogueIngestionRepository:
                     seed_country=seed.country,
                     seed_cycle=seed.cycle,
                     seed_intake_year=seed.intake_year,
-                    seed_official_url=(str(seed.possible_official_url) if seed.possible_official_url else None),
+                    seed_official_url=(
+                        str(seed.possible_official_url) if seed.possible_official_url else None
+                    ),
                     identity_hint_is_asserted=identity_hint_is_asserted,
                     seed_keywords=seed.keywords,
                 )
@@ -205,10 +238,15 @@ class CatalogueIngestionRepository:
                         CatalogueCandidate.claimed_until < observed_at,
                     ),
                 )
-                .order_by(CatalogueCandidate.seed_index)
+                .order_by(
+                    CatalogueCandidate.attempt_count,
+                    CatalogueCandidate.seed_index,
+                )
                 .limit(limit)
                 .options(
-                    selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
+                    selectinload(CatalogueCandidate.sources).selectinload(
+                        CatalogueCandidateSource.artifacts
+                    )
                 )
                 .execution_options(populate_existing=True)
                 .with_for_update(skip_locked=True)
@@ -278,7 +316,9 @@ class CatalogueIngestionRepository:
             select(CatalogueCandidate)
             .where(CatalogueCandidate.id == candidate_id)
             .options(
-                selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
+                selectinload(CatalogueCandidate.sources).selectinload(
+                    CatalogueCandidateSource.artifacts
+                )
             )
         )
 
@@ -288,7 +328,9 @@ class CatalogueIngestionRepository:
                 select(CatalogueCandidate)
                 .where(CatalogueCandidate.id == candidate_id)
                 .options(
-                    selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
+                    selectinload(CatalogueCandidate.sources).selectinload(
+                        CatalogueCandidateSource.artifacts
+                    )
                 )
                 .execution_options(populate_existing=True)
                 .with_for_update()
@@ -304,8 +346,8 @@ class CatalogueIngestionRepository:
         """Release the current candidate lease with an atomic fencing predicate.
 
         The conditional UPDATE executes with autoflush suppressed, so dirty candidate results are
-        not written before ownership is proven. The UPDATE then holds the row lock until the caller's
-        transaction commits, allowing the caller to flush its already-produced result safely.
+        not written before ownership is proven. The UPDATE then holds the row lock until the
+        caller's transaction commits, allowing the caller to flush its result safely.
         """
 
         expected_worker = worker_id if worker_id is not None else candidate.claimed_by
@@ -512,17 +554,21 @@ class CatalogueIngestionRepository:
         ):
             raise CatalogueLeaseLost("candidate_lease_lost")
 
-        existing_call_count = self.session.scalar(
-            select(func.count())
-            .select_from(CatalogueProviderAttempt)
-            .where(
-                CatalogueProviderAttempt.run_id == run_id,
-                ~and_(
-                    CatalogueProviderAttempt.state == ProviderAttemptState.FAILED,
-                    CatalogueProviderAttempt.failure_class == ProviderFailureClass.PRE_DISPATCH_FAILURE,
-                ),
+        existing_call_count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(CatalogueProviderAttempt)
+                .where(
+                    CatalogueProviderAttempt.run_id == run_id,
+                    ~and_(
+                        CatalogueProviderAttempt.state == ProviderAttemptState.FAILED,
+                        CatalogueProviderAttempt.failure_class
+                        == ProviderFailureClass.PRE_DISPATCH_FAILURE,
+                    ),
+                )
             )
-        ) or 0
+            or 0
+        )
         if existing_call_count >= run.max_model_calls:
             raise ProviderBudgetReservationError("provider_call_budget_exhausted")
         current_upper = self.session.scalar(
@@ -532,11 +578,14 @@ class CatalogueIngestionRepository:
         )
         if Decimal(str(current_upper or 0)) + reserved_cost_upper > run.max_estimated_cost:
             raise ProviderBudgetReservationError("provider_cost_budget_exhausted")
-        retry_ordinal = self.session.scalar(
-            select(func.count())
-            .select_from(CatalogueProviderAttempt)
-            .where(CatalogueProviderAttempt.extraction_job_key == extraction_job_key)
-        ) or 0
+        retry_ordinal = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(CatalogueProviderAttempt)
+                .where(CatalogueProviderAttempt.extraction_job_key == extraction_job_key)
+            )
+            or 0
+        )
         attempt = CatalogueProviderAttempt(
             run_id=run_id,
             candidate_id=candidate_id,
@@ -606,7 +655,9 @@ class CatalogueIngestionRepository:
             candidate_lease_token=candidate_lease_token,
         )
         attempt.state = ProviderAttemptState.SUCCEEDED
-        attempt.dispatched_at = attempt.dispatched_at or attempt.dispatch_started_at or datetime.now(UTC)
+        attempt.dispatched_at = (
+            attempt.dispatched_at or attempt.dispatch_started_at or datetime.now(UTC)
+        )
         attempt.completed_at = datetime.now(UTC)
         attempt.failure_class = None
         attempt.error_code = None
@@ -617,6 +668,10 @@ class CatalogueIngestionRepository:
         attempt.input_tokens = input_tokens
         attempt.output_tokens = output_tokens
         attempt.provider_request_id = provider_request_id
+        # Sessions deliberately disable autoflush for lease/fencing reads. Flush the
+        # settled ledger row before deriving run-level accounting, otherwise the query
+        # observes the prior reservation and callers can miss an actual-cost overflow.
+        self.session.flush()
         run = self.session.get(CatalogueIngestionRun, attempt.run_id)
         if run is not None:
             self.refresh_provider_accounting(run)
@@ -652,7 +707,9 @@ class CatalogueIngestionRepository:
         attempt.provider_request_id = provider_request_id
         attempt.completed_at = datetime.now(UTC)
         if dispatch_occurred:
-            attempt.dispatched_at = attempt.dispatched_at or attempt.dispatch_started_at or datetime.now(UTC)
+            attempt.dispatched_at = (
+                attempt.dispatched_at or attempt.dispatch_started_at or datetime.now(UTC)
+            )
         if exact_cost is not None:
             attempt.accounting_state = ProviderAccountingState.EXACT
             attempt.cost_lower_bound = exact_cost
@@ -667,6 +724,7 @@ class CatalogueIngestionRepository:
             attempt.accounting_state = ProviderAccountingState.NOT_BILLABLE
             attempt.cost_lower_bound = Decimal("0")
             attempt.cost_upper_bound = Decimal("0")
+        self.session.flush()
         run = self.session.get(CatalogueIngestionRun, attempt.run_id)
         if run is not None:
             self.refresh_provider_accounting(run)
@@ -688,7 +746,10 @@ class CatalogueIngestionRepository:
                 .execution_options(populate_existing=True)
                 .with_for_update()
             )
-        if current is None or current.state in {ProviderAttemptState.SUCCEEDED, ProviderAttemptState.FAILED}:
+        if current is None or current.state in {
+            ProviderAttemptState.SUCCEEDED,
+            ProviderAttemptState.FAILED,
+        }:
             self.session.rollback()
             return
         current.state = ProviderAttemptState.FAILED
@@ -708,6 +769,7 @@ class CatalogueIngestionRepository:
             current.accounting_state = ProviderAccountingState.UNKNOWN_POTENTIALLY_BILLABLE
             current.cost_lower_bound = Decimal("0")
             current.cost_upper_bound = current.reserved_cost_upper
+        self.session.flush()
         run = self.session.get(CatalogueIngestionRun, current.run_id)
         if run is not None:
             self.refresh_provider_accounting(run)
@@ -737,45 +799,65 @@ class CatalogueIngestionRepository:
         self.session.flush()
 
     def refresh_provider_accounting(self, run: CatalogueIngestionRun) -> None:
-        count = self.session.scalar(
-            select(func.count())
-            .select_from(CatalogueProviderAttempt)
-            .where(
-                CatalogueProviderAttempt.run_id == run.id,
-                ~and_(
-                    CatalogueProviderAttempt.state == ProviderAttemptState.FAILED,
-                    CatalogueProviderAttempt.failure_class == ProviderFailureClass.PRE_DISPATCH_FAILURE,
-                ),
+        count = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(CatalogueProviderAttempt)
+                .where(
+                    CatalogueProviderAttempt.run_id == run.id,
+                    ~and_(
+                        CatalogueProviderAttempt.state == ProviderAttemptState.FAILED,
+                        CatalogueProviderAttempt.failure_class
+                        == ProviderFailureClass.PRE_DISPATCH_FAILURE,
+                    ),
+                )
             )
-        ) or 0
-        input_tokens = self.session.scalar(
-            select(func.coalesce(func.sum(CatalogueProviderAttempt.input_tokens), 0)).where(
-                CatalogueProviderAttempt.run_id == run.id
+            or 0
+        )
+        input_tokens = (
+            self.session.scalar(
+                select(func.coalesce(func.sum(CatalogueProviderAttempt.input_tokens), 0)).where(
+                    CatalogueProviderAttempt.run_id == run.id
+                )
             )
-        ) or 0
-        output_tokens = self.session.scalar(
-            select(func.coalesce(func.sum(CatalogueProviderAttempt.output_tokens), 0)).where(
-                CatalogueProviderAttempt.run_id == run.id
+            or 0
+        )
+        output_tokens = (
+            self.session.scalar(
+                select(func.coalesce(func.sum(CatalogueProviderAttempt.output_tokens), 0)).where(
+                    CatalogueProviderAttempt.run_id == run.id
+                )
             )
-        ) or 0
-        lower = self.session.scalar(
-            select(func.coalesce(func.sum(CatalogueProviderAttempt.cost_lower_bound), 0)).where(
-                CatalogueProviderAttempt.run_id == run.id
+            or 0
+        )
+        lower = (
+            self.session.scalar(
+                select(func.coalesce(func.sum(CatalogueProviderAttempt.cost_lower_bound), 0)).where(
+                    CatalogueProviderAttempt.run_id == run.id
+                )
             )
-        ) or 0
-        upper = self.session.scalar(
-            select(func.coalesce(func.sum(CatalogueProviderAttempt.cost_upper_bound), 0)).where(
-                CatalogueProviderAttempt.run_id == run.id
+            or 0
+        )
+        upper = (
+            self.session.scalar(
+                select(func.coalesce(func.sum(CatalogueProviderAttempt.cost_upper_bound), 0)).where(
+                    CatalogueProviderAttempt.run_id == run.id
+                )
             )
-        ) or 0
-        uncertain = self.session.scalar(
-            select(func.count())
-            .select_from(CatalogueProviderAttempt)
-            .where(
-                CatalogueProviderAttempt.run_id == run.id,
-                CatalogueProviderAttempt.accounting_state == ProviderAccountingState.UNKNOWN_POTENTIALLY_BILLABLE,
+            or 0
+        )
+        uncertain = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(CatalogueProviderAttempt)
+                .where(
+                    CatalogueProviderAttempt.run_id == run.id,
+                    CatalogueProviderAttempt.accounting_state
+                    == ProviderAccountingState.UNKNOWN_POTENTIALLY_BILLABLE,
+                )
             )
-        ) or 0
+            or 0
+        )
         run.model_calls = int(count)
         run.input_tokens = int(input_tokens)
         run.output_tokens = int(output_tokens)
@@ -820,16 +902,21 @@ class CatalogueIngestionRepository:
         items = list(
             self.session.scalars(
                 base.options(
-                    selectinload(CatalogueCandidate.sources).selectinload(CatalogueCandidateSource.artifacts)
+                    selectinload(CatalogueCandidate.sources).selectinload(
+                        CatalogueCandidateSource.artifacts
+                    )
                 )
                 .order_by(CatalogueCandidate.created_at.desc())
                 .offset(offset)
                 .limit(limit)
             )
         )
-        total = self.session.scalar(
-            select(func.count()).select_from(CatalogueCandidate).where(*filters)
-        ) or 0
+        total = (
+            self.session.scalar(
+                select(func.count()).select_from(CatalogueCandidate).where(*filters)
+            )
+            or 0
+        )
         return items, total
 
     def refresh_run_summary(self, run: CatalogueIngestionRun) -> None:
@@ -838,14 +925,17 @@ class CatalogueIngestionRepository:
             .where(CatalogueCandidate.run_id == run.id)
             .group_by(CatalogueCandidate.status)
         ).all()
-        pipeline_failures = self.session.scalar(
-            select(func.count())
-            .select_from(CatalogueCandidate)
-            .where(
-                CatalogueCandidate.run_id == run.id,
-                CatalogueCandidate.failure_code.in_(_PIPELINE_FAILURE_CODES),
+        pipeline_failures = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(CatalogueCandidate)
+                .where(
+                    CatalogueCandidate.run_id == run.id,
+                    CatalogueCandidate.failure_code.in_(_PIPELINE_FAILURE_CODES),
+                )
             )
-        ) or 0
+            or 0
+        )
         provider_summary = {
             key: value
             for key, value in (run.aggregate_summary or {}).items()
@@ -874,21 +964,41 @@ class CatalogueIngestionRepository:
 
     def _run_for_update(self, run_id: uuid.UUID) -> CatalogueIngestionRun | None:
         with self.session.no_autoflush:
-            return self.session.scalar(
-                select(CatalogueIngestionRun)
-                .where(CatalogueIngestionRun.id == run_id)
-                .execution_options(populate_existing=True)
-                .with_for_update()
+            row = (
+                self.session.execute(
+                    select(CatalogueIngestionRun.__table__)
+                    .where(CatalogueIngestionRun.id == run_id)
+                    .with_for_update()
+                )
+                .mappings()
+                .one_or_none()
             )
+            if row is None:
+                return None
+            run = self.session.get(CatalogueIngestionRun, run_id)
+            if run is None:
+                return None
+            _refresh_clean_columns(run, row)
+            return run
 
     def _candidate_for_update(self, candidate_id: uuid.UUID) -> CatalogueCandidate | None:
         with self.session.no_autoflush:
-            return self.session.scalar(
-                select(CatalogueCandidate)
-                .where(CatalogueCandidate.id == candidate_id)
-                .execution_options(populate_existing=True)
-                .with_for_update()
+            row = (
+                self.session.execute(
+                    select(CatalogueCandidate.__table__)
+                    .where(CatalogueCandidate.id == candidate_id)
+                    .with_for_update()
+                )
+                .mappings()
+                .one_or_none()
             )
+            if row is None:
+                return None
+            candidate = self.session.get(CatalogueCandidate, candidate_id)
+            if candidate is None:
+                return None
+            _refresh_clean_columns(candidate, row)
+            return candidate
 
     def _assert_run_lease(
         self,
@@ -914,7 +1024,7 @@ class CatalogueIngestionRepository:
         return (
             run.lease_token == lease_token
             and run.lease_expires_at is not None
-            and run.lease_expires_at >= observed_at
+            and _as_utc(run.lease_expires_at) >= _as_utc(observed_at)
             and run.status not in _TERMINAL_RUN_STATUSES
         )
 
@@ -930,7 +1040,7 @@ class CatalogueIngestionRepository:
             candidate.claimed_by == worker_id
             and candidate.lease_token == lease_token
             and candidate.claimed_until is not None
-            and candidate.claimed_until >= observed_at
+            and _as_utc(candidate.claimed_until) >= _as_utc(observed_at)
         )
 
     def _assert_provider_attempt_ownership(

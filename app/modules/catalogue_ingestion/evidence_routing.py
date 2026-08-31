@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -79,7 +79,7 @@ class _RouteTarget:
 
 
 class CatalogueEvidenceRouter:
-    """Build and persist the block × scope × objective relevance matrix without a model call."""
+    """Build and persist the block x scope x objective relevance matrix without a model call."""
 
     def __init__(
         self,
@@ -126,9 +126,7 @@ class CatalogueEvidenceRouter:
         )
         linked_scopes = {(link.source_id, link.scope_node_id) for link in links}
         explicit_scopes = {
-            (link.source_id, link.scope_node_id)
-            for link in links
-            if link.applicability_is_explicit
+            (link.source_id, link.scope_node_id) for link in links if link.applicability_is_explicit
         }
 
         decisions: list[EvidenceRouteDecision] = []
@@ -354,9 +352,7 @@ def _scope_tokens(target: _RouteTarget) -> set[str]:
         if len(normalized) >= 2:
             tokens.add(normalized)
         tokens.update(
-            item
-            for item in re.split(r"[^\w]+", normalized, flags=re.UNICODE)
-            if len(item) >= 3
+            item for item in re.split(r"[^\w]+", normalized, flags=re.UNICODE) if len(item) >= 3
         )
     return tokens
 

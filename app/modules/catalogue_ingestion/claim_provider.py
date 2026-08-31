@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 import urllib.request
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -63,115 +64,184 @@ CLAIM_SOURCE_SELECTION_VERSION = "objective-evidence-mask.v3"
 
 OBJECTIVE_SOURCE_TERMS: dict[ClaimObjective, tuple[str, ...]] = {
     ClaimObjective.IDENTITY: (
-        "japanese government (mext) scholarship",
-        "mext scholarship",
+        "scholarship",
+        "fellowship",
+        "award",
+        "programme",
+        "program",
+        "grant",
+        "bursary",
+        "academic year",
+        "intake",
         "ministry of education",
-        "academic year 2027",
-        "2027 scholarship",
+        "mext",
+        "daad",
+        "chevening",
+        "fulbright",
+        "erasmus",
     ),
     ClaimObjective.PROGRAMMES: (
-        "types of japanese government (mext) scholarships",
-        "categories of students",
-        "scholarship period",
+        "degree",
+        "masters",
+        "master's",
+        "phd",
+        "doctoral",
+        "doctorate",
+        "postgraduate",
+        "undergraduate",
+        "bachelors",
+        "bachelor's",
         "fields of study",
+        "disciplines",
         "academic level",
         "degree course",
         "research students",
-        "undergraduate students",
+        "study period",
+        "categories of students",
     ),
     ClaimObjective.PROGRAMME_DETAILS: (
-        "types of japanese government (mext) scholarships",
-        "categories of students",
-        "scholarship period",
+        "degree",
+        "masters",
+        "master's",
+        "phd",
+        "doctoral",
+        "doctorate",
+        "postgraduate",
+        "undergraduate",
+        "bachelors",
+        "bachelor's",
         "fields of study",
+        "disciplines",
         "academic level",
         "degree course",
-        "research students",
-        "undergraduate students",
+        "duration",
+        "course structure",
     ),
     ClaimObjective.ROUTES: (
         "application process",
+        "how to apply",
+        "application route",
         "embassy recommendation",
         "university recommendation",
-        "direct placement",
-        "japanese diplomatic mission",
+        "direct application",
+        "online portal",
+        "diplomatic mission",
+        "nominating agency",
+        "placement",
     ),
     ClaimObjective.ELIGIBILITY: (
+        "eligibility",
         "qualifications and conditions",
+        "requirements",
+        "criteria",
         "nationality",
+        "citizenship",
         "academic background",
-        "arrival in japan",
+        "gpa",
+        "cgpa",
+        "percentage",
+        "age limit",
         "student visa",
-        "health",
-        "age",
+        "work experience",
+        "english proficiency",
+        "language",
     ),
     ClaimObjective.ELIGIBILITY_CONTEXT: (
+        "eligibility",
         "qualifications and conditions",
+        "requirements",
         "nationality",
+        "citizenship",
         "academic background",
-        "arrival in japan",
-        "student visa",
-        "health",
-        "age",
+        "minimum grade",
+        "degree requirement",
+        "language requirement",
+        "ielts",
+        "toefl",
     ),
     ClaimObjective.DOCUMENTS_CORE: (
         "documents to be submitted",
         "application documents",
+        "required documents",
         "academic transcript",
         "graduation certificate",
+        "degree certificate",
         "recommendation letter",
-        "recommendation form",
+        "reference letter",
+        "statement of purpose",
+        "motivation letter",
+        "research plan",
+        "cv",
+        "passport",
         "medical certificate",
         "language proficiency",
     ),
     ClaimObjective.DOCUMENTS_REQUIREMENTS: (
         "documents to be submitted",
         "application documents",
+        "required documents",
         "academic transcript",
         "graduation certificate",
         "recommendation letter",
         "recommendation form",
+        "statement of purpose",
+        "research proposal",
         "medical certificate",
-        "language proficiency",
+        "language certificate",
     ),
     ClaimObjective.DOCUMENTS_COUNTS: (
         "documents to be submitted",
         "application documents",
+        "copies",
+        "original",
+        "number of documents",
         "academic transcript",
-        "graduation certificate",
         "recommendation letter",
-        "recommendation form",
-        "medical certificate",
-        "language proficiency",
+        "certified copies",
     ),
     ClaimObjective.DOCUMENTS_FORMAT: (
         "documents to be submitted",
         "application documents",
-        "academic transcript",
-        "graduation certificate",
-        "recommendation letter",
-        "recommendation form",
-        "medical certificate",
-        "language proficiency",
+        "format",
+        "pdf format",
+        "apostille",
+        "attestation",
+        "notarized",
+        "translation",
+        "prescribed form",
     ),
     ClaimObjective.FUNDING: (
         "scholarship benefits",
+        "funding",
         "allowance",
-        "education fees",
+        "stipend",
+        "monthly stipend",
+        "living allowance",
+        "tuition",
+        "tuition fees",
+        "waiver",
         "traveling costs",
-        "transportation to japan",
-        "transportation from japan",
+        "airfare",
+        "travel grant",
+        "insurance",
+        "health insurance",
+        "accommodation",
     ),
     ClaimObjective.APPLICATION_TIMELINE: (
         "application deadline",
         "application period",
-        "application form",
+        "closing date",
+        "due date",
+        "cutoff",
+        "cut-off",
         "selection schedule",
+        "timeline",
         "first screening",
         "second screening",
+        "interview",
         "provisional acceptance",
         "notification of results",
-        "selection",
+        "announcement",
     ),
 }
 
@@ -418,8 +488,14 @@ class AzureOpenAIClaimProvider:
         objective: ClaimObjective = ClaimObjective.IDENTITY,
         source_links: list[dict[str, str | None]] | None = None,
     ) -> ClaimExtractionResult:
-        bounded = source_text[: self.settings.catalogue_ai_max_input_characters]
-        prompt_text = _objective_source_text(bounded, objective)
+        prompt_text = _objective_source_text(
+            source_text,
+            objective,
+            target_evidence_characters=min(
+                self.settings.catalogue_ai_max_input_characters,
+                16_000,
+            ),
+        )
         objective_links = source_links if objective is ClaimObjective.APPLICATION_TIMELINE else []
         links_text = json.dumps(objective_links or [], ensure_ascii=True, separators=(",", ":"))
         instruction = f"{CLAIM_SYSTEM_INSTRUCTION}\n\n{OBJECTIVE_INSTRUCTIONS[objective]}"
@@ -467,16 +543,21 @@ class AzureOpenAIClaimProvider:
             latency_ms=response.latency_ms,
             provider_request_id=response.provider_request_id,
         )
-        result.output = _normalize_claim_output(result.output, bounded, objective=objective)
+        result.output = _normalize_claim_output(result.output, source_text, objective=objective)
         return result
 
     def _parse(
         self,
         raw: bytes,
+        start_time: float | None = None,
         *,
-        latency_ms: int,
-        provider_request_id: str | None,
+        latency_ms: int = 0,
+        provider_request_id: str | None = None,
     ) -> ClaimExtractionResult:
+        if start_time is not None and latency_ms == 0:
+            import time
+
+            latency_ms = max(0, int((time.perf_counter() - start_time) * 1000))
         usage: ExtractionUsage | None = None
         try:
             response = json.loads(raw)
@@ -696,6 +777,20 @@ def _bind_unique_evidence_span(claim: ExtractedClaim, source_text: str) -> Extra
     while position >= 0 and len(starts) < 100:
         starts.append(position)
         position = source_text.find(claim.excerpt, position + 1)
+    if not starts:
+        stripped = claim.excerpt.strip()
+        if stripped:
+            position = source_text.find(stripped)
+            while position >= 0 and len(starts) < 100:
+                starts.append(position)
+                position = source_text.find(stripped, position + 1)
+    if not starts:
+        norm_claim = unicodedata.normalize("NFKC", claim.excerpt).replace("\u00a0", " ")
+        norm_source = unicodedata.normalize("NFKC", source_text).replace("\u00a0", " ")
+        position = norm_source.find(norm_claim)
+        while position >= 0 and len(starts) < 100:
+            starts.append(position)
+            position = norm_source.find(norm_claim, position + 1)
     if not starts:
         return claim
     distance = min(abs(start - claim.excerpt_start) for start in starts)

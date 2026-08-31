@@ -8,7 +8,6 @@ shared topology-aware frontier without replacing the large compatibility service
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import cast
 
 from sqlalchemy import select
 
@@ -20,7 +19,11 @@ from app.modules.catalogue_ingestion.acquisition_runtime import (
     acquisition_snapshot_payload,
     crawl_budget_for_run,
 )
-from app.modules.catalogue_ingestion.crawler import BoundedOfficialSiteCrawler, CrawlBudget, CrawlResult
+from app.modules.catalogue_ingestion.crawler import (
+    BoundedOfficialSiteCrawler,
+    CrawlBudget,
+    CrawlResult,
+)
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceRole,
     CandidateSourceStatus,
@@ -157,9 +160,7 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
         for source in explicit_sources:
             fetched = accepted_by_identity.get(source.canonical_url)
             if fetched is None:
-                fetched = accepted_by_identity.get(
-                    self.opportunities.canonicalize_url(source.url)
-                )
+                fetched = accepted_by_identity.get(self.opportunities.canonicalize_url(source.url))
             if fetched is None:
                 if (
                     source.source_role is CandidateSourceRole.SUPPORTING
@@ -171,7 +172,8 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
                     source.status = CandidateSourceStatus.MANUAL_REVIEW
                     source.failure_code = "duplicate_evidence_source"
                     source.failure_reason = (
-                        "Supporting source resolved to duplicate or near-duplicate accepted evidence"
+                        "Supporting source resolved to duplicate or near-duplicate "
+                        "accepted evidence"
                     )
                     continue
                 source.status = CandidateSourceStatus.MANUAL_REVIEW

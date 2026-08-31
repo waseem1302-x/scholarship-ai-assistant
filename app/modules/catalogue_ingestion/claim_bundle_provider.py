@@ -12,9 +12,9 @@ from pydantic import BaseModel, ValidationError
 
 from app.core.config import Settings
 from app.modules.catalogue_ingestion.claim_bundle_schemas import (
+    BundledAtomicClaim,
     BundleEvidenceReference,
     BundleObjectiveCoverage,
-    BundledAtomicClaim,
     ClaimBundleExtractionOutput,
 )
 from app.modules.catalogue_ingestion.claim_provider import (
@@ -183,7 +183,10 @@ class AzureOpenAIBundleClaimProvider:
                 "Planned evidence bundle exceeds the configured input-character limit",
                 failure_class="pre_dispatch_failure",
             )
-        if max_output_tokens < 1 or max_output_tokens > self.settings.catalogue_ai_max_output_tokens:
+        if (
+            max_output_tokens < 1
+            or max_output_tokens > self.settings.catalogue_ai_max_output_tokens
+        ):
             raise ExtractionSchemaError(
                 "Planned output-token bound exceeds the configured provider limit",
                 failure_class="pre_dispatch_failure",
@@ -201,9 +204,12 @@ class AzureOpenAIBundleClaimProvider:
                     "role": "user",
                     "content": (
                         f"OFFICIAL SOURCE URL: {source_url}\n"
-                        f"OBJECTIVES: {json.dumps([item.value for item in requested], separators=(',', ':'))}\n"
-                        f"SCOPE TARGETS: {json.dumps(scope_targets, ensure_ascii=True, separators=(',', ':'))}\n"
-                        f"RESOURCE LINKS: {json.dumps(links or [], ensure_ascii=True, separators=(',', ':'))}\n\n"
+                        "OBJECTIVES: "
+                        f"{json.dumps([item.value for item in requested], separators=(',', ':'))}\n"
+                        "SCOPE TARGETS: "
+                        f"{json.dumps(scope_targets, ensure_ascii=True, separators=(',', ':'))}\n"
+                        "RESOURCE LINKS: "
+                        f"{json.dumps(links or [], ensure_ascii=True, separators=(',', ':'))}\n\n"
                         "ROUTED EVIDENCE BLOCKS:\n"
                         f"{evidence_text}"
                     ),
@@ -405,7 +411,9 @@ def _sanitize_bundle_payload(
             valid_refs.append(ref.model_dump(mode="json"))
             valid_ref_ids.add(ref.ref_id)
         if len(valid_refs) != len(raw_refs):
-            warnings.append(f"provider_invalid_evidence_refs_dropped:{len(raw_refs) - len(valid_refs)}")
+            warnings.append(
+                f"provider_invalid_evidence_refs_dropped:{len(raw_refs) - len(valid_refs)}"
+            )
         payload["evidence_refs"] = valid_refs
 
     raw_claims = payload.get("claims")
@@ -419,12 +427,17 @@ def _sanitize_bundle_payload(
                 if objective is not None:
                     dropped_objectives.add(objective)
                 continue
-            if claim.evidence_ref_id not in valid_ref_ids or claim.evidence_ref_id in invalid_ref_ids:
+            if (
+                claim.evidence_ref_id not in valid_ref_ids
+                or claim.evidence_ref_id in invalid_ref_ids
+            ):
                 dropped_objectives.add(claim.objective)
                 continue
             valid_claims.append(claim.model_dump(mode="json"))
         if len(valid_claims) != len(raw_claims):
-            warnings.append(f"provider_invalid_bundle_claims_dropped:{len(raw_claims) - len(valid_claims)}")
+            warnings.append(
+                f"provider_invalid_bundle_claims_dropped:{len(raw_claims) - len(valid_claims)}"
+            )
         payload["claims"] = valid_claims
 
     raw_coverage = payload.get("objective_coverage")
@@ -441,7 +454,8 @@ def _sanitize_bundle_payload(
             valid_coverage.append(item.model_dump(mode="json"))
         if len(valid_coverage) != len(raw_coverage):
             warnings.append(
-                f"provider_invalid_bundle_coverage_dropped:{len(raw_coverage) - len(valid_coverage)}"
+                "provider_invalid_bundle_coverage_dropped:"
+                f"{len(raw_coverage) - len(valid_coverage)}"
             )
         payload["objective_coverage"] = valid_coverage
     return payload, dropped_objectives, warnings

@@ -11,9 +11,16 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.modules.auth.models import User
 from app.modules.catalogue_ingestion.models import CatalogueCandidate
-from app.modules.catalogue_ingestion.review_models import CatalogueCandidateReview, CatalogueProposalState
+from app.modules.catalogue_ingestion.review_models import (
+    CatalogueCandidateReview,
+    CatalogueProposalState,
+)
 from app.modules.catalogue_ingestion.review_workflow import CatalogueReviewWorkflow
-from app.modules.opportunities.schemas import AdminOpportunityResponse, ReviewAction, ReviewActionRequest
+from app.modules.opportunities.schemas import (
+    AdminOpportunityResponse,
+    ReviewAction,
+    ReviewActionRequest,
+)
 from app.modules.opportunities.service import OpportunityService
 
 
@@ -51,10 +58,13 @@ class CatalogueAwareOpportunityService(OpportunityService):
                 }:
                     raise AppError(
                         "catalogue_publication_workflow_required",
-                        "Catalogue-ingestion opportunities must pass the candidate publication-readiness workflow before activation",
+                        "Catalogue-ingestion opportunities must pass the candidate "
+                        "publication-readiness workflow before activation",
                         409,
                     )
-                readiness = CatalogueReviewWorkflow(self.session).publication_readiness(candidate.id)
+                readiness = CatalogueReviewWorkflow(self.session).publication_readiness(
+                    candidate.id
+                )
                 if not readiness.ready:
                     raise AppError(
                         "catalogue_publication_readiness_stale",

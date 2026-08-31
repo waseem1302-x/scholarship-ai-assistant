@@ -57,8 +57,8 @@ def trust_domain_rank(domain: EvidenceTrustDomain | None) -> int:
 
 
 __all__ = [
-    "EvidenceTrustDomain",
     "OFFICIAL_FACTUAL_DOMAINS",
+    "EvidenceTrustDomain",
     "trust_domain_for_source_tier",
     "trust_domain_rank",
 ]

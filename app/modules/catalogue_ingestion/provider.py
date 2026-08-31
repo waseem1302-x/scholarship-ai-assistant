@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import urllib.request
 from collections.abc import Callable
 from decimal import Decimal
@@ -29,6 +30,24 @@ from app.modules.catalogue_ingestion.schemas import (
     ExtractionResult,
     ExtractionUsage,
 )
+
+__all__ = [
+    "AzureOpenAIExtractionProvider",
+    "CatalogueExtractionProvider",
+    "ExtractionProviderConnectionError",
+    "ExtractionProviderError",
+    "ExtractionProviderRateLimited",
+    "ExtractionProviderResponseInterrupted",
+    "ExtractionProviderServerError",
+    "ExtractionProviderTimeout",
+    "ExtractionProviderUnavailable",
+    "ExtractionSchemaError",
+    "UnavailableExtractionProvider",
+    "estimate_cost",
+    "extraction_prompt_hash",
+    "extraction_retry_delay",
+    "get_extraction_provider",
+]
 
 SYSTEM_INSTRUCTION = """You extract scholarship facts only from the supplied official-source text.
 Return null/unknown when the text does not explicitly support a value. Never use general knowledge.
@@ -239,10 +258,13 @@ class AzureOpenAIExtractionProvider:
     def _parse_response(
         self,
         raw: bytes,
+        started: float | None = None,
         *,
-        latency_ms: int,
-        provider_request_id: str | None,
+        latency_ms: int | None = None,
+        provider_request_id: str | None = None,
     ) -> ExtractionResult:
+        if latency_ms is None:
+            latency_ms = max(0, int((time.perf_counter() - started) * 1000)) if started else 0
         try:
             response = json.loads(raw)
         except (TypeError, ValueError, json.JSONDecodeError) as exc:

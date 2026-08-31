@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 def build_candidate_extraction_preflight(
-    service: "ProductionCatalogueIngestionService",
+    service: ProductionCatalogueIngestionService,
     candidate_id: uuid.UUID,
 ) -> CandidateExtractionPlanResponse:
     """Calculate routed call/cost bounds without fetching sources or dispatching a provider.
@@ -62,9 +62,7 @@ def build_candidate_extraction_preflight(
             {
                 block.id: block
                 for block in service.session.scalars(
-                    select(CatalogueEvidenceBlock).where(
-                        CatalogueEvidenceBlock.id.in_(block_ids)
-                    )
+                    select(CatalogueEvidenceBlock).where(CatalogueEvidenceBlock.id.in_(block_ids))
                 )
             }
             if block_ids

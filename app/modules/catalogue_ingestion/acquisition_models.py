@@ -38,7 +38,9 @@ class CatalogueAcquisitionSnapshot(Base):
         ForeignKey("catalogue_candidates.id", ondelete="CASCADE"), index=True
     )
     revision: Mapped[str] = mapped_column(
-        String(100), default=ACQUISITION_SNAPSHOT_REVISION, server_default=ACQUISITION_SNAPSHOT_REVISION
+        String(100),
+        default=ACQUISITION_SNAPSHOT_REVISION,
+        server_default=ACQUISITION_SNAPSHOT_REVISION,
     )
     coverage_revision: Mapped[str | None] = mapped_column(String(100))
     plan_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

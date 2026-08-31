@@ -7,7 +7,7 @@ import json
 import re
 import uuid
 from collections import defaultdict
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from urllib.parse import urlsplit
 
@@ -21,6 +21,10 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ResolvedClaim,
 )
 from app.modules.catalogue_ingestion.models import CatalogueSourceArtifact
+from app.modules.catalogue_ingestion.normalization_utils import (
+    disambiguate_currency,
+    parse_flexible_datetime,
+)
 from app.modules.opportunities.evidence_models import (
     ApplicationStep,
     EvidenceSupportType,
@@ -105,9 +109,27 @@ class CatalogueGraphMaterializer:
             _required_value(resolution, ClaimEntityType.SCHOLARSHIP, "country_code")
         ).upper()
         intake_year = int(_required_value(resolution, ClaimEntityType.CYCLE, "intake_year"))
-        degree_levels = _degree_levels(
-            _required_value(resolution, ClaimEntityType.SCHOLARSHIP, "degree_levels")
-        )
+
+        # Degree Levels: Top-level scholarship field or aggregated from programmes/tracks
+        raw_degree = _optional_value(resolution, ClaimEntityType.SCHOLARSHIP, "degree_levels")
+        if raw_degree is None:
+            prog_degrees = [
+                item.claim.value.primitive()
+                for item in resolution.resolved
+                if item.claim.entity_type in (ClaimEntityType.PROGRAMME, ClaimEntityType.TRACK)
+                and item.claim.field_path in ("degree_levels", "degree_level")
+            ]
+            if prog_degrees:
+                flattened = []
+                for entry in prog_degrees:
+                    if isinstance(entry, list):
+                        flattened.extend(entry)
+                    else:
+                        flattened.append(entry)
+                raw_degree = flattened or ["masters"]
+            else:
+                raw_degree = ["masters"]
+        degree_levels = _degree_levels(raw_degree)
         primary_degree = _primary_degree_level(degree_levels)
         source_excerpt = _source_excerpt(primary_artifact)
 
@@ -211,6 +233,41 @@ class CatalogueGraphMaterializer:
             field_entity=field_entity,
             snapshot_by_artifact=snapshot_by_artifact,
         )
+
+        # Dynamically infer FundingType from materialized funding components
+        funding_components = [
+            item for item in group_entity.values() if isinstance(item, FundingComponent)
+        ]
+        if funding_components:
+            has_tuition = any(
+                "tuition" in (fc.component_type or "").lower()
+                or "fee" in (fc.component_type or "").lower()
+                for fc in funding_components
+            )
+            has_stipend = any(
+                "stipend" in (fc.component_type or "").lower()
+                or "allowance" in (fc.component_type or "").lower()
+                or "living" in (fc.component_type or "").lower()
+                for fc in funding_components
+            )
+            if has_tuition and has_stipend:
+                opportunity.funding_type = FundingType.FULL
+            elif has_tuition:
+                opportunity.funding_type = FundingType.TUITION_ONLY
+            elif has_stipend:
+                opportunity.funding_type = FundingType.STIPEND_ONLY
+            else:
+                opportunity.funding_type = FundingType.PARTIAL
+
+        # Auto-publish high confidence clean official opportunities if enabled
+        if (
+            getattr(self.opportunities.settings, "catalogue_auto_publish_high_confidence", False)
+            and not resolution.conflicts
+            and not resolution.rejected
+        ):
+            opportunity.status = OpportunityStatus.PUBLISHED
+            opportunity.data_confidence = DataConfidence.HIGH
+
         self.session.flush()
         return opportunity
 
@@ -335,7 +392,9 @@ class CatalogueGraphMaterializer:
             if parent_key:
                 parent = track_by_key.get(parent_key)
                 if parent is None:
-                    raise ValueError(f"Track {entity_key} references missing parent track {parent_key}")
+                    raise ValueError(
+                        f"Track {entity_key} references missing parent track {parent_key}"
+                    )
                 track_by_key[entity_key].parent_track_id = parent.id
         return track_by_key
 
@@ -373,7 +432,8 @@ class CatalogueGraphMaterializer:
             else:
                 if institution.canonical_name.casefold() != canonical_name.casefold():
                     raise ValueError(
-                        f"Institution slug collision for {canonical_name}: existing identity differs"
+                        f"Institution slug collision for {canonical_name}: "
+                        "existing identity differs"
                     )
                 if (
                     country_code
@@ -451,7 +511,9 @@ class CatalogueGraphMaterializer:
         track_by_key: dict[str, ApplicationTrack],
         institution_by_key: dict[str, Institution],
     ) -> dict[str, list[tuple[ClaimScope, ScholarshipProgramme]]]:
-        programmes_by_key: dict[str, list[tuple[ClaimScope, ScholarshipProgramme]]] = defaultdict(list)
+        programmes_by_key: dict[str, list[tuple[ClaimScope, ScholarshipProgramme]]] = defaultdict(
+            list
+        )
         for key, items in sorted(
             groups.items(),
             key=lambda value: (value[0][0].value, value[0][1], value[0][2]),
@@ -565,8 +627,13 @@ class CatalogueGraphMaterializer:
             elif entity_type is ClaimEntityType.DEADLINE:
                 deadline_at = _optional_datetime(fields, "deadline_at")
                 deadline_text = _optional_single_text(fields, "deadline_text")
+                tz_text = _optional_single_text(fields, "timezone")
+                if deadline_at is None and deadline_text:
+                    deadline_at = parse_flexible_datetime(deadline_text, default_tz=tz_text)
                 if deadline_at is None and deadline_text is None:
-                    raise ValueError(f"Deadline {entity_key} has neither deadline_at nor deadline_text")
+                    raise ValueError(
+                        f"Deadline {entity_key} has neither deadline_at nor deadline_text"
+                    )
                 precision = _optional_single_text(fields, "precision") or (
                     "datetime" if deadline_at is not None else "text"
                 )
@@ -610,7 +677,9 @@ class CatalogueGraphMaterializer:
                     component_type=_required_text(fields, "component_type"),
                     coverage_status=_required_text(fields, "coverage_status"),
                     amount=_optional_decimal(fields, "amount"),
-                    currency=_optional_single_text(fields, "currency"),
+                    currency=disambiguate_currency(
+                        _optional_single_text(fields, "currency"), opportunity.country
+                    ),
                     frequency=_optional_single_text(fields, "frequency"),
                     description=_joined_text(fields, "description"),
                 )
@@ -951,20 +1020,39 @@ def _optional_decimal(fields: dict[str, list[ResolvedClaim]], name: str) -> Deci
     return unique[0]
 
 
+def _optional_value(
+    resolution: ClaimResolution,
+    entity_type: ClaimEntityType,
+    field_path: str,
+) -> object | None:
+    values = [
+        item.claim.value.primitive()
+        for item in resolution.resolved
+        if item.claim.entity_type is entity_type and item.claim.field_path == field_path
+    ]
+    if not values:
+        return None
+    normalized = {_stable_value(value) for value in values}
+    if len(normalized) != 1:
+        return values[0]
+    return values[0]
+
+
 def _optional_datetime(fields: dict[str, list[ResolvedClaim]], name: str) -> datetime | None:
     raw = _optional_single_text(fields, name)
     if raw is None:
         return None
+    tz_val = _optional_single_text(fields, "timezone")
+    parsed = parse_flexible_datetime(raw, default_tz=tz_val)
+    if parsed is not None:
+        return parsed
     try:
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            local = date.fromisoformat(raw)
-            return datetime(local.year, local.month, local.day, tzinfo=UTC)
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
     except ValueError as exc:
-        raise ValueError(f"Field {name} is not a supported ISO date/datetime") from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
+        raise ValueError(f"Field {name} is not a supported ISO date/datetime: {raw}") from exc
 
 
 def _degree_levels(value: object) -> list[str]:
@@ -1074,7 +1162,9 @@ def _resolved_claim_id(item: ResolvedClaim) -> str:
 def _source_excerpt(artifact: CatalogueSourceArtifact) -> str:
     excerpt = artifact.normalized_text[:12_000].strip()
     if len(excerpt) < 20:
-        raise ValueError("Official source artifact is too short for the operational source boundary")
+        raise ValueError(
+            "Official source artifact is too short for the operational source boundary"
+        )
     return excerpt
 
 

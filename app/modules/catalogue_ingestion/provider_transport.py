@@ -193,7 +193,7 @@ def send_json_request(
             potentially_billable=False,
             dispatch_occurred=True,
         ) from exc
-    except (TimeoutError, socket.timeout) as exc:
+    except TimeoutError as exc:
         raise ExtractionProviderTimeout(
             "Catalogue provider request timed out",
             dispatch_occurred=True,

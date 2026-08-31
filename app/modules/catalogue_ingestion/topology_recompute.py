@@ -72,10 +72,7 @@ def reset_derived_topology_for_artifacts(
         provenance = node.provenance_json or {}
         if _node_has_reviewed_state(node):
             protected_node_ids.add(node.id)
-        if (
-            provenance.get("derived_from") == "resolved_claim"
-            and node.id not in protected_node_ids
-        ):
+        if provenance.get("derived_from") == "resolved_claim" and node.id not in protected_node_ids:
             session.delete(node)
     session.flush()
     return candidate_id

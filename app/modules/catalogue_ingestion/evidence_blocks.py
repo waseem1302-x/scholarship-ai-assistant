@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import re
 import uuid
 from dataclasses import dataclass
@@ -114,7 +115,7 @@ def build_evidence_blocks(
 
     if blocks[-1].end_offset != text_length:
         raise AssertionError("evidence block builder did not cover the complete artifact")
-    for previous, current in zip(blocks, blocks[1:], strict=False):
+    for previous, current in itertools.pairwise(blocks):
         if previous.end_offset != current.start_offset:
             raise AssertionError("evidence block spans must be contiguous")
     return tuple(blocks)
@@ -193,7 +194,9 @@ def _preferred_cut(text: str, *, start: int, target_chars: int, max_chars: int) 
         position = text.rfind(pattern, search_start, hard_end)
         if position >= preferred_start:
             return position + len(pattern)
-    for match in reversed(list(re.finditer(r"[.!?。！？]\s+", text[search_start:hard_end]))):
+    for match in reversed(
+        list(re.finditer(r"[.!?。\uFF01\uFF1F]\s+", text[search_start:hard_end]))
+    ):
         position = search_start + match.end()
         if position >= preferred_start:
             return position
@@ -222,7 +225,10 @@ def _looks_like_heading(value: str) -> bool:
     if re.match(r"^(?:\d+(?:\.\d+)*|[A-Z]|[IVXLC]+)[.)\-:]\s+\S", value):
         return True
     letters = [character for character in value if character.isalpha()]
-    if len(letters) >= 4 and sum(character.isupper() for character in letters) / len(letters) >= 0.8:
+    if (
+        len(letters) >= 4
+        and sum(character.isupper() for character in letters) / len(letters) >= 0.8
+    ):
         return True
     return value.endswith(":") and len(value.split()) <= 12
 
@@ -267,11 +273,7 @@ def _string_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple, set)):
         return ()
     return tuple(
-        dict.fromkeys(
-            item.strip()[:64]
-            for item in (str(raw) for raw in value)
-            if item.strip()
-        )
+        dict.fromkeys(item.strip()[:64] for item in (str(raw) for raw in value) if item.strip())
     )
 
 
@@ -295,9 +297,12 @@ def _coordinates_for_span(value: object, start: int, end: int) -> list[dict[str,
         coordinate = dict(raw)
         raw_start = coordinate.get("start_offset")
         raw_end = coordinate.get("end_offset")
-        if isinstance(raw_start, int) and isinstance(raw_end, int):
-            if raw_end <= start or raw_start >= end:
-                continue
+        if (
+            isinstance(raw_start, int)
+            and isinstance(raw_end, int)
+            and (raw_end <= start or raw_start >= end)
+        ):
+            continue
         result.append(coordinate)
         if len(result) >= 100:
             break

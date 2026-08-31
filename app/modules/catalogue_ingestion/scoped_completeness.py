@@ -7,8 +7,8 @@ import json
 import re
 import uuid
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, object_session
@@ -78,21 +78,15 @@ _FINITE_SCOPE_REQUIREMENTS: dict[
         (ClaimEntityType.SCHOLARSHIP, "provider_name"),
         (ClaimEntityType.SCHOLARSHIP, "country_code"),
     },
-    (ClaimObjective.IDENTITY, ScopeNodeType.CYCLE): {
-        (ClaimEntityType.CYCLE, "intake_year")
-    },
+    (ClaimObjective.IDENTITY, ScopeNodeType.CYCLE): {(ClaimEntityType.CYCLE, "intake_year")},
     (ClaimObjective.IDENTITY, ScopeNodeType.COUNTRY): {
         (ClaimEntityType.SCHOLARSHIP, "country_code")
     },
     (ClaimObjective.IDENTITY, ScopeNodeType.INSTITUTION): {
         (ClaimEntityType.INSTITUTION, "canonical_name")
     },
-    (ClaimObjective.PROGRAMMES, ScopeNodeType.PROGRAMME): {
-        (ClaimEntityType.PROGRAMME, "name")
-    },
-    (ClaimObjective.ROUTES, ScopeNodeType.ROUTE): {
-        (ClaimEntityType.TRACK, "name")
-    },
+    (ClaimObjective.PROGRAMMES, ScopeNodeType.PROGRAMME): {(ClaimEntityType.PROGRAMME, "name")},
+    (ClaimObjective.ROUTES, ScopeNodeType.ROUTE): {(ClaimEntityType.TRACK, "name")},
 }
 _TERMINAL_COMPLETE_STATES = {
     ScopedCoverageState.COMPLETE,
@@ -459,6 +453,19 @@ class _PersistentCoverageEvaluator:
     ) -> None:
         if parent.id == child.id:
             return
+        # Multiple claims can describe the same topology relationship before the unit of work is
+        # flushed.  The database uniqueness constraint protects committed rows, but a query cannot
+        # see pending ORM rows; check the identity map first to avoid inserting duplicate edges in
+        # one evaluation transaction.
+        if any(
+            isinstance(pending, CatalogueScopeEdge)
+            and pending.candidate_id == candidate_id
+            and pending.parent_node_id == parent.id
+            and pending.child_node_id == child.id
+            and pending.relationship_type == relationship_type
+            for pending in self.session.new
+        ):
+            return
         existing = self.session.scalar(
             select(CatalogueScopeEdge).where(
                 CatalogueScopeEdge.candidate_id == candidate_id,
@@ -498,6 +505,16 @@ class _PersistentCoverageEvaluator:
     ) -> None:
         source_id = uuid.UUID(item.source_id)
         artifact_id = uuid.UUID(item.artifact_id)
+        for pending in self.session.new:
+            if (
+                isinstance(pending, CatalogueSourceScopeLink)
+                and pending.source_id == source_id
+                and pending.scope_node_id == node.id
+                and pending.relationship_type == relationship_type
+                and pending.source_artifact_id == artifact_id
+            ):
+                pending.applicability_is_explicit = pending.applicability_is_explicit or explicit
+                return
         existing = self.session.scalar(
             select(CatalogueSourceScopeLink).where(
                 CatalogueSourceScopeLink.source_id == source_id,
@@ -581,8 +598,10 @@ class _PersistentCoverageEvaluator:
         nodes: dict[tuple[ScopeNodeType, str, str], CatalogueScopeNode],
     ) -> None:
         claim = item.claim
-        lifecycle = claim.scope.cycle_key or candidate.seed_cycle or (
-            str(candidate.seed_intake_year) if candidate.seed_intake_year is not None else ""
+        lifecycle = (
+            claim.scope.cycle_key
+            or candidate.seed_cycle
+            or (str(candidate.seed_intake_year) if candidate.seed_intake_year is not None else "")
         )
         if claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "parent_track_key":
             parent = nodes.get(
@@ -592,9 +611,7 @@ class _PersistentCoverageEvaluator:
                     lifecycle,
                 )
             )
-            child = nodes.get(
-                (ScopeNodeType.ROUTE, _canonical_key(claim.entity_key), lifecycle)
-            )
+            child = nodes.get((ScopeNodeType.ROUTE, _canonical_key(claim.entity_key), lifecycle))
             if parent is not None and child is not None:
                 self._upsert_edge(
                     candidate_id=candidate.id,
@@ -658,8 +675,11 @@ class _PersistentCoverageEvaluator:
         conflicts = [
             record
             for record in resolution.conflict_records
-            if objective in _objectives_for_record(record.entity_type, record.field_path, record.scope)
-            and _record_matches_node(record.entity_type, record.entity_key, record.scope, node, root)
+            if objective
+            in _objectives_for_record(record.entity_type, record.field_path, record.scope)
+            and _record_matches_node(
+                record.entity_type, record.entity_key, record.scope, node, root
+            )
         ]
         if conflicts:
             return _result(
@@ -673,8 +693,11 @@ class _PersistentCoverageEvaluator:
         rejections = [
             record
             for record in resolution.rejection_records
-            if objective in _objectives_for_record(record.entity_type, record.field_path, record.scope)
-            and _record_matches_node(record.entity_type, record.entity_key, record.scope, node, root)
+            if objective
+            in _objectives_for_record(record.entity_type, record.field_path, record.scope)
+            and _record_matches_node(
+                record.entity_type, record.entity_key, record.scope, node, root
+            )
         ]
         if rejections:
             return _result(
@@ -783,7 +806,9 @@ class _PersistentCoverageEvaluator:
                 )
             return _CoverageResult(
                 state=ScopedCoverageState.PARTIAL if supporting else ScopedCoverageState.UNKNOWN,
-                reason="resolved scoped items do not yet satisfy the deterministic expected item count",
+                reason=(
+                    "resolved scoped items do not yet satisfy the deterministic expected item count"
+                ),
                 missing_frontier_reasons=["acquire_or_resolve_expected_items"],
                 supporting_claim_ids=support_ids,
                 supporting_evidence_ids=evidence_ids,
@@ -794,7 +819,10 @@ class _PersistentCoverageEvaluator:
         if supporting:
             return _CoverageResult(
                 state=ScopedCoverageState.PARTIAL,
-                reason="validated claims exist but no deterministic frontier closure proves completeness",
+                reason=(
+                    "validated claims exist but no deterministic frontier closure proves "
+                    "completeness"
+                ),
                 missing_frontier_reasons=["establish_expected_item_count_or_applicability"],
                 supporting_claim_ids=support_ids,
                 supporting_evidence_ids=evidence_ids,
@@ -804,7 +832,9 @@ class _PersistentCoverageEvaluator:
         if provider_signal == ObjectiveCoverageState.NOT_STATED.value:
             return _CoverageResult(
                 state=ScopedCoverageState.NOT_STATED,
-                reason="provider absence signal is retained but does not prove semantic completeness",
+                reason=(
+                    "provider absence signal is retained but does not prove semantic completeness"
+                ),
                 missing_frontier_reasons=["verify_absence_with_deterministic_source_coverage"],
                 supporting_claim_ids=[],
                 supporting_evidence_ids=[],
@@ -894,7 +924,11 @@ class _PersistentCoverageEvaluator:
                 return _aggregate_result(
                     base,
                     state=ScopedCoverageState.PARTIAL,
-                    reason="resolved branches are complete but the authoritative expected branch count is unknown",
+                    reason=(
+                        "resolved branches are complete but the authoritative expected branch "
+                        "count "
+                        "is unknown"
+                    ),
                     frontier=[f"establish_expected_child_count:{enumerated_type.value}"],
                     expected=None,
                     resolved=actual,
@@ -903,7 +937,9 @@ class _PersistentCoverageEvaluator:
                 return _aggregate_result(
                     base,
                     state=ScopedCoverageState.PARTIAL,
-                    reason="fewer topology branches are resolved than the authoritative expected count",
+                    reason=(
+                        "fewer topology branches are resolved than the authoritative expected count"
+                    ),
                     frontier=[f"acquire_missing_child_scope:{enumerated_type.value}"],
                     expected=expected,
                     resolved=actual,
@@ -1013,7 +1049,9 @@ def _detached_evaluation(
     summary: dict[str, str] = {}
     decisions: list[ScopeCoverageDecision] = []
     for objective in ClaimObjective:
-        if objective is ClaimObjective.IDENTITY and _detached_identity_complete(resolution.resolved):
+        if objective is ClaimObjective.IDENTITY and _detached_identity_complete(
+            resolution.resolved
+        ):
             state = ScopedCoverageState.COMPLETE
             reason = "detached compatibility evaluation resolved finite identity fields"
             frontier: list[str] = []
@@ -1072,8 +1110,10 @@ def _scope_refs_for_claim(
     artifact_id = uuid.UUID(item.artifact_id)
     artifact = artifacts.get(artifact_id)
     source_id = artifact.source_id if artifact is not None else uuid.UUID(item.source_id)
-    lifecycle = claim.scope.cycle_key or candidate.seed_cycle or (
-        str(candidate.seed_intake_year) if candidate.seed_intake_year is not None else ""
+    lifecycle = (
+        claim.scope.cycle_key
+        or candidate.seed_cycle
+        or (str(candidate.seed_intake_year) if candidate.seed_intake_year is not None else "")
     )
     refs: dict[tuple[ScopeNodeType, str, str], _ScopeRef] = {}
 
@@ -1196,12 +1236,8 @@ def _add_ref(
 
 
 def _source_relationship_for_claim(claim: ExtractedClaim) -> SourceScopeRelationship:
-    if (
-        claim.entity_type is ClaimEntityType.PROGRAMME
-        and claim.field_path == "name"
-    ) or (
-        claim.entity_type is ClaimEntityType.TRACK
-        and claim.field_path == "name"
+    if (claim.entity_type is ClaimEntityType.PROGRAMME and claim.field_path == "name") or (
+        claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "name"
     ):
         return SourceScopeRelationship.ENUMERATES
     return SourceScopeRelationship.SUPPORTS

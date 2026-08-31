@@ -27,7 +27,7 @@ from app.modules.catalogue_ingestion.pipeline_versions import (
     BUNDLE_VALIDATOR_VERSION,
 )
 
-CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v2"
+CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v3"
 
 
 class CatalogueDeploymentMap(BaseModel):
@@ -110,9 +110,7 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
 
     profile = catalogue_provider_profile(settings)
     reviewed_domains = sorted(settings.catalogue_reviewed_official_domain_set)
-    reviewed_domain_fingerprint = hashlib.sha256(
-        "\n".join(reviewed_domains).encode()
-    ).hexdigest()
+    reviewed_domain_fingerprint = hashlib.sha256("\n".join(reviewed_domains).encode()).hexdigest()
     bundle_prompt_family_hash = bundle_claim_prompt_hash(tuple(ClaimObjective))
     payload = {
         "revision": CATALOGUE_CONFIGURATION_REVISION,
@@ -149,12 +147,20 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
             "max_calls_per_run": settings.catalogue_ai_max_calls_per_run,
             "max_input_characters": settings.catalogue_ai_max_input_characters,
             "max_output_tokens": settings.catalogue_ai_max_output_tokens,
-            "max_estimated_cost_per_run": str(
-                settings.catalogue_ai_max_estimated_cost_per_run
-            ),
+            "max_estimated_cost_per_run": str(settings.catalogue_ai_max_estimated_cost_per_run),
             "source_max_bytes_per_page": settings.catalogue_source_max_bytes_per_page,
             "source_monitor_per_host_interval_seconds": str(
                 settings.source_monitor_per_host_interval_seconds
+            ),
+            "provider_max_concurrency_per_deployment": (
+                settings.catalogue_provider_max_concurrency_per_deployment
+            ),
+            "provider_circuit_failure_threshold": (
+                settings.catalogue_provider_circuit_failure_threshold
+            ),
+            "provider_circuit_open_seconds": settings.catalogue_provider_circuit_open_seconds,
+            "max_provider_calls_per_candidate_slice": (
+                settings.catalogue_scheduler_max_provider_calls_per_candidate_slice
             ),
         },
     }

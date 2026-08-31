@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Iterable, Mapping
 
 from pydantic import Field, model_validator
 
@@ -29,7 +29,7 @@ class BundleEvidenceReference(StrictClaimModel):
     excerpt_end: int = Field(ge=0)
 
     @model_validator(mode="after")
-    def valid_span(self) -> "BundleEvidenceReference":
+    def valid_span(self) -> BundleEvidenceReference:
         if self.excerpt_end <= self.excerpt_start:
             raise ValueError("Bundle evidence span must be non-empty")
         return self
@@ -46,7 +46,7 @@ class BundledAtomicClaim(StrictClaimModel):
     basis: str
 
     @model_validator(mode="after")
-    def valid_basis(self) -> "BundledAtomicClaim":
+    def valid_basis(self) -> BundledAtomicClaim:
         if self.basis not in {"explicit", "normalized"}:
             raise ValueError("Claim basis must be explicit or normalized")
         return self
@@ -66,7 +66,7 @@ class ClaimBundleExtractionOutput(StrictClaimModel):
     warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def internally_consistent(self) -> "ClaimBundleExtractionOutput":
+    def internally_consistent(self) -> ClaimBundleExtractionOutput:
         ref_ids = [item.ref_id for item in self.evidence_refs]
         if len(ref_ids) != len(set(ref_ids)):
             raise ValueError("Bundle evidence reference IDs must be unique")
@@ -160,9 +160,7 @@ def expand_claim_bundle(
         allowed_fields = allowed_field_paths.get(objective)
         if allowed_fields is not None and claim.field_path not in allowed_fields:
             dropped_by_objective[objective] += 1
-            warnings.append(
-                f"objective_field_mismatch:{objective.value}:{claim.field_path}"
-            )
+            warnings.append(f"objective_field_mismatch:{objective.value}:{claim.field_path}")
             continue
         claims_by_objective[objective].append(claim)
 

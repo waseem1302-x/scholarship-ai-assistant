@@ -27,6 +27,7 @@ from app.modules.catalogue_ingestion.discovery_models import (
     CatalogueDiscoveryQuery,
     CatalogueDiscoveryRun,
     DiscoveryAttemptStatus,
+    DiscoveryLeadReviewStatus,
     DiscoveryOfficialityStatus,
     DiscoveryQueryStatus,
     DiscoveryRunStatus,
@@ -41,6 +42,13 @@ from app.modules.catalogue_ingestion.url_policy import (
     URLRejectionCode,
     normalize_discovery_lead_url,
 )
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Normalize SQLite's naive reads before Python-side lease comparisons."""
+
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
 
 RETRYABLE_QUERY_STATUSES = {
     DiscoveryQueryStatus.PROVIDER_RATE_LIMITED,
@@ -347,7 +355,7 @@ class CatalogueDiscoveryRepository:
             query.status is not DiscoveryQueryStatus.CLAIMED
             or query.claimed_by != worker_id
             or query.claimed_until is None
-            or query.claimed_until < observed_at
+            or _as_utc(query.claimed_until) < _as_utc(observed_at)
         ):
             raise DiscoveryStateError("discovery_query_not_claimed_by_worker")
         run = self._run_for_update(query.run_id)
@@ -443,7 +451,7 @@ class CatalogueDiscoveryRepository:
         if (
             query.status is not DiscoveryQueryStatus.CALLING_PROVIDER
             or query.claimed_until is None
-            or query.claimed_until >= observed_at
+            or _as_utc(query.claimed_until) >= _as_utc(observed_at)
         ):
             raise DiscoveryStateError("discovery_query_attempt_not_expired")
         attempt = self.session.scalar(
@@ -652,6 +660,40 @@ class CatalogueDiscoveryRepository:
         self.session.commit()
         return record
 
+    def review_lead(
+        self,
+        *,
+        lead_id: uuid.UUID,
+        status: DiscoveryLeadReviewStatus | str,
+        reviewer_id: uuid.UUID,
+        reason: str,
+        now: datetime | None = None,
+    ) -> CatalogueDiscoveryLead:
+        try:
+            review_status = DiscoveryLeadReviewStatus(status)
+        except ValueError as exc:
+            raise ValueError("unsupported discovery lead review status") from exc
+        if review_status is DiscoveryLeadReviewStatus.PENDING:
+            raise ValueError("a completed discovery lead review cannot return to pending")
+        normalized_reason = " ".join(reason.split())
+        if not 10 <= len(normalized_reason) <= 500:
+            raise ValueError("discovery lead review reason must be 10-500 characters")
+        lead = self.session.scalar(
+            select(CatalogueDiscoveryLead)
+            .where(CatalogueDiscoveryLead.id == lead_id)
+            .with_for_update()
+        )
+        if lead is None:
+            raise DiscoveryStateError("catalogue_discovery_lead_not_found")
+        if not lead.active:
+            raise DiscoveryStateError("discovery_lead_is_inactive")
+        lead.review_status = review_status
+        lead.review_reason = normalized_reason
+        lead.reviewed_by_user_id = reviewer_id
+        lead.reviewed_at = now or datetime.now(UTC)
+        self.session.commit()
+        return lead
+
     def bind_candidate_source(
         self,
         *,
@@ -688,6 +730,8 @@ class CatalogueDiscoveryRepository:
         lead = self.session.get(CatalogueDiscoveryLead, lead_id)
         if lead is None or not lead.active:
             raise DiscoveryStateError("binding_requires_active_discovery_lead")
+        if lead.review_status is not DiscoveryLeadReviewStatus.APPROVED:
+            raise DiscoveryStateError("binding_requires_human_approval")
         candidate = self.session.scalar(
             select(CatalogueCandidate)
             .where(CatalogueCandidate.id == run.target_candidate_id)
@@ -794,6 +838,9 @@ class CatalogueDiscoveryRepository:
             self.session.commit()
             return existing
         assessment = self.session.get(CatalogueDiscoveryAssessment, assessment_id)
+        lead = self.session.get(CatalogueDiscoveryLead, lead_id)
+        if lead is None or lead.review_status is not DiscoveryLeadReviewStatus.APPROVED:
+            raise DiscoveryStateError("promotion_requires_human_approval")
         source = self.session.get(CatalogueCandidateSource, candidate_source_id)
         if (
             assessment is None
@@ -910,7 +957,7 @@ class CatalogueDiscoveryRepository:
         if (
             candidate.claimed_by is not None
             and candidate.claimed_until is not None
-            and candidate.claimed_until >= observed_at
+            and _as_utc(candidate.claimed_until) >= _as_utc(observed_at)
         ):
             raise DiscoveryStateError("binding_candidate_is_actively_claimed")
 

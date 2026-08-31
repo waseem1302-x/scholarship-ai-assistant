@@ -2,9 +2,9 @@
 
 Provider adapters are single-attempt transports. This module owns retries and ensures every physical
 attempt has a committed ledger identity before network I/O begins. Cost reservations use an upper
-bound and are reconciled to exact usage when available; ambiguous post-dispatch failures retain their
-reservation as an unknown-potentially-billable upper bound. Run and candidate fencing tokens are
-validated before scheduling, dispatch transition, retry waits, and result reconciliation.
+bound and are reconciled to exact usage when available. Ambiguous post-dispatch failures retain
+their reservation as an unknown-potentially-billable upper bound. Run and candidate fencing tokens
+are validated before scheduling, dispatch transition, retry waits, and result reconciliation.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from app.modules.catalogue_ingestion.repository import (
     CatalogueLeaseLost,
     ProviderBudgetReservationError,
 )
+from app.modules.catalogue_ingestion.scheduling import CatalogueProviderScheduler
 
 T = TypeVar("T")
 
@@ -63,6 +64,13 @@ class ProviderExecutionCancelled(RuntimeError):
     pass
 
 
+class ProviderExecutionDeferred(RuntimeError):
+    def __init__(self, reason: str, *, retry_after_seconds: float) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.retry_after_seconds = retry_after_seconds
+
+
 @dataclass(frozen=True)
 class ProviderExecutionResult:
     result: Any
@@ -80,6 +88,7 @@ class CatalogueProviderExecutor:
         self.repository = repository
         self.settings = settings
         self.sleeper = sleeper
+        self.scheduler = CatalogueProviderScheduler(repository.session, settings)
 
     def execute(
         self,
@@ -137,7 +146,9 @@ class CatalogueProviderExecutor:
         if output_ceiling < 1 or output_ceiling > run.max_output_tokens:
             raise ProviderExecutionBudgetExhausted("provider_output_token_budget_invalid")
 
-        max_retries = self.settings.catalogue_ai_max_retries if provider.name == "azure_openai" else 0
+        max_retries = (
+            self.settings.catalogue_ai_max_retries if provider.name == "azure_openai" else 0
+        )
         profile = catalogue_provider_profile(self.settings)
         projected_input_tokens = max(1, min(len(source_text), run.max_input_characters) // 4)
         reserved_cost_upper = estimate_cost(
@@ -152,6 +163,23 @@ class CatalogueProviderExecutor:
             if provider.name == "azure_openai" and not self.settings.catalogue_ai_ingestion_enabled:
                 raise ProviderExecutionCancelled("catalogue AI ingestion kill switch is disabled")
             self._heartbeat(heartbeat)
+            admission = self.scheduler.admit(
+                provider=provider.name,
+                deployment=profile.extraction_deployment,
+                logical_job_key=job_key,
+                run_id=run.id,
+                candidate_id=candidate.id,
+            )
+            if not admission.allowed:
+                retry_after_seconds = (
+                    float(self.settings.catalogue_provider_circuit_open_seconds)
+                    if admission.reason == "provider_circuit_open"
+                    else 1.0
+                )
+                raise ProviderExecutionDeferred(
+                    admission.reason,
+                    retry_after_seconds=retry_after_seconds,
+                )
             try:
                 ledger = self.repository.reserve_provider_attempt(
                     run_id=run.id,
@@ -221,7 +249,13 @@ class CatalogueProviderExecutor:
                         provider_request_id=exc.provider_request_id,
                     )
                     raise ProviderExecutionLeaseLost(str(lease_exc)) from exc
-                setattr(exc, "provider_attempt_id", ledger.id)
+                self.scheduler.record_failure(
+                    provider=provider.name,
+                    deployment=profile.extraction_deployment,
+                    failure_class=_failure_class(exc.failure_class),
+                    retry_after_seconds=exc.retry_after_seconds,
+                )
+                exc.provider_attempt_id = ledger.id
                 if not exc.retryable or orchestration_attempt >= max_retries:
                     raise
                 self._heartbeat(heartbeat)
@@ -257,7 +291,12 @@ class CatalogueProviderExecutor:
                 except CatalogueLeaseLost as lease_exc:
                     self.repository.record_provider_attempt_lease_loss(ledger)
                     raise ProviderExecutionLeaseLost(str(lease_exc)) from exc
-                setattr(wrapped, "provider_attempt_id", ledger.id)
+                self.scheduler.record_failure(
+                    provider=provider.name,
+                    deployment=profile.extraction_deployment,
+                    failure_class=ProviderFailureClass.UNKNOWN_POTENTIALLY_BILLABLE_FAILURE,
+                )
+                wrapped.provider_attempt_id = ledger.id
                 raise wrapped from exc
 
             usage = getattr(result, "usage", None)
@@ -285,7 +324,12 @@ class CatalogueProviderExecutor:
                 except CatalogueLeaseLost as lease_exc:
                     self.repository.record_provider_attempt_lease_loss(ledger)
                     raise ProviderExecutionLeaseLost(str(lease_exc)) from wrapped
-                setattr(wrapped, "provider_attempt_id", ledger.id)
+                self.scheduler.record_failure(
+                    provider=provider.name,
+                    deployment=profile.extraction_deployment,
+                    failure_class=ProviderFailureClass.MALFORMED_PROVIDER_RESPONSE,
+                )
+                wrapped.provider_attempt_id = ledger.id
                 raise wrapped
 
             try:
@@ -309,6 +353,10 @@ class CatalogueProviderExecutor:
                     provider_request_id=getattr(usage, "provider_request_id", None),
                 )
                 raise ProviderExecutionLeaseLost(str(exc)) from exc
+            self.scheduler.record_success(
+                provider=provider.name,
+                deployment=profile.extraction_deployment,
+            )
             return ProviderExecutionResult(result=result, provider_attempt_id=ledger.id)
 
         assert last_error is not None

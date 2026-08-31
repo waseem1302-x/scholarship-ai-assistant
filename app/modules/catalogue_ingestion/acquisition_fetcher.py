@@ -16,7 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
 from xml.etree import ElementTree
@@ -280,31 +280,35 @@ class _StructuredHTMLParser(HTMLParser):
         self._anchor_text: list[str] = []
         self.canonical_url: str | None = None
         self.languages: set[str] = set()
+        self._ignored_depth: int = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.casefold()
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._ignored_depth += 1
+            return
         values = {key.casefold(): (value or "") for key, value in attrs}
         if tag in {"table", "thead", "tbody", "tr", "td", "th", "main", "article", "nav"}:
             self._contexts.append(tag)
         if tag in {"p", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section"}:
             self.text_parts.append("\n")
-        lang = values.get("lang").strip()
+        lang = (values.get("lang") or "").strip()
         if lang:
             self.languages.add(lang[:40])
         if len(self.links) >= self.max_links:
             return
         if tag == "link":
-            href = values.get("href").strip()
+            href = (values.get("href") or "").strip()
             if not href:
                 return
-            rel = tuple(item for item in values.get("rel").casefold().split() if item)
+            rel = tuple(item for item in (values.get("rel") or "").casefold().split() if item)
             resolved = urllib.parse.urljoin(self.base_url, href)
-            hreflang = values.get("hreflang").strip() or None
-            media_type = values.get("type").strip().casefold() or None
+            hreflang = (values.get("hreflang") or "").strip() or None
+            media_type = (values.get("type") or "").strip().casefold() or None
             self.links.append(
                 StructuredFetchedLink(
                     url=resolved,
-                    title=values.get("title").strip()[:500] or None,
+                    title=(values.get("title") or "").strip()[:500] or None,
                     relation=rel,
                     hreflang=hreflang,
                     media_type=media_type,
@@ -318,23 +322,28 @@ class _StructuredHTMLParser(HTMLParser):
             return
         if tag != "a":
             return
-        href = values.get("href").strip()
+        href = (values.get("href") or "").strip()
         if not href:
             return
         self._href = href
-        self._title = values.get("title").strip()[:500] or None
-        self._rel = tuple(item for item in values.get("rel").casefold().split() if item)
-        self._hreflang = values.get("hreflang").strip() or None
-        self._media_type = values.get("type").strip().casefold() or None
+        self._title = (values.get("title") or "").strip()[:500] or None
+        self._rel = tuple(item for item in (values.get("rel") or "").casefold().split() if item)
+        self._hreflang = (values.get("hreflang") or "").strip() or None
+        self._media_type = (values.get("type") or "").strip().casefold() or None
         self._anchor_text = []
 
     def handle_data(self, data: str) -> None:
+        if self._ignored_depth > 0:
+            return
         self.text_parts.append(data)
         if self._href is not None:
             self._anchor_text.append(data)
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.casefold()
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._ignored_depth = max(0, self._ignored_depth - 1)
+            return
         if tag == "a" and self._href is not None and len(self.links) < self.max_links:
             resolved = urllib.parse.urljoin(self.base_url, self._href)
             text = " ".join(" ".join(self._anchor_text).split())[:500]
@@ -364,10 +373,48 @@ class _StructuredHTMLParser(HTMLParser):
                     break
 
 
+def _decode_html_payload(payload: bytes) -> str:
+    """Decode raw HTML bytes with charset detection and global language fallbacks."""
+    # 1. Check <meta charset="..."> or <meta http-equiv="Content-Type" ...> in first 2048 bytes
+    head_prefix = payload[:2048].decode("ascii", errors="ignore")
+    meta_match = re.search(r"<meta[^>]+charset=['\"]?([a-zA-Z0-9_-]+)", head_prefix, re.IGNORECASE)
+    if meta_match:
+        charset = meta_match.group(1).strip().lower()
+        try:
+            return payload.decode(charset)
+        except (UnicodeDecodeError, LookupError):
+            pass
+
+    # 2. Try UTF-8 (covers modern web and most UTF-8-BOM)
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+
+    # 3. Try common global scholarship country charsets
+    for candidate in (
+        "shift_jis",
+        "gb18030",
+        "euc_jp",
+        "euc_kr",
+        "big5",
+        "windows-1252",
+        "iso-8859-1",
+    ):
+        try:
+            return payload.decode(candidate)
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    # 4. Fallback
+    return payload.decode("utf-8", errors="replace")
+
+
 def _convert_html(payload: bytes, *, final_url: str) -> _ConvertedPayload:
     parser = _StructuredHTMLParser(base_url=final_url)
     try:
-        parser.feed(payload.decode("utf-8", errors="ignore"))
+        decoded_text = _decode_html_payload(payload)
+        parser.feed(decoded_text)
         parser.close()
     except Exception as exc:
         raise SourceFetchError("malformed_source_html") from exc
@@ -520,15 +567,13 @@ def _xlsx_shared_strings(archive: zipfile.ZipFile) -> list[str]:
     for item in root:
         values.append(
             "".join(
-                child.text or ""
-                for child in item.iter()
-                if child.tag.rsplit("}", 1)[-1] == "t"
+                child.text or "" for child in item.iter() if child.tag.rsplit("}", 1)[-1] == "t"
             )
         )
     return values
 
 
-def _convert_pdf(payload: bytes) -> _ConvertedPayload:
+def _convert_pdf_pypdf(payload: bytes) -> _ConvertedPayload:
     try:
         from pypdf import PdfReader
 
@@ -550,6 +595,39 @@ def _convert_pdf(payload: bytes) -> _ConvertedPayload:
         raise
     except Exception as exc:
         raise SourceFetchError("malformed_source_pdf") from exc
+
+
+def _convert_pdf(payload: bytes, *, prefer_docling: bool = True) -> _ConvertedPayload:
+    if prefer_docling:
+        try:
+            from app.core.config import get_settings
+            from app.modules.catalogue_ingestion.docling_pdf_converter import (
+                DoclingConversionError,
+                convert_pdf_docling,
+                is_docling_available,
+            )
+
+            settings = get_settings()
+            if settings.catalogue_docling_enabled and is_docling_available():
+                result = convert_pdf_docling(
+                    payload,
+                    models_dir=settings.catalogue_docling_models_dir,
+                    table_mode=settings.catalogue_docling_table_mode,
+                    do_ocr=settings.catalogue_docling_do_ocr,
+                )
+                if result.text:
+                    return _ConvertedPayload(
+                        text=_normalize_text(result.text),
+                        coordinates=result.coordinates,
+                    )
+        except DoclingConversionError:
+            pass
+        except SourceFetchError:
+            raise
+        except Exception:
+            pass
+
+    return _convert_pdf_pypdf(payload)
 
 
 class _BoundedZip:

@@ -279,7 +279,7 @@ class ClaimValue(StrictClaimModel):
     string_list_value: list[str] | None
 
     @model_validator(mode="after")
-    def exactly_one_value(self) -> "ClaimValue":
+    def exactly_one_value(self) -> ClaimValue:
         if self.string_list_value == []:
             self.string_list_value = None
         values = (
@@ -318,7 +318,7 @@ class ExtractedClaim(StrictClaimModel):
     basis: Literal["explicit", "normalized"]
 
     @model_validator(mode="after")
-    def valid_span(self) -> "ExtractedClaim":
+    def valid_span(self) -> ExtractedClaim:
         field_path = self.field_path.strip().casefold()
         if field_path not in SUPPORTED_CLAIM_FIELDS[self.entity_type]:
             for separator in (".", " ", "_", "/"):

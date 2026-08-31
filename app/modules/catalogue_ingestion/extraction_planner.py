@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Mapping, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -147,11 +147,14 @@ class CatalogueExtractionPlanner:
                 )
             )
         )
-        has_current_coverage = self.session.scalar(
-            select(CatalogueCoverageCell.id)
-            .where(CatalogueCoverageCell.candidate_id == candidate_id)
-            .limit(1)
-        ) is not None
+        has_current_coverage = (
+            self.session.scalar(
+                select(CatalogueCoverageCell.id)
+                .where(CatalogueCoverageCell.candidate_id == candidate_id)
+                .limit(1)
+            )
+            is not None
+        )
         route_query = select(CatalogueEvidenceRoute).where(
             CatalogueEvidenceRoute.candidate_id == candidate_id,
             CatalogueEvidenceRoute.selected.is_(True),

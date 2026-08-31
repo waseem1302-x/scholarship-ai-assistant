@@ -6,7 +6,18 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -14,7 +25,7 @@ from app.modules.auth.models import enum_values, utc_now
 
 
 class CatalogueProposalState(StrEnum):
-    """Human review/materialization state, deliberately separate from ingestion and publication state."""
+    """Human review/materialization state, separate from ingestion/publication state."""
 
     DRAFT = "draft"
     NEEDS_REVIEW = "needs_review"
@@ -34,10 +45,12 @@ class CatalogueCandidateReview(Base):
     __tablename__ = "catalogue_candidate_reviews"
     __table_args__ = (
         UniqueConstraint("candidate_id", name="uq_catalogue_candidate_reviews_candidate"),
-        CheckConstraint("review_revision >= 1", name="ck_catalogue_candidate_reviews_revision_positive"),
+        CheckConstraint(
+            "review_revision >= 1", name="ck_catalogue_candidate_reviews_revision_positive"
+        ),
         CheckConstraint(
             "materialization_attempt_count >= 0",
-            name="ck_catalogue_candidate_reviews_materialization_attempt_non_negative",
+            name="ck_candidate_reviews_attempt_non_negative",
         ),
         Index("ix_catalogue_candidate_reviews_state_updated", "state", "updated_at"),
         Index("ix_catalogue_candidate_reviews_proposal_hash", "proposal_hash"),

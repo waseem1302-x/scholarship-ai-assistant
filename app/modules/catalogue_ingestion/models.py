@@ -26,6 +26,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.modules.auth.models import enum_values, utc_now
 from app.modules.catalogue_ingestion import discovery_models as _discovery_models  # noqa: F401
+from app.modules.catalogue_ingestion import scheduling_models as _scheduling_models  # noqa: F401
 from app.modules.opportunities.graph_models import RelationshipKind
 
 

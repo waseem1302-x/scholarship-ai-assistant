@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from collections import defaultdict
 from collections.abc import Iterable
 
@@ -246,9 +247,7 @@ def resolve_claims(
         )
     if len(scoped_cycles) > 1:
         conflicts.append("cycle:scope:multiple_cycles")
-        sample = next(
-            item for item in resolved_claims if item.claim.scope.cycle_key is not None
-        )
+        sample = next(item for item in resolved_claims if item.claim.scope.cycle_key is not None)
         conflict_records.append(
             ClaimConflictRecord(
                 entity_type=sample.claim.entity_type,
@@ -296,7 +295,7 @@ def _artifact_trust_domain(
             trust_tier=source.trust_tier,
         )
     # Detached compatibility callers historically pass either the base tier or the production
-    # base-tier×10 effective rank. This fallback is deliberately limited to the reviewed 1–3 tiers.
+    # base-tier x10 effective rank. This fallback is limited to the reviewed 1-3 tiers.
     base_tier = effective_trust_tier // 10 if effective_trust_tier >= 10 else effective_trust_tier
     return trust_domain_for_source_tier(
         is_official=base_tier in {1, 2, 3},
@@ -403,11 +402,21 @@ def _resolved_claim_id(item: ResolvedClaim) -> str:
     ).hexdigest()
 
 
+def _normalize_span_text(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).replace("\u00a0", " ").strip()
+
+
 def _valid_evidence_span(text: str, claim: ExtractedClaim) -> bool:
-    return (
-        claim.excerpt_end <= len(text)
-        and text[claim.excerpt_start : claim.excerpt_end] == claim.excerpt
-    )
+    if (
+        claim.excerpt_start < 0
+        or claim.excerpt_end > len(text)
+        or claim.excerpt_start >= claim.excerpt_end
+    ):
+        return False
+    target = text[claim.excerpt_start : claim.excerpt_end]
+    if target == claim.excerpt:
+        return True
+    return _normalize_span_text(target) == _normalize_span_text(claim.excerpt)
 
 
 def _semantic_claim_error(

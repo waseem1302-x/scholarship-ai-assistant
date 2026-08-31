@@ -229,7 +229,9 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             self._manual_review(run, candidate, plan.refusal_reasons[0], run_lease_token)
             return
         if plan.estimated_calls > remaining_calls or plan.estimated_cost_upper > remaining_cost:
-            raise ProviderExecutionBudgetExhausted("planned_bundle_extraction_exceeds_remaining_budget")
+            raise ProviderExecutionBudgetExhausted(
+                "planned_bundle_extraction_exceeds_remaining_budget"
+            )
 
         groups: dict[tuple[uuid.UUID, tuple[str, ...]], _BundleGroupAccumulator] = {}
         pending_jobs = list(plan.jobs)
@@ -239,7 +241,9 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             source = source_by_id.get(job.source_id)
             artifact = artifact_by_id.get(job.source_artifact_id)
             if source is None or artifact is None:
-                self._manual_review(run, candidate, "planned_source_revision_missing", run_lease_token)
+                self._manual_review(
+                    run, candidate, "planned_source_revision_missing", run_lease_token
+                )
                 return
             job_blocks = [blocks_by_id[item.block_id] for item in job.evidence]
             job_routes = self._job_routes(job, all_routes)
@@ -353,25 +357,25 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                     max_output_tokens=job.max_output_tokens,
                     parser_version=BUNDLE_PROVIDER_PARSER_VERSION,
                     normalizer_version=BUNDLE_NORMALIZER_VERSION,
-                    invoke=lambda job=job, source_links=source_links: self.bundle_claim_extractor.extract_bundle(
-                        source_url=artifact.final_url,
-                        evidence_text=job.evidence_text,
-                        objectives=job.objectives,
-                        scope_targets=[
-                            {
-                                "objective": target.objective.value,
-                                "scope_type": target.scope_type,
-                                "scope_key": target.scope_key,
-                                "coverage_input_fingerprint": target.coverage_input_fingerprint,
-                            }
-                            for target in job.scopes
-                        ],
-                        source_links=source_links,
-                        max_output_tokens=job.max_output_tokens,
+                    invoke=lambda job=job, source_links=source_links, artifact=artifact: (
+                        self.bundle_claim_extractor.extract_bundle(
+                            source_url=artifact.final_url,
+                            evidence_text=job.evidence_text,
+                            objectives=job.objectives,
+                            scope_targets=[
+                                {
+                                    "objective": target.objective.value,
+                                    "scope_type": target.scope_type,
+                                    "scope_key": target.scope_key,
+                                    "coverage_input_fingerprint": target.coverage_input_fingerprint,
+                                }
+                                for target in job.scopes
+                            ],
+                            source_links=source_links,
+                            max_output_tokens=job.max_output_tokens,
+                        )
                     ),
-                    heartbeat=lambda: self._heartbeat_candidate(
-                        run, candidate, run_lease_token
-                    ),
+                    heartbeat=lambda: self._heartbeat_candidate(run, candidate, run_lease_token),
                 )
             except ClaimOutputTruncated as exc:
                 self.metrics.add("ai_schema_failures")
@@ -411,9 +415,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                         "planner_job_key": job.job_key,
                         "outcome": "terminal_truncation",
                         "error_code": exc.code,
-                        "provider_attempt_id": str(
-                            getattr(exc, "provider_attempt_id", "") or ""
-                        ),
+                        "provider_attempt_id": str(getattr(exc, "provider_attempt_id", "") or ""),
                     },
                 )
                 self._manual_review(run, candidate, exc.code, run_lease_token)
@@ -431,9 +433,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                         "planner_job_key": job.job_key,
                         "outcome": "schema_failed",
                         "error_code": exc.code,
-                        "provider_attempt_id": str(
-                            getattr(exc, "provider_attempt_id", "") or ""
-                        ),
+                        "provider_attempt_id": str(getattr(exc, "provider_attempt_id", "") or ""),
                     },
                 )
                 self._manual_review(run, candidate, exc.code, run_lease_token)
@@ -451,9 +451,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                         "planner_job_key": job.job_key,
                         "outcome": "provider_failed",
                         "error_code": exc.code,
-                        "provider_attempt_id": str(
-                            getattr(exc, "provider_attempt_id", "") or ""
-                        ),
+                        "provider_attempt_id": str(getattr(exc, "provider_attempt_id", "") or ""),
                     },
                 )
                 self._manual_review(run, candidate, exc.code, run_lease_token)
@@ -634,11 +632,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             "objective_field_mismatch:",
             "provider_invalid_claims_dropped:",
         )
-        warnings = [
-            warning
-            for output in expanded.outputs.values()
-            for warning in output.warnings
-        ]
+        warnings = [warning for output in expanded.outputs.values() for warning in output.warnings]
         if any(warning.startswith(severe_prefixes) for warning in warnings):
             raise ExtractionSchemaError(
                 "Bundled claim output failed deterministic evidence validation",
@@ -694,9 +688,9 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
 
         for group in groups.values():
             self._persist_bundle_group_attempt(run, candidate, run_lease_token, group)
-            effective_trust_tier = (
-                (group.source.trust_tier or 99) * 10 + role_order[group.source.source_role]
-            )
+            effective_trust_tier = (group.source.trust_tier or 99) * 10 + role_order[
+                group.source.source_role
+            ]
             for objective in group.objectives:
                 outputs = group.outputs.get(objective, [])
                 if not outputs:
@@ -709,8 +703,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                     for item in merged.unknown_objectives
                 )
                 warnings.update(
-                    f"{group.artifact.id}:{objective.value}:{item}"
-                    for item in merged.warnings
+                    f"{group.artifact.id}:{objective.value}:{item}" for item in merged.warnings
                 )
                 coverage_by_objective[objective].append(merged.coverage_state)
                 extracted.append((group.artifact, effective_trust_tier, merged.claims))
@@ -949,16 +942,10 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             ),
             claims=[claim for item in outputs for claim in item.claims],
             unknown_objectives=list(
-                dict.fromkeys(
-                    value for item in outputs for value in item.unknown_objectives
-                )
+                dict.fromkeys(value for item in outputs for value in item.unknown_objectives)
             ),
-            conflicts=list(
-                dict.fromkeys(value for item in outputs for value in item.conflicts)
-            ),
-            warnings=list(
-                dict.fromkeys(value for item in outputs for value in item.warnings)
-            ),
+            conflicts=list(dict.fromkeys(value for item in outputs for value in item.conflicts)),
+            warnings=list(dict.fromkeys(value for item in outputs for value in item.warnings)),
         )
 
     @staticmethod
@@ -985,13 +972,13 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
     @staticmethod
     def _resume_job_key(candidate_id: uuid.UUID, cache_key: str) -> str:
         return hashlib.sha256(
-            f"claim-bundle-resume|{candidate_id}|{cache_key}".encode("utf-8")
+            f"claim-bundle-resume|{candidate_id}|{cache_key}".encode()
         ).hexdigest()
 
     @staticmethod
     def _provider_job_key(candidate_id: uuid.UUID, cache_key: str) -> str:
         return hashlib.sha256(
-            f"claim-bundle-provider|{candidate_id}|{cache_key}".encode("utf-8")
+            f"claim-bundle-provider|{candidate_id}|{cache_key}".encode()
         ).hexdigest()
 
     def _bundle_group_job_key(

@@ -282,14 +282,14 @@ class AcquisitionLexicon:
     negative_terms: tuple[str, ...] = _NEGATIVE_TERMS
 
     @classmethod
-    def defaults(cls) -> "AcquisitionLexicon":
+    def defaults(cls) -> AcquisitionLexicon:
         return cls(terms_by_objective=dict(_DEFAULT_LEXICON))
 
     @classmethod
     def from_mapping(
         cls,
         overrides: Mapping[str, Sequence[str]] | None,
-    ) -> "AcquisitionLexicon":
+    ) -> AcquisitionLexicon:
         merged = {key: list(values) for key, values in _DEFAULT_LEXICON.items()}
         for objective, values in (overrides or {}).items():
             normalized = [" ".join(str(value).split()).strip() for value in values]
@@ -469,13 +469,17 @@ def score_crawl_link(
         terms = active_lexicon.terms_by_objective.get(objective, ())
         matches = sum(1 for term in terms if term.casefold() in combined)
         score += min(matches, 3) * 12
+        if objective == "application_timeline" and matches:
+            score += 15
 
     for need in needs:
         for keyword in need.keywords:
             if keyword.casefold() in combined:
                 score += 18
         for reason in need.reasons:
-            reason_terms = [item for item in re.split(r"[^\w]+", reason.casefold()) if len(item) >= 4]
+            reason_terms = [
+                item for item in re.split(r"[^\w]+", reason.casefold()) if len(item) >= 4
+            ]
             if any(term in combined for term in reason_terms[:6]):
                 score += 5
 
@@ -505,12 +509,12 @@ def classify_static_page(fetched: FetchedSource) -> StaticPageSufficiency:
     compact = " ".join(text.split())
     if content_type in {"text/html", "application/xhtml+xml"} and (
         any(marker in compact for marker in _JAVASCRIPT_SHELL_MARKERS)
-        or (len(compact) < 300 and len(fetched.links) >= 3)
+        or (not compact and len(fetched.links) >= 3)
     ):
         return StaticPageSufficiency.JAVASCRIPT_SHELL
     if len(compact) >= 1_200:
         return StaticPageSufficiency.FULL_CONTENT
-    if len(compact) >= 80:
+    if compact:
         return StaticPageSufficiency.PARTIAL_CONTENT
     return StaticPageSufficiency.UNSUPPORTED
 
@@ -573,6 +577,10 @@ class BoundedOfficialSiteCrawler:
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        if not callable(getattr(fetcher, "fetch_with_limit", None)) and not isinstance(
+            fetcher, SafeSourceFetcher
+        ):
+            raise SourceFetchError("crawler_fetcher_does_not_support_byte_budget")
         self.fetcher = fetcher
         self.sleeper = sleeper
         self.clock = clock
@@ -630,6 +638,7 @@ class BoundedOfficialSiteCrawler:
         ocr_enabled: bool = False,
         primary_root: str | None = None,
         enqueue_auxiliary_roots: bool = True,
+        enqueue_seed_sitemaps: bool = False,
     ) -> CrawlResult:
         """Crawl multiple explicitly-authorized roots through one deduplicated frontier."""
 
@@ -720,14 +729,25 @@ class BoundedOfficialSiteCrawler:
                 return
             host = _host(normalized)
             if host not in authority_by_host:
-                rejected.append(
-                    RejectedCrawlLink(
-                        url=normalized,
-                        depth=depth,
-                        reason="cross_domain_without_typed_authority",
+                matching_auth = None
+                for auth_host, auth_val in list(authority_by_host.items()):
+                    if host == f"www.{auth_host}" or auth_host == f"www.{host}":
+                        matching_auth = auth_val
+                        break
+                    if host and auth_host and host.endswith(f".{auth_host}"):
+                        matching_auth = AcquisitionAuthority.REVIEWED_AUXILIARY
+                        break
+                if matching_auth is not None:
+                    authority_by_host[host] = matching_auth
+                else:
+                    rejected.append(
+                        RejectedCrawlLink(
+                            url=normalized,
+                            depth=depth,
+                            reason="cross_domain_unverified",
+                        )
                     )
-                )
-                return
+                    return
             seen_urls.add(normalized)
             heapq.heappush(
                 queue,
@@ -772,16 +792,6 @@ class BoundedOfficialSiteCrawler:
                         )
                     )
                     continue
-                host = _host(normalized)
-                if host not in authority_by_host:
-                    rejected.append(
-                        RejectedCrawlLink(
-                            url=normalized,
-                            depth=depth,
-                            reason="cross_domain_without_typed_authority",
-                        )
-                    )
-                    continue
                 enqueue(
                     normalized,
                     depth=depth,
@@ -816,7 +826,8 @@ class BoundedOfficialSiteCrawler:
             if item not in escalations:
                 escalations.append(item)
             unresolved.add(
-                f"acquisition_escalation:{kind.value}:{'enabled' if enabled else 'disabled'}:{reason}"
+                "acquisition_escalation:"
+                f"{kind.value}:{'enabled' if enabled else 'disabled'}:{reason}"
             )
 
         def fetch_page(item: _QueuedLink) -> bool:
@@ -851,7 +862,10 @@ class BoundedOfficialSiteCrawler:
             if remaining_bytes <= 0:
                 mark_budget("bytes")
                 return False
-            if _looks_like_document(item.url) and document_conversions >= limits.max_document_conversions:
+            if (
+                _looks_like_document(item.url)
+                and document_conversions >= limits.max_document_conversions
+            ):
                 mark_budget("document_conversions")
                 return False
 
@@ -889,6 +903,8 @@ class BoundedOfficialSiteCrawler:
                     "crawler_fetcher_does_not_support_byte_budget",
                 }:
                     mark_budget("bytes")
+                    if item.is_seed and item.url == normalized_primary:
+                        raise
                     return False
                 if item.is_seed and item.url == normalized_primary and escalation is None:
                     raise
@@ -958,7 +974,9 @@ class BoundedOfficialSiteCrawler:
                 )
             elif sufficiency is StaticPageSufficiency.UNSUPPORTED:
                 failures.append(
-                    CrawlFailure(url=final_url, depth=item.depth, reason="static_content_unsupported")
+                    CrawlFailure(
+                        url=final_url, depth=item.depth, reason="static_content_unsupported"
+                    )
                 )
                 escalation = _escalation_for_failure(final_url, fetched.content_type)
                 if escalation is not None:
@@ -1015,7 +1033,7 @@ class BoundedOfficialSiteCrawler:
         roots_to_enqueue = normalized_seeds if enqueue_auxiliary_roots else normalized_seeds[:1]
         for index, seed in enumerate(roots_to_enqueue):
             enqueue(seed.url, depth=0, score=100 - index, is_seed=True)
-            if limits.max_depth > 0:
+            if enqueue_seed_sitemaps and limits.max_depth > 0:
                 enqueue_sitemap(seed.url)
 
         while queue and not budget_exhausted:
@@ -1083,7 +1101,9 @@ def _structural_link_score(link: FetchedLink) -> int:
         score += 35
     if _looks_like_document(link.url):
         score += 20
-    if any(term in path for term in ("download", "document", "resource", "form", "guide", "handbook")):
+    if any(
+        term in path for term in ("download", "document", "resource", "form", "guide", "handbook")
+    ):
         score += 18
     query_keys = {key.casefold() for key, _value in parse_qsl(parsed.query, keep_blank_values=True)}
     if query_keys & {"page", "p", "offset", "start", "cursor"}:

@@ -69,15 +69,7 @@ class AcquisitionPlan:
 
     @property
     def unresolved_reasons(self) -> tuple[str, ...]:
-        return tuple(
-            sorted(
-                {
-                    reason
-                    for need in self.needs
-                    for reason in need.reasons
-                }
-            )
-        )
+        return tuple(sorted({reason for need in self.needs for reason in need.reasons}))
 
     @property
     def objectives(self) -> tuple[str, ...]:
@@ -99,7 +91,9 @@ class CatalogueAcquisitionPlanner:
         rows = list(
             self.session.execute(
                 select(CatalogueCoverageCell, CatalogueScopeNode)
-                .join(CatalogueScopeNode, CatalogueScopeNode.id == CatalogueCoverageCell.scope_node_id)
+                .join(
+                    CatalogueScopeNode, CatalogueScopeNode.id == CatalogueCoverageCell.scope_node_id
+                )
                 .where(
                     CatalogueCoverageCell.candidate_id == candidate_id,
                     CatalogueCoverageCell.required.is_(True),
@@ -125,15 +119,9 @@ class CatalogueAcquisitionPlanner:
             )
 
         unresolved = [
-            (cell, node)
-            for cell, node in rows
-            if cell.state not in _TERMINAL_COVERAGE_STATES
+            (cell, node) for cell, node in rows if cell.state not in _TERMINAL_COVERAGE_STATES
         ]
-        revisions = {
-            cell.evaluator_version
-            for cell, _node in rows
-            if cell.evaluator_version
-        }
+        revisions = {cell.evaluator_version for cell, _node in rows if cell.evaluator_version}
         coverage_revision = next(iter(revisions)) if len(revisions) == 1 else None
         if not unresolved:
             return AcquisitionPlan(

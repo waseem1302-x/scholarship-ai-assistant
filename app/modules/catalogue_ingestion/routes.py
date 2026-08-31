@@ -10,10 +10,27 @@ from app.core.config import Settings, get_settings
 from app.db.session import get_db
 from app.modules.auth.dependencies import require_admin_step_up, require_roles
 from app.modules.auth.models import User, UserRole
+from app.modules.catalogue_ingestion.discovery_control import CatalogueDiscoveryControlService
+from app.modules.catalogue_ingestion.discovery_schemas import (
+    CandidateDiscoveryRunRequest,
+    DiscoveryLeadBindingResponse,
+    DiscoveryLeadBindRequest,
+    DiscoveryLeadListResponse,
+    DiscoveryLeadResponse,
+    DiscoveryLeadReviewRequest,
+    DiscoveryRunListResponse,
+    DiscoveryRunProcessRequest,
+    DiscoveryRunResponse,
+)
 from app.modules.catalogue_ingestion.extraction_preflight import (
     build_candidate_extraction_preflight,
 )
 from app.modules.catalogue_ingestion.models import CandidateStatus
+from app.modules.catalogue_ingestion.observability import CatalogueObservabilityService
+from app.modules.catalogue_ingestion.observability_schemas import (
+    CandidateObservabilityResponse,
+    RunObservabilityResponse,
+)
 from app.modules.catalogue_ingestion.production_service import ProductionCatalogueIngestionService
 from app.modules.catalogue_ingestion.review_schemas import (
     CatalogueCandidateReviewResponse,
@@ -52,6 +69,96 @@ def get_review_workflow(
     return CatalogueReviewWorkflow(session)
 
 
+def get_discovery_control(
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> CatalogueDiscoveryControlService:
+    return CatalogueDiscoveryControlService(session, settings)
+
+
+def get_observability(
+    session: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> CatalogueObservabilityService:
+    return CatalogueObservabilityService(session, settings)
+
+
+@router.post("/discovery/runs", response_model=DiscoveryRunResponse)
+def create_discovery_run(
+    payload: CandidateDiscoveryRunRequest,
+    _admin: AdminUser,
+    service: Annotated[CatalogueDiscoveryControlService, Depends(get_discovery_control)],
+) -> DiscoveryRunResponse:
+    return service.create_candidate_run(payload)
+
+
+@router.get("/discovery/runs", response_model=DiscoveryRunListResponse)
+def list_discovery_runs(
+    _admin: AdminReader,
+    service: Annotated[CatalogueDiscoveryControlService, Depends(get_discovery_control)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DiscoveryRunListResponse:
+    return service.list_runs(limit=limit, offset=offset)
+
+
+@router.post("/discovery/runs/{run_id}/process", response_model=DiscoveryRunResponse)
+def process_discovery_run(
+    run_id: uuid.UUID,
+    payload: DiscoveryRunProcessRequest,
+    _admin: AdminUser,
+    service: Annotated[CatalogueDiscoveryControlService, Depends(get_discovery_control)],
+) -> DiscoveryRunResponse:
+    return service.process_run(
+        run_id,
+        worker_id=f"admin-discovery:{run_id}",
+        max_queries=payload.max_queries,
+    )
+
+
+@router.get("/discovery/leads", response_model=DiscoveryLeadListResponse)
+def list_discovery_leads(
+    _admin: AdminReader,
+    service: Annotated[CatalogueDiscoveryControlService, Depends(get_discovery_control)],
+    run_id: uuid.UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DiscoveryLeadListResponse:
+    return service.list_leads(run_id=run_id, limit=limit, offset=offset)
+
+
+@router.post("/discovery/leads/{lead_id}/review", response_model=DiscoveryLeadResponse)
+def review_discovery_lead(
+    lead_id: uuid.UUID,
+    payload: DiscoveryLeadReviewRequest,
+    admin: AdminUser,
+    service: Annotated[CatalogueDiscoveryControlService, Depends(get_discovery_control)],
+) -> DiscoveryLeadResponse:
+    return service.review_lead(
+        lead_id,
+        status=payload.status,
+        reviewer_id=admin.id,
+        reason=payload.reason,
+    )
+
+
+@router.post(
+    "/discovery/leads/{lead_id}/bind",
+    response_model=DiscoveryLeadBindingResponse,
+)
+def bind_discovery_lead(
+    lead_id: uuid.UUID,
+    payload: DiscoveryLeadBindRequest,
+    _admin: AdminUser,
+    service: Annotated[CatalogueDiscoveryControlService, Depends(get_discovery_control)],
+) -> DiscoveryLeadBindingResponse:
+    return service.bind_lead(
+        lead_id,
+        run_id=payload.run_id,
+        assessment_id=payload.assessment_id,
+    )
+
+
 @router.post("/runs/url", response_model=IngestionRunResponse)
 def create_url_run(
     payload: DirectUrlIngestionRequest,
@@ -81,6 +188,15 @@ def list_runs(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> IngestionRunListResponse:
     return service.list_runs(limit=limit, offset=offset)
+
+
+@router.get("/runs/{run_id}/observability", response_model=RunObservabilityResponse)
+def run_observability(
+    run_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[CatalogueObservabilityService, Depends(get_observability)],
+) -> RunObservabilityResponse:
+    return service.run(run_id)
 
 
 @router.get("/candidates", response_model=CandidateListResponse)
@@ -113,6 +229,18 @@ def get_candidate(
     _admin: AdminReader,
     service: Annotated[CatalogueIngestionService, Depends(get_service)],
 ) -> CandidateResponse:
+    return service.candidate(candidate_id)
+
+
+@router.get(
+    "/candidates/{candidate_id}/observability",
+    response_model=CandidateObservabilityResponse,
+)
+def candidate_observability(
+    candidate_id: uuid.UUID,
+    _admin: AdminReader,
+    service: Annotated[CatalogueObservabilityService, Depends(get_observability)],
+) -> CandidateObservabilityResponse:
     return service.candidate(candidate_id)
 
 

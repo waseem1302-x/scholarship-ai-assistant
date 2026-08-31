@@ -434,8 +434,7 @@ class CatalogueTopologyService:
     def _objective_keys(objectives: Iterable[ClaimObjective | str]) -> list[str]:
         valid = {objective.value for objective in ClaimObjective}
         values = {
-            item.value if isinstance(item, ClaimObjective) else str(item)
-            for item in objectives
+            item.value if isinstance(item, ClaimObjective) else str(item) for item in objectives
         }
         invalid = sorted(values - valid - {"*"})
         if invalid:

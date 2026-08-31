@@ -87,7 +87,7 @@ class CatalogueEvidenceBlock(Base):
 
 
 class CatalogueEvidenceRoute(Base):
-    """Append-only block × topology-scope × objective relevance decision."""
+    """Append-only block x topology-scope x objective relevance decision."""
 
     __tablename__ = "catalogue_evidence_routes"
     __table_args__ = (

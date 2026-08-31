@@ -257,11 +257,15 @@ class CatalogueReviewWorkflow:
         candidate = self._candidate(candidate_id, for_update=True)
         review = self._required_review(candidate)
         self._assert_expected_hash(candidate, review, expected_proposal_hash)
-        if review.state in {
-            CatalogueProposalState.MATERIALIZED,
-            CatalogueProposalState.PUBLICATION_READY,
-            CatalogueProposalState.PUBLISHED,
-        } and candidate.opportunity_id is not None:
+        if (
+            review.state
+            in {
+                CatalogueProposalState.MATERIALIZED,
+                CatalogueProposalState.PUBLICATION_READY,
+                CatalogueProposalState.PUBLISHED,
+            }
+            and candidate.opportunity_id is not None
+        ):
             return self._response(candidate, review)
         if review.state not in {
             CatalogueProposalState.APPROVED,
@@ -501,7 +505,9 @@ class CatalogueReviewWorkflow:
         response = self.opportunities.stage_opportunity_for_review(legacy_payload, commit=False)
         opportunity = self.session.get(Opportunity, response.id)
         if opportunity is None:
-            raise RuntimeError("Legacy staged opportunity disappeared before materialization commit")
+            raise RuntimeError(
+                "Legacy staged opportunity disappeared before materialization commit"
+            )
         return opportunity, LEGACY_OPPORTUNITY_MATERIALIZER_VERSION
 
     def _readiness(
@@ -774,7 +780,8 @@ class CatalogueReviewWorkflow:
         if review.proposal_hash != current_hash:
             raise AppError(
                 "catalogue_proposal_changed_after_review",
-                "Proposal changed after review submission; resubmit the new proposal before deciding",
+                "Proposal changed after review submission; resubmit the new proposal "
+                "before deciding",
                 409,
             )
         return current_hash
@@ -928,4 +935,4 @@ def _safe_materialization_failure(exc: Exception) -> tuple[str, str]:
     return "materialization_failed", "Materialization failed without committing catalogue writes"
 
 
-__all__ = ["CatalogueReviewWorkflow", "LEGACY_OPPORTUNITY_MATERIALIZER_VERSION"]
+__all__ = ["LEGACY_OPPORTUNITY_MATERIALIZER_VERSION", "CatalogueReviewWorkflow"]
