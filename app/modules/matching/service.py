@@ -704,25 +704,6 @@ def _normalize(value: str | None) -> str:
     return " ".join(value.lower().strip().split()) if value else ""
 
 
-def _token_overlap(left: str, right: str) -> bool:
-    left_tokens = {token for token in re.split(r"\W+", left) if len(token) >= 4}
-    right_tokens = {token for token in re.split(r"\W+", right) if len(token) >= 4}
-    return bool(left_tokens & right_tokens)
-
-
-def _extract_required_cgpa(requirement: str) -> Decimal | None:
-    patterns = [
-        r"cgpa\s*(?:of|:|>=|at least|minimum)?\s*(\d(?:\.\d+)?)",
-        r"(\d(?:\.\d+)?)\s*/\s*4(?:\.0)?",
-    ]
-    normalized = requirement.lower()
-    for pattern in patterns:
-        match = re.search(pattern, normalized)
-        if match:
-            return Decimal(match.group(1))
-    return None
-
-
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 

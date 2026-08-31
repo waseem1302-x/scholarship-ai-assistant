@@ -1395,21 +1395,6 @@ class CatalogueIngestionService:
             raise AppError("catalogue_candidate_not_found", "Candidate was not found", 404)
         return self._candidate_response(candidate)
 
-    def _check_budget(self, run: CatalogueIngestionRun, source_text: str) -> None:
-        """Legacy conservative check retained for non-provider call sites.
-
-        Paid provider execution uses the atomic reservation ledger instead.
-        """
-        if run.model_calls >= run.max_model_calls:
-            raise RunBudgetExhausted
-        projected_input = max(1, len(source_text) // 4)
-        projected_cost = (
-            Decimal(projected_input) * self.settings.catalogue_ai_input_cost_per_million
-            + Decimal(run.max_output_tokens) * self.settings.catalogue_ai_output_cost_per_million
-        ) / Decimal(1_000_000)
-        if run.estimated_cost + projected_cost > run.max_estimated_cost:
-            raise RunBudgetExhausted
-
     def _persist_crawled_sources(
         self,
         candidate: CatalogueCandidate,

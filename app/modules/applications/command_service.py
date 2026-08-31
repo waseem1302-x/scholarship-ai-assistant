@@ -830,45 +830,6 @@ class ApplicationCommandService:
                     source_excerpt_id=outcome.source_excerpt_id,
                 )
 
-    def _sync_deadlines(self, applications: list[Application], user: User) -> None:
-        changed = False
-        for application in applications:
-            opportunity = application.opportunity
-            source = self._official_source(opportunity)
-            official_deadline, official_timezone = self._official_deadline_context(
-                opportunity, source
-            )
-            state = DeadlineState.KNOWN if official_deadline and source else DeadlineState.UNCERTAIN
-            if (
-                application.official_deadline != official_deadline
-                or application.official_deadline_state != state
-                or application.official_deadline_timezone != official_timezone
-            ):
-                application.official_deadline_state = (
-                    DeadlineState.UNCERTAIN
-                    if state is DeadlineState.UNCERTAIN
-                    else (
-                        DeadlineState.CHANGED
-                        if application.official_deadline and official_deadline
-                        else DeadlineState.KNOWN
-                    )
-                )
-                application.official_deadline = official_deadline
-                application.official_deadline_timezone = official_timezone
-                application.official_deadline_source_id = source.id if source else None
-                application.official_deadline_verified_at = (
-                    source.last_verified_at if source else None
-                )
-                self.repository.add_event(
-                    application.id,
-                    user.id,
-                    "deadline.changed",
-                    {"state": str(application.official_deadline_state)},
-                )
-                changed = True
-        if changed:
-            self.session.commit()
-
     def _official_deadline_context(
         self, opportunity: Opportunity, source: Source | None
     ) -> tuple[datetime | None, str]:
