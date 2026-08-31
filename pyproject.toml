@@ -51,7 +51,7 @@ docling = [
 packages = ["app"]
 
 [tool.pytest.ini_options]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers --basetemp=pytest_temp -o cache_dir=pytest_temp/.cache"
 testpaths = ["tests"]
 markers = [
   "e2e: runs against a live browser and application URL",
