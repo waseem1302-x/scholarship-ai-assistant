@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import delete, func, select
 
 from app.core.config import Settings
+from app.modules.auth.models import User, UserRole
 from app.modules.catalogue_ingestion.discovery import (
     DiscoveryObjective,
     DiscoveryObjectiveKind,
@@ -248,6 +249,19 @@ def _claim_observe_and_assess(
         ),
     )
     assert assessment.officiality_status is DiscoveryOfficialityStatus.OFFICIAL
+    reviewer = User(
+        email=f"promotion-reviewer-{uuid.uuid4().hex}@example.test",
+        password_hash="not-used",
+        role=UserRole.ADMIN,
+    )
+    db_session.add(reviewer)
+    db_session.commit()
+    repository.review_lead(
+        lead_id=lead.id,
+        status="approved",
+        reviewer_id=reviewer.id,
+        reason="Official ownership assessment reviewed for promotion test.",
+    )
     return query, lead, assessment
 
 

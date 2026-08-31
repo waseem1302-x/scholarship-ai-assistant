@@ -111,7 +111,7 @@ def test_react_frontend_can_register_and_sign_out(page: Page, live_base_url: str
     expect(
         page.get_by_role("heading", name=f"Good to see you, {email.split('@')[0]}.")
     ).to_be_visible()
-    for link_name in ["Scholarships", "Dashboard", "Applications", "Assistant"]:
+    for link_name in ["Scholarships", "Dashboard", "Applications"]:
         expect(page.get_by_role("link", name=link_name, exact=True)).to_be_visible()
     page.get_by_text("More", exact=True).click()
     for link_name in ["Profile", "Matches"]:
@@ -823,8 +823,8 @@ def test_phase_five_application_command_centre_journey(page: Page, live_base_url
     page.route("**/api/v1/applications", applications_route)
 
     page.goto(f"{live_base_url}/catalogue/{opportunity_id}", wait_until="networkidle")
-    page.get_by_role("button", name="Create application").click()
-    expect(page.get_by_role("status")).to_contain_text("Application workspace created")
+    page.get_by_role("button", name="Save & track").click()
+    expect(page.get_by_role("status")).to_contain_text("Saved. Your application plan is ready.")
     page.get_by_role("link", name="Applications", exact=True).click()
     expect(page.get_by_role("heading", name="Phase Five Verified Scholarship")).to_be_visible()
     page.get_by_role("link", name="Open workspace").click()

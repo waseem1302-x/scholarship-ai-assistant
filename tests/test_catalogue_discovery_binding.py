@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import delete, func, select
 
+from app.modules.auth.models import User, UserRole
 from app.modules.catalogue_ingestion.discovery import (
     DiscoveryObjective,
     DiscoveryObjectiveKind,
@@ -225,11 +226,25 @@ def _provider_registration(provider: Provider, domain: str) -> ReviewedOwnerDoma
 
 
 def _assess(db_session, run_id, lead_id, registrations):
-    return CatalogueDiscoveryOfficialityService(db_session).assess_lead(
+    assessment = CatalogueDiscoveryOfficialityService(db_session).assess_lead(
         run_id=run_id,
         lead_id=lead_id,
         reviewed_owner_domains=registrations,
     )
+    reviewer = User(
+        email=f"binding-reviewer-{uuid.uuid4().hex}@example.test",
+        password_hash="not-used",
+        role=UserRole.ADMIN,
+    )
+    db_session.add(reviewer)
+    db_session.commit()
+    CatalogueDiscoveryRepository(db_session).review_lead(
+        lead_id=lead_id,
+        status="approved",
+        reviewer_id=reviewer.id,
+        reason="Official ownership assessment reviewed for binding test.",
+    )
+    return assessment
 
 
 def _provider_binding_context(db_session, *, status=CandidateStatus.DISCOVERED, failure_code=None):

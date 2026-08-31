@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import inspect, select
 
+from app.modules.auth.models import User, UserRole
 from app.modules.catalogue_ingestion.discovery import (
     DiscoveryObjective,
     DiscoveryObjectiveKind,
@@ -619,6 +620,65 @@ def test_leads_observations_and_assessments_are_idempotent_and_immutable(db_sess
     db_session.rollback()
 
 
+def test_discovery_lead_requires_human_approval_before_candidate_binding(db_session) -> None:
+    reviewer = User(
+        email=f"reviewer-{uuid.uuid4().hex}@example.test",
+        password_hash="not-used-in-this-test",
+        role=UserRole.ADMIN,
+    )
+    db_session.add(reviewer)
+    db_session.commit()
+    candidate = _candidate(db_session)
+    repository, run, _ = _run(db_session, candidate.id)
+    run.dry_run = False
+    db_session.commit()
+    query = _claim(repository, run.id)
+    _settle_success(repository, query)
+    lead, _ = repository.record_lead_observation(
+        query_id=query.id,
+        url="https://scholarships.gov.uk/example",
+        discovery_reason="exact identity query",
+        provider_rank=1,
+    )
+    assessment = repository.append_assessment(
+        run_id=run.id,
+        lead_id=lead.id,
+        assessment=DiscoveryAssessmentInput(
+            assessment_context_hash="e" * 64,
+            context_type="candidate_root",
+            officiality_status=DiscoveryOfficialityStatus.OFFICIAL,
+            owner_type="government",
+            reason_code="REVIEWED_GOVERNMENT_DOMAIN",
+            reason_detail="Host matches the reviewed government owner.",
+            classifier_version="official-source.v1",
+            canonical_domain="scholarships.gov.uk",
+            trust_tier=1,
+        ),
+    )
+
+    with pytest.raises(DiscoveryStateError, match="human_approval"):
+        repository.bind_candidate_source(
+            run_id=run.id,
+            lead_id=lead.id,
+            assessment_id=assessment.id,
+        )
+
+    reviewed = repository.review_lead(
+        lead_id=lead.id,
+        status="approved",
+        reviewer_id=reviewer.id,
+        reason="Reviewed ownership evidence and approved this official source.",
+    )
+    outcome = repository.bind_candidate_source(
+        run_id=run.id,
+        lead_id=lead.id,
+        assessment_id=assessment.id,
+    )
+
+    assert reviewed.review_status.value == "approved"
+    assert outcome.source.discovery_lead_id == lead.id
+
+
 def test_same_lead_keeps_distinct_contextual_assessment_history(db_session) -> None:
     provider = Provider(
         name=f"China Scholarship Council {uuid.uuid4().hex}",
@@ -848,6 +908,19 @@ def test_promotion_requires_matching_fetched_source_and_is_idempotent(db_session
     )
     db_session.add(source)
     db_session.commit()
+    reviewer = User(
+        email=f"promotion-prerequisite-{uuid.uuid4().hex}@example.test",
+        password_hash="not-used",
+        role=UserRole.ADMIN,
+    )
+    db_session.add(reviewer)
+    db_session.commit()
+    repository.review_lead(
+        lead_id=lead.id,
+        status="approved",
+        reviewer_id=reviewer.id,
+        reason="Approved to test the later fetched-source promotion prerequisite.",
+    )
     with pytest.raises(DiscoveryStateError, match="requires_fetched"):
         repository.record_promotion(
             run_id=run.id,

@@ -51,6 +51,7 @@ from app.modules.catalogue_ingestion.provider import (
     estimate_cost,
     extraction_retry_delay,
 )
+from app.modules.catalogue_ingestion.repository import CatalogueIngestionRepository
 from app.modules.catalogue_ingestion.schemas import (
     CatalogueExtractionOutput,
     ExtractionResult,
@@ -589,6 +590,10 @@ def test_catalogue_ingestion_admin_api_is_not_public(client) -> None:
     for path in (
         "/api/v1/admin/catalogue-ingestion/runs",
         "/api/v1/admin/catalogue-ingestion/candidates",
+        "/api/v1/admin/catalogue-ingestion/discovery/runs",
+        "/api/v1/admin/catalogue-ingestion/discovery/leads",
+        f"/api/v1/admin/catalogue-ingestion/runs/{uuid.uuid4()}/observability",
+        f"/api/v1/admin/catalogue-ingestion/candidates/{uuid.uuid4()}/observability",
     ):
         assert client.get(path).status_code == 401
     assert (
@@ -598,6 +603,51 @@ def test_catalogue_ingestion_admin_api_is_not_public(client) -> None:
         ).status_code
         == 401
     )
+
+
+def test_candidate_claiming_prefers_the_least_served_candidate(db_session) -> None:
+    run = CatalogueIngestionRun(
+        source_label="fairness.json",
+        source_fingerprint="f" * 64,
+        mode=IngestionMode.CANDIDATE_ONLY,
+        dry_run=True,
+        max_candidates=2,
+        max_pages_per_candidate=1,
+        max_model_calls=0,
+        max_input_characters=1_000,
+        max_output_tokens=256,
+        max_estimated_cost=Decimal("0"),
+    )
+    db_session.add(run)
+    db_session.flush()
+    earlier = CatalogueCandidate(
+        run_id=run.id,
+        seed_index=0,
+        idempotency_key="a" * 64,
+        seed_name="Large Scholarship",
+        attempt_count=2,
+    )
+    waiting = CatalogueCandidate(
+        run_id=run.id,
+        seed_index=1,
+        idempotency_key="b" * 64,
+        seed_name="Waiting Scholarship",
+        attempt_count=0,
+    )
+    db_session.add_all((earlier, waiting))
+    db_session.commit()
+    repository = CatalogueIngestionRepository(db_session)
+    run_lease = repository.acquire_run_lease(run.id, lease_seconds=60)
+
+    claimed = repository.claim_candidates(
+        run_id=run.id,
+        run_lease_token=run_lease,
+        worker_id="fair-worker",
+        limit=1,
+        lease_seconds=60,
+    )
+
+    assert [item.id for item in claimed] == [waiting.id]
 
 
 def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_session) -> None:
@@ -635,6 +685,32 @@ def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_
     assert artifact is not None
     assert artifact.normalized_text == MEXT_TEXT
     assert artifact.content_hash == hashlib.sha256(MEXT_TEXT.encode()).hexdigest()
+
+
+def test_direct_url_paid_work_yields_after_each_configured_candidate_slice(db_session) -> None:
+    extractor = FakeClaimProvider(claim_output())
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(catalogue_scheduler_max_provider_calls_per_candidate_slice=1),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=extractor,
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+
+    result = service.process_run(run.id, worker_id="direct-slice", batch_size=1)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+
+    assert result.status is IngestionRunStatus.COMPLETED_WITH_REVIEW
+    assert result.checkpoint_cursor == 1
+    assert extractor.calls == len(ClaimObjective)
+    assert candidate is not None
+    assert candidate.attempt_count >= len(ClaimObjective)
 
 
 def test_catalogue_source_byte_limit_is_independent_from_model_text_limit(db_session) -> None:
@@ -767,20 +843,11 @@ def test_direct_source_bundle_stages_expanded_claims_from_three_explicit_sources
     assert db_session.scalar(select(func.count()).select_from(CatalogueSourceArtifact)) == 3
     assert db_session.scalar(select(func.count()).select_from(SourceSnapshot)) == 0
     assert db_session.scalar(select(func.count()).select_from(GraphFieldEvidence)) == 0
-    assert candidate.proposed_payload["objective_coverage"] == {
-        "identity": "complete",
-        "programmes": "complete",
-        "programme_details": "complete",
-        "routes": "complete",
-        "eligibility": "complete",
-        "eligibility_context": "complete",
-        "documents_core": "complete",
-        "documents_requirements": "complete",
-        "documents_counts": "complete",
-        "documents_format": "complete",
-        "funding": "complete",
-        "application_timeline": "complete",
-    }
+    objective_coverage = candidate.proposed_payload["objective_coverage"]
+    assert objective_coverage["identity"] == "complete"
+    assert set(objective_coverage.values()) <= {"complete", "partial", "unknown"}
+    assert {"partial", "unknown"}.issubset(set(objective_coverage.values()))
+    assert any(error.startswith("coverage:") for error in candidate.validation_errors)
 
 
 def test_direct_source_bundle_rejects_duplicates_and_page_budget_overflow(db_session) -> None:
@@ -1247,7 +1314,7 @@ def test_claim_resolution_separates_events_and_validates_resource_links() -> Non
     assert (ClaimEntityType.RESOURCE, "application_form", "url") in accepted
 
 
-def test_detail_completeness_requires_degree_mapping_for_every_programme() -> None:
+def test_compatibility_resolution_defers_programme_completeness_to_persisted_topology() -> None:
     artifact = CatalogueSourceArtifact(
         id=uuid.uuid4(),
         source_id=uuid.uuid4(),
@@ -1280,11 +1347,15 @@ def test_detail_completeness_requires_degree_mapping_for_every_programme() -> No
         },
     )
 
-    assert "missing:programme.research_students.degree_levels" in resolution.completeness_errors
+    assert any(
+        cell.state.value in {"partial", "unknown"}
+        and "persist_and_evaluate_topology" in cell.missing_frontier_reasons
+        for cell in resolution.scope_coverage
+    )
     assert resolution.is_materializable is False
 
 
-def test_multi_programme_detail_requires_scoped_requirements_for_each_programme() -> None:
+def test_multi_programme_compatibility_resolution_requires_topology_evaluation() -> None:
     artifact = CatalogueSourceArtifact(
         id=uuid.uuid4(),
         source_id=uuid.uuid4(),
@@ -1332,13 +1403,11 @@ def test_multi_programme_detail_requires_scoped_requirements_for_each_programme(
         },
     )
 
-    for programme_key in ("research_students", "undergraduate_students"):
-        for entity_type in ("document", "funding", "step"):
-            assert (
-                f"missing:programme.{programme_key}.{entity_type}" in resolution.completeness_errors
-            )
-    assert "missing:programme.undergraduate_students.eligibility" in (
-        resolution.completeness_errors
+    assert any(error.startswith("coverage:") for error in resolution.completeness_errors)
+    assert all(
+        "persist_and_evaluate_topology" in cell.missing_frontier_reasons
+        for cell in resolution.scope_coverage
+        if cell.state.value != "complete"
     )
 
 
@@ -1586,7 +1655,7 @@ def test_pipeline_reaches_review_boundary_without_publication(db_session, tmp_pa
     result = service.process_run(run.id, worker_id="test-worker", batch_size=1)
     candidate = db_session.scalar(select(CatalogueCandidate))
 
-    assert result.status is IngestionRunStatus.COMPLETED
+    assert result.status is IngestionRunStatus.COMPLETED_WITH_REVIEW
     assert result.model_calls == 1
     assert candidate is not None
     assert candidate.status is CandidateStatus.READY_FOR_REVIEW
@@ -1721,6 +1790,50 @@ def test_budget_exhaustion_is_explicit_and_resumeable(db_session, tmp_path) -> N
     assert candidate.claimed_by is None
 
 
+def test_open_provider_circuit_defers_candidate_without_calling_provider(
+    db_session, tmp_path
+) -> None:
+    from app.modules.catalogue_ingestion.provider_attempts import ProviderFailureClass
+    from app.modules.catalogue_ingestion.scheduling import CatalogueProviderScheduler
+
+    extractor = FakeExtractionProvider(extraction_output())
+    settings = enabled_settings()
+    service = CatalogueIngestionService(
+        db_session,
+        settings,
+        fetcher=FakeFetcher(),
+        extractor=extractor,
+    )
+    run = service.create_run_from_source(
+        str(
+            write_seed(
+                tmp_path,
+                [{"name": "Example Scholarship", "possible_official_url": OFFICIAL_URL}],
+            )
+        ),
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    CatalogueProviderScheduler(db_session, settings).record_failure(
+        provider=extractor.name,
+        deployment=settings.catalogue_ai_model,
+        failure_class=ProviderFailureClass.AUTHENTICATION_CONFIGURATION_ERROR,
+    )
+
+    result = service.process_run(run.id, worker_id="circuit-test", batch_size=1)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+
+    assert result.status is IngestionRunStatus.PENDING
+    assert result.failure_code == "provider_circuit_open"
+    assert extractor.calls == 0
+    assert candidate is not None
+    assert candidate.status is CandidateStatus.SOURCE_FETCHED
+    assert candidate.claimed_by is None
+    assert candidate.next_attempt_at is not None
+
+
 def test_actual_cost_overflow_preserves_paid_output_for_resume(db_session, tmp_path) -> None:
     class CostlyExtractionProvider:
         name = "fake"
@@ -1779,7 +1892,7 @@ def test_actual_cost_overflow_preserves_paid_output_for_resume(db_session, tmp_p
 
     resumed = service.process_run(run.id, worker_id="resume-worker", batch_size=1)
 
-    assert resumed.status is IngestionRunStatus.COMPLETED
+    assert resumed.status is IngestionRunStatus.COMPLETED_WITH_REVIEW
     assert resumed.failure_code is None
     assert extractor.calls == 1
     assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == 1
@@ -1850,7 +1963,7 @@ def test_direct_claim_cost_overflow_preserves_paid_output_for_resume(db_session)
     db_session.commit()
     resumed = service.process_run(run.id, worker_id="direct-cost-resume", batch_size=1)
 
-    assert resumed.status is IngestionRunStatus.COMPLETED
+    assert resumed.status is IngestionRunStatus.COMPLETED_WITH_REVIEW
     assert extractor.calls == 12
     assert db_session.scalar(select(func.count()).select_from(CatalogueExtractionAttempt)) == 12
     assert candidate.status is CandidateStatus.READY_FOR_REVIEW
@@ -1876,7 +1989,11 @@ def test_500_candidate_run_is_bounded_and_never_calls_ai(db_session, tmp_path) -
     assert result.checkpoint_cursor == 500
     assert result.model_calls == 0
     assert extractor.calls == 0
-    assert result.aggregate_summary == {"needs_review": 500}
+    assert result.aggregate_summary["needs_review"] == 500
+    assert result.aggregate_summary["provider_attempts"] == 0
+    assert result.aggregate_summary["provider_accounting_uncertain"] == 0
+    assert result.aggregate_summary["provider_cost_lower_bound"] == "0"
+    assert result.aggregate_summary["provider_cost_upper_bound"] == "0"
 
 
 def test_idempotency_distinguishes_new_cycles_without_duplicating_same_cycle(
@@ -1945,7 +2062,7 @@ def test_cost_and_evaluation_report_fail_closed() -> None:
     assert failed.official_source_correctness == 0
 
 
-def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
+def test_azure_provider_uses_entra_strict_output_as_single_attempt_transport() -> None:
     output = extraction_output()
     response_body = json.dumps(
         {
@@ -1960,6 +2077,9 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
             return type("Token", (), {"token": "entra-token"})()
 
     class Response:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+
         def __enter__(self):
             return self
 
@@ -1979,8 +2099,6 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
             self.calls += 1
             self.request = request
             assert timeout == 30
-            if self.calls == 1:
-                raise urllib.error.URLError("temporary")
             return Response()
 
     opener = Opener()
@@ -1990,8 +2108,8 @@ def test_azure_provider_uses_entra_strict_output_and_bounded_retry() -> None:
     )
     result = provider.extract(source_url=OFFICIAL_URL, source_text=SOURCE_TEXT)
 
-    assert opener.calls == 2
-    assert waits == [1]
+    assert opener.calls == 1
+    assert waits == []
     assert opener.request.get_header("Authorization") == "Bearer entra-token"
     sent = json.loads(opener.request.data)
     assert sent["response_format"]["json_schema"]["strict"] is True

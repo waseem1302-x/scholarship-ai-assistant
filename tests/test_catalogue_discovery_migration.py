@@ -74,7 +74,15 @@ def test_discovery_foundation_migration_is_additive_and_reversible(tmp_path: Pat
     assert expected_tables.issubset(inspector.get_table_names())
     for table_name in expected_tables:
         migrated_columns = {column["name"] for column in inspector.get_columns(table_name)}
-        assert migrated_columns == set(Base.metadata.tables[table_name].columns.keys())
+        model_columns = set(Base.metadata.tables[table_name].columns.keys())
+        if table_name == "catalogue_discovery_leads":
+            model_columns -= {
+                "review_status",
+                "review_reason",
+                "reviewed_by_user_id",
+                "reviewed_at",
+            }
+        assert migrated_columns == model_columns
     for table_name in expected_tables | {"catalogue_candidate_sources"}:
         named_schema_objects = (
             inspector.get_indexes(table_name)
@@ -167,4 +175,32 @@ def test_discovery_foundation_migration_is_additive_and_reversible(tmp_path: Pat
             )
             == 1
         )
+    engine.dispose()
+
+
+def test_discovery_lead_review_migration_is_additive_and_reversible(tmp_path: Path) -> None:
+    database_url = f"sqlite+pysqlite:///{(tmp_path / 'discovery-review.db').as_posix()}"
+    config = _config(database_url)
+    command.upgrade(config, "20260830_0056")
+    engine = create_engine(database_url)
+
+    command.upgrade(config, "20260830_0057")
+    inspector = inspect(engine)
+    columns = {
+        column["name"]: column for column in inspector.get_columns("catalogue_discovery_leads")
+    }
+    assert {
+        "review_status",
+        "review_reason",
+        "reviewed_by_user_id",
+        "reviewed_at",
+    }.issubset(columns)
+    assert columns["review_status"]["nullable"] is False
+    assert "pending" in str(columns["review_status"]["default"])
+
+    command.downgrade(config, "20260830_0056")
+    inspector = inspect(engine)
+    assert "review_status" not in {
+        column["name"] for column in inspector.get_columns("catalogue_discovery_leads")
+    }
     engine.dispose()

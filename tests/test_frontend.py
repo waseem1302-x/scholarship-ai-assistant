@@ -22,7 +22,7 @@ def test_react_frontend_is_served_at_the_canonical_root(client: TestClient) -> N
 
     assert bundle.status_code == 200
     assert stylesheet.status_code == 200
-    assert "Find scholarships you can actually act on." in bundle.text
+    assert "Not sure which scholarships you qualify for?" in bundle.text
     assert "input:focus" in stylesheet.text
     assert "textarea:focus" in stylesheet.text
 
