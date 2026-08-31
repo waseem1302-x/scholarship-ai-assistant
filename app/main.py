@@ -64,6 +64,24 @@ def create_app() -> FastAPI:
 
     register_health_routes(application, settings)
 
+    from typing import Annotated
+
+    from fastapi import Depends
+    from sqlalchemy.orm import Session
+
+    from app.db.session import get_db
+    from app.modules.opportunities.sitemap import generate_robots_txt, generate_sitemap_xml
+
+    @application.get("/sitemap.xml", include_in_schema=False)
+    def root_sitemap(session: Annotated[Session, Depends(get_db)]) -> Response:
+        xml_content = generate_sitemap_xml(session)
+        return Response(content=xml_content, media_type="application/xml")
+
+    @application.get("/robots.txt", include_in_schema=False)
+    def root_robots() -> Response:
+        robots_content = generate_robots_txt()
+        return Response(content=robots_content, media_type="text/plain")
+
     @application.get("/", include_in_schema=False)
     def frontend() -> Response:
         return frontend_response()

@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.core.errors import AppError
+from app.modules.matching.countries import match_nationality_or_country
+from app.modules.matching.grading import compare_gpa_cross_scale
 from app.modules.matching.models import (
     MatchEvaluation,
     MatchEvaluationResult,
@@ -17,6 +19,7 @@ from app.modules.matching.schemas import (
     MatchListResponse,
     OpportunityMatchResponse,
 )
+from app.modules.matching.taxonomy import match_fields_of_study
 from app.modules.opportunities.lifecycle import effective_application_window
 from app.modules.opportunities.models import (
     ApplicationWindowState,
@@ -403,6 +406,62 @@ class MatchingService:
                     "Verify an official grading equivalence before relying on this comparison.",
                 )
             actual = Decimal(str(actual))
+        if rule.rule_type is EligibilityRuleType.PERCENTAGE:
+            student_grade = profile.percentage if profile.percentage is not None else profile.cgpa
+            student_scale = (
+                Decimal("100") if profile.percentage is not None else profile.grading_scale
+            )
+            if student_grade is None:
+                return _unknown_rule(
+                    label,
+                    "Percentage/CGPA is missing from your profile.",
+                    "Add your academic score to evaluate this requirement.",
+                )
+            satisfied, explanation_msg = compare_gpa_cross_scale(
+                student_grade,
+                student_scale,
+                rule.value_json,
+                Decimal("100"),
+                rule.operator,
+            )
+            return RuleResult(
+                label,
+                15,
+                15 if satisfied else 0,
+                satisfied=[explanation_msg] if satisfied else [],
+                missing=[] if satisfied else [explanation_msg],
+            )
+        if rule.rule_type is EligibilityRuleType.FIELD:
+            match_res = match_fields_of_study(actual, rule.value_json)
+            if match_res.matched:
+                score = round(15 * match_res.score)
+                return RuleResult(
+                    label,
+                    15,
+                    score,
+                    satisfied=[f"{label.title()}: {match_res.explanation}."],
+                )
+            return RuleResult(
+                label,
+                15,
+                0,
+                missing=[f"{label.title()} requirement is not satisfied: {match_res.explanation}."],
+            )
+        if rule.rule_type in {EligibilityRuleType.NATIONALITY, EligibilityRuleType.RESIDENCE}:
+            is_excl = rule.operator is EligibilityOperator.NOT_IN
+            matched = match_nationality_or_country(
+                str(actual), rule.value_json, is_exclusion=is_excl
+            )
+            msg = (
+                f"{label.title()} requirement {'is satisfied' if matched else 'is not satisfied'}."
+            )
+            return RuleResult(
+                label,
+                15,
+                15 if matched else 0,
+                satisfied=[msg] if matched else [],
+                missing=[] if matched else [msg],
+            )
         if (
             rule.rule_type
             in {
@@ -458,10 +517,42 @@ class MatchingService:
 
     @staticmethod
     def _nationality_rule(profile: StudentProfile, opportunity: Opportunity) -> RuleResult:
+        nat = profile.nationality or profile.nationality_code
+        if nat and opportunity.country:
+            matched = match_nationality_or_country(nat, opportunity.country)
+            if matched:
+                return RuleResult(
+                    "nationality",
+                    15,
+                    15,
+                    satisfied=[
+                        f"Opportunity country ({opportunity.country}) matches nationality ({nat})."
+                    ],
+                )
         return _unstructured_rule("nationality")
 
     @staticmethod
     def _field_rule(profile: StudentProfile, opportunity: Opportunity) -> RuleResult:
+        student_fields = [
+            f
+            for f in [
+                profile.intended_field,
+                profile.academic_discipline,
+                profile.intended_field_detail,
+            ]
+            if f
+        ]
+        if student_fields and (opportunity.name or opportunity.field_eligibility):
+            target = [t for t in [opportunity.field_eligibility, opportunity.name] if t]
+            match_res = match_fields_of_study(student_fields, target)
+            if match_res.matched:
+                score = round(15 * match_res.score)
+                return RuleResult(
+                    "field",
+                    15,
+                    score,
+                    satisfied=[f"Field alignment: {match_res.explanation}."],
+                )
         return _unstructured_rule("field")
 
     @staticmethod

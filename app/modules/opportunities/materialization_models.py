@@ -1,4 +1,4 @@
-"""Operational entities required to materialize rich catalogue claim graphs without identity loss."""
+"""Operational entities for materializing rich catalogue claim graphs without identity loss."""
 
 from __future__ import annotations
 
@@ -6,7 +6,20 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -14,7 +27,7 @@ from app.modules.auth.models import utc_now
 
 
 class ScholarshipProgramme(Base):
-    """Scholarship-scoped programme/award offering; distinct from institution-owned academic programmes."""
+    """Scholarship-scoped award offering, distinct from institution-owned programmes."""
 
     __tablename__ = "scholarship_programmes"
     __table_args__ = (
@@ -212,7 +225,7 @@ class OpportunityResource(Base):
 
 
 class CatalogueMaterializedClaimLink(Base):
-    """Immutable bridge from a proposal claim to its operational row and canonical field evidence."""
+    """Immutable bridge from a proposal claim to its row and canonical field evidence."""
 
     __tablename__ = "catalogue_materialized_claim_links"
     __table_args__ = (
