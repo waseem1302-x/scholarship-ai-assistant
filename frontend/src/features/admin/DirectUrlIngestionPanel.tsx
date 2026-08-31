@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 
 import { acquireOfficialUrl } from "./admin";
+import { CatalogueIngestionObservabilityPanel } from "./CatalogueIngestionObservabilityPanel";
 import type { IngestionCandidate, IngestionRun, OpportunityGraph } from "./types";
 
 export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }) {
@@ -41,7 +42,7 @@ export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }
     }
   }
 
-  return <section className="admin-panel direct-url-panel">
+  return <><section className="admin-panel direct-url-panel">
     <p className="eyebrow">Official URL acquisition</p>
     <h2>Build a cited scholarship record.</h2>
     <form className="direct-url-form" onSubmit={submit}>
@@ -84,5 +85,5 @@ export function DirectUrlIngestionPanel({ onChanged }: { onChanged: () => void }
       <ul>{graph.tracks.map((track) => <li key={track.id}><strong>{track.name}</strong><span>{track.track_type.replaceAll("_", " ")}</span></li>)}</ul>
       <section><h3>Field citations</h3>{graph.citations.map((citation) => <article key={citation.id}><strong>{citation.entity_type} · {citation.field_path}</strong><p>{citation.excerpt}</p><a href={citation.source_url} target="_blank" rel="noreferrer">{citation.source_title}</a></article>)}</section>
     </div> : null}
-  </section>;
+  </section><CatalogueIngestionObservabilityPanel /></>;
 }

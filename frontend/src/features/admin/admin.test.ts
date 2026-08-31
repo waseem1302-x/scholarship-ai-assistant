@@ -11,6 +11,8 @@ vi.mock("../../api/client", () => ({
 
 import {
   acquireOfficialUrl,
+  getCatalogueCandidateObservability,
+  getCatalogueRunObservability,
   importFormatForFile,
   importTemplates,
   recordSourceCheck,
@@ -88,6 +90,26 @@ describe("administrator source operations", () => {
     expect(apiMocks.request).toHaveBeenNthCalledWith(
       3,
       "/admin/opportunities/opportunity-id/graph",
+    );
+  });
+
+  it("loads the authorized catalogue run and candidate observability views", async () => {
+    apiMocks.request
+      .mockResolvedValueOnce({ run_id: "run-id" })
+      .mockResolvedValueOnce({ candidate_id: "candidate-id" });
+
+    await getCatalogueRunObservability("run-id");
+    await getCatalogueCandidateObservability("candidate-id");
+
+    expect(apiMocks.request).toHaveBeenNthCalledWith(
+      1,
+      "/admin/catalogue-ingestion/runs/run-id/observability",
+      { signal: undefined },
+    );
+    expect(apiMocks.request).toHaveBeenNthCalledWith(
+      2,
+      "/admin/catalogue-ingestion/candidates/candidate-id/observability",
+      { signal: undefined },
     );
   });
 });

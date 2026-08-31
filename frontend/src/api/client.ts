@@ -149,6 +149,24 @@ export class ApiClient {
     return result;
   }
 
+  async signInWithGoogle(idToken: string): Promise<TokenResponse> {
+    const result = await this.request<TokenResponse>("/auth/oauth/google", {
+      method: "POST",
+      body: JSON.stringify({ id_token: idToken }),
+    });
+    this.setAccessToken(result.access_token);
+    return result;
+  }
+
+  async signInWithFacebook(accessToken: string): Promise<TokenResponse> {
+    const result = await this.request<TokenResponse>("/auth/oauth/facebook", {
+      method: "POST",
+      body: JSON.stringify({ access_token: accessToken }),
+    });
+    this.setAccessToken(result.access_token);
+    return result;
+  }
+
   async currentUser(): Promise<User> {
     return this.request<User>("/auth/me");
   }

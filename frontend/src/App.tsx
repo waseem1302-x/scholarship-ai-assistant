@@ -22,29 +22,33 @@ const CommunityPage = lazy(() => import("./features/community/CommunityPage").th
 
 function Brand() {
   return (
-    <NavLink className="brand" to="/" aria-label="Source-backed Scholarship Assistant home">
+    <NavLink className="brand" to="/" aria-label="Scholarship Assistant home">
       <span aria-hidden="true" className="brand-mark">
-        S/
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M16 1C7.716 1 1 7.716 1 16c0 4.144 1.68 7.896 4.394 10.606A14.933 14.933 0 0 0 16 31c4.144 0 7.896-1.68 10.606-4.394A14.933 14.933 0 0 0 31 16C31 7.716 24.284 1 16 1zm0 4c2.87 0 5.23 2.1 5.92 5.15-1.84.45-3.8 1.15-5.92 2.1-2.12-.95-4.08-1.65-5.92-2.1C10.77 7.1 13.13 5 16 5zm0 18.5c-3.5 0-6.5-2.5-7.5-6 2.3.6 4.7 1.4 7.5 2.5 2.8-1.1 5.2-1.9 7.5-2.5-1 3.5-4 6-7.5 6z"/>
+        </svg>
       </span>
-      <span>
-        <strong>Scholarship Assistant</strong>
-        <small>Source-backed guidance</small>
+      <span className="brand-text">
+        <strong>scholarship stay</strong>
+        <small>Verified funding & stays</small>
       </span>
     </NavLink>
   );
 }
 
-function Topbar() {
+export function Topbar() {
   const { user, isRestoring, sessionError, signOut } = useAuth();
   const navigate = useNavigate();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   async function logout() {
     setLogoutError(null);
     setIsSigningOut(true);
     try {
       await signOut();
+      setMenuOpen(false);
       navigate("/");
     } catch {
       setLogoutError(
@@ -59,74 +63,134 @@ function Topbar() {
     <header className="topbar-shell">
       <nav className="topbar page-width" aria-label="Primary navigation">
         <Brand />
+
+        {/* Center Tabs — Airbnb Style */}
         <div className="product-nav" aria-label="Product navigation">
           <NavLink className="product-nav-link" to="/catalogue">
+            <span aria-hidden="true">🌐</span>
             Scholarships
           </NavLink>
           {user ? (
             <>
               <NavLink className="product-nav-link" to="/dashboard">
+                <span aria-hidden="true">🏠</span>
                 Dashboard
               </NavLink>
               <NavLink className="product-nav-link" to="/applications">
+                <span aria-hidden="true">🧳</span>
                 Applications
               </NavLink>
-              <NavLink className="product-nav-link" to="/assistant">
-                Assistant
-              </NavLink>
-              <details className="product-nav-more">
-                <summary>More</summary>
-                <div className="product-nav-menu workspace-menu">
-                  <div className="workspace-menu-section">
-                    <span>Plan</span>
-                    <NavLink className="workspace-menu-link" to="/profile">
-                      <strong>Profile</strong>
-                      <small>Student passport and preferences</small>
-                    </NavLink>
-                    <NavLink className="workspace-menu-link" to="/matches">
-                      <strong>Matches</strong>
-                      <small>Eligibility signals and fit checks</small>
-                    </NavLink>
-                  </div>
-                  <div className="workspace-menu-section">
-                    <span>Prepare</span>
-                    <NavLink className="workspace-menu-link" to="/document-lab">
-                      <strong>Documents</strong>
-                      <small>Draft review and application materials</small>
-                    </NavLink>
-                    <NavLink className="workspace-menu-link" to="/community">
-                      <strong>Community</strong>
-                      <small>Practical scholarship experience</small>
-                    </NavLink>
-                  </div>
-                  {user.role === "admin" ? (
-                    <div className="workspace-menu-section workspace-menu-admin">
-                      <span>Admin</span>
-                      <NavLink className="workspace-menu-link" to="/admin">
-                        <strong>Review workspace</strong>
-                        <small>Curate records and quality signals</small>
-                      </NavLink>
-                      <NavLink className="workspace-menu-link" to="/admin/security">
-                        <strong>Security</strong>
-                        <small>Audit and operational controls</small>
-                      </NavLink>
-                    </div>
-                  ) : null}
-                </div>
-              </details>
             </>
-          ) : null}
-        </div>
-        <div className="topbar-actions">
-          {user ? (
-            <button className="button button-quiet" type="button" onClick={logout} disabled={isSigningOut}>
-              {isSigningOut ? "Signing out..." : "Sign out"}
-            </button>
           ) : (
-            <NavLink className="button button-quiet" to="/auth">
-              {isRestoring ? "Preparing..." : "Sign in"}
-            </NavLink>
+            <>
+              <NavLink className="product-nav-link" to="/catalogue?funding_type=full">
+                <span aria-hidden="true">🏆</span>
+                Full-Ride
+              </NavLink>
+              <NavLink className="product-nav-link" to="/catalogue?degree_level=bachelors">
+                <span aria-hidden="true">🎓</span>
+                Bachelor
+              </NavLink>
+            </>
           )}
+        </div>
+
+        {/* Right Actions — Airbnb Style */}
+        <div className="topbar-actions">
+          <NavLink className="topbar-host-link" to={user ? "/dashboard" : "/auth"}>
+            {user ? "Switch to workspace" : "Become an applicant"}
+          </NavLink>
+
+          <button
+            className="topbar-globe-btn"
+            type="button"
+            aria-label="Language & Currency"
+            title="Language: English (US) · Currency: USD ($)"
+            onClick={() => navigate("/catalogue")}
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm5.93 7h-2.5a13.3 13.3 0 0 0-1.04-4.22A6.53 6.53 0 0 1 13.93 7zM8 1.52c.7 1.25 1.25 3.1 1.44 5.48H6.56C6.75 4.62 7.3 2.77 8 1.52zm-3.39 1.26A13.3 13.3 0 0 0 3.57 7H1.07a6.53 6.53 0 0 1 3.54-4.22zm-3.54 5.72h2.5c.19 1.6.57 3.06 1.04 4.22A6.53 6.53 0 0 1 1.07 8.5zm5.49 0h2.88c-.19 2.38-.74 4.23-1.44 5.48-.7-1.25-1.25-3.1-1.44-5.48zm4.87 4.22c.47-1.16.85-2.62 1.04-4.22h2.5a6.53 6.53 0 0 1-3.54 4.22z"/>
+            </svg>
+          </button>
+
+          {/* User Menu Capsule */}
+          <div className="user-menu-wrapper">
+            <button
+              className="user-menu-pill"
+              type="button"
+              aria-label="Main user menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              <svg className="hamburger" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+                <line x1="4" y1="9" x2="28" y2="9" />
+                <line x1="4" y1="16" x2="28" y2="16" />
+                <line x1="4" y1="23" x2="28" y2="23" />
+              </svg>
+              <span className={"user-avatar-circle " + (user ? "has-user" : "")}>
+                {user ? user.email.slice(0, 1).toUpperCase() : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                  </svg>
+                )}
+              </span>
+            </button>
+
+            {menuOpen ? (
+              <div className="airbnb-dropdown" role="menu">
+                {user ? (
+                  <>
+                    <NavLink className="airbnb-dropdown-item" to="/dashboard" onClick={() => setMenuOpen(false)} role="menuitem">
+                      <strong>Dashboard</strong>
+                    </NavLink>
+                    <NavLink className="airbnb-dropdown-item" to="/applications" onClick={() => setMenuOpen(false)} role="menuitem">
+                      Applications tracker
+                    </NavLink>
+                    <NavLink className="airbnb-dropdown-item" to="/matches" onClick={() => setMenuOpen(false)} role="menuitem">
+                      Explainable matches
+                    </NavLink>
+                    <NavLink className="airbnb-dropdown-item" to="/profile" onClick={() => setMenuOpen(false)} role="menuitem">
+                      Student profile & passport
+                    </NavLink>
+                    {user.role === "admin" ? (
+                      <>
+                        <div className="airbnb-dropdown-divider" />
+                        <NavLink className="airbnb-dropdown-item" to="/admin" onClick={() => setMenuOpen(false)} role="menuitem">
+                          Admin review workspace
+                        </NavLink>
+                        <NavLink className="airbnb-dropdown-item" to="/admin/security" onClick={() => setMenuOpen(false)} role="menuitem">
+                          Admin security & audit
+                        </NavLink>
+                      </>
+                    ) : null}
+                    <div className="airbnb-dropdown-divider" />
+                    <button
+                      className="airbnb-dropdown-item"
+                      type="button"
+                      onClick={logout}
+                      disabled={isSigningOut}
+                      role="menuitem"
+                    >
+                      {isSigningOut ? "Signing out..." : "Log out"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <NavLink className="airbnb-dropdown-item" to="/auth" onClick={() => setMenuOpen(false)} role="menuitem">
+                      <strong>Sign up</strong>
+                    </NavLink>
+                    <NavLink className="airbnb-dropdown-item" to="/auth" onClick={() => setMenuOpen(false)} role="menuitem">
+                      Log in
+                    </NavLink>
+                    <div className="airbnb-dropdown-divider" />
+                    <NavLink className="airbnb-dropdown-item" to="/catalogue" onClick={() => setMenuOpen(false)} role="menuitem">
+                      Browse all scholarships
+                    </NavLink>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
       </nav>
       {logoutError ? <p className="form-error page-width" role="alert">{logoutError}</p> : null}
@@ -155,7 +219,7 @@ function AuthPage() {
   );
 }
 
-function Dashboard() {
+export function Dashboard() {
   const { user, isRestoring } = useAuth();
   if (!isRestoring && !user) {
     return <Navigate replace to="/auth" />;
@@ -198,21 +262,6 @@ function Dashboard() {
           <span>Act</span>
           <h2>Application command centre</h2>
           <p>Manage source-linked tasks, reminders, and application milestones.</p>
-        </NavLink>
-        <NavLink className="workspace-card" to="/assistant">
-          <span>Research</span>
-          <h2>Scholarship AI</h2>
-          <p>Ask questions grounded in verified official sources.</p>
-        </NavLink>
-        <NavLink className="workspace-card" to="/document-lab">
-          <span>Improve</span>
-          <h2>Documents</h2>
-          <p>Get consent-gated editorial feedback on private drafts.</p>
-        </NavLink>
-        <NavLink className="workspace-card" to="/community">
-          <span>Connect</span>
-          <h2>Scholarship community</h2>
-          <p>Share practical experience while keeping private work private.</p>
         </NavLink>
         {user.role === "admin" ? (
           <NavLink className="workspace-card" to="/admin">

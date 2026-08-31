@@ -241,11 +241,11 @@ export function CommunityPage() {
 
           {!preferences?.consented ? (
             <form className="clean-feed-card community-onboarding-card" onSubmit={participate}>
-              <h2>Choose how you appear to members</h2>
-              <p>Your display name is visible on posts. Email, private documents, and assistant sessions remain 100% private.</p>
+              <h2>Choose how you appear</h2>
+              <p>Your display name is visible on posts. Your email, profile, applications, assistant history remain 100% private.</p>
               <div className="onboarding-form-row">
                 <label>
-                  <span>Community Display Name</span>
+                  <span>Community display name</span>
                   <input
                     value={displayName}
                     onChange={(event) => setDisplayName(event.target.value)}
@@ -259,7 +259,7 @@ export function CommunityPage() {
                   <input type="checkbox" required />
                   <span>I agree to keep discussion scholarship-related and report unsafe content.</span>
                 </label>
-                <button className="button button-primary" type="submit">Join Community</button>
+                <button className="button button-primary" type="submit">Join community</button>
               </div>
             </form>
           ) : preferences.suspended ? (
@@ -409,6 +409,7 @@ export function CommunityPage() {
                         <button
                           type="button"
                           className={`feed-action-btn ${post.is_bookmarked ? "active-helpful" : ""}`}
+                          aria-label={post.is_bookmarked ? "Bookmarked" : "Bookmark"}
                           onClick={() =>
                             void action(`/community/posts/${post.id}/bookmarks`, post.is_bookmarked ? "DELETE" : "POST")
                           }

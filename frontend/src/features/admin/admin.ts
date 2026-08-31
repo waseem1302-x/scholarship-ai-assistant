@@ -9,8 +9,50 @@ import type {
   ReviewQueueResponse,
   IngestionCandidateResponse,
   IngestionRun,
+  CatalogueCandidateObservability,
+  CatalogueRunObservability,
+  IngestionRunResponse,
   OpportunityGraph,
 } from "./types";
+
+export async function getCatalogueIngestionRuns(
+  signal?: AbortSignal,
+): Promise<IngestionRunResponse> {
+  return apiClient.request<IngestionRunResponse>(
+    "/admin/catalogue-ingestion/runs?limit=20&offset=0",
+    { signal },
+  );
+}
+
+export async function getCatalogueRunObservability(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<CatalogueRunObservability> {
+  return apiClient.request<CatalogueRunObservability>(
+    `/admin/catalogue-ingestion/runs/${encodeURIComponent(runId)}/observability`,
+    { signal },
+  );
+}
+
+export async function getCatalogueCandidateObservability(
+  candidateId: string,
+  signal?: AbortSignal,
+): Promise<CatalogueCandidateObservability> {
+  return apiClient.request<CatalogueCandidateObservability>(
+    `/admin/catalogue-ingestion/candidates/${encodeURIComponent(candidateId)}/observability`,
+    { signal },
+  );
+}
+
+export async function getCatalogueCandidates(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<IngestionCandidateResponse> {
+  return apiClient.request<IngestionCandidateResponse>(
+    `/admin/catalogue-ingestion/candidates?run_id=${encodeURIComponent(runId)}&limit=100&offset=0`,
+    { signal },
+  );
+}
 
 export const reviewActions: { value: ReviewAction; label: string; needsNotes: boolean }[] = [
   { value: "publish", label: "Publish", needsNotes: false },

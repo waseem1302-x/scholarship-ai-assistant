@@ -47,7 +47,7 @@ function MatchAuditSection({
     );
   }
 
-  const score = match ? Math.round(match.fit_score * 100) : null;
+  const score = match && match.fit_score !== null && match.fit_score !== undefined ? Math.round(match.fit_score * 100) : null;
   const isHighFit = score !== null && score >= 80;
   const isGoodFit = score !== null && score >= 60 && score < 80;
 
@@ -224,7 +224,7 @@ export function OpportunityDetailPage() {
   );
 
   const match = useMemo(() => {
-    if (!studentMatches || !opportunityId) return undefined;
+    if (!Array.isArray(studentMatches) || !opportunityId) return undefined;
     return studentMatches.find((m) => m.opportunity.id === opportunityId);
   }, [studentMatches, opportunityId]);
 
