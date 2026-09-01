@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { BrowserRouter } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({ useAuth: vi.fn() }));
 
@@ -12,12 +12,12 @@ vi.mock("./auth/AuthProvider", () => ({
   useAuth: auth.useAuth,
 }));
 
-import { Dashboard, Topbar } from "./App";
+import { Topbar } from "./App";
 
 describe("The Next Scholar Topbar Navigation", () => {
   afterEach(cleanup);
 
-  it("renders pre-login navigation correctly before user is logged in", () => {
+  it("renders calm pre-login navigation before user is logged in", () => {
     auth.useAuth.mockReturnValue({
       user: null,
       isRestoring: false,
@@ -31,14 +31,14 @@ describe("The Next Scholar Topbar Navigation", () => {
       </BrowserRouter>,
     );
 
-    expect(screen.getByRole("link", { name: "Explore Scholarships" })).toBeInTheDocument();
-    expect(screen.getByText("How it Works")).toBeInTheDocument();
-    expect(screen.getByText("For Students")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Login" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Get Started" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
+    expect(screen.getByText("How it works")).toBeInTheDocument();
+    expect(screen.getByText("For students")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Get Started" })).not.toBeInTheDocument();
   });
 
-  it("renders premium icon tabs in the home navigation", () => {
+  it("keeps the home navigation text-first without decorative emoji icons", () => {
     auth.useAuth.mockReturnValue({
       user: null,
       isRestoring: false,
@@ -52,9 +52,8 @@ describe("The Next Scholar Topbar Navigation", () => {
       </BrowserRouter>,
     );
 
-    expect(screen.getByRole("link", { name: "Explore Scholarships" }).querySelector(".tns-home-nav-icon")).toBeInTheDocument();
-    expect(screen.getByText("How it Works").closest("a")?.querySelector(".tns-home-nav-icon")).toBeInTheDocument();
-    expect(screen.getByText("For Students").closest("a")?.querySelector(".tns-home-nav-icon")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Product navigation" })).toBeInTheDocument();
+    expect(document.querySelector(".tns-home-nav-icon")).not.toBeInTheDocument();
   });
 
   it("closes the homepage search popup when clicking outside", () => {
@@ -78,7 +77,7 @@ describe("The Next Scholar Topbar Navigation", () => {
     expect(screen.queryByRole("dialog", { name: /popular scholarship destinations/i })).not.toBeInTheDocument();
   });
 
-  it("renders post-login navigation correctly after user logs in", () => {
+  it("renders task-focused navigation after user logs in", () => {
     auth.useAuth.mockReturnValue({
       user: {
         id: "student-1",
@@ -98,9 +97,9 @@ describe("The Next Scholar Topbar Navigation", () => {
     );
 
     expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Matches" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Applications" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Guidance" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "User account menu" })).toBeInTheDocument();
   });
 
@@ -127,12 +126,10 @@ describe("The Next Scholar Topbar Navigation", () => {
     const userBtn = screen.getByRole("button", { name: "User account menu" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 
-    // Open menu
     fireEvent.click(userBtn);
     expect(screen.getByRole("menu")).toBeInTheDocument();
-    expect(screen.getByText("Profile & Criteria")).toBeInTheDocument();
+    expect(screen.getByText(/Profile & criteria/i)).toBeInTheDocument();
 
-    // Click outside closes menu
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
