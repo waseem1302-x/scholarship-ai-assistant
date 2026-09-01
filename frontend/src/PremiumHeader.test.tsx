@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { BrowserRouter } from "react-router-dom";
@@ -15,8 +15,8 @@ vi.mock("./auth/AuthProvider", () => ({
 
 import { Topbar } from "./App";
 import { Brand } from "./components/BrandLogo";
+import { ScholarshipSearch } from "./components/ScholarshipSearch";
 import {
-  SearchPill,
   initialSearch,
   type ActivePopover,
   type HomeSearchState,
@@ -27,7 +27,7 @@ function SearchHarness() {
   const [activePopover, setActivePopover] = useState<ActivePopover>(null);
 
   return (
-    <SearchPill
+    <ScholarshipSearch
       search={search}
       activePopover={activePopover}
       onSearchChange={setSearch}
@@ -93,12 +93,15 @@ describe("premium header and scholarship search", () => {
       </BrowserRouter>,
     );
 
-    expect(screen.getByText("Where")).toBeInTheDocument();
-    expect(screen.getByText("Search destinations")).toBeInTheDocument();
-    expect(screen.getByText("Degree")).toBeInTheDocument();
-    expect(screen.getByText("Any degree")).toBeInTheDocument();
-    expect(screen.getByText("Funding")).toBeInTheDocument();
-    expect(screen.getByText("Any funding")).toBeInTheDocument();
+    const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
+    const search = within(desktopSearch);
+
+    expect(search.getByText("Where")).toBeInTheDocument();
+    expect(search.getByText("Search destinations")).toBeInTheDocument();
+    expect(search.getByText("Degree")).toBeInTheDocument();
+    expect(search.getByText("Any degree")).toBeInTheDocument();
+    expect(search.getByText("Funding")).toBeInTheDocument();
+    expect(search.getByText("Any funding")).toBeInTheDocument();
   });
 
   it("renders the brand mark without the old gradient glow definition", () => {
