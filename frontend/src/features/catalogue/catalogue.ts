@@ -6,6 +6,7 @@ import {
   type CatalogueFilters,
   type OpportunityDetail,
   type OpportunitySearchResponse,
+  type OpportunitySummary,
 } from "./types";
 
 export function filtersFromSearch(search: URLSearchParams): CatalogueFilters {
@@ -147,6 +148,108 @@ export function getCountryFlag(country: string | null | undefined): string {
   if (normalized.includes("korea")) return "🇰🇷";
   if (normalized.includes("pakistan")) return "🇵🇰";
   return "🌐";
+}
+
+export function getDestinationImage(country?: string | null, name?: string | null): string {
+  const normCountry = (country || "").toLowerCase();
+  const normName = (name || "").toLowerCase();
+
+  if (normName.includes("chevening") || normCountry.includes("united kingdom") || normCountry === "uk") {
+    return "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=600&q=80"; // Big Ben / London
+  }
+  if (normName.includes("daad") || normCountry.includes("germany")) {
+    return "https://images.unsplash.com/photo-1560969184-10fe8719e047?auto=format&fit=crop&w=600&q=80"; // Brandenburg Gate / Berlin
+  }
+  if (normName.includes("erasmus") || normCountry.includes("europe") || normCountry.includes("eu")) {
+    return "https://images.unsplash.com/photo-1565008447742-97f6f38c985c?auto=format&fit=crop&w=600&q=80"; // European architecture
+  }
+  if (normName.includes("mext") || normCountry.includes("japan")) {
+    return "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=600&q=80"; // Mount Fuji / Japan
+  }
+  if (normName.includes("fulbright") || normCountry.includes("united states") || normCountry === "usa" || normCountry === "us") {
+    return "https://images.unsplash.com/photo-1501446529957-6226bd447c46?auto=format&fit=crop&w=600&q=80"; // USA Capitol / Washington
+  }
+  if (normCountry.includes("australia")) {
+    return "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?auto=format&fit=crop&w=600&q=80"; // Sydney Opera House
+  }
+  if (normCountry.includes("canada")) {
+    return "https://images.unsplash.com/photo-1503614472-8c93d56e92ce?auto=format&fit=crop&w=600&q=80"; // Canada / Banff
+  }
+  if (normCountry.includes("singapore")) {
+    return "https://images.unsplash.com/photo-1525625293386-3f8f99389edd?auto=format&fit=crop&w=600&q=80"; // Singapore Marina Bay
+  }
+  if (normCountry.includes("france")) {
+    return "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=600&q=80"; // Paris Eiffel Tower
+  }
+  if (normCountry.includes("netherlands")) {
+    return "https://images.unsplash.com/photo-1512470876302-972faa2aa9a4?auto=format&fit=crop&w=600&q=80"; // Amsterdam Canal
+  }
+  if (normCountry.includes("china")) {
+    return "https://images.unsplash.com/photo-1508804185872-d7badad00f7d?auto=format&fit=crop&w=600&q=80"; // Great Wall / China
+  }
+  if (normCountry.includes("korea") || normCountry.includes("south korea")) {
+    return "https://images.unsplash.com/photo-1538485399081-7191377e8241?auto=format&fit=crop&w=600&q=80"; // Seoul Korea
+  }
+  // Default university campus / academic aesthetic
+  return "https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=600&q=80";
+}
+
+export interface CardBadges {
+  fundingBadge: { label: string; tier: "full" | "partial" };
+  highlightBadge?: { label: string; style: "top" | "popular" | "new" };
+}
+
+export function getOpportunityBadges(opportunity: OpportunitySummary): CardBadges {
+  const isFull = opportunity.funding_type === "full" || opportunity.funding_classification === "fully_funded";
+  const nameLower = (opportunity.name + " " + (opportunity.provider_name || "")).toLowerCase();
+  
+  let highlight: CardBadges["highlightBadge"] = undefined;
+  if (nameLower.includes("chevening") || nameLower.includes("fulbright") || nameLower.includes("rhodes")) {
+    highlight = { label: "Top opportunity", style: "top" };
+  } else if (nameLower.includes("daad") || nameLower.includes("erasmus") || nameLower.includes("australia awards")) {
+    highlight = { label: "Popular", style: "popular" };
+  } else if (opportunity.source_is_fresh || nameLower.includes("mext") || opportunity.verification_freshness === "recent") {
+    highlight = { label: "New", style: "new" };
+  }
+
+  return {
+    fundingBadge: {
+      label: isFull ? "Fully Funded" : "Partial Funding",
+      tier: isFull ? "full" : "partial",
+    },
+    highlightBadge: highlight,
+  };
+}
+
+export function getInclusionsSummary(opportunity: OpportunitySummary): string {
+  const text = (opportunity.funding_summary || opportunity.funding_display_label || "").toLowerCase();
+  if (text.includes("travel") && text.includes("living") && text.includes("tuition")) {
+    return "Tuition, living costs, travel";
+  }
+  if (text.includes("stipend") && text.includes("tuition")) {
+    return "Tuition, stipend, travel";
+  }
+  if (text.includes("allowance") || text.includes("living")) {
+    return "Tuition, living allowance, insurance";
+  }
+  if (text.includes("waiver") || opportunity.funding_type === "tuition_only") {
+    return "Tuition waiver, monthly allowance";
+  }
+  if (opportunity.funding_type === "full" || opportunity.funding_classification === "fully_funded") {
+    return "Tuition, living costs, travel";
+  }
+  return "Tuition waiver & academic stipend";
+}
+
+export function formatCardDeadline(dateStr: string | null): string {
+  if (!dateStr) return "Open Now";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "Open Now";
+    return d.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+  } catch {
+    return "Open Now";
+  }
 }
 
 export async function searchOpportunities(filters: CatalogueFilters, offset: number, signal?: AbortSignal) {

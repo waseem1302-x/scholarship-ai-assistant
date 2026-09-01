@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,12 +14,75 @@ vi.mock("./auth/AuthProvider", () => ({
 
 import { Dashboard, Topbar } from "./App";
 
-describe("MVP product navigation", () => {
-  beforeEach(() => {
+describe("The Next Scholar Topbar Navigation", () => {
+  afterEach(cleanup);
+
+  it("renders pre-login navigation correctly before user is logged in", () => {
+    auth.useAuth.mockReturnValue({
+      user: null,
+      isRestoring: false,
+      sessionError: null,
+      signOut: vi.fn(),
+    });
+
+    render(
+      <BrowserRouter>
+        <Topbar />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByRole("link", { name: "Explore Scholarships" })).toBeInTheDocument();
+    expect(screen.getByText("How it Works")).toBeInTheDocument();
+    expect(screen.getByText("For Students")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Login" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Get Started" })).toBeInTheDocument();
+  });
+
+  it("renders premium icon tabs in the home navigation", () => {
+    auth.useAuth.mockReturnValue({
+      user: null,
+      isRestoring: false,
+      sessionError: null,
+      signOut: vi.fn(),
+    });
+
+    render(
+      <BrowserRouter>
+        <Topbar />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByRole("link", { name: "Explore Scholarships" }).querySelector(".tns-home-nav-icon")).toBeInTheDocument();
+    expect(screen.getByText("How it Works").closest("a")?.querySelector(".tns-home-nav-icon")).toBeInTheDocument();
+    expect(screen.getByText("For Students").closest("a")?.querySelector(".tns-home-nav-icon")).toBeInTheDocument();
+  });
+
+  it("closes the homepage search popup when clicking outside", () => {
+    auth.useAuth.mockReturnValue({
+      user: null,
+      isRestoring: false,
+      sessionError: null,
+      signOut: vi.fn(),
+    });
+
+    render(
+      <BrowserRouter>
+        <Topbar />
+      </BrowserRouter>,
+    );
+
+    fireEvent.click(screen.getByText("Search destinations"));
+    expect(screen.getByRole("dialog", { name: /popular scholarship destinations/i })).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("dialog", { name: /popular scholarship destinations/i })).not.toBeInTheDocument();
+  });
+
+  it("renders post-login navigation correctly after user logs in", () => {
     auth.useAuth.mockReturnValue({
       user: {
         id: "student-1",
-        email: "student@example.com",
+        email: "scholar@thenextscholar.com",
         role: "student",
         email_verified_at: "2026-08-30T00:00:00Z",
       },
@@ -27,11 +90,7 @@ describe("MVP product navigation", () => {
       sessionError: null,
       signOut: vi.fn(),
     });
-  });
 
-  afterEach(cleanup);
-
-  it("does not expose disabled Assistant, Documents, or Community links", () => {
     render(
       <BrowserRouter>
         <Topbar />
@@ -41,24 +100,40 @@ describe("MVP product navigation", () => {
     expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Applications" })).toBeInTheDocument();
-    expect(screen.queryByText("Assistant", { exact: true })).not.toBeInTheDocument();
-    expect(screen.queryByText("Documents", { exact: true })).not.toBeInTheDocument();
-    expect(screen.queryByText("Community", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "User account menu" })).toBeInTheDocument();
   });
 
-  it("does not place disabled features in the student dashboard", () => {
+  it("toggles user menu dropdown and closes on outside click", () => {
+    const signOutMock = vi.fn();
+    auth.useAuth.mockReturnValue({
+      user: {
+        id: "student-1",
+        email: "scholar@thenextscholar.com",
+        role: "student",
+        email_verified_at: "2026-08-30T00:00:00Z",
+      },
+      isRestoring: false,
+      sessionError: null,
+      signOut: signOutMock,
+    });
+
     render(
       <BrowserRouter>
-        <Dashboard />
+        <Topbar />
       </BrowserRouter>,
     );
 
-    expect(screen.getByRole("heading", { name: "Verified scholarships" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Profile and fit" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Explainable matches" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Application command centre" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Scholarship AI" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Documents" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Scholarship community" })).not.toBeInTheDocument();
+    const userBtn = screen.getByRole("button", { name: "User account menu" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    // Open menu
+    fireEvent.click(userBtn);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(screen.getByText("Profile & Criteria")).toBeInTheDocument();
+
+    // Click outside closes menu
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });

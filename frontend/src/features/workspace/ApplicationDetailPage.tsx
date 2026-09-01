@@ -47,17 +47,41 @@ export function ApplicationDetailPage() {
   const [documentName, setDocumentName] = useState("");
   const [documentRequired, setDocumentRequired] = useState(true);
 
+  // Inline edit states (replaces window.prompt)
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTaskTitle, setEditingTaskTitle] = useState("");
+  const [editingTaskDueAt, setEditingTaskDueAt] = useState("");
+  const [reschedulingReminderId, setReschedulingReminderId] = useState<string | null>(null);
+  const [reschedulingReminderAt, setReschedulingReminderAt] = useState("");
+
   const load = (signal?: AbortSignal) => {
     if (!applicationId) return;
-    setLoading(true); setError(null);
+    setLoading(true);
+    setError(null);
     void Promise.all([getApplication(applicationId, signal), getApplicationEvents(applicationId, signal)])
       .then(([current, history]) => {
-        setApplication(current); setNotes(current.notes ?? ""); setPersonalDeadline(localDateTime(current.personal_deadline)); setEvents(history);
+        if (signal?.aborted) return;
+        setApplication(current);
+        setNotes(current.notes ?? "");
+        setPersonalDeadline(localDateTime(current.personal_deadline));
+        setEvents(history);
+        setLoading(false);
       })
-      .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Unable to load this application."); })
-      .finally(() => { if (!signal?.aborted) setLoading(false); });
+      .catch((reason: unknown) => {
+        if (signal?.aborted) return;
+        if (!(reason instanceof DOMException && reason.name === "AbortError")) {
+          setError(reason instanceof Error ? reason.message : "Unable to load this application.");
+        }
+        setLoading(false);
+      });
   };
-  useEffect(() => { const controller = new AbortController(); if (user?.role === "student") load(controller.signal); return () => controller.abort(); }, [applicationId, user]);
+  useEffect(() => {
+    const controller = new AbortController();
+    if (user?.role === "student") {
+      load(controller.signal);
+    }
+    return () => controller.abort();
+  }, [applicationId, user?.role]);
 
   async function perform(action: () => Promise<void>) {
     setActionError(null);
@@ -68,11 +92,51 @@ export function ApplicationDetailPage() {
   async function savePersonalDeadline() { if (!application) return; await updateApplication(application.id, { personal_deadline: personalDeadline ? new Date(personalDeadline).toISOString() : null, personal_deadline_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, expected_version: application.version }); load(); }
   async function setLifecycle(lifecycle: CommandLifecycle) { if (!application) return; await updateApplication(application.id, { lifecycle, expected_version: application.version }); load(); }
   async function setTaskStatus(task: ApplicationTask, status: string) { if (!application) return; await updateApplicationTask(application.id, task.id, { status, completion_evidence: status === "completed" ? "Marked complete by student" : null }); load(); }
-  async function editTask(task: ApplicationTask) { if (!application) return; const title = window.prompt("Task title", task.title); if (!title?.trim()) return; const dueAt = window.prompt("Task deadline (YYYY-MM-DDTHH:mm), or leave blank", localDateTime(task.due_at)); const due = dueAt?.trim() ? new Date(dueAt).toISOString() : null; await updateApplicationTask(application.id, task.id, { title: title.trim(), due_at: due }); load(); }
-  async function addTask(event: FormEvent) { event.preventDefault(); if (!application || !taskTitle.trim()) return; await createApplicationTask(application.id, { title: taskTitle.trim(), category: taskCategory }); setTaskTitle(""); load(); }
-  async function addReminder(event: FormEvent) { event.preventDefault(); if (!application || !reminderAt) return; await createApplicationReminder(application.id, { scheduled_at: new Date(reminderAt).toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, message: reminderMessage.trim() || null }); setReminderAt(""); setReminderMessage(""); load(); }
-  async function dismissReminder(id: string) { if (!application) return; await updateApplicationReminder(application.id, id, { status: "cancelled" }); load(); }
-  async function rescheduleReminder(id: string, scheduledAt: string) { if (!application) return; const next = window.prompt("Reminder time (YYYY-MM-DDTHH:mm)", localDateTime(scheduledAt)); if (!next?.trim()) return; await updateApplicationReminder(application.id, id, { status: "scheduled", scheduled_at: new Date(next).toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }); load(); }
+  
+  function startEditTask(task: ApplicationTask) {
+    setEditingTaskId(task.id);
+    setEditingTaskTitle(task.title);
+    setEditingTaskDueAt(localDateTime(task.due_at));
+  }
+  async function saveTaskEdit(taskId: string) {
+    if (!application || !editingTaskTitle.trim()) return;
+    const due = editingTaskDueAt.trim() ? new Date(editingTaskDueAt).toISOString() : null;
+    await updateApplicationTask(application.id, taskId, { title: editingTaskTitle.trim(), due_at: due });
+    setEditingTaskId(null);
+    load();
+  }
+
+  async function addTask(event: FormEvent) {
+    event.preventDefault();
+    if (!application || !taskTitle.trim()) return;
+    await createApplicationTask(application.id, { title: taskTitle.trim(), category: taskCategory });
+    setTaskTitle("");
+    load();
+  }
+  async function addReminder(event: FormEvent) {
+    event.preventDefault();
+    if (!application || !reminderAt) return;
+    await createApplicationReminder(application.id, { scheduled_at: new Date(reminderAt).toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, message: reminderMessage.trim() || null });
+    setReminderAt("");
+    setReminderMessage("");
+    load();
+  }
+  async function dismissReminder(id: string) {
+    if (!application) return;
+    await updateApplicationReminder(application.id, id, { status: "cancelled" });
+    load();
+  }
+  function startRescheduleReminder(id: string, scheduledAt: string) {
+    setReschedulingReminderId(id);
+    setReschedulingReminderAt(localDateTime(scheduledAt));
+  }
+  async function saveRescheduleReminder(id: string) {
+    if (!application || !reschedulingReminderAt) return;
+    await updateApplicationReminder(application.id, id, { status: "scheduled", scheduled_at: new Date(reschedulingReminderAt).toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    setReschedulingReminderId(null);
+    load();
+  }
+
   async function addDocument(event: FormEvent) { event.preventDefault(); if (!application || !documentName.trim()) return; await createApplicationDocument(application.id, { name: documentName.trim(), is_required: documentRequired }); setDocumentName(""); setDocumentRequired(true); load(); }
   async function saveDocument(documentId: string, event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!application) return; const fields = new FormData(event.currentTarget); const date = (name: string) => { const value = String(fields.get(name) ?? "").trim(); return value ? new Date(value).toISOString() : null; }; const text = (name: string) => String(fields.get(name) ?? "").trim() || null; const size = text("size_bytes"); await updateApplicationDocument(application.id, documentId, { name: String(fields.get("name") ?? "").trim(), is_required: fields.get("is_required") === "on", file_name: text("file_name"), content_type: text("content_type"), size_bytes: size ? Number(size) : null, version_label: text("version_label"), expires_at: date("expires_at"), reviewed_at: date("reviewed_at"), is_complete: fields.get("is_complete") === "on" }); load(); }
 
@@ -90,11 +154,138 @@ export function ApplicationDetailPage() {
     <section className="application-panel"><h2>Deadline timeline</h2><dl className="deadline-timeline"><div><dt>Official deadline</dt><dd>{formatDate(application.official_deadline)} ({application.official_deadline_timezone}) — {humanize(application.official_deadline_state)}</dd></div><div><dt>Your target deadline</dt><dd>{application.personal_deadline ? `${formatDate(application.personal_deadline)} (${application.personal_deadline_timezone})` : "Not set"}</dd></div></dl><form className="inline-form" onSubmit={(event) => { event.preventDefault(); void perform(savePersonalDeadline); }}><label>Set your target<input type="datetime-local" value={personalDeadline} onChange={(event) => setPersonalDeadline(event.target.value)} /></label><button className="button button-quiet" type="submit">Save target</button></form></section>
     <section className="application-panel"><h2>Lifecycle</h2><p className="muted-copy">Current: {humanize(application.lifecycle)}</p><div className="lifecycle-controls" aria-label="Application lifecycle">{lifecycleSteps.map((step) => <span key={step} className={application.lifecycle === step ? "lifecycle-current" : ""}>{humanize(step)}</span>)}</div>{transitions[application.lifecycle].length ? <div className="card-actions">{transitions[application.lifecycle].map((step) => <button key={step} className="button button-quiet" type="button" onClick={() => void perform(() => setLifecycle(step))}>Move to {humanize(step)}</button>)}</div> : <p className="muted-copy">This application lifecycle is final.</p>}</section>
     <div className="application-detail-grid">
-      <section className="application-panel"><h2>Task board</h2><form className="inline-form" onSubmit={(event) => void perform(() => addTask(event))}><label>New task<input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} required /></label><label>Category<select value={taskCategory} onChange={(event) => setTaskCategory(event.target.value)}>{taskCategories.map((category) => <option key={category}>{humanize(category)}</option>)}</select></label><button className="button button-primary" type="submit">Add task</button></form><div className="detail-task-list">{application.tasks.map((task) => <article className="detail-task" key={task.id}><div><strong>{task.title}</strong><small>{humanize(task.category)} · {task.is_generated ? "Source-generated" : "Personal"} · {task.due_at ? formatDate(task.due_at) : "No due date"}</small>{task.completion_evidence ? <small>Evidence: {task.completion_evidence}</small> : null}</div><div className="task-actions"><select aria-label={`Status for ${task.title}`} value={task.status} onChange={(event) => void perform(() => setTaskStatus(task, event.target.value))}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="blocked">Blocked</option><option value="completed">Complete</option><option value="dismissed">Dismissed</option></select><button className="text-link" type="button" onClick={() => void perform(() => editTask(task))}>Edit</button></div></article>)}</div></section>
-      <section className="application-panel"><h2>Reminders</h2><form className="inline-form" onSubmit={(event) => void perform(() => addReminder(event))}><label>When<input type="datetime-local" value={reminderAt} onChange={(event) => setReminderAt(event.target.value)} required /></label><label>Message<input value={reminderMessage} onChange={(event) => setReminderMessage(event.target.value)} /></label><button className="button button-primary" type="submit">Schedule</button></form>{application.reminders.length ? <ul className="compact-list">{application.reminders.map((reminder) => <li key={reminder.id}><span>{formatDate(reminder.scheduled_at)} · {reminder.status}{reminder.message ? ` — ${reminder.message}` : ""}</span>{["scheduled", "snoozed"].includes(reminder.status) ? <span className="task-actions"><button className="text-link" type="button" onClick={() => void perform(() => rescheduleReminder(reminder.id, reminder.scheduled_at))}>Reschedule</button><button className="text-link" type="button" onClick={() => void perform(() => dismissReminder(reminder.id))}>Dismiss</button></span> : null}</li>)}</ul> : <p className="empty-copy">No reminders scheduled.</p>}</section>
-      <section className="application-panel document-panel"><h2>Document coordination</h2><p className="muted-copy">Document status records your evidence only. It does not confirm official acceptance. Uploading and analysis now live in the separate private Documents area; linking a version still requires your explicit confirmation there.</p><Link className="button button-quiet" to="/document-lab">Open Documents</Link><form className="inline-form" onSubmit={(event) => void perform(() => addDocument(event))}><label>Document name<input value={documentName} onChange={(event) => setDocumentName(event.target.value)} required /></label><label className="checkbox-label"><input type="checkbox" checked={documentRequired} onChange={(event) => setDocumentRequired(event.target.checked)} /> Required</label><button className="button button-primary" type="submit">Add document</button></form><div className="document-list">{application.documents.map((document) => <form className="document-card" key={document.id} onSubmit={(event) => void perform(() => saveDocument(document.id, event))}><label>Name<input name="name" defaultValue={document.name} required /></label><label>File name<input name="file_name" defaultValue={document.file_name ?? ""} /></label><label>Content type<input name="content_type" defaultValue={document.content_type ?? ""} placeholder="application/pdf" /></label><label>Size (bytes)<input name="size_bytes" type="number" min="0" defaultValue={document.size_bytes ?? ""} /></label><label>Version<input name="version_label" defaultValue={document.version_label ?? ""} /></label><label>Review date<input name="reviewed_at" type="datetime-local" defaultValue={localDateTime(document.reviewed_at)} /></label><label>Expiry date<input name="expires_at" type="datetime-local" defaultValue={localDateTime(document.expires_at)} /></label><label className="checkbox-label"><input name="is_required" type="checkbox" defaultChecked={document.is_required} /> Required</label><label className="checkbox-label"><input name="is_complete" type="checkbox" defaultChecked={document.is_complete} /> Evidence complete</label><button className="button button-quiet" type="submit">Save metadata</button></form>)}</div>{!application.documents.length ? <p className="empty-copy">No documents are being coordinated yet.</p> : null}</section>
-      <section className="application-panel"><h2>Private notes</h2><textarea rows={7} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Keep your personal next steps here." /><div className="card-actions"><button className="button button-primary" type="button" onClick={() => void perform(saveNotes)}>Save notes</button></div></section>
-      <section className="application-panel"><h2>Activity history</h2>{events.length ? <ol className="activity-list">{events.map((event) => <li key={event.id}><strong>{humanize(event.event_type.replaceAll(".", "_"))}</strong><small>{formatDate(event.created_at)}</small></li>)}</ol> : <p className="empty-copy">No activity has been recorded yet.</p>}</section>
+      <section className="application-panel">
+        <h2>Task board</h2>
+        <form className="inline-form" onSubmit={(event) => void perform(() => addTask(event))}>
+          <label>New task<input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} required /></label>
+          <label>Category
+            <select value={taskCategory} onChange={(event) => setTaskCategory(event.target.value)}>
+              {taskCategories.map((category) => (
+                <option key={category} value={category}>{humanize(category)}</option>
+              ))}
+            </select>
+          </label>
+          <button className="button button-primary" type="submit">Add task</button>
+        </form>
+        <div className="detail-task-list">
+          {application.tasks.map((task) => (
+            <article className="detail-task" key={task.id}>
+              {editingTaskId === task.id ? (
+                <div className="task-edit-box">
+                  <label>Title<input value={editingTaskTitle} onChange={(e) => setEditingTaskTitle(e.target.value)} required /></label>
+                  <label>Deadline<input type="datetime-local" value={editingTaskDueAt} onChange={(e) => setEditingTaskDueAt(e.target.value)} /></label>
+                  <div className="task-edit-actions">
+                    <button className="button button-primary" type="button" onClick={() => void perform(() => saveTaskEdit(task.id))}>Save</button>
+                    <button className="button button-quiet" type="button" onClick={() => setEditingTaskId(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <strong>{task.title}</strong>
+                    <small>{humanize(task.category)} · {task.is_generated ? "Source-generated" : "Personal"} · {task.due_at ? formatDate(task.due_at) : "No due date"}</small>
+                    {task.completion_evidence ? <small>Evidence: {task.completion_evidence}</small> : null}
+                  </div>
+                  <div className="task-actions">
+                    <select aria-label={`Status for ${task.title}`} value={task.status} onChange={(event) => void perform(() => setTaskStatus(task, event.target.value))}>
+                      <option value="todo">To do</option>
+                      <option value="in_progress">In progress</option>
+                      <option value="blocked">Blocked</option>
+                      <option value="completed">Complete</option>
+                      <option value="dismissed">Dismissed</option>
+                    </select>
+                    <button className="text-link" type="button" onClick={() => startEditTask(task)}>Edit</button>
+                  </div>
+                </>
+              )}
+            </article>
+          ))}
+        </div>
+      </section>
+      
+      <section className="application-panel">
+        <h2>Reminders</h2>
+        <form className="inline-form" onSubmit={(event) => void perform(() => addReminder(event))}>
+          <label>When<input type="datetime-local" value={reminderAt} onChange={(event) => setReminderAt(event.target.value)} required /></label>
+          <label>Message<input value={reminderMessage} onChange={(event) => setReminderMessage(event.target.value)} /></label>
+          <button className="button button-primary" type="submit">Schedule</button>
+        </form>
+        {application.reminders.length ? (
+          <ul className="compact-list">
+            {application.reminders.map((reminder) => (
+              <li key={reminder.id}>
+                {reschedulingReminderId === reminder.id ? (
+                  <div className="reminder-reschedule-box">
+                    <label>New date & time<input type="datetime-local" value={reschedulingReminderAt} onChange={(e) => setReschedulingReminderAt(e.target.value)} required /></label>
+                    <button className="button button-primary" type="button" onClick={() => void perform(() => saveRescheduleReminder(reminder.id))}>Save</button>
+                    <button className="button button-quiet" type="button" onClick={() => setReschedulingReminderId(null)}>Cancel</button>
+                  </div>
+                ) : (
+                  <>
+                    <span>{formatDate(reminder.scheduled_at)} · {reminder.status}{reminder.message ? ` — ${reminder.message}` : ""}</span>
+                    {["scheduled", "snoozed"].includes(reminder.status) ? (
+                      <span className="task-actions">
+                        <button className="text-link" type="button" onClick={() => startRescheduleReminder(reminder.id, reminder.scheduled_at)}>Reschedule</button>
+                        <button className="text-link" type="button" onClick={() => void perform(() => dismissReminder(reminder.id))}>Dismiss</button>
+                      </span>
+                    ) : null}
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : <p className="empty-copy">No reminders scheduled.</p>}
+      </section>
+      
+      <section className="application-panel document-panel">
+        <h2>Document coordination</h2>
+        <p className="muted-copy">Document status records your evidence only. It does not confirm official acceptance. Uploading and analysis now live in the separate private Documents area; linking a version still requires your explicit confirmation there.</p>
+        <Link className="button button-quiet" to="/document-lab">Open Documents</Link>
+        <form className="inline-form" onSubmit={(event) => void perform(() => addDocument(event))}>
+          <label>Document name<input value={documentName} onChange={(event) => setDocumentName(event.target.value)} required /></label>
+          <label className="checkbox-label"><input type="checkbox" checked={documentRequired} onChange={(event) => setDocumentRequired(event.target.checked)} /> Required</label>
+          <button className="button button-primary" type="submit">Add document</button>
+        </form>
+        <div className="document-list">
+          {application.documents.map((document) => (
+            <form className="document-card" key={document.id} onSubmit={(event) => void perform(() => saveDocument(document.id, event))}>
+              <label>Name<input name="name" defaultValue={document.name} required /></label>
+              <label>File name<input name="file_name" defaultValue={document.file_name ?? ""} /></label>
+              <label>Content type<input name="content_type" defaultValue={document.content_type ?? ""} placeholder="application/pdf" /></label>
+              <label>Size (bytes)<input name="size_bytes" type="number" min="0" defaultValue={document.size_bytes ?? ""} /></label>
+              <label>Version<input name="version_label" defaultValue={document.version_label ?? ""} /></label>
+              <label>Review date<input name="reviewed_at" type="datetime-local" defaultValue={localDateTime(document.reviewed_at)} /></label>
+              <label>Expiry date<input name="expires_at" type="datetime-local" defaultValue={localDateTime(document.expires_at)} /></label>
+              <label className="checkbox-label"><input name="is_required" type="checkbox" defaultChecked={document.is_required} /> Required</label>
+              <label className="checkbox-label"><input name="is_complete" type="checkbox" defaultChecked={document.is_complete} /> Evidence complete</label>
+              <button className="button button-quiet" type="submit">Save metadata</button>
+            </form>
+          ))}
+        </div>
+        {!application.documents.length ? <p className="empty-copy">No documents are being coordinated yet.</p> : null}
+      </section>
+      
+      <section className="application-panel">
+        <h2>Private notes</h2>
+        <textarea rows={7} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Keep your personal next steps here." />
+        <div className="card-actions">
+          <button className="button button-primary" type="button" onClick={() => void perform(saveNotes)}>Save notes</button>
+        </div>
+      </section>
+      
+      <section className="application-panel">
+        <h2>Activity history</h2>
+        {events.length ? (
+          <ol className="activity-list">
+            {events.map((event) => (
+              <li key={event.id}>
+                <strong>{humanize(event.event_type.replaceAll(".", "_"))}</strong>
+                <small>{formatDate(event.created_at)}</small>
+              </li>
+            ))}
+          </ol>
+        ) : <p className="empty-copy">No activity has been recorded yet.</p>}
+      </section>
     </div>
   </main>;
 }

@@ -1,769 +1,1031 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Link, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
-import { useServerQuery } from "../../hooks/useServerQuery";
 import {
-  catalogueSearch,
-  deadlineLabel,
-  getCountryFlag,
-  readableValue,
-  searchOpportunities,
-} from "../catalogue/catalogue";
+  AustraliaLandmarkSvg,
+  CanadaLandmarkSvg,
+  GermanyLandmarkSvg,
+  UKLandmarkSvg,
+  USLandmarkSvg,
+} from "../../components/DestinationLandmarks";
 import {
-  defaultCatalogueFilters,
   type DegreeLevel,
   type FundingType,
-  type OpportunitySearchResponse,
-  type OpportunitySummary,
 } from "../catalogue/types";
 
 /* ------------------------------------------------------------------ */
-/*  Types                                                              */
+/*  Types & Options                                                   */
 /* ------------------------------------------------------------------ */
 
-interface HomeSearchState {
+export interface HomeSearchState {
   country: string;
   degree_level: DegreeLevel | "";
   funding_type: FundingType | "";
 }
 
-type ActivePopover = "where" | "degree" | "funding" | null;
+export type ActivePopover = "where" | "degree" | "funding" | null;
 
-/* ------------------------------------------------------------------ */
-/*  Static Data                                                        */
-/* ------------------------------------------------------------------ */
-
-const initialSearch: HomeSearchState = {
+export const initialSearch: HomeSearchState = {
   country: "",
   degree_level: "",
   funding_type: "",
 };
 
-const categoryLinks = [
-  { label: "All", icon: "🌐", search: {} },
-  { label: "Fully funded", icon: "🏆", search: { funding_type: "full" as const } },
-  { label: "Bachelor", icon: "🎓", search: { degree_level: "bachelors" as const } },
-  { label: "Masters", icon: "📚", search: { degree_level: "masters" as const } },
-  { label: "PhD", icon: "🔬", search: { degree_level: "phd" as const } },
-  { label: "Asia", icon: "🌏", search: { country: "Malaysia" } },
-  { label: "Europe", icon: "🏛️", search: { country: "Europe" } },
-  { label: "UK", icon: "🇬🇧", search: { country: "United Kingdom" } },
-  { label: "USA", icon: "🇺🇸", search: { country: "United States" } },
-  { label: "No IELTS", icon: "⚡", search: { field: "English flexible" } },
-];
-
-const popularDestinations = [
-  { country: "United Kingdom", flag: "🇬🇧", hint: "Chevening, Oxford, Cambridge" },
-  { country: "United States", flag: "🇺🇸", hint: "Fulbright, Harvard, MIT" },
+export const popularDestinations = [
   { country: "Germany", flag: "🇩🇪", hint: "DAAD, Free tuition public universities" },
+  { country: "United States", flag: "🇺🇸", hint: "Fulbright, Harvard, MIT" },
+  { country: "United Kingdom", flag: "🇬🇧", hint: "Chevening, Oxford, Cambridge" },
   { country: "Canada", flag: "🇨🇦", hint: "Vanier, Toronto, McGill" },
   { country: "Australia", flag: "🇦🇺", hint: "Australia Awards, Melbourne" },
-  { country: "Japan", flag: "🇯🇵", hint: "MEXT Government, Tokyo, Kyoto" },
-  { country: "Malaysia", flag: "🇲🇾", hint: "MIS Government, UM, UTM" },
-  { country: "Singapore", flag: "🇸🇬", hint: "NUS, NTU, A*STAR Fellowships" },
   { country: "Europe", flag: "🇪🇺", hint: "Erasmus Mundus Joint Masters" },
 ];
 
-const degreeOptions: { label: string; value: DegreeLevel | ""; icon: string; desc: string }[] = [
-  { label: "Any degree", value: "", icon: "🌐", desc: "All academic degree levels" },
-  { label: "Bachelors", value: "bachelors", icon: "🎓", desc: "Undergraduate & freshman grants" },
-  { label: "Masters", value: "masters", icon: "📚", desc: "Postgraduate & professional degrees" },
+export const degreeOptions: { label: string; value: DegreeLevel | ""; icon: string; desc: string }[] = [
+  { label: "All Degree Levels", value: "", icon: "🌐", desc: "Bachelor's, Master's, PhD" },
+  { label: "Bachelor's", value: "bachelors", icon: "🎓", desc: "Undergraduate & freshman grants" },
+  { label: "Master's", value: "masters", icon: "📚", desc: "Postgraduate & professional degrees" },
   { label: "PhD / Doctorate", value: "phd", icon: "🔬", desc: "Research fellowships & doctorates" },
   { label: "Postdoc", value: "postdoc", icon: "🧪", desc: "Postdoctoral scientific research" },
   { label: "Short course", value: "short_course", icon: "⚡", desc: "Summer schools & training" },
 ];
 
-const fundingOptions: { label: string; value: FundingType | ""; icon: string; desc: string }[] = [
-  { label: "Any funding", value: "", icon: "💎", desc: "All funding coverage types" },
-  { label: "100% Full Funding", value: "full", icon: "🏆", desc: "Tuition + monthly living stipend + flights" },
-  { label: "Partial Aid", value: "partial", icon: "💵", desc: "Tuition discount or partial stipend" },
+export const fundingOptions: { label: string; value: FundingType | ""; icon: string; desc: string }[] = [
+  { label: "All Funding Types", value: "", icon: "💎", desc: "Fully funded, Partial, etc." },
+  { label: "Fully Funded", value: "full", icon: "🏆", desc: "Tuition + monthly living stipend + flights" },
+  { label: "Partial Funding", value: "partial", icon: "💵", desc: "Tuition discount or partial stipend" },
   { label: "Tuition Only", value: "tuition_only", icon: "🏛️", desc: "100% tuition waiver coverage" },
   { label: "Stipend Only", value: "stipend_only", icon: "💳", desc: "Monthly living allowance grant" },
 ];
 
-const spotlightCountries = [
-  { label: "United Kingdom", hint: "Chevening, Commonwealth, university awards", count: "148" },
-  { label: "United States", hint: "Fulbright, institutional aid, fellowships", count: "210" },
-  { label: "Germany", hint: "DAAD, tuition-free public universities", count: "84" },
-  { label: "Canada", hint: "Vanier, Banting, Trillium scholarships", count: "92" },
-  { label: "Australia", hint: "Government and university funding", count: "65" },
-];
+/* ------------------------------------------------------------------ */
+/*  Featured Scholarships Data                                        */
+/* ------------------------------------------------------------------ */
 
-const discoveryFooterGroups = [
+interface FeaturedScholarshipItem {
+  id: string;
+  name: string;
+  country: string;
+  flag: string;
+  degreeLevel: string;
+  deadline: string;
+  matchScore: string;
+  isFullMatch?: boolean;
+}
+
+const featuredScholarshipsData: FeaturedScholarshipItem[] = [
   {
-    title: "Popular",
-    links: [
-      { label: "Scholarships in Asia", hint: "Japan, Korea, Malaysia", search: { country: "Malaysia" } },
-      { label: "Scholarships in Europe", hint: "Germany, UK, France", search: { country: "Europe" } },
-      { label: "Government awards", hint: "Official national funding", search: { field: "Government" } },
-      { label: "No IELTS routes", hint: "English-flexible options", search: { field: "English flexible" } },
-    ],
+    id: "daad-epos",
+    name: "DAAD Development-Related Postgraduate Courses",
+    country: "Germany",
+    flag: "🇩🇪",
+    degreeLevel: "Master's, PhD",
+    deadline: "31 Oct 2026",
+    matchScore: "Full Match",
+    isFullMatch: true,
   },
   {
-    title: "Degree",
-    links: [
-      { label: "Fully funded bachelor", hint: "Undergraduate awards", search: { degree_level: "bachelors" as const, funding_type: "full" as const } },
-      { label: "Masters scholarships", hint: "Coursework and research", search: { degree_level: "masters" as const } },
-      { label: "PhD fellowships", hint: "Research funding", search: { degree_level: "phd" as const } },
-      { label: "Short courses", hint: "Exchange and training", search: { degree_level: "short_course" as const } },
-    ],
+    id: "fulbright-foreign",
+    name: "Fulbright Foreign Student Program",
+    country: "United States",
+    flag: "🇺🇸",
+    degreeLevel: "Master's, PhD",
+    deadline: "15 Oct 2026",
+    matchScore: "90% Match",
   },
   {
-    title: "Workspace",
-    links: [
-      { label: "Build your profile", hint: "Match-ready student passport", to: "/profile" },
-      { label: "Explainable matches", hint: "Evidence-linked eligibility", to: "/matches" },
-      { label: "Application tracker", hint: "Tasks and deadlines", to: "/applications" },
-      { label: "Verified catalogue", hint: "Browse every record", to: "/catalogue" },
-    ],
+    id: "chevening-uk",
+    name: "Chevening Scholarships 2025/26",
+    country: "United Kingdom",
+    flag: "🇬🇧",
+    degreeLevel: "Master's",
+    deadline: "06 Nov 2026",
+    matchScore: "90% Match",
+  },
+  {
+    id: "vanier-canada",
+    name: "Vanier Canada Graduate Scholarships",
+    country: "Canada",
+    flag: "🇨🇦",
+    degreeLevel: "PhD",
+    deadline: "05 Nov 2026",
+    matchScore: "88% Match",
+  },
+  {
+    id: "australia-awards",
+    name: "Australia Awards Scholarships",
+    country: "Australia",
+    flag: "🇦🇺",
+    degreeLevel: "Master's, PhD",
+    deadline: "30 Apr 2027",
+    matchScore: "86% Match",
   },
 ];
 
-const asiaCountries = [
-  "brunei",
-  "china",
-  "hong kong",
-  "india",
-  "indonesia",
-  "japan",
-  "korea",
-  "malaysia",
-  "pakistan",
-  "singapore",
-  "taiwan",
-  "thailand",
-  "turkey",
+/* ------------------------------------------------------------------ */
+/*  Browse by Destination Data                                        */
+/* ------------------------------------------------------------------ */
+
+interface DestinationCardItem {
+  id: string;
+  name: string;
+  shortName: string;
+  opportunitiesCount: string;
+  subtitle: string;
+  gradientClass: string;
+  searchCountry: string;
+  svgComponent: React.ComponentType<{ className?: string }>;
+}
+
+const destinationCardsData: DestinationCardItem[] = [
+  {
+    id: "uk",
+    name: "United Kingdom",
+    shortName: "UK",
+    opportunitiesCount: "120+ opportunities",
+    subtitle: "Study in world-class universities",
+    gradientClass: "tns-dest-uk",
+    searchCountry: "United Kingdom",
+    svgComponent: UKLandmarkSvg,
+  },
+  {
+    id: "us",
+    name: "United States",
+    shortName: "US",
+    opportunitiesCount: "120+ opportunities",
+    subtitle: "Top-ranked universities and research programs",
+    gradientClass: "tns-dest-us",
+    searchCountry: "United States",
+    svgComponent: USLandmarkSvg,
+  },
+  {
+    id: "germany",
+    name: "Germany",
+    shortName: "Germany",
+    opportunitiesCount: "110+ opportunities",
+    subtitle: "Tuition-free education in public universities",
+    gradientClass: "tns-dest-germany",
+    searchCountry: "Germany",
+    svgComponent: GermanyLandmarkSvg,
+  },
+  {
+    id: "canada",
+    name: "Canada",
+    shortName: "Canada",
+    opportunitiesCount: "90+ opportunities",
+    subtitle: "Diverse programs with strong support",
+    gradientClass: "tns-dest-canada",
+    searchCountry: "Canada",
+    svgComponent: CanadaLandmarkSvg,
+  },
+  {
+    id: "australia",
+    name: "Australia",
+    shortName: "Australia",
+    opportunitiesCount: "80+ opportunities",
+    subtitle: "Quality education and vibrant communities",
+    gradientClass: "tns-dest-australia",
+    searchCountry: "Australia",
+    svgComponent: AustraliaLandmarkSvg,
+  },
 ];
 
 /* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
+/*  How It Works Step Data                                            */
 /* ------------------------------------------------------------------ */
 
-function toCatalogueUrl(partial: Partial<typeof defaultCatalogueFilters>): string {
-  const filters = {
-    ...defaultCatalogueFilters,
-    availability: "all" as const,
-    limit: "20" as const,
-    ...partial,
-  };
-  return "/catalogue?" + catalogueSearch(filters, 0).toString();
-}
-
-function visualTone(country: string): string {
-  const normalized = country.toLowerCase();
-  if (normalized.includes("kingdom") || normalized === "uk") return "uk";
-  if (normalized.includes("state") || normalized === "usa") return "usa";
-  if (normalized.includes("canada")) return "canada";
-  if (normalized.includes("australia")) return "australia";
-  if (normalized.includes("malaysia")) return "malaysia";
-  if (normalized.includes("germany") || normalized.includes("france") || normalized.includes("europe")) return "europe";
-  return "global";
-}
-
-function windowLabel(opportunity: OpportunitySummary): { text: string; tone: "open" | "upcoming" | "rolling" | "neutral" } {
-  if (opportunity.application_window_state === "open") return { text: "Open now", tone: "open" };
-  if (opportunity.application_window_state === "upcoming") return { text: "Upcoming", tone: "upcoming" };
-  if (opportunity.application_window_state === "rolling") return { text: "Rolling", tone: "rolling" };
-  return { text: deadlineLabel(opportunity.application_deadline), tone: "neutral" };
-}
-
-function fundingBadge(opportunity: OpportunitySummary): string | null {
-  if (opportunity.funding_classification === "fully_funded" || opportunity.funding_type === "full") return "Guest favorite";
-  if (opportunity.funding_type === "partial") return "Partial Aid";
-  return "Top Choice";
-}
-
-function hasDegree(opportunity: OpportunitySummary, degree: DegreeLevel): boolean {
-  return opportunity.degree_level === degree || Boolean(opportunity.degree_levels?.includes(degree));
-}
-
-function isFullyFunded(opportunity: OpportunitySummary): boolean {
-  return opportunity.funding_classification === "fully_funded" || opportunity.funding_type === "full";
-}
-
-function isAsiaOpportunity(opportunity: OpportunitySummary): boolean {
-  const country = opportunity.country.toLowerCase();
-  return asiaCountries.some((keyword) => country.includes(keyword));
-}
-
-function scholarshipSignal(opportunity: OpportunitySummary): string {
-  if (opportunity.catalogue_decision_tier === "decision_ready") return "Decision-ready";
-  if (opportunity.structured_eligibility_complete) return "Eligibility mapped";
-  return "Source-backed";
-}
+const howItWorksSteps = [
+  {
+    number: "1",
+    title: "Discover",
+    description: "Search verified scholarships tailored to your goals.",
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </svg>
+    ),
+  },
+  {
+    number: "2",
+    title: "Save",
+    description: "Save opportunities you like and organize them in one place.",
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+      </svg>
+    ),
+  },
+  {
+    number: "3",
+    title: "Track",
+    description: "Track deadlines, requirements and application progress effortlessly.",
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 3v18h18" />
+        <path d="m19 9-5 5-4-4-3 3" />
+      </svg>
+    ),
+  },
+  {
+    number: "4",
+    title: "Prepare",
+    description: "Get AI-powered guidance to build stronger applications and essays.",
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z" />
+      </svg>
+    ),
+  },
+];
 
 /* ------------------------------------------------------------------ */
-/*  Shelf Scroll Helpers                                               */
+/*  Trust Bar Items                                                   */
 /* ------------------------------------------------------------------ */
 
-function scrollShelf(ref: React.RefObject<HTMLDivElement | null>, direction: "left" | "right") {
-  if (!ref.current) return;
-  const scrollAmount = ref.current.clientWidth * 0.75;
-  ref.current.scrollBy({ left: direction === "left" ? -scrollAmount : scrollAmount, behavior: "smooth" });
-}
+const trustMetrics = [
+  {
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="m9 12 2 2 4-4" />
+      </svg>
+    ),
+    bold: "500+",
+    label: "Verified Scholarships",
+  },
+  {
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="2" y1="12" x2="22" y2="12" />
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+      </svg>
+    ),
+    bold: "120+",
+    label: "Countries",
+  },
+  {
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
+        <path d="M6 12v5c3 3 9 3 12 0v-5" />
+      </svg>
+    ),
+    bold: "Bachelor • Master • PhD",
+    label: "All Degree Levels",
+  },
+  {
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+      </svg>
+    ),
+    bold: "Fully Funded",
+    label: "Opportunities",
+  },
+];
 
 /* ------------------------------------------------------------------ */
-/*  Sub-Components                                                     */
+/*  Search Pill Component (Exact Airbnb Hover & Active Mechanics)       */
 /* ------------------------------------------------------------------ */
 
-function SearchPill() {
+export function SearchPill({
+  search,
+  activePopover,
+  onSearchChange,
+  onPopoverChange,
+}: {
+  search: HomeSearchState;
+  activePopover: ActivePopover;
+  onSearchChange: (update: HomeSearchState | ((prev: HomeSearchState) => HomeSearchState)) => void;
+  onPopoverChange: (popover: ActivePopover) => void;
+}) {
   const navigate = useNavigate();
-  const [search, setSearch] = useState<HomeSearchState>(initialSearch);
-  const [activePopover, setActivePopover] = useState<ActivePopover>(null);
-  const pillRef = useRef<HTMLDivElement>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    onPopoverChange(null);
+    const params = new URLSearchParams();
+    if (search.country) params.set("country", search.country);
+    if (search.degree_level) params.set("degree_level", search.degree_level);
+    if (search.funding_type) params.set("funding_type", search.funding_type);
+    navigate(`/catalogue?${params.toString()}`);
+  }
+
+  const isAnyActive = activePopover !== null;
+  const openPopover = (popover: Exclude<ActivePopover, null>) => {
+    onPopoverChange(activePopover === popover ? null : popover);
+  };
+
+  const handleSegmentKey =
+    (popover: Exclude<ActivePopover, null>) => (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openPopover(popover);
+      }
+    };
 
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (pillRef.current && !pillRef.current.contains(event.target as Node)) {
-        setActivePopover(null);
+    if (!activePopover) return;
+
+    function handleOutsideClick(event: MouseEvent) {
+      if (!searchContainerRef.current?.contains(event.target as Node)) {
+        onPopoverChange(null);
       }
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
-  function update(key: keyof HomeSearchState, value: string) {
-    setSearch((current) => ({ ...current, [key]: value }));
-  }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onPopoverChange(null);
+      }
+    }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setActivePopover(null);
-    navigate(toCatalogueUrl(search));
-  }
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape);
 
-  function selectDestination(country: string) {
-    update("country", country);
-    setActivePopover("degree");
-  }
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [activePopover, onPopoverChange]);
 
-  function selectDegree(level: DegreeLevel | "") {
-    update("degree_level", level);
-    setActivePopover("funding");
-  }
-
-  function selectFunding(funding: FundingType | "") {
-    update("funding_type", funding);
-    setActivePopover(null);
-  }
-
-  return (
-    <div className="home-search-pill-wrapper" ref={pillRef}>
-      <form
-        className={"home-search-pill " + (activePopover ? "home-search-pill--active" : "")}
-        onSubmit={submit}
-        aria-label="Search verified scholarships"
+  const wherePopover =
+    activePopover === "where" ? (
+      <div
+        className="tns-popover-panel tns-popover-where is-open"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Popular scholarship destinations"
       >
-        {/* Where Segment */}
-        <div
-          className={"home-search-pill__segment " + (activePopover === "where" ? "home-search-pill__segment--selected" : "")}
-          onClick={() => setActivePopover((curr) => (curr === "where" ? null : "where"))}
-        >
-          <span className="home-search-pill__label">Where</span>
-          <input
-            value={search.country}
-            onChange={(event) => update("country", event.target.value)}
-            placeholder="Search countries or scholarships"
-            name="country"
-            className="home-search-pill__input"
-            onFocus={() => setActivePopover("where")}
-            autoComplete="off"
-          />
-        </div>
-
-        <div className="home-search-pill__divider" />
-
-        {/* Degree Level Segment */}
-        <div
-          className={"home-search-pill__segment " + (activePopover === "degree" ? "home-search-pill__segment--selected" : "")}
-          onClick={() => setActivePopover((curr) => (curr === "degree" ? null : "degree"))}
-        >
-          <span className="home-search-pill__label">Degree</span>
-          <div className="home-search-pill__input">
-            {search.degree_level ? readableValue(search.degree_level) : <span style={{ color: "var(--airbnb-muted)", fontWeight: 400 }}>Any degree</span>}
-          </div>
-        </div>
-
-        <div className="home-search-pill__divider" />
-
-        {/* Funding Segment */}
-        <div
-          className={"home-search-pill__segment " + (activePopover === "funding" ? "home-search-pill__segment--selected" : "")}
-          onClick={() => setActivePopover((curr) => (curr === "funding" ? null : "funding"))}
-        >
-          <span className="home-search-pill__label">Funding</span>
-          <div className="home-search-pill__input">
-            {search.funding_type === "full"
-              ? "100% Full Funding"
-              : search.funding_type
-              ? readableValue(search.funding_type)
-              : <span style={{ color: "var(--airbnb-muted)", fontWeight: 400 }}>Any funding</span>}
-          </div>
-        </div>
-
-        {/* Search Action Button */}
-        <button className="home-search-pill__button" type="submit" aria-label="Search scholarships">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-        </button>
-      </form>
-
-      {/* Popovers */}
-      {activePopover === "where" && (
-        <div className="home-search-popover home-search-popover--where" role="dialog" aria-label="Choose destination">
-          <h4>Popular study destinations</h4>
-          <div className="home-search-popover__grid">
-            {popularDestinations.map((dest) => (
-              <button
-                key={dest.country}
-                type="button"
-                className={"home-search-popover__chip " + (search.country === dest.country ? "active" : "")}
-                onClick={() => selectDestination(dest.country)}
-              >
-                <span className="home-search-popover__chip-flag">{dest.flag}</span>
-                <span className="home-search-popover__chip-title">{dest.country}</span>
-                <span className="home-search-popover__chip-sub">{dest.hint}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {activePopover === "degree" && (
-        <div className="home-search-popover home-search-popover--degree" role="dialog" aria-label="Choose degree level">
-          <h4>Select degree level</h4>
-          <div className="home-search-popover__list">
-            {degreeOptions.map((opt) => (
-              <div
-                key={opt.label}
-                className={"home-search-popover__item " + (search.degree_level === opt.value ? "active" : "")}
-                onClick={() => selectDegree(opt.value)}
-              >
-                <div>
-                  <div className="home-search-popover__item-title">{opt.label}</div>
-                  <small style={{ color: "var(--airbnb-muted)", fontSize: "0.76rem" }}>{opt.desc}</small>
-                </div>
-                <span className="home-search-popover__item-icon">{opt.icon}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {activePopover === "funding" && (
-        <div className="home-search-popover home-search-popover--funding" role="dialog" aria-label="Choose funding coverage">
-          <h4>Select funding coverage</h4>
-          <div className="home-search-popover__list">
-            {fundingOptions.map((opt) => (
-              <div
-                key={opt.label}
-                className={"home-search-popover__item " + (search.funding_type === opt.value ? "active" : "")}
-                onClick={() => selectFunding(opt.value)}
-              >
-                <div>
-                  <div className="home-search-popover__item-title">{opt.label}</div>
-                  <small style={{ color: "var(--airbnb-muted)", fontSize: "0.76rem" }}>{opt.desc}</small>
-                </div>
-                <span className="home-search-popover__item-icon">{opt.icon}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CategoryRibbon({ activeIndex, onSelect }: { activeIndex: number; onSelect: (index: number) => void }) {
-  return (
-    <div className="home-category-ribbon">
-      <div className="home-category-ribbon__track" role="tablist" aria-label="Scholarship categories">
-        {categoryLinks.map((category, index) => (
-          <NavLink
-            key={category.label}
-            to={toCatalogueUrl(category.search)}
-            className={"home-category-ribbon__item " + (index === activeIndex ? "home-category-ribbon__item--active" : "")}
-            role="tab"
-            aria-selected={index === activeIndex}
-            onClick={(event) => {
-              event.preventDefault();
-              onSelect(index);
+        <h3 className="tns-popover-title">Popular scholarship destinations</h3>
+        <div className="tns-region-grid">
+          <button
+            type="button"
+            className="tns-region-card"
+            onClick={() => {
+              onSearchChange((s) => ({ ...s, country: "" }));
+              onPopoverChange("degree");
             }}
           >
-            <span className="home-category-ribbon__icon" aria-hidden="true">{category.icon}</span>
-            <span className="home-category-ribbon__text">{category.label}</span>
-          </NavLink>
-        ))}
+            <div className="tns-region-thumb">🌐</div>
+            <span className="tns-region-copy">
+              <span className="tns-region-name">Anywhere</span>
+              <span className="tns-region-hint">Search every destination</span>
+            </span>
+          </button>
+          {popularDestinations.map((d) => (
+            <button
+              key={d.country}
+              type="button"
+              className="tns-region-card"
+              onClick={() => {
+                onSearchChange((s) => ({ ...s, country: d.country }));
+                onPopoverChange("degree");
+              }}
+            >
+              <div className="tns-region-thumb">{d.flag}</div>
+              <span className="tns-region-copy">
+                <span className="tns-region-name">{d.country}</span>
+                <span className="tns-region-hint">{d.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="home-category-ribbon__controls">
-        <NavLink className="home-category-ribbon__filter-btn" to="/catalogue">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" />
-            <line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" />
-            <line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" />
-            <line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" />
-            <line x1="17" y1="16" x2="23" y2="16" />
-          </svg>
-          Filters
-        </NavLink>
+    ) : null;
+
+  const degreePopover =
+    activePopover === "degree" ? (
+      <div
+        className="tns-popover-panel tns-popover-degree is-open"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Academic degree level"
+      >
+        <h3 className="tns-popover-title">Academic Degree Level</h3>
+        <div className="tns-popover-list">
+          {degreeOptions.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className="tns-popover-row"
+              onClick={() => {
+                onSearchChange((s) => ({ ...s, degree_level: opt.value }));
+                onPopoverChange("funding");
+              }}
+            >
+              <span className="tns-popover-icon">{opt.icon}</span>
+              <span className="tns-popover-row-text">
+                <span className="tns-popover-row-title">{opt.label}</span>
+                <span className="tns-popover-row-desc">{opt.desc}</span>
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
-    </div>
-  );
-}
+    ) : null;
 
-function ScholarshipCard({ opportunity }: { opportunity: OpportunitySummary }) {
-  const [saved, setSaved] = useState(false);
-
-  const badge = fundingBadge(opportunity);
-  const window = windowLabel(opportunity);
-  const flag = getCountryFlag(opportunity.country);
-
-  function toggleSave(event: React.MouseEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    setSaved((prev) => !prev);
-  }
+  const fundingPopover =
+    activePopover === "funding" ? (
+      <div
+        className="tns-popover-panel tns-popover-funding is-open"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Funding coverage"
+      >
+        <h3 className="tns-popover-title">Funding Coverage</h3>
+        <div className="tns-popover-list">
+          {fundingOptions.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className="tns-popover-row"
+              onClick={() => {
+                onSearchChange((s) => ({ ...s, funding_type: opt.value }));
+                onPopoverChange(null);
+              }}
+            >
+              <span className="tns-popover-icon">{opt.icon}</span>
+              <span className="tns-popover-row-text">
+                <span className="tns-popover-row-title">{opt.label}</span>
+                <span className="tns-popover-row-desc">{opt.desc}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    ) : null;
 
   return (
-    <Link className="home-card" to={"/catalogue/" + opportunity.id}>
-      {/* Visual / Image area with Airbnb card style */}
-      <div className={"home-card__visual scholarship-visual-" + visualTone(opportunity.country)}>
-        {badge ? (
-          <span className="home-card__badge">{badge}</span>
-        ) : null}
+    <div className={`tns-search-container ${isAnyActive ? "tns-search-container--open" : ""}`} ref={searchContainerRef}>
+      <div className="tns-mobile-airbnb-shell">
         <button
-          className={"home-card__heart " + (saved ? "home-card__heart--saved" : "")}
+          className="tns-mobile-start-search"
           type="button"
-          aria-label={saved ? "Remove from saved" : "Save scholarship"}
-          onClick={toggleSave}
+          onClick={() => onPopoverChange(activePopover ? null : "where")}
+          aria-expanded={isAnyActive}
         >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill={saved ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
-            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-          </svg>
-        </button>
-        <div className="home-card__visual-art" aria-hidden="true">
-          <span className="home-card__seal">{flag}</span>
-          <span className="home-card__document" />
-          <span className="home-card__ribbon" />
-        </div>
-        <div className="home-card__dots" aria-hidden="true">
-          <span className="home-card__dot home-card__dot--active" />
-          <span className="home-card__dot" />
-          <span className="home-card__dot" />
-        </div>
-        <span className="home-card__country-label" aria-hidden="true">{opportunity.country}</span>
-      </div>
-
-      {/* Strict Airbnb Typography Hierarchy */}
-      <div className="home-card__meta">
-        <div className="home-card__row-top">
-          <span className="home-card__location">{flag} {opportunity.country}</span>
-          <span className="home-card__verified" title="Officially verified scholarship source">
-            ★ {opportunity.verification_freshness === "recent" ? "4.98" : "4.92"}
+          <span className="tns-mobile-start-icon" aria-hidden="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
           </span>
-        </div>
-        <h3 className="home-card__title">{opportunity.name}</h3>
-        <p className="home-card__subtitle">{opportunity.provider_name} · {readableValue(opportunity.degree_level)}</p>
-        <p className={"home-card__deadline home-card__deadline--" + window.tone}>{window.text}</p>
-        <p className="home-card__price">
-          <strong>{opportunity.funding_display_label}</strong>
-          <span> · {scholarshipSignal(opportunity)}</span>
-        </p>
-      </div>
-    </Link>
-  );
-}
+          <span>Start your search</span>
+        </button>
 
-function ShelfRow({
-  title,
-  browseUrl,
-  items,
-  isLoading,
-}: {
-  title: string;
-  browseUrl: string;
-  items: OpportunitySummary[];
-  isLoading?: boolean;
-}) {
-  const railRef = useRef<HTMLDivElement>(null);
-
-  return (
-    <section className="home-shelf">
-      <div className="home-shelf__header">
-        <NavLink className="home-shelf__title" to={browseUrl}>
-          {title}
-          <span aria-hidden="true"> →</span>
-        </NavLink>
-        <div className="home-shelf__arrows">
-          <button
-            className="home-shelf__arrow"
-            type="button"
-            aria-label="Scroll left"
-            onClick={() => scrollShelf(railRef, "left")}
-          >
-            ‹
-          </button>
-          <button
-            className="home-shelf__arrow"
-            type="button"
-            aria-label="Scroll right"
-            onClick={() => scrollShelf(railRef, "right")}
-          >
-            ›
-          </button>
+        <div className="tns-mobile-category-tabs" aria-label="Scholarship search shortcuts">
+          <button type="button" className="tns-mobile-category-chip is-active">🎓 All</button>
+          <button type="button" className="tns-mobile-category-chip">🏛️ Degree</button>
+          <button type="button" className="tns-mobile-category-chip">💎 Funding</button>
+          <button type="button" className="tns-mobile-category-chip">🌍 Country</button>
         </div>
       </div>
 
-      <div className="home-shelf__rail" ref={railRef}>
-        {isLoading
-          ? Array.from({ length: 7 }).map((_, index) => (
-              <article className="home-card home-card--loading" key={index}>
-                <div className="home-card__visual scholarship-visual-global" />
-                <div className="home-card__meta">
-                  <span /><span /><span />
-                </div>
-              </article>
-            ))
-          : items.map((opportunity) => (
-              <ScholarshipCard key={opportunity.id} opportunity={opportunity} />
-            ))}
-      </div>
-    </section>
-  );
-}
-
-function DiscoveryFooter() {
-  return (
-    <section className="home-discovery-footer" aria-labelledby="home-discovery-title">
-      <h2 id="home-discovery-title">Inspiration for future applications</h2>
-      <div className="home-discovery-footer__grid">
-        {discoveryFooterGroups.map((group) => (
-          <div className="home-discovery-footer__group" key={group.title}>
-            <h3>{group.title}</h3>
-            <div className="home-discovery-footer__links">
-              {group.links.map((link) => {
-                const to = "to" in link ? link.to : toCatalogueUrl(link.search);
-                return (
-                  <NavLink className="home-discovery-footer__link" key={link.label} to={to}>
-                    <span>{link.label}</span>
-                    <small>{link.hint}</small>
-                  </NavLink>
-                );
-              })}
-            </div>
+      {/* Desktop Airbnb Search Pill */}
+      <form
+        className={`tns-airbnb-search-pill ${isAnyActive ? "has-active-segment" : ""}`}
+        onSubmit={handleSubmit}
+        role="search"
+        aria-label="Search verified scholarships"
+      >
+        {/* Segment 1: Where */}
+        <div
+          className={`tns-airbnb-segment segment-where ${activePopover === "where" ? "is-active" : ""}`}
+          onClick={() => openPopover("where")}
+          onKeyDown={handleSegmentKey("where")}
+          role="button"
+          tabIndex={0}
+        >
+          <div className="tns-segment-text-col">
+            <span className="tns-segment-label">Where</span>
+            <span className={`tns-segment-input ${search.country ? "is-filled" : ""}`}>
+              {search.country || "Search destinations"}
+            </span>
           </div>
-        ))}
+          <div className="tns-search-divider" aria-hidden="true" />
+        </div>
+
+        {/* Segment 2: Degree Level */}
+        <div
+          className={`tns-airbnb-segment segment-degree ${activePopover === "degree" ? "is-active" : ""}`}
+          onClick={() => openPopover("degree")}
+          onKeyDown={handleSegmentKey("degree")}
+          role="button"
+          tabIndex={0}
+        >
+          <div className="tns-segment-text-col">
+            <span className="tns-segment-label">Degree level</span>
+            <span className={`tns-segment-input ${search.degree_level ? "is-filled" : ""}`}>
+              {search.degree_level
+                ? degreeOptions.find((d) => d.value === search.degree_level)?.label
+                : "Bachelor's, Master's, PhD"}
+            </span>
+          </div>
+          <div className="tns-search-divider" aria-hidden="true" />
+        </div>
+
+        {/* Segment 3: Funding Type + Search Button Wrap */}
+        <div
+          className={`tns-airbnb-segment segment-funding ${activePopover === "funding" ? "is-active" : ""}`}
+          onClick={() => openPopover("funding")}
+          onKeyDown={handleSegmentKey("funding")}
+          role="button"
+          tabIndex={0}
+        >
+          <div className="tns-segment-text-col">
+            <span className="tns-segment-label">Funding type</span>
+            <span className={`tns-segment-input ${search.funding_type ? "is-filled" : ""}`}>
+              {search.funding_type
+                ? fundingOptions.find((f) => f.value === search.funding_type)?.label
+                : "Fully funded, Partial, etc."}
+            </span>
+          </div>
+
+          {/* Search Button wrapped inside segment 3 */}
+          <button
+            type="submit"
+            className="tns-search-submit-btn"
+            aria-label="Search scholarships"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span className="tns-search-btn-text">Search</span>
+          </button>
+        </div>
+      </form>
+
+      <div className="tns-desktop-popover-layer" aria-live="polite">
+        {wherePopover}
+        {degreePopover}
+        {fundingPopover}
       </div>
-    </section>
+
+      {/* Mobile Search Card (Hidden on Desktop) */}
+      <form
+        className={`tns-mobile-search-card ${isAnyActive ? "tns-mobile-search-card--open" : ""}`}
+        onSubmit={handleSubmit}
+        role="dialog"
+        aria-label="Scholarship search"
+      >
+        <div className="tns-mobile-sheet-top">
+          <h3>Where?</h3>
+          <button
+            type="button"
+            className="tns-mobile-sheet-close"
+            onClick={() => onPopoverChange(null)}
+            aria-label="Close scholarship search"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="tns-mobile-search-row">
+          <span className="tns-mobile-search-icon">🔍</span>
+          <div className="tns-mobile-search-field">
+            <label className="tns-mobile-field-label">Where</label>
+            <input
+              type="text"
+              className="tns-mobile-input"
+              placeholder="Search destinations"
+              value={search.country}
+              onChange={(e) => onSearchChange((s) => ({ ...s, country: e.target.value }))}
+            />
+          </div>
+        </div>
+
+        <div className="tns-mobile-search-row">
+          <span className="tns-mobile-search-icon">🎓</span>
+          <div className="tns-mobile-search-field">
+            <label className="tns-mobile-field-label">Degree level</label>
+            <select
+              className="tns-mobile-select"
+              value={search.degree_level}
+              onChange={(e) => onSearchChange((s) => ({ ...s, degree_level: e.target.value as DegreeLevel }))}
+            >
+              {degreeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="tns-mobile-search-row">
+          <span className="tns-mobile-search-icon">💎</span>
+          <div className="tns-mobile-search-field">
+            <label className="tns-mobile-field-label">Funding type</label>
+            <select
+              className="tns-mobile-select"
+              value={search.funding_type}
+              onChange={(e) => onSearchChange((s) => ({ ...s, funding_type: e.target.value as FundingType }))}
+            >
+              <option value="">Fully funded, Partial, etc.</option>
+              <option value="full">Fully Funded</option>
+              <option value="partial">Partial Aid</option>
+              <option value="tuition_only">Tuition Only</option>
+              <option value="stipend_only">Stipend Only</option>
+            </select>
+          </div>
+        </div>
+
+        <button type="submit" className="tns-mobile-search-btn">
+          <span>Search scholarships</span>
+        </button>
+      </form>
+    </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Main Page                                                          */
+/*  Main HomePage Component                                           */
 /* ------------------------------------------------------------------ */
 
 export function HomePage() {
-  const { user, isRestoring } = useAuth();
-  const [activeCategory, setActiveCategory] = useState(0);
-  const { data, error, isLoading } = useServerQuery<OpportunitySearchResponse>(
-    "homepage-opportunities",
-    (signal) =>
-      searchOpportunities(
-        { ...defaultCatalogueFilters, availability: "all", limit: "20" },
-        0,
-        signal,
-      ),
-  );
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [savedFavorites, setSavedFavorites] = useState<Set<string>>(new Set(["daad-epos"]));
 
-  const opportunities = data?.items ?? [];
-  const verifiedTotal = data?.pagination.total ?? 0;
-
-  const openOrPriority = useMemo(
-    () =>
-      opportunities
-        .filter((item) => item.application_window_state !== "closed")
-        .slice(0, 8),
-    [opportunities],
-  );
-
-  const fullyFunded = useMemo(
-    () =>
-      opportunities
-        .filter(isFullyFunded)
-        .slice(0, 8),
-    [opportunities],
-  );
-
-  const fullyFundedBachelor = useMemo(
-    () =>
-      opportunities
-        .filter((item) => isFullyFunded(item) && hasDegree(item, "bachelors"))
-        .slice(0, 8),
-    [opportunities],
-  );
-
-  const fullyFundedAsia = useMemo(
-    () =>
-      opportunities
-        .filter((item) => isFullyFunded(item) && isAsiaOpportunity(item))
-        .slice(0, 8),
-    [opportunities],
-  );
-
-  const ukEuropeOpportunities = useMemo(
-    () =>
-      opportunities
-        .filter((item) => {
-          const c = item.country.toLowerCase();
-          return c.includes("kingdom") || c.includes("germany") || c.includes("france") || c.includes("europe");
-        })
-        .slice(0, 8),
-    [opportunities],
-  );
-
-  const remaining = useMemo(
-    () => opportunities.slice(0, 8),
-    [opportunities],
-  );
-
-  const displayShelfTitle = verifiedTotal
-    ? verifiedTotal + " verified scholarships"
-    : null;
+  function toggleFavorite(id: string, event: React.MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    setSavedFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   return (
-    <main className="home-page">
-      {/* -------- Search Pill -------- */}
-      <section className="home-hero">
-        <div className="page-width">
-          <SearchPill />
-        </div>
-      </section>
-
-      {/* -------- Category Ribbon -------- */}
-      <section className="home-ribbon-bar">
-        <div className="page-width">
-          <CategoryRibbon activeIndex={activeCategory} onSelect={setActiveCategory} />
-        </div>
-      </section>
-
-      {/* -------- Curated Shelf Rows -------- */}
-      <div className="page-width home-feed">
-        {error ? (
-          <div className="catalogue-message error-message" role="alert">
-            We could not load featured scholarships right now. The full catalogue is still available.
+    <main className="tns-home-layout">
+      {/* ------------------------------------------------------------ */}
+      {/*  HERO SECTION (Clean document flow directly below header)     */}
+      {/* ------------------------------------------------------------ */}
+      <section className="tns-hero-section">
+        <div className="page-width tns-hero-content">
+          <div className="tns-hero-sparkles-container">
+            <span className="tns-sparkle tns-sparkle-left" aria-hidden="true">✦</span>
+            <h1 className="tns-hero-heading">
+              <span className="tns-hero-title-dark">Find scholarships.</span>
+              <br />
+              <span className="tns-hero-title-crimson">Build stronger applications.</span>
+            </h1>
+            <span className="tns-sparkle tns-sparkle-right" aria-hidden="true">✦</span>
           </div>
-        ) : null}
 
-        {/* Shelf 1: Open or priority */}
-        {displayShelfTitle ? (
-          <ShelfRow
-            title={"Currently open scholarships · " + displayShelfTitle}
-            browseUrl="/catalogue"
-            items={openOrPriority.length ? openOrPriority : remaining}
-            isLoading={isLoading}
-          />
-        ) : isLoading ? (
-          <ShelfRow
-            title="Loading scholarships…"
-            browseUrl="/catalogue"
-            items={[]}
-            isLoading
-          />
-        ) : null}
+          <p className="tns-hero-subtitle">
+            Discover 50,000+ verified scholarships worldwide
+            <br />
+            and get AI-powered guidance to win more.
+          </p>
 
-        {/* Shelf 2: Fully funded */}
-        {!isLoading && fullyFunded.length ? (
-          <ShelfRow
-            title="Fully funded scholarships"
-            browseUrl={toCatalogueUrl({ funding_type: "full" })}
-            items={fullyFunded}
-          />
-        ) : null}
+          {/* Sub-CTA Pill */}
+          <div className="tns-hero-sub-cta">
+            <NavLink
+              to={user ? "/matches" : "/profile"}
+              className="tns-match-profile-btn"
+            >
+              <span className="tns-sparkle-icon" aria-hidden="true">✨</span>
+              <span>Find scholarships that match my profile</span>
+            </NavLink>
+          </div>
+        </div>
+      </section>
 
-        {/* Shelf 3: Fully funded bachelor */}
-        {!isLoading && fullyFundedBachelor.length ? (
-          <ShelfRow
-            title="Fully funded bachelor"
-            browseUrl={toCatalogueUrl({ degree_level: "bachelors", funding_type: "full" })}
-            items={fullyFundedBachelor}
-          />
-        ) : null}
+      {/* ------------------------------------------------------------ */}
+      {/*  AI-POWERED MATCHING FEATURE BANNER                          */}
+      {/* ------------------------------------------------------------ */}
+      <section className="page-width tns-ai-banner-wrapper">
+        <div className="tns-ai-banner">
+          <div className="tns-ai-banner-left">
+            <div className="tns-ai-badge">
+              <span aria-hidden="true">✨</span>
+              <span>AI POWERED</span>
+            </div>
 
-        {/* Shelf 4: Fully funded in Asia */}
-        {!isLoading && fullyFundedAsia.length ? (
-          <ShelfRow
-            title="Fully funded in Asia"
-            browseUrl={toCatalogueUrl({ country: "Malaysia", funding_type: "full" })}
-            items={fullyFundedAsia}
-          />
-        ) : null}
-
-        {/* Shelf 5: UK & Europe Awards */}
-        {!isLoading && ukEuropeOpportunities.length ? (
-          <ShelfRow
-            title="Top awards in United Kingdom & Europe"
-            browseUrl={toCatalogueUrl({ country: "United Kingdom" })}
-            items={ukEuropeOpportunities}
-          />
-        ) : null}
-
-        {/* -------- Country Destinations -------- */}
-        <section className="home-country-band">
-          <div className="home-shelf__header">
-            <h2 className="home-shelf__title home-shelf__title--static">
-              Explore by study abroad destination
+            <h2 className="tns-ai-banner-title">
+              Not sure which scholarships you qualify for?
             </h2>
-          </div>
-          <div className="home-country-grid">
-            {spotlightCountries.map((country) => (
-              <NavLink
-                className={"home-country-card scholarship-visual-" + visualTone(country.label)}
-                key={country.label}
-                to={toCatalogueUrl({ country: country.label })}
-              >
-                <span className="home-country-card__flag">{getCountryFlag(country.label)}</span>
-                <span className="home-country-card__name">{country.label}</span>
-                <strong className="home-country-card__hint">{country.hint}</strong>
-              </NavLink>
-            ))}
-          </div>
-        </section>
 
-        {/* -------- AI Strip -------- */}
-        <section className="home-ai-strip">
-          <div>
-            <p className="eyebrow">Scholarship AI, not general chat</p>
-            <h2>Not sure which scholarships you qualify for?</h2>
-            <p>
-              The assistant analyzes official grant criteria from verified scholarship records
-              and your structured profile, so advice stays tied to real requirements.
+            <p className="tns-ai-banner-desc">
+              Our AI analyzes verified criteria and your profile to surface the best
+              matches and give you personalized guidance.
+            </p>
+
+            <div className="tns-ai-banner-actions">
+              <NavLink to="/assistant" className="tns-btn-crimson">
+                <span>Open assistant</span>
+                <span aria-hidden="true">›</span>
+              </NavLink>
+              <button
+                type="button"
+                className="tns-btn-ghost-white"
+                onClick={() => {
+                  const el = document.getElementById("how-it-works");
+                  el?.scrollIntoView({ behavior: "smooth" });
+                }}
+              >
+                <span>See how matching works</span>
+                <span className="tns-play-icon" aria-hidden="true">▶</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Right Preview Match Cards with Circular Progress Meters */}
+          <div className="tns-ai-banner-right">
+            {/* Card 1: 87% Match */}
+            <div className="tns-ai-gauge-card tns-gauge-card--side tns-gauge-card--left">
+              <div className="tns-circular-meter">
+                <svg viewBox="0 0 36 36" className="tns-circular-chart">
+                  <path
+                    className="tns-circle-bg"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <path
+                    className="tns-circle-stroke tns-stroke-cyan"
+                    strokeDasharray="87, 100"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                </svg>
+                <div className="tns-meter-text">
+                  <span className="tns-meter-pct">87%</span>
+                  <span className="tns-meter-label">Match</span>
+                </div>
+              </div>
+              <h3 className="tns-gauge-card-title">DAAD EPOS Scholarship</h3>
+              <span className="tns-gauge-card-badge">Fully funded</span>
+            </div>
+
+            {/* Card 2: 94% Match (Hero Active Card with Glow) */}
+            <div className="tns-ai-gauge-card tns-gauge-card--hero">
+              <div className="tns-circular-meter tns-circular-meter--large">
+                <svg viewBox="0 0 36 36" className="tns-circular-chart">
+                  <path
+                    className="tns-circle-bg"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <path
+                    className="tns-circle-stroke tns-stroke-teal"
+                    strokeDasharray="94, 100"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                </svg>
+                <div className="tns-meter-text">
+                  <span className="tns-meter-pct tns-meter-pct--large">94%</span>
+                  <span className="tns-meter-label">Match</span>
+                </div>
+              </div>
+              <h3 className="tns-gauge-card-title tns-gauge-card-title--hero">
+                Erasmus Mundus Joint Master
+              </h3>
+              <span className="tns-gauge-card-badge tns-badge-mint">Fully funded</span>
+            </div>
+
+            {/* Card 3: 72% Match */}
+            <div className="tns-ai-gauge-card tns-gauge-card--side tns-gauge-card--right">
+              <div className="tns-circular-meter">
+                <svg viewBox="0 0 36 36" className="tns-circular-chart">
+                  <path
+                    className="tns-circle-bg"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <path
+                    className="tns-circle-stroke tns-stroke-blue"
+                    strokeDasharray="72, 100"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                </svg>
+                <div className="tns-meter-text">
+                  <span className="tns-meter-pct">72%</span>
+                  <span className="tns-meter-label">Match</span>
+                </div>
+              </div>
+              <h3 className="tns-gauge-card-title">Commonwealth Master's</h3>
+              <span className="tns-gauge-card-badge">Partial funding</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------------ */}
+      {/*  FEATURED SCHOLARSHIPS SECTION                               */}
+      {/* ------------------------------------------------------------ */}
+      <section className="page-width tns-section">
+        <div className="tns-section-header">
+          <h2 className="tns-section-title">Featured scholarships</h2>
+          <NavLink to="/catalogue" className="tns-section-link">
+            <span>View all scholarships</span>
+            <span aria-hidden="true">›</span>
+          </NavLink>
+        </div>
+
+        <div className="tns-featured-carousel">
+          {featuredScholarshipsData.map((item) => {
+            const isFav = savedFavorites.has(item.id);
+            const matchLabel = user ? item.matchScore : "Check eligibility";
+            return (
+              <div key={item.id} className="tns-scholarship-card">
+                <div className="tns-card-top-row">
+                  <div className="tns-card-country-badge">
+                    <span className="tns-flag" aria-hidden="true">{item.flag}</span>
+                    <span className="tns-country-name">{item.country}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`tns-favorite-btn ${isFav ? "active" : ""}`}
+                    onClick={(e) => toggleFavorite(item.id, e)}
+                    aria-label={isFav ? `Remove ${item.name} from saved` : `Save ${item.name}`}
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill={isFav ? "#E11D48" : "none"}
+                      stroke={isFav ? "#E11D48" : "currentColor"}
+                      strokeWidth="2"
+                    >
+                      <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+                    </svg>
+                  </button>
+                </div>
+
+                <h3 className="tns-card-title">
+                  <Link to={`/catalogue?country=${encodeURIComponent(item.country)}`}>
+                    {item.name}
+                  </Link>
+                </h3>
+
+                <div className="tns-card-meta-list">
+                  <div className="tns-card-meta-item">
+                    <span className="tns-meta-icon" aria-hidden="true">🎓</span>
+                    <span>{item.degreeLevel}</span>
+                  </div>
+                  <div className="tns-card-meta-item">
+                    <span className="tns-meta-icon" aria-hidden="true">📅</span>
+                    <span className="tns-meta-deadline">
+                      <span className="tns-deadline-label">Deadline: </span>
+                      {item.deadline}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="tns-card-footer">
+                  <span className={`tns-match-pill ${user && item.isFullMatch ? "tns-match-pill--full" : ""} ${!user ? "tns-match-pill--locked" : ""}`}>
+                    {matchLabel}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------------ */}
+      {/*  BROWSE BY DESTINATION SECTION                               */}
+      {/* ------------------------------------------------------------ */}
+      <section className="page-width tns-section">
+        <div className="tns-section-header">
+          <h2 className="tns-section-title">Browse by destination</h2>
+          <NavLink to="/catalogue" className="tns-section-link">
+            <span>See all destinations</span>
+            <span aria-hidden="true">›</span>
+          </NavLink>
+        </div>
+
+        <div className="tns-destination-grid">
+          {destinationCardsData.map((dest) => {
+            const Landmark = dest.svgComponent;
+            return (
+              <button
+                key={dest.id}
+                type="button"
+                className={`tns-destination-card ${dest.gradientClass}`}
+                onClick={() => navigate(`/catalogue?country=${encodeURIComponent(dest.searchCountry)}`)}
+              >
+                <div className="tns-dest-card-content">
+                  <h3 className="tns-dest-name">{dest.shortName}</h3>
+                  <p className="tns-dest-count">{dest.opportunitiesCount}</p>
+                  <p className="tns-dest-subtitle">{dest.subtitle}</p>
+
+                  <div className="tns-dest-arrow-btn" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                      <polyline points="12 5 19 12 12 19" />
+                    </svg>
+                  </div>
+                </div>
+
+                <div className="tns-dest-landmark-art" aria-hidden="true">
+                  <Landmark />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------------ */}
+      {/*  HOW IT WORKS SECTION                                        */}
+      {/* ------------------------------------------------------------ */}
+      <section id="how-it-works" className="page-width tns-section tns-how-section">
+        <h2 className="tns-section-title tns-text-center">How it works</h2>
+
+        <div className="tns-how-grid">
+          {howItWorksSteps.map((step) => (
+            <div key={step.number} className="tns-how-card">
+              <div className="tns-how-card-header">
+                <span className="tns-step-title">{step.title}</span>
+                <div className="tns-how-card-icon-wrapper">{step.icon}</div>
+              </div>
+              <p className="tns-how-card-desc">{step.description}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------------ */}
+      {/*  TRUST & METRICS BAR                                         */}
+      {/* ------------------------------------------------------------ */}
+      <section className="page-width tns-trust-bar-section">
+        <div className="tns-trust-bar">
+          {trustMetrics.map((m, idx) => (
+            <div key={idx} className="tns-trust-item">
+              <span className="tns-trust-icon" aria-hidden="true">{m.icon}</span>
+              <div className="tns-trust-text">
+                <strong className="tns-trust-bold">{m.bold}</strong>
+                <span className="tns-trust-label">{m.label}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ------------------------------------------------------------ */}
+      {/*  COMPREHENSIVE FOOTER                                        */}
+      {/* ------------------------------------------------------------ */}
+      <footer className="tns-footer">
+        <div className="page-width tns-footer-content">
+          <div className="tns-footer-brand-col">
+            <h3 style={{ color: "var(--tns-crimson)", fontWeight: 800, fontSize: "1.2rem" }}>the next scholar</h3>
+            <p className="tns-footer-tagline">
+              AI-powered scholarship matching to help you study anywhere.
             </p>
           </div>
-          <div className="home-ai-actions">
-            <NavLink className="button button-primary" to={user ? "/assistant" : "/auth"}>
-              {isRestoring ? "Preparing..." : user ? "Open assistant" : "Create workspace"}
-            </NavLink>
-            <NavLink className="button button-quiet" to={user ? "/dashboard" : "/catalogue"}>
-              {user ? "Open workspace" : "Browse first"}
-            </NavLink>
+
+          <div className="tns-footer-links-grid">
+            <div className="tns-footer-col">
+              <h4 className="tns-footer-heading">Explore</h4>
+              <ul className="tns-footer-list">
+                <li><NavLink to="/catalogue">All Scholarships</NavLink></li>
+                <li><NavLink to="/catalogue?country=Germany">By Country</NavLink></li>
+                <li><NavLink to="/catalogue?degree_level=masters">By Degree</NavLink></li>
+                <li><NavLink to="/catalogue?funding_type=full">By Funding Type</NavLink></li>
+              </ul>
+            </div>
+
+            <div className="tns-footer-col">
+              <h4 className="tns-footer-heading">Company</h4>
+              <ul className="tns-footer-list">
+                <li><NavLink to="/">About Us</NavLink></li>
+                <li><NavLink to="/">Careers</NavLink></li>
+                <li><NavLink to="/">Blog</NavLink></li>
+                <li><NavLink to="/">Press</NavLink></li>
+              </ul>
+            </div>
+
+            <div className="tns-footer-col">
+              <h4 className="tns-footer-heading">Support</h4>
+              <ul className="tns-footer-list">
+                <li><NavLink to="/">Help Center</NavLink></li>
+                <li><NavLink to="/">Contact Us</NavLink></li>
+                <li><NavLink to="/">Privacy Policy</NavLink></li>
+                <li><NavLink to="/">Terms of Service</NavLink></li>
+              </ul>
+            </div>
+
+            <div className="tns-footer-col" id="for-students">
+              <h4 className="tns-footer-heading">For Students</h4>
+              <ul className="tns-footer-list">
+                <li><NavLink to="/#how-it-works">How it Works</NavLink></li>
+                <li><NavLink to="/assistant">Application Tips</NavLink></li>
+                <li><NavLink to="/matches">Success Stories</NavLink></li>
+                <li><NavLink to="/applications">Scholarship Tracker</NavLink></li>
+              </ul>
+            </div>
           </div>
-        </section>
+        </div>
 
-        <DiscoveryFooter />
-      </div>
-
-      {/* -------- Floating Map Action Button -------- */}
-      <NavLink className="home-floating-fab" to="/catalogue">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
-          <line x1="8" y1="2" x2="8" y2="18" />
-          <line x1="16" y1="6" x2="16" y2="22" />
-        </svg>
-        Browse all scholarships
-      </NavLink>
+        <div className="tns-footer-bottom">
+          <p>© 2025 The Next Scholar (thenextscholar.com). All rights reserved.</p>
+        </div>
+      </footer>
     </main>
   );
 }

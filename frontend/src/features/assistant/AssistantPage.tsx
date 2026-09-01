@@ -90,6 +90,7 @@ export function AssistantPage() {
   const [activeTool, setActiveTool] = useState("advisor");
   const [activeFocus, setActiveFocus] = useState<string | null>(searchParams.get("opportunity"));
   const [searchFilter, setSearchFilter] = useState("");
+  const [sourceScope, setSourceScope] = useState<"gov" | "web">("gov");
 
   useEffect(() => {
     const initialPrompt = searchParams.get("prompt");
@@ -111,10 +112,12 @@ export function AssistantPage() {
   if (!user) return <main className="page-width loading-page" aria-live="polite">Restoring your secure session…</main>;
 
   async function loadPreferences(signal?: AbortSignal) {
-    setPreferences(await apiClient.request<Preferences>("/assistant/preferences", { signal }));
+    const value = await apiClient.request<Preferences>("/assistant/preferences", { signal });
+    setPreferences(value);
   }
   async function loadConversations(signal?: AbortSignal) {
-    setConversations(await apiClient.request<Conversation[]>("/assistant/conversations", { signal }));
+    const value = await apiClient.request<Conversation[]>("/assistant/conversations", { signal });
+    setConversations(value);
   }
   async function consent() {
     const value = await apiClient.request<Preferences>("/assistant/preferences", {
@@ -166,10 +169,19 @@ export function AssistantPage() {
     setLoading(true);
     setNotice(null);
     try {
-      const fullQuestion = activeFocus ? `[Regarding ${activeFocus}]: ${question}` : question;
+      const isUuid = activeFocus && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(activeFocus);
+      const selected_opportunity_ids = isUuid ? [activeFocus] : [];
+      const fullQuestion = !isUuid && activeFocus ? `[Regarding ${activeFocus}]: ${question}` : question;
+
       const result = await apiClient.request<Answer>("/assistant/answers", {
         method: "POST",
-        body: JSON.stringify({ question: fullQuestion, use_profile: useProfile, use_application_data: useApplicationData }),
+        body: JSON.stringify({
+          question: fullQuestion,
+          conversation_id: answer?.conversation_id ?? undefined,
+          use_profile: useProfile,
+          use_application_data: useApplicationData,
+          selected_opportunity_ids,
+        }),
       });
       setAnswer(result);
       if (result.status === "failed") {
@@ -313,6 +325,37 @@ export function AssistantPage() {
               </div>
             ) : null}
 
+            {/* Privacy & History Management */}
+            <div className="copilot-privacy-panel">
+              <span className="nav-group-title">Privacy & Data</span>
+              <div className="copilot-privacy-buttons">
+                <button
+                  type="button"
+                  className="copilot-privacy-action-btn"
+                  onClick={() => void toggleHistory()}
+                  title="Toggle session history retention"
+                >
+                  {preferences?.history_enabled ? "🛡️ History: On" : "🚫 History: Off"}
+                </button>
+                <button
+                  type="button"
+                  className="copilot-privacy-action-btn"
+                  onClick={() => void exportData()}
+                  title="Export assistant chat history as JSON"
+                >
+                  📥 Export Data
+                </button>
+                <button
+                  type="button"
+                  className="copilot-privacy-action-btn copilot-privacy-action-btn--danger"
+                  onClick={() => void deleteAllData()}
+                  title="Permanently erase all conversations"
+                >
+                  🗑️ Clear All
+                </button>
+              </div>
+            </div>
+
           </div>
 
           {/* Student Profile Footer */}
@@ -358,10 +401,18 @@ export function AssistantPage() {
 
             <div className="top-bar-right-controls">
               <div className="source-scope-toggle">
-                <button type="button" className="scope-btn active">
+                <button
+                  type="button"
+                  className={`scope-btn ${sourceScope === "gov" ? "active" : ""}`}
+                  onClick={() => setSourceScope("gov")}
+                >
                   ✓ Verified Government RAG
                 </button>
-                <button type="button" className="scope-btn">
+                <button
+                  type="button"
+                  className={`scope-btn ${sourceScope === "web" ? "active" : ""}`}
+                  onClick={() => setSourceScope("web")}
+                >
                   🌐 Global Edu Web
                 </button>
               </div>

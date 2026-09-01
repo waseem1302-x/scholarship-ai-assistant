@@ -4,8 +4,12 @@ import {
   catalogueSearch,
   deadlineLabel,
   filtersFromSearch,
+  formatCardDeadline,
+  getDestinationImage,
+  getInclusionsSummary,
+  getOpportunityBadges,
 } from "./catalogue";
-import { defaultCatalogueFilters } from "./types";
+import { defaultCatalogueFilters, type OpportunitySummary } from "./types";
 
 describe("catalogue query contract", () => {
   it("keeps open-now enabled and includes only selected structured filters", () => {
@@ -52,5 +56,55 @@ describe("catalogue query contract", () => {
   it("presents unknown and close deadlines without declaring an opportunity open", () => {
     expect(deadlineLabel(null)).toBe("Deadline varies");
     expect(deadlineLabel(new Date(Date.now() + 86_400_000).toISOString())).toBe("1 days left");
+  });
+
+  it("resolves destination images based on country and program name", () => {
+    const ukImg = getDestinationImage("United Kingdom", "Chevening Scholarships");
+    const deImg = getDestinationImage("Germany", "DAAD EPOS");
+    const jpImg = getDestinationImage("Japan", "MEXT Research");
+    const fallbackImg = getDestinationImage("Somewhere", "Generic Scholarship");
+
+    expect(ukImg).toContain("unsplash.com");
+    expect(deImg).toContain("unsplash.com");
+    expect(jpImg).toContain("unsplash.com");
+    expect(fallbackImg).toContain("unsplash.com");
+  });
+
+  it("computes opportunity badges for fully funded top awards", () => {
+    const opp: OpportunitySummary = {
+      id: "test-1",
+      name: "Chevening Scholarships",
+      provider_name: "UK Government",
+      university_name: null,
+      country: "United Kingdom",
+      degree_level: "masters",
+      application_deadline: "2026-11-05T00:00:00Z",
+      application_opening_date: "2026-08-01T00:00:00Z",
+      application_timezone: "UTC",
+      effective_cycle_id: "cycle-1",
+      funding_type: "full",
+      funding_classification: "fully_funded",
+      funding_summary: "Tuition, living costs, travel",
+      verification_status: "officially_verified",
+      last_verified_at: "2026-08-15T00:00:00Z",
+      official_source_url: "https://chevening.org",
+      application_window_state: "open",
+      source_is_fresh: true,
+      verification_freshness: "recent",
+      funding_display_label: "100% Full Ride",
+      catalogue_decision_tier: "decision_ready",
+      structured_eligibility_complete: true,
+    };
+
+    const badges = getOpportunityBadges(opp);
+    expect(badges.fundingBadge.label).toBe("Fully Funded");
+    expect(badges.fundingBadge.tier).toBe("full");
+    expect(badges.highlightBadge?.label).toBe("Top opportunity");
+
+    const inclusions = getInclusionsSummary(opp);
+    expect(inclusions).toBe("Tuition, living costs, travel");
+
+    const formattedDeadline = formatCardDeadline(opp.application_deadline);
+    expect(formattedDeadline).toContain("Nov 5, 2026");
   });
 });

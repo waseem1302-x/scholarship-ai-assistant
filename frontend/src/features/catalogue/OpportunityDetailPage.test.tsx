@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   createApplication: vi.fn(),
   queryState: { current: null as unknown },
+  matchesState: { current: null as unknown },
 }));
 
 vi.mock("../../auth/AuthProvider", () => ({
@@ -15,7 +16,17 @@ vi.mock("../../auth/AuthProvider", () => ({
   }),
 }));
 vi.mock("../../hooks/useServerQuery", () => ({
-  useServerQuery: () => mocks.queryState.current,
+  useServerQuery: (key: unknown) => {
+    if (key === "detail-student-matches") {
+      return {
+        data: mocks.matchesState.current ?? [],
+        error: null,
+        isLoading: false,
+        reload: vi.fn(),
+      };
+    }
+    return mocks.queryState.current;
+  },
 }));
 vi.mock("../workspace/workspace", () => ({
   createApplication: mocks.createApplication,
@@ -127,5 +138,34 @@ describe("OpportunityDetailPage", () => {
     );
 
     expect(screen.queryByText("Discuss this scholarship")).not.toBeInTheDocument();
+  });
+
+  it("correctly renders percentage match score without 100x multiplication", () => {
+    mocks.matchesState.current = [
+      {
+        opportunity: { id: "opportunity-1" },
+        match_score: 85,
+        fit_score: 85,
+        fit_band: "high",
+        eligibility_status: "eligible",
+        eligibility_failures: [],
+        failed_criteria: [],
+        unknown_criteria: [],
+        explanation: { satisfied: ["Degree requirement met"], missing: [], uncertain: [], next_steps: [] },
+        warnings: [],
+      },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={["/catalogue/opportunity-1"]}>
+        <Routes>
+          <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("85%")).toBeInTheDocument();
+    expect(screen.queryByText("8500%")).not.toBeInTheDocument();
+    expect(screen.getByText("Strong Candidate Fit")).toBeInTheDocument();
   });
 });

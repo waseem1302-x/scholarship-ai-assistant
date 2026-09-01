@@ -1,57 +1,88 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const queryState = vi.hoisted(() => ({ current: null as unknown }));
+const authState = vi.hoisted(() => ({
+  user: null as { email: string; role: string } | null,
+}));
 
 vi.mock("../../auth/AuthProvider", () => ({
-  useAuth: () => ({ user: null, isRestoring: false }),
-}));
-vi.mock("../../hooks/useServerQuery", () => ({
-  useServerQuery: () => queryState.current,
+  useAuth: () => ({ user: authState.user, isRestoring: false }),
 }));
 
-import { HomePage } from "./HomePage";
+import { HomePage, SearchPill, initialSearch, type ActivePopover, type HomeSearchState } from "./HomePage";
 
-describe("HomePage", () => {
+function SearchPillHarness() {
+  const [search, setSearch] = useState<HomeSearchState>(initialSearch);
+  const [activePopover, setActivePopover] = useState<ActivePopover>(null);
+
+  return (
+    <SearchPill
+      search={search}
+      activePopover={activePopover}
+      onSearchChange={setSearch}
+      onPopoverChange={setActivePopover}
+    />
+  );
+}
+
+describe("HomePage - The Next Scholar", () => {
   beforeEach(() => {
-    queryState.current = {
-      data: null,
-      error: null,
-      isLoading: true,
-      reload: vi.fn(),
-    };
+    authState.user = null;
   });
 
   afterEach(cleanup);
 
-  it("does not claim a catalogue size while the catalogue count is unknown", () => {
+  it("renders the hero section with serif headline and crimson accent", () => {
     render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
     );
 
-    expect(screen.queryByText(/verified scholarships/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Find scholarships.")).toBeInTheDocument();
+    expect(screen.getByText("Build stronger applications.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Discover 50,000\+ verified scholarships worldwide/i),
+    ).toBeInTheDocument();
   });
 
-  it("uses the catalogue response as the displayed scholarship count", () => {
-    queryState.current = {
-      data: {
-        items: [],
-        pagination: {
-          total: 50,
-          count: 0,
-          limit: 20,
-          offset: 0,
-          has_next: false,
-          has_previous: false,
-        },
-      },
-      error: null,
-      isLoading: false,
-      reload: vi.fn(),
+  it("renders the AI-powered matching banner with circular gauges", () => {
+    render(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByText("AI POWERED")).toBeInTheDocument();
+    expect(screen.getByText(/Not sure which scholarships you qualify for\?/i)).toBeInTheDocument();
+    expect(screen.getByText("87%")).toBeInTheDocument();
+    expect(screen.getByText("94%")).toBeInTheDocument();
+    expect(screen.getByText("72%")).toBeInTheDocument();
+  });
+
+  it("renders featured scholarships without personalized match scores before login", () => {
+    render(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByText("Featured scholarships")).toBeInTheDocument();
+    expect(screen.getByText("DAAD Development-Related Postgraduate Courses")).toBeInTheDocument();
+    expect(screen.getByText("Fulbright Foreign Student Program")).toBeInTheDocument();
+    expect(screen.getByText("Chevening Scholarships 2025/26")).toBeInTheDocument();
+    expect(screen.queryByText("Full Match")).not.toBeInTheDocument();
+    expect(screen.queryByText("90% Match")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Check eligibility")).toHaveLength(5);
+  });
+
+  it("renders personalized featured match scores after login", () => {
+    authState.user = {
+      email: "student@thenextscholar.com",
+      role: "student",
     };
 
     render(
@@ -60,89 +91,93 @@ describe("HomePage", () => {
       </BrowserRouter>,
     );
 
-    expect(screen.getByText(/50 verified scholarships/i)).toBeInTheDocument();
+    expect(screen.getByText("Full Match")).toBeInTheDocument();
+    expect(screen.getAllByText("90% Match")).toHaveLength(2);
   });
 
-  it("presents the scholarship marketplace rows and discovery footer", () => {
-    queryState.current = {
-      data: {
-        items: [
-          {
-            id: "mext",
-            name: "MEXT University Recommendation",
-            provider_name: "Japanese Government",
-            university_name: "University of Tokyo",
-            country: "Japan",
-            degree_level: "bachelors",
-            degree_levels: ["bachelors"],
-            application_deadline: "2026-12-01",
-            application_opening_date: "2026-09-01",
-            application_timezone: "Asia/Tokyo",
-            effective_cycle_id: "2027",
-            funding_type: "full",
-            funding_classification: "fully_funded",
-            funding_summary: "Tuition, stipend, and travel",
-            verification_status: "officially_verified",
-            last_verified_at: "2026-08-31T00:00:00Z",
-            official_source_url: "https://example.edu/mext",
-            application_window_state: "open",
-            source_is_fresh: true,
-            verification_freshness: "recent",
-            funding_display_label: "Fully funded",
-            catalogue_decision_tier: "decision_ready",
-            structured_eligibility_complete: true,
-          },
-          {
-            id: "daad",
-            name: "DAAD EPOS Scholarship",
-            provider_name: "DAAD",
-            university_name: null,
-            country: "Germany",
-            degree_level: "masters",
-            degree_levels: ["masters"],
-            application_deadline: "2026-10-15",
-            application_opening_date: null,
-            application_timezone: "Europe/Berlin",
-            effective_cycle_id: "2027",
-            funding_type: "partial",
-            funding_classification: "partial",
-            funding_summary: "Monthly stipend and allowances",
-            verification_status: "officially_verified",
-            last_verified_at: "2026-08-31T00:00:00Z",
-            official_source_url: "https://example.edu/daad",
-            application_window_state: "upcoming",
-            source_is_fresh: true,
-            verification_freshness: "recent",
-            funding_display_label: "Partial funding",
-            catalogue_decision_tier: "decision_ready",
-            structured_eligibility_complete: true,
-          },
-        ],
-        pagination: {
-          total: 50,
-          count: 2,
-          limit: 20,
-          offset: 0,
-          has_next: false,
-          has_previous: false,
-        },
-      },
-      error: null,
-      isLoading: false,
-      reload: vi.fn(),
-    };
-
+  it("renders destination cards with landmark silhouettes", () => {
     render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
     );
 
-    expect(screen.getByPlaceholderText("Search countries or scholarships")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Currently open scholarships/i })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /Fully funded bachelor/i }).length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: /Fully funded in Asia/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Inspiration for future applications" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Scholarships in Asia/i })).toBeInTheDocument();
+    const destinationSection = screen.getByText("Browse by destination").closest("section");
+
+    expect(destinationSection).toBeInTheDocument();
+    expect(within(destinationSection as HTMLElement).getByText("Germany")).toBeInTheDocument();
+    expect(within(destinationSection as HTMLElement).getByText("UK")).toBeInTheDocument();
+    expect(within(destinationSection as HTMLElement).getByText("US")).toBeInTheDocument();
+    expect(within(destinationSection as HTMLElement).getByText("Canada")).toBeInTheDocument();
+    expect(within(destinationSection as HTMLElement).getByText("Australia")).toBeInTheDocument();
+  });
+
+  it("renders How It Works 4-step workflow", () => {
+    render(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByText("How it works")).toBeInTheDocument();
+    expect(screen.getByText("Discover")).toBeInTheDocument();
+    expect(screen.getByText("Save")).toBeInTheDocument();
+    expect(screen.getByText("Track")).toBeInTheDocument();
+    expect(screen.getByText("Prepare")).toBeInTheDocument();
+    expect(document.querySelector(".tns-step-number-badge")).not.toBeInTheDocument();
+  });
+
+  it("renders Trust bar metrics", () => {
+    render(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByText("500+")).toBeInTheDocument();
+    expect(screen.getByText("120+")).toBeInTheDocument();
+    expect(screen.getByText("Bachelor • Master • PhD")).toBeInTheDocument();
+    expect(screen.getByText("Fully Funded")).toBeInTheDocument();
+  });
+
+  it("exposes the desktop scholarship search as a search landmark", () => {
+    render(
+      <BrowserRouter>
+        <SearchPillHarness />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByRole("search", { name: /search verified scholarships/i })).toBeInTheDocument();
+  });
+
+  it("renders desktop popovers outside of the active search segment", () => {
+    render(
+      <BrowserRouter>
+        <SearchPillHarness />
+      </BrowserRouter>,
+    );
+
+    const whereSegment = screen.getByText("Search destinations").closest(".tns-airbnb-segment");
+    expect(whereSegment).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Search destinations"));
+
+    expect(screen.getByRole("dialog", { name: /popular scholarship destinations/i })).toBeInTheDocument();
+    expect(within(whereSegment as HTMLElement).queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows a complete mobile search sheet with country degree and funding fields", () => {
+    render(
+      <BrowserRouter>
+        <SearchPillHarness />
+      </BrowserRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /start your search/i }));
+
+    const mobileSheet = screen.getByRole("dialog", { name: /scholarship search/i });
+    expect(within(mobileSheet).getByText("Where?")).toBeInTheDocument();
+    expect(within(mobileSheet).getByText("Degree level")).toBeInTheDocument();
+    expect(within(mobileSheet).getByText("Funding type")).toBeInTheDocument();
   });
 });

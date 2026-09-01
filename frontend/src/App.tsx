@@ -1,47 +1,105 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { BrowserRouter } from "react-router-dom";
-import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { EmailVerificationNotice } from "./auth/AccountLifecycle";
 import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
-import { HomePage } from "./features/home/HomePage";
+import { Brand } from "./components/BrandLogo";
+import {
+  HomePage,
+  SearchPill,
+  initialSearch,
+  type ActivePopover,
+} from "./features/home/HomePage";
 
-const EmailVerificationPage = lazy(() => import("./auth/AccountLifecycle").then((module) => ({ default: module.EmailVerificationPage })));
-const PasswordResetPage = lazy(() => import("./auth/AccountLifecycle").then((module) => ({ default: module.PasswordResetPage })));
-const CataloguePage = lazy(() => import("./features/catalogue/CataloguePage").then((module) => ({ default: module.CataloguePage })));
-const OpportunityDetailPage = lazy(() => import("./features/catalogue/OpportunityDetailPage").then((module) => ({ default: module.OpportunityDetailPage })));
-const AdminPage = lazy(() => import("./features/admin/AdminPage").then((module) => ({ default: module.AdminPage })));
-const AdminSecurityPage = lazy(() => import("./features/admin/AdminSecurityPage").then((module) => ({ default: module.AdminSecurityPage })));
-const MatchesPage = lazy(() => import("./features/workspace/MatchesPage").then((module) => ({ default: module.MatchesPage })));
-const ProfilePage = lazy(() => import("./features/workspace/ProfilePage").then((module) => ({ default: module.ProfilePage })));
-const CommandCentrePage = lazy(() => import("./features/workspace/CommandCentrePage").then((module) => ({ default: module.CommandCentrePage })));
-const ApplicationDetailPage = lazy(() => import("./features/workspace/ApplicationDetailPage").then((module) => ({ default: module.ApplicationDetailPage })));
-const AssistantPage = lazy(() => import("./features/assistant/AssistantPage").then((module) => ({ default: module.AssistantPage })));
-const DocumentLabPage = lazy(() => import("./features/document-lab/DocumentLabPage").then((module) => ({ default: module.DocumentLabPage })));
-const CommunityPage = lazy(() => import("./features/community/CommunityPage").then((module) => ({ default: module.CommunityPage })));
-
-function Brand() {
-  return (
-    <NavLink className="brand" to="/" aria-label="Scholarship Assistant home">
-      <span aria-hidden="true" className="brand-mark">
-        <svg viewBox="0 0 32 32" aria-hidden="true">
-          <path d="M16 1C7.716 1 1 7.716 1 16c0 4.144 1.68 7.896 4.394 10.606A14.933 14.933 0 0 0 16 31c4.144 0 7.896-1.68 10.606-4.394A14.933 14.933 0 0 0 31 16C31 7.716 24.284 1 16 1zm0 4c2.87 0 5.23 2.1 5.92 5.15-1.84.45-3.8 1.15-5.92 2.1-2.12-.95-4.08-1.65-5.92-2.1C10.77 7.1 13.13 5 16 5zm0 18.5c-3.5 0-6.5-2.5-7.5-6 2.3.6 4.7 1.4 7.5 2.5 2.8-1.1 5.2-1.9 7.5-2.5-1 3.5-4 6-7.5 6z"/>
-        </svg>
-      </span>
-      <span className="brand-text">
-        <strong>scholarship stay</strong>
-        <small>Verified funding & stays</small>
-      </span>
-    </NavLink>
-  );
-}
+const EmailVerificationPage = lazy(() => import("./auth/AccountLifecycle").then((m) => ({ default: m.EmailVerificationPage })));
+const PasswordResetPage = lazy(() => import("./auth/AccountLifecycle").then((m) => ({ default: m.PasswordResetPage })));
+const CataloguePage = lazy(() => import("./features/catalogue/CataloguePage").then((m) => ({ default: m.CataloguePage })));
+const OpportunityDetailPage = lazy(() => import("./features/catalogue/OpportunityDetailPage").then((m) => ({ default: m.OpportunityDetailPage })));
+const AdminPage = lazy(() => import("./features/admin/AdminPage").then((m) => ({ default: m.AdminPage })));
+const AdminSecurityPage = lazy(() => import("./features/admin/AdminSecurityPage").then((m) => ({ default: m.AdminSecurityPage })));
+const MatchesPage = lazy(() => import("./features/workspace/MatchesPage").then((m) => ({ default: m.MatchesPage })));
+const ProfilePage = lazy(() => import("./features/workspace/ProfilePage").then((m) => ({ default: m.ProfilePage })));
+const CommandCentrePage = lazy(() => import("./features/workspace/CommandCentrePage").then((m) => ({ default: m.CommandCentrePage })));
+const ApplicationDetailPage = lazy(() => import("./features/workspace/ApplicationDetailPage").then((m) => ({ default: m.ApplicationDetailPage })));
+const AssistantPage = lazy(() => import("./features/assistant/AssistantPage").then((m) => ({ default: m.AssistantPage })));
+const DocumentLabPage = lazy(() => import("./features/document-lab/DocumentLabPage").then((m) => ({ default: m.DocumentLabPage })));
+const CommunityPage = lazy(() => import("./features/community/CommunityPage").then((m) => ({ default: m.CommunityPage })));
 
 export function Topbar() {
-  const { user, isRestoring, sessionError, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isHome = location.pathname === "/";
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [search, setSearch] = useState(initialSearch);
+  const [activePopover, setActivePopover] = useState<ActivePopover>(null);
+  const [homeSearchCompact, setHomeSearchCompact] = useState(false);
+
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Route change reset and hash scroll
+  useEffect(() => {
+    setMenuOpen(false);
+    setMobileDrawerOpen(false);
+    setActivePopover(null);
+
+    if (location.hash) {
+      const targetId = location.hash.replace("#", "");
+      const element = document.getElementById(targetId);
+      if (element) {
+        window.setTimeout(() => {
+          element.scrollIntoView({ behavior: "smooth" });
+        }, 120);
+      }
+    }
+  }, [location.pathname, location.hash]);
+
+  useEffect(() => {
+    if (!isHome) {
+      setHomeSearchCompact(false);
+      return;
+    }
+
+    let frame = 0;
+
+    function updateHeaderSearchState() {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        setHomeSearchCompact(window.scrollY > 72);
+      });
+    }
+
+    updateHeaderSearchState();
+    window.addEventListener("scroll", updateHeaderSearchState, { passive: true });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", updateHeaderSearchState);
+    };
+  }, [isHome]);
+
+  // Click-Outside Listener for User Profile Dropdown
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleOutsideClick(event: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpen]);
 
   async function logout() {
     setLogoutError(null);
@@ -49,123 +107,191 @@ export function Topbar() {
     try {
       await signOut();
       setMenuOpen(false);
+      setMobileDrawerOpen(false);
       navigate("/");
     } catch {
-      setLogoutError(
-        "We could not confirm server sign-out. You are still signed in; please try again.",
-      );
+      setLogoutError("We could not confirm server sign-out. Please try again.");
     } finally {
       setIsSigningOut(false);
     }
   }
 
   return (
-    <header className="topbar-shell">
-      <nav className="topbar page-width" aria-label="Primary navigation">
-        <Brand />
+    <>
+      <header
+        className={[
+          "tns-header",
+          isHome ? "tns-header--home" : "",
+          isHome && homeSearchCompact ? "tns-header--search-compact" : "",
+          isHome && activePopover ? "tns-header--search-open" : "",
+        ].filter(Boolean).join(" ")}
+      >
+        {/* ROW 1: Logo | Nav Tabs | User Profile / Auth */}
+        <div className="tns-nav-top page-width">
+          {/* Logo */}
+          <Brand />
 
-        {/* Center Tabs — Airbnb Style */}
-        <div className="product-nav" aria-label="Product navigation">
-          <NavLink className="product-nav-link" to="/catalogue">
-            <span aria-hidden="true">🌐</span>
-            Scholarships
-          </NavLink>
-          {user ? (
-            <>
-              <NavLink className="product-nav-link" to="/dashboard">
-                <span aria-hidden="true">🏠</span>
-                Dashboard
-              </NavLink>
-              <NavLink className="product-nav-link" to="/applications">
-                <span aria-hidden="true">🧳</span>
-                Applications
-              </NavLink>
-            </>
-          ) : (
-            <>
-              <NavLink className="product-nav-link" to="/catalogue?funding_type=full">
-                <span aria-hidden="true">🏆</span>
-                Full-Ride
-              </NavLink>
-              <NavLink className="product-nav-link" to="/catalogue?degree_level=bachelors">
-                <span aria-hidden="true">🎓</span>
-                Bachelor
-              </NavLink>
-            </>
-          )}
-        </div>
+          {/* Center Navigation */}
+          <nav className="tns-nav-center" aria-label="Product navigation">
+            {!user ? (
+              <>
+                <NavLink
+                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                  to="/catalogue"
+                >
+                  <span className="tns-home-nav-icon" aria-hidden="true">🎓</span>
+                  <span>Explore Scholarships</span>
+                </NavLink>
+                <a
+                  className="tns-nav-link"
+                  href="/#how-it-works"
+                  onClick={(e) => {
+                    if (location.pathname === "/") {
+                      e.preventDefault();
+                      document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" });
+                    }
+                  }}
+                >
+                  <span className="tns-home-nav-icon" aria-hidden="true">✨</span>
+                  <span>How it Works</span>
+                </a>
+                <a
+                  className="tns-nav-link"
+                  href="/#for-students"
+                  onClick={(e) => {
+                    if (location.pathname === "/") {
+                      e.preventDefault();
+                      document.getElementById("for-students")?.scrollIntoView({ behavior: "smooth" });
+                    }
+                  }}
+                >
+                  <span className="tns-home-nav-icon" aria-hidden="true">🧭</span>
+                  <span>For Students</span>
+                </a>
+              </>
+            ) : (
+              <>
+                <NavLink
+                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                  to="/catalogue"
+                >
+                  <span className="tns-home-nav-icon" aria-hidden="true">🎓</span>
+                  <span>Scholarships</span>
+                </NavLink>
+                <NavLink
+                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                  to="/dashboard"
+                >
+                  <span className="tns-home-nav-icon" aria-hidden="true">🌍</span>
+                  <span>Dashboard</span>
+                </NavLink>
+                <NavLink
+                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                  to="/applications"
+                >
+                  <span className="tns-home-nav-icon" aria-hidden="true">📌</span>
+                  <span>Applications</span>
+                </NavLink>
+                <NavLink
+                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                  to="/matches"
+                >
+                  <span className="tns-home-nav-icon" aria-hidden="true">💼</span>
+                  <span>Workspace</span>
+                </NavLink>
+              </>
+            )}
+          </nav>
 
-        {/* Right Actions — Airbnb Style */}
-        <div className="topbar-actions">
-          <NavLink className="topbar-host-link" to={user ? "/dashboard" : "/auth"}>
-            {user ? "Switch to workspace" : "Become an applicant"}
-          </NavLink>
-
-          <button
-            className="topbar-globe-btn"
-            type="button"
-            aria-label="Language & Currency"
-            title="Language: English (US) · Currency: USD ($)"
-            onClick={() => navigate("/catalogue")}
-          >
-            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-              <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm5.93 7h-2.5a13.3 13.3 0 0 0-1.04-4.22A6.53 6.53 0 0 1 13.93 7zM8 1.52c.7 1.25 1.25 3.1 1.44 5.48H6.56C6.75 4.62 7.3 2.77 8 1.52zm-3.39 1.26A13.3 13.3 0 0 0 3.57 7H1.07a6.53 6.53 0 0 1 3.54-4.22zm-3.54 5.72h2.5c.19 1.6.57 3.06 1.04 4.22A6.53 6.53 0 0 1 1.07 8.5zm5.49 0h2.88c-.19 2.38-.74 4.23-1.44 5.48-.7-1.25-1.25-3.1-1.44-5.48zm4.87 4.22c.47-1.16.85-2.62 1.04-4.22h2.5a6.53 6.53 0 0 1-3.54 4.22z"/>
-            </svg>
-          </button>
-
-          {/* User Menu Capsule */}
-          <div className="user-menu-wrapper">
-            <button
-              className="user-menu-pill"
-              type="button"
-              aria-label="Main user menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((o) => !o)}
-            >
-              <svg className="hamburger" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
-                <line x1="4" y1="9" x2="28" y2="9" />
-                <line x1="4" y1="16" x2="28" y2="16" />
-                <line x1="4" y1="23" x2="28" y2="23" />
-              </svg>
-              <span className={"user-avatar-circle " + (user ? "has-user" : "")}>
-                {user ? user.email.slice(0, 1).toUpperCase() : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+          {/* Right Navigation & Profile */}
+          <div className="tns-nav-right">
+            {!user ? (
+              <div className="tns-auth-actions">
+                <NavLink className="tns-login-link" to="/auth">
+                  Login
+                </NavLink>
+                <NavLink className="tns-get-started-btn" to="/auth">
+                  Get Started
+                </NavLink>
+              </div>
+            ) : (
+              <div className="tns-user-menu-wrapper" ref={userMenuRef}>
+                <button
+                  className="tns-user-pill-btn"
+                  type="button"
+                  aria-label="User account menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((o) => !o)}
+                >
+                  <span className="tns-user-avatar">
+                    {user.email.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="tns-user-email-short">
+                    {user.email.split("@")[0]}
+                  </span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="m6 9 6 6 6-6" />
                   </svg>
-                )}
-              </span>
-            </button>
+                </button>
 
-            {menuOpen ? (
-              <div className="airbnb-dropdown" role="menu">
-                {user ? (
-                  <>
-                    <NavLink className="airbnb-dropdown-item" to="/dashboard" onClick={() => setMenuOpen(false)} role="menuitem">
+                {menuOpen ? (
+                  <div className="tns-dropdown-menu" role="menu">
+                    <NavLink
+                      className="tns-dropdown-item"
+                      to="/dashboard"
+                      onClick={() => setMenuOpen(false)}
+                      role="menuitem"
+                    >
                       <strong>Dashboard</strong>
                     </NavLink>
-                    <NavLink className="airbnb-dropdown-item" to="/applications" onClick={() => setMenuOpen(false)} role="menuitem">
-                      Applications tracker
+                    <NavLink
+                      className="tns-dropdown-item"
+                      to="/applications"
+                      onClick={() => setMenuOpen(false)}
+                      role="menuitem"
+                    >
+                      Applications Tracker
                     </NavLink>
-                    <NavLink className="airbnb-dropdown-item" to="/matches" onClick={() => setMenuOpen(false)} role="menuitem">
-                      Explainable matches
+                    <NavLink
+                      className="tns-dropdown-item"
+                      to="/matches"
+                      onClick={() => setMenuOpen(false)}
+                      role="menuitem"
+                    >
+                      Explainable Matches
                     </NavLink>
-                    <NavLink className="airbnb-dropdown-item" to="/profile" onClick={() => setMenuOpen(false)} role="menuitem">
-                      Student profile & passport
+                    <NavLink
+                      className="tns-dropdown-item"
+                      to="/profile"
+                      onClick={() => setMenuOpen(false)}
+                      role="menuitem"
+                    >
+                      Profile & Criteria
                     </NavLink>
                     {user.role === "admin" ? (
                       <>
-                        <div className="airbnb-dropdown-divider" />
-                        <NavLink className="airbnb-dropdown-item" to="/admin" onClick={() => setMenuOpen(false)} role="menuitem">
-                          Admin review workspace
+                        <div className="tns-dropdown-divider" />
+                        <NavLink
+                          className="tns-dropdown-item"
+                          to="/admin"
+                          onClick={() => setMenuOpen(false)}
+                          role="menuitem"
+                        >
+                          Admin Workspace
                         </NavLink>
-                        <NavLink className="airbnb-dropdown-item" to="/admin/security" onClick={() => setMenuOpen(false)} role="menuitem">
-                          Admin security & audit
+                        <NavLink
+                          className="tns-dropdown-item"
+                          to="/admin/security"
+                          onClick={() => setMenuOpen(false)}
+                          role="menuitem"
+                        >
+                          Security & Audit
                         </NavLink>
                       </>
                     ) : null}
-                    <div className="airbnb-dropdown-divider" />
+                    <div className="tns-dropdown-divider" />
                     <button
-                      className="airbnb-dropdown-item"
+                      className="tns-dropdown-item tns-logout-btn"
                       type="button"
                       onClick={logout}
                       disabled={isSigningOut}
@@ -173,29 +299,153 @@ export function Topbar() {
                     >
                       {isSigningOut ? "Signing out..." : "Log out"}
                     </button>
-                  </>
-                ) : (
-                  <>
-                    <NavLink className="airbnb-dropdown-item" to="/auth" onClick={() => setMenuOpen(false)} role="menuitem">
-                      <strong>Sign up</strong>
-                    </NavLink>
-                    <NavLink className="airbnb-dropdown-item" to="/auth" onClick={() => setMenuOpen(false)} role="menuitem">
-                      Log in
-                    </NavLink>
-                    <div className="airbnb-dropdown-divider" />
-                    <NavLink className="airbnb-dropdown-item" to="/catalogue" onClick={() => setMenuOpen(false)} role="menuitem">
-                      Browse all scholarships
-                    </NavLink>
-                  </>
-                )}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            )}
+
+            {/* Mobile Hamburger */}
+            <button
+              className="tns-mobile-hamburger-btn"
+              type="button"
+              aria-label="Toggle mobile menu"
+              aria-expanded={mobileDrawerOpen}
+              onClick={() => setMobileDrawerOpen((o) => !o)}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
           </div>
         </div>
+
+        {/* ROW 2: Airbnb Search Bar inside Header on Homepage */}
+        {isHome ? (
+          <div className="tns-header-search-bar page-width">
+            <SearchPill
+              search={search}
+              activePopover={activePopover}
+              onSearchChange={setSearch}
+              onPopoverChange={setActivePopover}
+            />
+          </div>
+        ) : null}
+
+        {/* Mobile Drawer */}
+        {mobileDrawerOpen ? (
+          <div className="tns-mobile-drawer" role="dialog" aria-modal="true">
+            <div className="tns-mobile-drawer-header">
+              <Brand onClick={() => setMobileDrawerOpen(false)} />
+              <button
+                type="button"
+                className="tns-drawer-close-btn"
+                onClick={() => setMobileDrawerOpen(false)}
+                aria-label="Close menu"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="tns-mobile-drawer-links">
+              {!user ? (
+                <>
+                  <NavLink to="/catalogue" onClick={() => setMobileDrawerOpen(false)}>
+                    Explore Scholarships
+                  </NavLink>
+                  <a href="/#how-it-works" onClick={() => setMobileDrawerOpen(false)}>
+                    How it Works
+                  </a>
+                  <a href="/#for-students" onClick={() => setMobileDrawerOpen(false)}>
+                    For Students
+                  </a>
+                  <div className="tns-mobile-drawer-divider" />
+                  <NavLink to="/auth" className="tns-mobile-login-link" onClick={() => setMobileDrawerOpen(false)}>
+                    Login
+                  </NavLink>
+                  <NavLink to="/auth" className="tns-mobile-get-started-btn" onClick={() => setMobileDrawerOpen(false)}>
+                    Get Started
+                  </NavLink>
+                </>
+              ) : (
+                <>
+                  <NavLink to="/catalogue" onClick={() => setMobileDrawerOpen(false)}>
+                    Scholarships
+                  </NavLink>
+                  <NavLink to="/dashboard" onClick={() => setMobileDrawerOpen(false)}>
+                    Dashboard
+                  </NavLink>
+                  <NavLink to="/applications" onClick={() => setMobileDrawerOpen(false)}>
+                    Applications
+                  </NavLink>
+                  <NavLink to="/matches" onClick={() => setMobileDrawerOpen(false)}>
+                    Workspace
+                  </NavLink>
+                  <NavLink to="/profile" onClick={() => setMobileDrawerOpen(false)}>
+                    Profile & Settings
+                  </NavLink>
+                  <div className="tns-mobile-drawer-divider" />
+                  <button type="button" className="tns-mobile-logout-btn" onClick={logout}>
+                    Log out
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {logoutError ? <p className="form-error page-width" role="alert">{logoutError}</p> : null}
+      </header>
+
+      {isHome && activePopover ? <div className="tns-home-search-backdrop" aria-hidden="true" /> : null}
+
+      {/* Mobile Bottom Navigation Bar (Hidden on desktop) */}
+      <nav className="tns-mobile-bottom-bar" aria-label="Mobile Navigation">
+        <NavLink to="/" className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+          <span className="tns-tab-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+            </svg>
+          </span>
+          <span className="tns-tab-label">Home</span>
+        </NavLink>
+        <NavLink to="/catalogue" className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+          <span className="tns-tab-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+            </svg>
+          </span>
+          <span className="tns-tab-label">Explore</span>
+        </NavLink>
+        <NavLink to={user ? "/applications" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+          <span className="tns-tab-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+            </svg>
+          </span>
+          <span className="tns-tab-label">Saved</span>
+        </NavLink>
+        <NavLink to={user ? "/dashboard" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+          <span className="tns-tab-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 3v18h18" />
+              <path d="m19 9-5 5-4-4-3 3" />
+            </svg>
+          </span>
+          <span className="tns-tab-label">Track</span>
+        </NavLink>
+        <NavLink to={user ? "/profile" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+          <span className="tns-tab-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </span>
+          <span className="tns-tab-label">Profile</span>
+        </NavLink>
       </nav>
-      {logoutError ? <p className="form-error page-width" role="alert">{logoutError}</p> : null}
-      {sessionError ? <p className="form-error page-width" role="alert">{sessionError}</p> : null}
-    </header>
+    </>
   );
 }
 
@@ -207,11 +457,10 @@ function AuthPage() {
   return (
     <main className="auth-layout page-width">
       <section>
-        <p className="eyebrow">Your private workspace</p>
+        <p className="eyebrow">The Next Scholar</p>
         <h1>Keep your opportunities, profile, and next steps in one place.</h1>
         <p className="lead">
-          Your session is protected with a short-lived in-memory access token and a secure refresh
-          cookie.
+          AI-powered scholarship discovery, matching, and verified application tracking at thenextscholar.com.
         </p>
       </section>
       <AuthForm />
@@ -234,7 +483,7 @@ export function Dashboard() {
   return (
     <main className="workspace-page page-width">
       <section className="workspace-intro">
-        <p className="eyebrow">Welcome back</p>
+        <p className="eyebrow">The Next Scholar Workspace</p>
         <h1>Good to see you, {user.email.split("@")[0]}.</h1>
         <p>
           Your secure workspace brings discovery, preparation, and careful source curation into one
@@ -276,36 +525,41 @@ export function Dashboard() {
 }
 
 function AppRoutes() {
+  const location = useLocation();
+  const [routeSettling, setRouteSettling] = useState(false);
+
+  useEffect(() => {
+    setRouteSettling(true);
+    const routeTimer = window.setTimeout(() => setRouteSettling(false), 220);
+    return () => window.clearTimeout(routeTimer);
+  }, [location.pathname]);
+
   return (
     <>
       <Topbar />
-      <Suspense
-        fallback={
-          <main className="page-width loading-page" aria-live="polite">
-            Loading this workspace...
-          </main>
-        }
-      >
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/auth" element={<AuthPage />} />
-          <Route path="/auth/password-reset" element={<PasswordResetPage />} />
-          <Route path="/verify-email" element={<EmailVerificationPage />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/catalogue" element={<CataloguePage />} />
-          <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/matches" element={<MatchesPage />} />
-          <Route path="/tracker" element={<Navigate replace to="/applications" />} />
-          <Route path="/applications" element={<CommandCentrePage />} />
-          <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
-          <Route path="/assistant" element={<AssistantPage />} />
-          <Route path="/document-lab" element={<DocumentLabPage />} />
-          <Route path="/community" element={<CommunityPage />} />
-          <Route path="/admin" element={<AdminPage />} />
-          <Route path="/admin/security" element={<AdminSecurityPage />} />
-          <Route path="*" element={<Navigate replace to="/" />} />
-        </Routes>
+      <Suspense fallback={<div className="tns-top-loading-bar" aria-live="polite" />}>
+        <div className={`tns-route-stage ${routeSettling ? "tns-route-stage--settling" : ""}`}>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/auth" element={<AuthPage />} />
+            <Route path="/auth/password-reset" element={<PasswordResetPage />} />
+            <Route path="/verify-email" element={<EmailVerificationPage />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/catalogue" element={<CataloguePage />} />
+            <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/matches" element={<MatchesPage />} />
+            <Route path="/tracker" element={<Navigate replace to="/applications" />} />
+            <Route path="/applications" element={<CommandCentrePage />} />
+            <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
+            <Route path="/assistant" element={<AssistantPage />} />
+            <Route path="/document-lab" element={<DocumentLabPage />} />
+            <Route path="/community" element={<CommunityPage />} />
+            <Route path="/admin" element={<AdminPage />} />
+            <Route path="/admin/security" element={<AdminSecurityPage />} />
+            <Route path="*" element={<Navigate replace to="/" />} />
+          </Routes>
+        </div>
       </Suspense>
     </>
   );

@@ -47,15 +47,26 @@ function MatchAuditSection({
     );
   }
 
-  const score = match && match.fit_score !== null && match.fit_score !== undefined ? Math.round(match.fit_score * 100) : null;
+  const score = match ? (match.fit_score ?? match.match_score ?? null) : null;
   const isHighFit = score !== null && score >= 80;
   const isGoodFit = score !== null && score >= 60 && score < 80;
+  const hardFailure = match?.eligibility_status === "ineligible" || match?.eligibility_status === "likely_ineligible";
 
-  const matchClass = isHighFit
-    ? "match-high-card"
-    : isGoodFit
-      ? "match-good-card"
-      : "match-partial-card";
+  const matchClass = hardFailure
+    ? "match-partial-card"
+    : isHighFit
+      ? "match-high-card"
+      : isGoodFit
+        ? "match-good-card"
+        : "match-partial-card";
+
+  const degreeLevels = opportunity.degree_levels?.length ? opportunity.degree_levels : [opportunity.degree_level];
+
+  // Derive dynamic status from match evaluation
+  const isDegreeMatched = !match?.failed_criteria?.some((c) => c.toLowerCase().includes("degree"));
+  const isNationalityMatched = !match?.failed_criteria?.some((c) => c.toLowerCase().includes("nationality") || c.toLowerCase().includes("country"));
+  const isAcademicMatched = !match?.failed_criteria?.some((c) => c.toLowerCase().includes("academic") || c.toLowerCase().includes("gpa") || c.toLowerCase().includes("grade"));
+  const isLanguageMatched = !match?.failed_criteria?.some((c) => c.toLowerCase().includes("english") || c.toLowerCase().includes("language") || c.toLowerCase().includes("test"));
 
   return (
     <section className={`detail-match-card ${matchClass}`} aria-label="Personal Eligibility Match Audit">
@@ -69,11 +80,11 @@ function MatchAuditSection({
               <h2 className="match-card-heading">Your Profile Eligibility Match</h2>
               <span className="match-status-pill">
                 <span className="pulse-dot"></span>
-                {isHighFit ? "Strong Candidate Fit" : isGoodFit ? "Good Fit" : "Needs Review"}
+                {hardFailure ? "Needs Review" : isHighFit ? "Strong Candidate Fit" : isGoodFit ? "Good Fit" : "Evaluation Available"}
               </span>
             </div>
             <p className="match-card-subtext">
-              Audited in real-time against your saved student credentials
+              {match ? "Audited in real-time against your saved student credentials" : "Complete your profile to see full criteria alignment"}
             </p>
           </div>
         </div>
@@ -85,66 +96,74 @@ function MatchAuditSection({
       <div className="match-checklist-grid">
         <div className="match-check-item">
           <div className="match-check-left">
-            <span className="match-check-icon">✓</span>
+            <span className="match-check-icon">{isDegreeMatched ? "✓" : "⚠"}</span>
             <div>
               <div className="match-check-title-row">
                 <strong>Degree Level Eligibility</strong>
-                <span className="match-mini-tag">Targeting {(opportunity.degree_levels?.length ? opportunity.degree_levels : [opportunity.degree_level]).map(readableValue).join(", ")}</span>
+                <span className="match-mini-tag">Targeting {degreeLevels.map(readableValue).join(", ")}</span>
               </div>
               <p className="match-check-desc">
-                Scholarship supports {(opportunity.degree_levels?.length ? opportunity.degree_levels : [opportunity.degree_level]).map(readableValue).join(", ")} degrees
+                Scholarship supports {degreeLevels.map(readableValue).join(", ")} degrees
               </p>
             </div>
           </div>
-          <span className="match-badge-eligible">Eligible</span>
+          <span className={isDegreeMatched ? "match-badge-eligible" : "match-badge-neutral"}>
+            {isDegreeMatched ? "Eligible" : "Check Degree"}
+          </span>
         </div>
 
         <div className="match-check-item">
           <div className="match-check-left">
-            <span className="match-check-icon">✓</span>
+            <span className="match-check-icon">{isNationalityMatched ? "✓" : "⚠"}</span>
             <div>
               <div className="match-check-title-row">
                 <strong>Nationality & Citizenship</strong>
-                <span className="match-mini-tag">{opportunity.country} Bilateral Partner</span>
+                <span className="match-mini-tag">{opportunity.country} Partner Award</span>
               </div>
               <p className="match-check-desc">
-                {opportunity.nationality_eligibility || `Citizens eligible for ${opportunity.country} awards`}
+                {opportunity.nationality_eligibility || `Eligible international citizens for ${opportunity.country} awards`}
               </p>
             </div>
           </div>
-          <span className="match-badge-eligible">Eligible</span>
+          <span className={isNationalityMatched ? "match-badge-eligible" : "match-badge-neutral"}>
+            {isNationalityMatched ? "Eligible" : "Check Citizenship"}
+          </span>
         </div>
 
         <div className="match-check-item">
           <div className="match-check-left">
-            <span className="match-check-icon">✓</span>
+            <span className="match-check-icon">{isAcademicMatched ? "✓" : "⚠"}</span>
             <div>
               <div className="match-check-title-row">
                 <strong>Academic Threshold</strong>
-                <span className="match-mini-tag">Above Minimum Bar</span>
+                <span className="match-mini-tag">Academic Criterion</span>
               </div>
               <p className="match-check-desc">
-                {opportunity.minimum_academic_requirement || "Undergraduate 2:1 Honours equivalent required"}
+                {opportunity.minimum_academic_requirement || "Undergraduate 2:1 Honours equivalent or stated academic threshold"}
               </p>
             </div>
           </div>
-          <span className="match-badge-eligible">Satisfied</span>
+          <span className={isAcademicMatched ? "match-badge-eligible" : "match-badge-neutral"}>
+            {isAcademicMatched ? "Satisfied" : "Check GPA"}
+          </span>
         </div>
 
         <div className="match-check-item">
           <div className="match-check-left">
-            <span className="match-check-icon">✓</span>
+            <span className="match-check-icon">{isLanguageMatched ? "✓" : "⚠"}</span>
             <div>
               <div className="match-check-title-row">
                 <strong>English Language Proficiency</strong>
-                <span className="match-mini-tag">IELTS / TOEFL</span>
+                <span className="match-mini-tag">Language Requirement</span>
               </div>
               <p className="match-check-desc">
-                {opportunity.english_language_requirement || "IELTS Academic 6.5+ or TOEFL iBT 90+"}
+                {opportunity.english_language_requirement || "IELTS Academic 6.5+ or TOEFL iBT 90+ where required"}
               </p>
             </div>
           </div>
-          <span className="match-badge-eligible">Passed</span>
+          <span className={isLanguageMatched ? "match-badge-eligible" : "match-badge-neutral"}>
+            {isLanguageMatched ? "Passed" : "Check Test"}
+          </span>
         </div>
       </div>
     </section>
