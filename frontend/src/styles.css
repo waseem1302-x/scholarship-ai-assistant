@@ -4184,20 +4184,29 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 :root {
   --tns-crimson: #E11D48;
   --tns-crimson-hover: #BE123C;
-  --tns-crimson-gradient: linear-gradient(135deg, #FF385C 0%, #E11D48 50%, #BE123C 100%);
+  --tns-crimson-gradient: linear-gradient(135deg, #FF385C 0%, #E11D48 60%, #BE123C 100%);
+  --tns-crimson-subtle: rgba(225, 29, 72, 0.08);
+
   --tns-text-dark: #0F172A;
   --tns-text-muted: #64748B;
+  --tns-text-light: #94A3B8;
+
   --tns-bg-white: #FFFFFF;
   --tns-bg-track: #EBEBEB;
   --tns-bg-hover: #F8FAFC;
   --tns-bg-hover-dark: #DDDDDD;
-  --tns-border: #E2E8F0;
-  --tns-border-dark: #DDDDDD;
-  --tns-backdrop: rgba(15, 23, 42, 0.35);
+  --tns-bg-recessed: #F1F5F9;
 
-  --shadow-search-default: 0 3px 12px 0 rgba(0, 0, 0, 0.08), 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-active-pill: 0 6px 20px rgba(0, 0, 0, 0.18);
-  --shadow-popover: 0 16px 40px rgba(0, 0, 0, 0.16);
+  --tns-border: #E2E8F0;
+  --tns-border-dark: #CBD5E1;
+  --tns-border-subtle: #F1F5F9;
+  --tns-backdrop: rgba(15, 23, 42, 0.25);
+
+  --shadow-search-default: 0 2px 8px 0 rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.04);
+  --shadow-search-hover: 0 4px 18px 0 rgba(15, 23, 42, 0.10), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  --shadow-active-pill: 0 10px 30px rgba(15, 23, 42, 0.14);
+  --shadow-popover: 0 20px 48px -4px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.05);
+  --shadow-user-menu: 0 12px 36px rgba(15, 23, 42, 0.12);
 
   --ease-airbnb: cubic-bezier(0.2, 0, 0, 1);
 }
@@ -4222,7 +4231,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .tns-route-stage {
-  min-height: calc(100vh - 80px);
+  min-height: calc(100vh - 76px);
 }
 
 .tns-home-layout {
@@ -4250,6 +4259,47 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* ------------------------------------------------------------------ */
+/*  Brand & Logo Component                                            */
+/* ------------------------------------------------------------------ */
+.tns-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--tns-text-dark);
+  user-select: none;
+  flex-shrink: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.tns-brand:hover {
+  opacity: 0.92;
+}
+.tns-brand-icon-wrapper {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+}
+.tns-brand-text-block {
+  display: flex;
+  flex-direction: column;
+}
+.tns-brand-title {
+  font-family: inherit;
+  font-size: 1.12rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: var(--tns-text-dark);
+  line-height: 1.15;
+}
+.tns-brand-domain {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--tns-text-muted);
+  letter-spacing: -0.01em;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Sticky Header (Unified Header with Tier 1 Nav & Tier 2 Search)    */
 /* ------------------------------------------------------------------ */
 .tns-header {
@@ -4262,7 +4312,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   border-bottom: 1px solid var(--tns-border);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.035);
   transition:
-    min-height 320ms var(--ease-airbnb),
+    min-height 280ms var(--ease-airbnb),
     box-shadow 220ms ease,
     border-color 220ms ease;
   isolation: isolate;
@@ -4270,13 +4320,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .tns-header--home {
   position: fixed;
-  min-height: 200px;
-  border-bottom-color: rgba(221, 221, 221, 0.78);
+  min-height: 160px;
+  border-bottom-color: rgba(226, 232, 240, 0.85);
   box-shadow: none;
 }
 
 .tns-header--home ~ .tns-route-stage {
-  padding-top: 200px;
+  padding-top: 160px;
 }
 
 .tns-header--home::before {
@@ -4288,28 +4338,28 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .tns-header--home.tns-header--search-compact:not(.tns-header--search-open) {
-  min-height: 80px;
-  border-bottom-color: rgba(221, 221, 221, 0.9);
-  box-shadow: 0 2px 18px rgba(15, 23, 42, 0.055);
+  min-height: 76px;
+  border-bottom-color: var(--tns-border);
+  box-shadow: 0 2px 14px rgba(15, 23, 42, 0.05);
 }
 
 .tns-header--home.tns-header--search-open {
-  min-height: 200px;
-  box-shadow: 0 2px 18px rgba(15, 23, 42, 0.055);
+  min-height: 160px;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
 }
 
 .tns-header--home.tns-header--search-compact.tns-header--search-open {
-  min-height: 200px;
-  box-shadow: 0 2px 18px rgba(15, 23, 42, 0.055);
+  min-height: 160px;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
 }
 
 .tns-home-search-backdrop {
   position: fixed;
-  inset: 200px 0 0;
+  inset: 160px 0 0;
   z-index: 150;
   pointer-events: none;
-  background: rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(2px);
+  background: rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(4px);
   animation: tnsBackdropFade 180ms var(--ease-airbnb) both;
 }
 
@@ -4326,129 +4376,220 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 80px;
+  height: 76px;
   gap: 24px;
-  transition: height 320ms var(--ease-airbnb);
+  transition: height 280ms var(--ease-airbnb);
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-nav-top {
-  height: 80px;
+  height: 76px;
 }
 
-/* Center Nav Tabs */
+/* Center Navigation & Compact Search Wrapper */
+.tns-nav-center-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+}
+
 .tns-nav-center {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 36px;
-  transition: opacity 220ms ease, transform 260ms var(--ease-airbnb);
+  gap: 8px;
+  transition:
+    opacity 220ms ease,
+    transform 240ms var(--ease-airbnb);
+}
+
+.tns-nav-center--hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.88);
 }
 
 .tns-nav-link {
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   font-weight: 600;
   color: #475569;
   text-decoration: none;
-  padding: 6px 2px;
+  padding: 8px 16px;
+  border-radius: 20px;
   position: relative;
-  transition: color 0.15s ease, transform 180ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: color 0.15s ease, background-color 0.15s ease, transform 180ms ease;
 }
 
 .tns-home-nav-icon {
-  display: none;
+  font-size: 0.95rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.88;
 }
 
 .tns-header--home .tns-nav-link {
-  min-width: 96px;
-  min-height: 48px;
+  min-width: 0;
+  min-height: 0;
   display: inline-flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  color: #64748B;
-  font-size: 0.94rem;
-  font-weight: 750;
-  padding: 5px 10px 9px;
+  gap: 7px;
+  color: #475569;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 20px;
 }
 
 .tns-header--home .tns-home-nav-icon {
-  display: grid;
+  display: inline-flex;
   place-items: center;
-  height: 24px;
-  font-size: 1.45rem;
-  filter: drop-shadow(0 5px 8px rgba(15, 23, 42, 0.12));
+  height: auto;
+  font-size: 0.95rem;
+  filter: none;
   line-height: 1;
 }
 
-.tns-header--home .tns-nav-link:hover,
+.tns-nav-link:hover,
+.tns-header--home .tns-nav-link:hover {
+  background: #F1F5F9;
+  color: var(--tns-text-dark);
+  transform: none;
+}
+
+.tns-nav-link.active,
 .tns-header--home .tns-nav-link.active {
-  color: #0F172A;
-  transform: translateY(-1px);
+  color: var(--tns-text-dark);
+  font-weight: 700;
+  background: #F1F5F9;
+  transform: none;
 }
 
 .tns-header--home .tns-nav-link.active::after,
-.tns-header--home .tns-nav-link:hover::after {
-  content: "";
-  position: absolute;
-  left: 20%;
-  right: 20%;
-  bottom: 5px;
-  height: 4px;
-  background: #0F172A;
-  border-radius: 999px;
+.tns-header--home .tns-nav-link:hover::after,
+.tns-nav-link.active::after {
+  display: none;
 }
 
-.tns-header--search-compact:not(.tns-header--search-open) .tns-nav-center {
+/* Compact Search Button (Exact Airbnb Scrolled Header Style) */
+.tns-compact-search-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.85);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-14px);
+  height: 48px;
+  background: #FFFFFF;
+  border: 1px solid var(--tns-border);
+  border-radius: 24px;
+  padding: 0 8px 0 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.04);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    opacity 240ms ease,
+    transform 240ms var(--ease-airbnb),
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+  z-index: 10;
 }
 
-.tns-header--search-compact:not(.tns-header--search-open) .tns-nav-link {
-  transition-duration: 120ms;
+.tns-compact-search-btn:hover {
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+  border-color: var(--tns-border-dark);
 }
-.tns-nav-link:hover, .tns-nav-link.active {
-  color: var(--tns-crimson);
+
+.tns-compact-search-btn--visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) scale(1);
 }
-.tns-nav-link.active::after {
-  content: "";
-  position: absolute;
-  bottom: -4px;
-  left: 0;
-  right: 0;
-  height: 2.5px;
-  background: var(--tns-crimson);
-  border-radius: 4px;
+
+.tns-compact-segment {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--tns-text-dark);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tns-compact-segment--muted {
+  color: var(--tns-text-muted);
+  font-weight: 500;
+}
+
+.tns-compact-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--tns-border);
+}
+
+.tns-compact-search-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tns-crimson-gradient);
+  color: #FFFFFF;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(225, 29, 72, 0.3);
 }
 
 /* Right Navigation & Profile */
 .tns-nav-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
 }
 .tns-auth-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
 }
 .tns-login-link {
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   font-weight: 600;
   color: #334155;
   text-decoration: none;
-  padding: 8px 12px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.tns-login-link:hover {
+  background: #F1F5F9;
+  color: var(--tns-text-dark);
 }
 .tns-get-started-btn {
-  background: var(--tns-crimson);
-  color: #FFFFFF !important;
-  font-size: 0.92rem;
+  background: #FFFFFF;
+  border: 1.5px solid var(--tns-border);
+  color: var(--tns-text-dark) !important;
+  font-size: 0.88rem;
   font-weight: 700;
-  padding: 10px 22px;
-  border-radius: 9999px;
+  padding: 8px 18px;
+  border-radius: 20px;
   text-decoration: none;
-  box-shadow: 0 2px 10px rgba(225, 29, 72, 0.28);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: all 0.18s ease;
+}
+.tns-get-started-btn:hover {
+  border-color: var(--tns-border-dark);
+  background: #F8FAFC;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.08);
 }
 .tns-user-menu-wrapper {
   position: relative;
@@ -4457,20 +4598,26 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #F8FAFC;
+  background: #FFFFFF;
   border: 1px solid var(--tns-border);
-  padding: 6px 14px 6px 8px;
-  border-radius: 9999px;
+  padding: 4px 12px 4px 6px;
+  border-radius: 24px;
   cursor: pointer;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: all 0.18s ease;
+}
+.tns-user-pill-btn:hover {
+  border-color: var(--tns-border-dark);
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
 }
 .tns-user-avatar {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: var(--tns-crimson);
   color: #FFFFFF;
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: 0.82rem;
+  font-weight: 750;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4487,9 +4634,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   width: 220px;
   background: #FFFFFF;
   border: 1px solid var(--tns-border);
-  border-radius: 16px;
+  border-radius: 18px;
   padding: 8px 0;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-user-menu);
   z-index: 120;
   display: flex;
   flex-direction: column;
@@ -4500,6 +4647,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   color: #334155;
   text-decoration: none;
   text-align: left;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 .tns-dropdown-item:hover {
   background: #F8FAFC;
@@ -4524,29 +4672,24 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .tns-header-search-bar {
   display: flex;
   justify-content: center;
-  padding: 14px 0 40px;
+  padding: 6px 0 18px;
   position: relative;
   z-index: 5;
   transition:
-    padding 320ms var(--ease-airbnb),
-    transform 320ms var(--ease-airbnb),
-    top 320ms var(--ease-airbnb),
-    width 320ms var(--ease-airbnb),
-    opacity 180ms ease;
+    opacity 240ms ease,
+    transform 260ms var(--ease-airbnb),
+    padding 260ms var(--ease-airbnb);
+  transform-origin: top center;
 }
 
+.tns-header-search-bar--compact,
 .tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar {
-  position: absolute;
-  top: 16px;
-  left: 50%;
-  width: min(374px, calc(100vw - 260px));
-  min-width: 330px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-16px) scale(0.9);
   padding: 0;
-  transform: translateX(-50%);
-}
-
-.tns-header--search-compact.tns-header--search-open .tns-header-search-bar {
-  padding: 14px 0 40px;
+  height: 0;
+  overflow: hidden;
 }
 
 .tns-search-container {
@@ -4558,36 +4701,32 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .tns-airbnb-search-pill {
-  width: min(850px, calc(100vw - 164px));
+  width: min(840px, calc(100vw - 64px));
   max-width: 100%;
-  min-width: 720px;
-  height: 66px;
-  border-radius: 9999px;
+  min-width: 680px;
+  height: 64px;
+  border-radius: 32px;
   background-color: #FFFFFF;
-  border: 1px solid var(--tns-border-dark);
-  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.02), 0 8px 24px rgba(15, 23, 42, 0.10);
+  border: 1px solid var(--tns-border);
+  box-shadow: var(--shadow-search-default);
   display: flex;
   align-items: center;
   position: relative;
   transition:
-    width 320ms var(--ease-airbnb),
-    height 320ms var(--ease-airbnb),
     background-color 0.18s ease,
     box-shadow 0.2s ease,
-    border-color 0.18s ease,
-    min-width 320ms var(--ease-airbnb);
+    border-color 0.18s ease;
 }
 
-.tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-search-pill {
-  width: 100%;
-  min-width: 0;
-  height: 48px;
-  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.11);
+.tns-airbnb-search-pill:hover {
+  box-shadow: var(--shadow-search-hover);
+  border-color: var(--tns-border-dark);
 }
 
 .tns-airbnb-search-pill.has-active-segment {
   background-color: #EBEBEB;
   border-color: transparent;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.12);
 }
 
 /* Individual Segments */
@@ -4598,57 +4737,29 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   justify-content: center;
   position: relative;
   cursor: pointer;
-  border-radius: 9999px;
+  border-radius: 32px;
   transition:
     background-color 0.15s ease,
-    box-shadow 0.2s var(--ease-airbnb),
-    flex 280ms var(--ease-airbnb),
-    padding 280ms var(--ease-airbnb);
+    box-shadow 0.2s var(--ease-airbnb);
   background-color: transparent;
   z-index: 1;
   outline: none;
 }
 .segment-where {
-  flex: 0 0 278px;
-  padding: 14px 24px 14px 32px;
+  flex: 1.15 1 0;
+  padding: 12px 24px 12px 28px;
 }
 .segment-degree {
-  flex: 0 0 283px;
-  padding: 14px 24px;
+  flex: 1 1 0;
+  padding: 12px 20px;
 }
 .segment-funding {
-  flex: 1 1 289px;
-  padding: 9px 10px 9px 24px;
+  flex: 1.1 1 0;
+  padding: 8px 8px 8px 20px;
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-}
-
-.tns-header--search-compact:not(.tns-header--search-open) .segment-where,
-.tns-header--search-compact:not(.tns-header--search-open) .segment-degree,
-.tns-header--search-compact:not(.tns-header--search-open) .segment-funding {
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-.tns-header--search-compact:not(.tns-header--search-open) .segment-where {
-  flex: 0 0 141px;
-  padding-left: 20px;
-  border-radius: 40px 4px 4px 40px;
-}
-
-.tns-header--search-compact:not(.tns-header--search-open) .segment-degree {
-  flex: 0 0 90px;
-  padding-inline: 18px;
-  border-radius: 4px;
-}
-
-.tns-header--search-compact:not(.tns-header--search-open) .segment-funding {
-  flex: 1 1 109px;
-  padding-left: 18px;
-  padding-right: 6px;
-  border-radius: 4px 40px 40px 4px;
 }
 
 .tns-segment-text-col {
@@ -4658,33 +4769,24 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   overflow: hidden;
 }
 .tns-segment-label {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 800;
-  letter-spacing: -0.01em;
-  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 14px;
   color: var(--tns-text-dark);
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 .tns-segment-input {
-  font-size: 0.98rem;
-  line-height: 20px;
+  font-size: 0.92rem;
+  line-height: 18px;
   color: var(--tns-text-muted);
-  font-weight: 400;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.tns-header--search-compact:not(.tns-header--search-open) .tns-segment-label {
-  font-size: 0.72rem;
-  line-height: 13px;
-  margin-bottom: 0;
-}
-
-.tns-header--search-compact:not(.tns-header--search-open) .tns-segment-input {
-  font-size: 0.8rem;
-  line-height: 16px;
-}
 .tns-segment-input.is-filled {
   color: var(--tns-text-dark);
   font-weight: 600;
@@ -4692,101 +4794,146 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 /* Hover & Active States */
 .tns-airbnb-search-pill:not(.has-active-segment) .tns-airbnb-segment:hover {
-  background-color: #F1F1F1;
+  background-color: #F1F5F9;
 }
 .tns-airbnb-search-pill.has-active-segment .tns-airbnb-segment:hover:not(.is-active) {
   background-color: #DDDDDD;
 }
+
+/* Smooth transition on the segment itself */
+.tns-airbnb-segment {
+  transition:
+    background-color 280ms ease,
+    box-shadow 320ms var(--ease-airbnb);
+}
+
 .tns-airbnb-segment.is-active {
   background-color: #FFFFFF !important;
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.15);
+  box-shadow: var(--shadow-active-pill);
   z-index: 5;
 }
 
-.tns-airbnb-search-pill.has-active-segment .segment-funding.is-active {
-  flex: 1 1 289px;
-}
-
-/* Dividers */
+/* Dividers — fade on hover of either adjacent segment */
 .tns-search-divider {
   width: 1px;
-  height: 40px;
-  background-color: var(--tns-border-dark);
+  height: 32px;
+  background-color: var(--tns-border);
   position: absolute;
   right: 0;
   top: 50%;
   transform: translateY(-50%);
-  transition: opacity 0.15s ease;
+  transition: opacity 0.25s ease;
   z-index: 2;
+  pointer-events: none;
 }
+
+/* Fade the RIGHT divider of the hovered segment */
+.tns-airbnb-search-pill:not(.has-active-segment) .tns-airbnb-segment:hover .tns-search-divider {
+  opacity: 0;
+}
+
+/* Fade the divider that sits BEFORE a hovered segment */
+.tns-airbnb-search-pill:not(.has-active-segment) .segment-where:has(+ .segment-degree:hover) .tns-search-divider,
+.tns-airbnb-search-pill:not(.has-active-segment) .segment-degree:has(+ .segment-funding:hover) .tns-search-divider {
+  opacity: 0;
+}
+
+/* When any segment is active, hide all dividers */
 .tns-airbnb-search-pill.has-active-segment .tns-search-divider {
   opacity: 0 !important;
 }
 
-/* 3rd Segment Wrapping & CTA Button */
+/* ── Search Submit Button ───────────────────────────────────────────────── */
+.segment-funding {
+  overflow: hidden;
+}
+
 .tns-search-submit-btn {
   height: 48px;
   min-width: 48px;
-  border-radius: 50%;
+  border-radius: 24px;
   background: var(--tns-crimson-gradient);
   color: #FFFFFF;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0 16px;
   gap: 8px;
   cursor: pointer;
-  position: relative;
+  flex-shrink: 0;
   z-index: 6;
   border: none;
   transition:
-    min-width 260ms var(--ease-airbnb),
-    padding 260ms var(--ease-airbnb),
-    border-radius 260ms var(--ease-airbnb),
-    transform 0.15s ease;
-  box-shadow: 0 8px 22px rgba(225, 29, 72, 0.28);
+    min-width 360ms var(--ease-airbnb),
+    padding 360ms var(--ease-airbnb),
+    border-radius 360ms var(--ease-airbnb),
+    transform 180ms ease,
+    box-shadow 180ms ease;
+  box-shadow: 0 4px 14px rgba(225, 29, 72, 0.35);
 }
 .tns-search-submit-btn:hover {
-  transform: scale(1.03);
+  transform: scale(1.04);
+  box-shadow: 0 6px 20px rgba(225, 29, 72, 0.45);
 }
+
 .tns-search-btn-text {
-  font-size: 15px;
+  font-size: 0.92rem;
   font-weight: 700;
   color: #FFFFFF;
-  display: none;
   white-space: nowrap;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  transition:
+    max-width 360ms var(--ease-airbnb),
+    opacity 280ms ease 80ms; /* slight delay so button expands first */
 }
+
+/* On active: button widens INTO the funding segment (not beyond pill edge) */
 .segment-funding.is-active .tns-search-submit-btn,
 .tns-airbnb-search-pill.has-active-segment .tns-search-submit-btn {
-  min-width: 100px;
+  min-width: 104px;
   border-radius: 24px;
   padding: 0 18px 0 16px;
 }
 
+.segment-funding.is-active .tns-search-btn-text,
+.tns-airbnb-search-pill.has-active-segment .tns-search-btn-text {
+  max-width: 80px;
+  opacity: 1;
+}
+
 .tns-header--search-compact:not(.tns-header--search-open) .tns-search-submit-btn {
-  height: 40px;
-  min-width: 40px;
-  padding: 0 11px;
-  box-shadow: 0 6px 18px rgba(225, 29, 72, 0.26);
+  height: 38px;
+  min-width: 38px;
+  padding: 0 10px;
+  box-shadow: 0 3px 10px rgba(225, 29, 72, 0.24);
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-search-btn-text {
-  display: none;
-}
-.segment-funding.is-active .tns-search-btn-text,
-.tns-airbnb-search-pill.has-active-segment .tns-search-btn-text {
-  display: inline-block;
+  max-width: 0;
+  opacity: 0;
 }
 
+
 /* ------------------------------------------------------------------ */
-/*  SOLID POPOVER DROPDOWN PANELS (NO TRANSPARENCY)                   */
+/*  POPOVER — Airbnb "bloom from segment" entrance                    */
 /* ------------------------------------------------------------------ */
+/*
+ * Airbnb's popover doesn't just fade — it appears to grow outward from the
+ * active segment like a bloom. Achieved by:
+ *   - Starting compressed (scale 0.92) and slightly above (translateY -12px)
+ *   - transform-origin: top center  →  anchors the expansion to the top edge
+ *     so the panel "opens downward and outward" from the segment boundary
+ *   - Slower timing (340ms) with the spring cubic-bezier for a physical feel
+ *   - Opacity starts at 0 and reaches full slightly before the scale settles
+ */
 .tns-desktop-popover-layer {
   position: absolute;
   top: 0;
   left: 50%;
-  width: min(850px, calc(100vw - 164px));
-  min-width: 720px;
+  width: min(840px, calc(100vw - 64px));
+  min-width: 680px;
   height: 0;
   transform: translateX(-50%);
   z-index: 240;
@@ -4795,33 +4942,38 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .tns-popover-panel {
   position: absolute;
-  top: 82px;
+  top: 74px;
   background: #FFFFFF !important;
-  border-radius: 28px;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16), 0 4px 12px rgba(15, 23, 42, 0.06);
+  border-radius: 24px;
+  box-shadow: var(--shadow-popover);
   border: 1px solid var(--tns-border);
   z-index: 240;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-8px);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  /* compressed start — slightly small and clipped above the pill */
+  transform: translateY(-12px) scale(0.92);
+  transform-origin: top center;
+  transition:
+    opacity 280ms ease,
+    transform 360ms var(--ease-airbnb);
 }
 .tns-popover-panel.is-open {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0);
+  /* blooms to full size, anchored at top — expands downward & outward */
+  transform: translateY(0) scale(1);
 }
 
 .tns-popover-where {
-  left: 8px;
-  width: 420px;
-  padding: 24px;
+  left: 0;
+  width: 440px;
+  padding: 22px;
 }
 .tns-popover-title {
-  font-size: 14px;
+  font-size: 0.88rem;
   font-weight: 800;
   color: var(--tns-text-dark);
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 .tns-region-grid {
   display: flex;
@@ -4831,27 +4983,27 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .tns-region-card {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   cursor: pointer;
   appearance: none;
   width: 100%;
   border: 0;
   background: transparent;
-  border-radius: 16px;
-  padding: 10px;
+  border-radius: 14px;
+  padding: 8px 10px;
   text-align: left;
   transition: background 0.15s ease, transform 0.15s ease;
 }
 .tns-region-thumb {
-  width: 56px;
-  height: 56px;
-  flex: 0 0 56px;
-  border-radius: 14px;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border-radius: 12px;
   border: 1px solid var(--tns-border);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
+  font-size: 24px;
   background: var(--tns-bg-hover);
   transition: border-color 0.15s ease;
 }
@@ -4869,13 +5021,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   gap: 2px;
 }
 .tns-region-name {
-  font-size: 15px;
+  font-size: 0.94rem;
   color: var(--tns-text-dark);
-  font-weight: 800;
+  font-weight: 750;
 }
 .tns-region-hint {
   color: var(--tns-text-muted);
-  font-size: 0.84rem;
+  font-size: 0.82rem;
   line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4883,10 +5035,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .tns-popover-degree {
-  left: 278px;
+  left: 260px;
   transform: translateY(-8px);
   width: 360px;
-  padding: 20px;
+  padding: 18px;
 }
 .tns-popover-degree.is-open {
   transform: translateY(0);
@@ -4894,13 +5046,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .tns-popover-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 .tns-popover-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-radius: 12px;
   cursor: pointer;
   appearance: none;
@@ -4914,32 +5066,32 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   background: #F8FAFC;
 }
 .tns-popover-icon {
-  font-size: 22px;
+  font-size: 20px;
 }
 .tns-popover-row-text {
   display: flex;
   flex-direction: column;
 }
 .tns-popover-row-title {
-  font-size: 14px;
+  font-size: 0.88rem;
   font-weight: 700;
   color: var(--tns-text-dark);
 }
 .tns-popover-row-desc {
-  font-size: 12px;
+  font-size: 0.78rem;
   color: var(--tns-text-muted);
 }
 .tns-popover-funding {
-  right: 8px;
+  right: 0;
   width: 380px;
-  padding: 20px;
+  padding: 18px;
 }
 
 /* ------------------------------------------------------------------ */
 /*  HERO SECTION (CLEAN DOCUMENT FLOW BELOW HEADER)                   */
 /* ------------------------------------------------------------------ */
 .tns-hero-section {
-  padding: 48px 0 36px;
+  padding: 40px 0 32px;
   background: radial-gradient(circle at 50% 10%, rgba(255, 228, 230, 0.45) 0%, rgba(255, 255, 255, 0) 65%);
   text-align: center;
   position: relative;

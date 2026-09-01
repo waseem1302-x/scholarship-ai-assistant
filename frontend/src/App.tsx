@@ -9,6 +9,8 @@ import {
   HomePage,
   SearchPill,
   initialSearch,
+  degreeOptions,
+  fundingOptions,
   type ActivePopover,
 } from "./features/home/HomePage";
 
@@ -69,7 +71,7 @@ export function Topbar() {
     function updateHeaderSearchState() {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
-        setHomeSearchCompact(window.scrollY > 72);
+        setHomeSearchCompact(window.scrollY > 48);
       });
     }
 
@@ -131,77 +133,114 @@ export function Topbar() {
           {/* Logo */}
           <Brand />
 
-          {/* Center Navigation */}
-          <nav className="tns-nav-center" aria-label="Product navigation">
-            {!user ? (
-              <>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/catalogue"
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">🎓</span>
-                  <span>Explore Scholarships</span>
-                </NavLink>
-                <a
-                  className="tns-nav-link"
-                  href="/#how-it-works"
-                  onClick={(e) => {
-                    if (location.pathname === "/") {
-                      e.preventDefault();
-                      document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" });
-                    }
-                  }}
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">✨</span>
-                  <span>How it Works</span>
-                </a>
-                <a
-                  className="tns-nav-link"
-                  href="/#for-students"
-                  onClick={(e) => {
-                    if (location.pathname === "/") {
-                      e.preventDefault();
-                      document.getElementById("for-students")?.scrollIntoView({ behavior: "smooth" });
-                    }
-                  }}
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">🧭</span>
-                  <span>For Students</span>
-                </a>
-              </>
-            ) : (
-              <>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/catalogue"
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">🎓</span>
-                  <span>Scholarships</span>
-                </NavLink>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/dashboard"
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">🌍</span>
-                  <span>Dashboard</span>
-                </NavLink>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/applications"
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">📌</span>
-                  <span>Applications</span>
-                </NavLink>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/matches"
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">💼</span>
-                  <span>Workspace</span>
-                </NavLink>
-              </>
-            )}
-          </nav>
+          {/* Center Navigation & Compact Search Trigger */}
+          <div className="tns-nav-center-wrapper">
+            <nav
+              className={`tns-nav-center ${isHome && homeSearchCompact && !activePopover ? "tns-nav-center--hidden" : ""}`}
+              aria-label="Product navigation"
+            >
+              {!user ? (
+                <>
+                  <NavLink
+                    className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                    to="/catalogue"
+                  >
+                    <span className="tns-home-nav-icon" aria-hidden="true">🎓</span>
+                    <span>Explore Scholarships</span>
+                  </NavLink>
+                  <a
+                    className="tns-nav-link"
+                    href="/#how-it-works"
+                    onClick={(e) => {
+                      if (location.pathname === "/") {
+                        e.preventDefault();
+                        document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" });
+                      }
+                    }}
+                  >
+                    <span className="tns-home-nav-icon" aria-hidden="true">✨</span>
+                    <span>How it Works</span>
+                  </a>
+                  <a
+                    className="tns-nav-link"
+                    href="/#for-students"
+                    onClick={(e) => {
+                      if (location.pathname === "/") {
+                        e.preventDefault();
+                        document.getElementById("for-students")?.scrollIntoView({ behavior: "smooth" });
+                      }
+                    }}
+                  >
+                    <span className="tns-home-nav-icon" aria-hidden="true">🧭</span>
+                    <span>For Students</span>
+                  </a>
+                </>
+              ) : (
+                <>
+                  <NavLink
+                    className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                    to="/catalogue"
+                  >
+                    <span className="tns-home-nav-icon" aria-hidden="true">🎓</span>
+                    <span>Scholarships</span>
+                  </NavLink>
+                  <NavLink
+                    className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                    to="/dashboard"
+                  >
+                    <span className="tns-home-nav-icon" aria-hidden="true">🌍</span>
+                    <span>Dashboard</span>
+                  </NavLink>
+                  <NavLink
+                    className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                    to="/applications"
+                  >
+                    <span className="tns-home-nav-icon" aria-hidden="true">📌</span>
+                    <span>Applications</span>
+                  </NavLink>
+                  <NavLink
+                    className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                    to="/matches"
+                  >
+                    <span className="tns-home-nav-icon" aria-hidden="true">💼</span>
+                    <span>Workspace</span>
+                  </NavLink>
+                </>
+              )}
+            </nav>
+
+            {/* Compact Airbnb-style Search Button on Scrolled Home */}
+            {isHome ? (
+              <button
+                type="button"
+                className={`tns-compact-search-btn ${homeSearchCompact && !activePopover ? "tns-compact-search-btn--visible" : ""}`}
+                onClick={() => setActivePopover("where")}
+                aria-label="Search scholarships"
+              >
+                <span className="tns-compact-segment">
+                  {search.country || "Any destination"}
+                </span>
+                <span className="tns-compact-divider" aria-hidden="true" />
+                <span className="tns-compact-segment">
+                  {search.degree_level
+                    ? degreeOptions.find((d) => d.value === search.degree_level)?.label
+                    : "Any degree"}
+                </span>
+                <span className="tns-compact-divider" aria-hidden="true" />
+                <span className="tns-compact-segment tns-compact-segment--muted">
+                  {search.funding_type
+                    ? fundingOptions.find((f) => f.value === search.funding_type)?.label
+                    : "Any funding"}
+                </span>
+                <span className="tns-compact-search-icon" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                </span>
+              </button>
+            ) : null}
+          </div>
 
           {/* Right Navigation & Profile */}
           <div className="tns-nav-right">
@@ -323,7 +362,9 @@ export function Topbar() {
 
         {/* ROW 2: Airbnb Search Bar inside Header on Homepage */}
         {isHome ? (
-          <div className="tns-header-search-bar page-width">
+          <div
+            className={`tns-header-search-bar page-width ${homeSearchCompact && !activePopover ? "tns-header-search-bar--compact" : ""}`}
+          >
             <SearchPill
               search={search}
               activePopover={activePopover}
