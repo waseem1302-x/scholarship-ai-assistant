@@ -5,12 +5,8 @@ import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "reac
 import { EmailVerificationNotice } from "./auth/AccountLifecycle";
 import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
 import { Brand } from "./components/BrandLogo";
-import {
-  HomePage,
-  SearchPill,
-  initialSearch,
-  type ActivePopover,
-} from "./features/home/HomePage";
+import { ScholarshipSearch } from "./components/ScholarshipSearch";
+import { HomePage, initialSearch, type ActivePopover } from "./features/home/HomePage";
 
 const EmailVerificationPage = lazy(() => import("./auth/AccountLifecycle").then((m) => ({ default: m.EmailVerificationPage })));
 const PasswordResetPage = lazy(() => import("./auth/AccountLifecycle").then((m) => ({ default: m.PasswordResetPage })));
@@ -41,7 +37,6 @@ export function Topbar() {
 
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // Route change reset and hash scroll
   useEffect(() => {
     setMenuOpen(false);
     setMobileDrawerOpen(false);
@@ -82,17 +77,19 @@ export function Topbar() {
     };
   }, [isHome]);
 
-  // Click-Outside Listener for User Profile Dropdown
   useEffect(() => {
     if (!menuOpen) return;
+
     function handleOutsideClick(event: MouseEvent) {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setMenuOpen(false);
       }
     }
+
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") setMenuOpen(false);
     }
+
     document.addEventListener("mousedown", handleOutsideClick);
     document.addEventListener("keydown", handleEscape);
     return () => {
@@ -126,12 +123,9 @@ export function Topbar() {
           isHome && activePopover ? "tns-header--search-open" : "",
         ].filter(Boolean).join(" ")}
       >
-        {/* ROW 1: Logo | Nav Tabs | User Profile / Auth */}
         <div className="tns-nav-top page-width">
-          {/* Logo */}
           <Brand />
 
-          {/* Center Navigation */}
           <nav className="tns-nav-center" aria-label="Product navigation">
             {!user ? (
               <>
@@ -139,34 +133,31 @@ export function Topbar() {
                   className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
                   to="/catalogue"
                 >
-                  <span className="tns-home-nav-icon" aria-hidden="true">🎓</span>
-                  <span>Explore Scholarships</span>
+                  Scholarships
                 </NavLink>
                 <a
                   className="tns-nav-link"
                   href="/#how-it-works"
-                  onClick={(e) => {
+                  onClick={(event) => {
                     if (location.pathname === "/") {
-                      e.preventDefault();
+                      event.preventDefault();
                       document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" });
                     }
                   }}
                 >
-                  <span className="tns-home-nav-icon" aria-hidden="true">✨</span>
-                  <span>How it Works</span>
+                  How it works
                 </a>
                 <a
                   className="tns-nav-link"
                   href="/#for-students"
-                  onClick={(e) => {
+                  onClick={(event) => {
                     if (location.pathname === "/") {
-                      e.preventDefault();
+                      event.preventDefault();
                       document.getElementById("for-students")?.scrollIntoView({ behavior: "smooth" });
                     }
                   }}
                 >
-                  <span className="tns-home-nav-icon" aria-hidden="true">🧭</span>
-                  <span>For Students</span>
+                  For students
                 </a>
               </>
             ) : (
@@ -175,43 +166,35 @@ export function Topbar() {
                   className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
                   to="/catalogue"
                 >
-                  <span className="tns-home-nav-icon" aria-hidden="true">🎓</span>
-                  <span>Scholarships</span>
-                </NavLink>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/dashboard"
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">🌍</span>
-                  <span>Dashboard</span>
-                </NavLink>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/applications"
-                >
-                  <span className="tns-home-nav-icon" aria-hidden="true">📌</span>
-                  <span>Applications</span>
+                  Scholarships
                 </NavLink>
                 <NavLink
                   className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
                   to="/matches"
                 >
-                  <span className="tns-home-nav-icon" aria-hidden="true">💼</span>
-                  <span>Workspace</span>
+                  Matches
+                </NavLink>
+                <NavLink
+                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                  to="/applications"
+                >
+                  Applications
+                </NavLink>
+                <NavLink
+                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
+                  to="/assistant"
+                >
+                  Guidance
                 </NavLink>
               </>
             )}
           </nav>
 
-          {/* Right Navigation & Profile */}
           <div className="tns-nav-right">
             {!user ? (
               <div className="tns-auth-actions">
                 <NavLink className="tns-login-link" to="/auth">
-                  Login
-                </NavLink>
-                <NavLink className="tns-get-started-btn" to="/auth">
-                  Get Started
+                  Sign in
                 </NavLink>
               </div>
             ) : (
@@ -221,7 +204,7 @@ export function Topbar() {
                   type="button"
                   aria-label="User account menu"
                   aria-expanded={menuOpen}
-                  onClick={() => setMenuOpen((o) => !o)}
+                  onClick={() => setMenuOpen((open) => !open)}
                 >
                   <span className="tns-user-avatar">
                     {user.email.slice(0, 1).toUpperCase()}
@@ -229,63 +212,33 @@ export function Topbar() {
                   <span className="tns-user-email-short">
                     {user.email.split("@")[0]}
                   </span>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
                     <path d="m6 9 6 6 6-6" />
                   </svg>
                 </button>
 
                 {menuOpen ? (
                   <div className="tns-dropdown-menu" role="menu">
-                    <NavLink
-                      className="tns-dropdown-item"
-                      to="/dashboard"
-                      onClick={() => setMenuOpen(false)}
-                      role="menuitem"
-                    >
+                    <NavLink className="tns-dropdown-item" to="/dashboard" onClick={() => setMenuOpen(false)} role="menuitem">
                       <strong>Dashboard</strong>
                     </NavLink>
-                    <NavLink
-                      className="tns-dropdown-item"
-                      to="/applications"
-                      onClick={() => setMenuOpen(false)}
-                      role="menuitem"
-                    >
-                      Applications Tracker
+                    <NavLink className="tns-dropdown-item" to="/applications" onClick={() => setMenuOpen(false)} role="menuitem">
+                      Applications tracker
                     </NavLink>
-                    <NavLink
-                      className="tns-dropdown-item"
-                      to="/matches"
-                      onClick={() => setMenuOpen(false)}
-                      role="menuitem"
-                    >
-                      Explainable Matches
+                    <NavLink className="tns-dropdown-item" to="/matches" onClick={() => setMenuOpen(false)} role="menuitem">
+                      Explainable matches
                     </NavLink>
-                    <NavLink
-                      className="tns-dropdown-item"
-                      to="/profile"
-                      onClick={() => setMenuOpen(false)}
-                      role="menuitem"
-                    >
-                      Profile & Criteria
+                    <NavLink className="tns-dropdown-item" to="/profile" onClick={() => setMenuOpen(false)} role="menuitem">
+                      Profile & criteria
                     </NavLink>
                     {user.role === "admin" ? (
                       <>
                         <div className="tns-dropdown-divider" />
-                        <NavLink
-                          className="tns-dropdown-item"
-                          to="/admin"
-                          onClick={() => setMenuOpen(false)}
-                          role="menuitem"
-                        >
-                          Admin Workspace
+                        <NavLink className="tns-dropdown-item" to="/admin" onClick={() => setMenuOpen(false)} role="menuitem">
+                          Admin workspace
                         </NavLink>
-                        <NavLink
-                          className="tns-dropdown-item"
-                          to="/admin/security"
-                          onClick={() => setMenuOpen(false)}
-                          role="menuitem"
-                        >
-                          Security & Audit
+                        <NavLink className="tns-dropdown-item" to="/admin/security" onClick={() => setMenuOpen(false)} role="menuitem">
+                          Security & audit
                         </NavLink>
                       </>
                     ) : null}
@@ -304,15 +257,14 @@ export function Topbar() {
               </div>
             )}
 
-            {/* Mobile Hamburger */}
             <button
               className="tns-mobile-hamburger-btn"
               type="button"
               aria-label="Toggle mobile menu"
               aria-expanded={mobileDrawerOpen}
-              onClick={() => setMobileDrawerOpen((o) => !o)}
+              onClick={() => setMobileDrawerOpen((open) => !open)}
             >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
                 <line x1="3" y1="6" x2="21" y2="6" />
                 <line x1="3" y1="12" x2="21" y2="12" />
                 <line x1="3" y1="18" x2="21" y2="18" />
@@ -321,10 +273,9 @@ export function Topbar() {
           </div>
         </div>
 
-        {/* ROW 2: Airbnb Search Bar inside Header on Homepage */}
         {isHome ? (
           <div className="tns-header-search-bar page-width">
-            <SearchPill
+            <ScholarshipSearch
               search={search}
               activePopover={activePopover}
               onSearchChange={setSearch}
@@ -333,9 +284,8 @@ export function Topbar() {
           </div>
         ) : null}
 
-        {/* Mobile Drawer */}
         {mobileDrawerOpen ? (
-          <div className="tns-mobile-drawer" role="dialog" aria-modal="true">
+          <div className="tns-mobile-drawer" role="dialog" aria-modal="true" aria-label="Navigation menu">
             <div className="tns-mobile-drawer-header">
               <Brand onClick={() => setMobileDrawerOpen(false)} />
               <button
@@ -344,27 +294,27 @@ export function Topbar() {
                 onClick={() => setMobileDrawerOpen(false)}
                 aria-label="Close menu"
               >
-                ✕
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
               </button>
             </div>
             <div className="tns-mobile-drawer-links">
               {!user ? (
                 <>
                   <NavLink to="/catalogue" onClick={() => setMobileDrawerOpen(false)}>
-                    Explore Scholarships
+                    Scholarships
                   </NavLink>
                   <a href="/#how-it-works" onClick={() => setMobileDrawerOpen(false)}>
-                    How it Works
+                    How it works
                   </a>
                   <a href="/#for-students" onClick={() => setMobileDrawerOpen(false)}>
-                    For Students
+                    For students
                   </a>
                   <div className="tns-mobile-drawer-divider" />
                   <NavLink to="/auth" className="tns-mobile-login-link" onClick={() => setMobileDrawerOpen(false)}>
-                    Login
-                  </NavLink>
-                  <NavLink to="/auth" className="tns-mobile-get-started-btn" onClick={() => setMobileDrawerOpen(false)}>
-                    Get Started
+                    Sign in
                   </NavLink>
                 </>
               ) : (
@@ -372,17 +322,17 @@ export function Topbar() {
                   <NavLink to="/catalogue" onClick={() => setMobileDrawerOpen(false)}>
                     Scholarships
                   </NavLink>
-                  <NavLink to="/dashboard" onClick={() => setMobileDrawerOpen(false)}>
-                    Dashboard
+                  <NavLink to="/matches" onClick={() => setMobileDrawerOpen(false)}>
+                    Matches
                   </NavLink>
                   <NavLink to="/applications" onClick={() => setMobileDrawerOpen(false)}>
                     Applications
                   </NavLink>
-                  <NavLink to="/matches" onClick={() => setMobileDrawerOpen(false)}>
-                    Workspace
+                  <NavLink to="/assistant" onClick={() => setMobileDrawerOpen(false)}>
+                    Guidance
                   </NavLink>
                   <NavLink to="/profile" onClick={() => setMobileDrawerOpen(false)}>
-                    Profile & Settings
+                    Profile & settings
                   </NavLink>
                   <div className="tns-mobile-drawer-divider" />
                   <button type="button" className="tns-mobile-logout-btn" onClick={logout}>
@@ -399,11 +349,10 @@ export function Topbar() {
 
       {isHome && activePopover ? <div className="tns-home-search-backdrop" aria-hidden="true" /> : null}
 
-      {/* Mobile Bottom Navigation Bar (Hidden on desktop) */}
       <nav className="tns-mobile-bottom-bar" aria-label="Mobile Navigation">
         <NavLink to="/" className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
             </svg>
           </span>
@@ -411,7 +360,7 @@ export function Topbar() {
         </NavLink>
         <NavLink to="/catalogue" className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <circle cx="12" cy="12" r="10" />
               <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
             </svg>
@@ -420,7 +369,7 @@ export function Topbar() {
         </NavLink>
         <NavLink to={user ? "/applications" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
             </svg>
           </span>
@@ -428,7 +377,7 @@ export function Topbar() {
         </NavLink>
         <NavLink to={user ? "/dashboard" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="M3 3v18h18" />
               <path d="m19 9-5 5-4-4-3 3" />
             </svg>
@@ -437,7 +386,7 @@ export function Topbar() {
         </NavLink>
         <NavLink to={user ? "/profile" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
