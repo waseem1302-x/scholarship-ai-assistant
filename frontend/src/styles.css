@@ -4633,13 +4633,26 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   right: 0;
   width: 220px;
   background: #FFFFFF;
-  border: 1px solid var(--tns-border);
+  border: 1px solid rgba(226, 232, 240, 0.8);
   border-radius: 18px;
   padding: 8px 0;
-  box-shadow: var(--shadow-user-menu);
+  box-shadow: var(--shadow-user-menu), 0 4px 16px rgba(15, 23, 42, 0.06);
   z-index: 120;
   display: flex;
   flex-direction: column;
+  animation: dropdownAppear 200ms var(--ease-airbnb);
+  transform-origin: top right;
+}
+
+@keyframes dropdownAppear {
+  0% {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 .tns-dropdown-item {
   padding: 10px 16px;
@@ -4719,14 +4732,16 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .tns-airbnb-search-pill:hover {
-  box-shadow: var(--shadow-search-hover);
+  box-shadow: var(--shadow-search-hover), 0 4px 16px rgba(15, 23, 42, 0.08);
   border-color: var(--tns-border-dark);
+  transform: translateY(-1px);
 }
 
 .tns-airbnb-search-pill.has-active-segment {
   background-color: #EBEBEB;
   border-color: transparent;
-  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.15), 0 2px 8px rgba(15, 23, 42, 0.08);
+  transform: translateY(0);
 }
 
 /* Individual Segments */
@@ -4860,13 +4875,27 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     min-width 360ms var(--ease-airbnb),
     padding 360ms var(--ease-airbnb),
     border-radius 360ms var(--ease-airbnb),
-    transform 180ms ease,
-    box-shadow 180ms ease;
-  box-shadow: 0 4px 14px rgba(225, 29, 72, 0.35);
+    transform 200ms var(--ease-airbnb),
+    box-shadow 200ms var(--ease-airbnb);
+  box-shadow: 0 4px 14px rgba(225, 29, 72, 0.35), 0 2px 4px rgba(225, 29, 72, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+.tns-search-submit-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.15), transparent 50%);
+  border-radius: inherit;
+  pointer-events: none;
 }
 .tns-search-submit-btn:hover {
-  transform: scale(1.04);
-  box-shadow: 0 6px 20px rgba(225, 29, 72, 0.45);
+  transform: scale(1.06);
+  box-shadow: 0 8px 24px rgba(225, 29, 72, 0.5), 0 3px 8px rgba(225, 29, 72, 0.3);
+}
+.tns-search-submit-btn:active {
+  transform: scale(0.98);
+  box-shadow: 0 3px 10px rgba(225, 29, 72, 0.3);
 }
 
 .tns-search-btn-text {
