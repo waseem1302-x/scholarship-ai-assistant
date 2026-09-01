@@ -48,18 +48,9 @@ describe("premium header and scholarship search", () => {
   afterEach(cleanup);
 
   it("keeps the signed-out header text-first and secondary to search", () => {
-    auth.useAuth.mockReturnValue({
-      user: null,
-      isRestoring: false,
-      sessionError: null,
-      signOut: vi.fn(),
-    });
+    auth.useAuth.mockReturnValue({ user: null, isRestoring: false, sessionError: null, signOut: vi.fn() });
 
-    render(
-      <BrowserRouter>
-        <Topbar />
-      </BrowserRouter>,
-    );
+    render(<BrowserRouter><Topbar /></BrowserRouter>);
 
     expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
     expect(screen.getByText("How it works")).toBeInTheDocument();
@@ -71,22 +62,13 @@ describe("premium header and scholarship search", () => {
 
   it("uses task-focused navigation after sign in", () => {
     auth.useAuth.mockReturnValue({
-      user: {
-        id: "student-1",
-        email: "scholar@thenextscholar.com",
-        role: "student",
-        email_verified_at: "2026-08-30T00:00:00Z",
-      },
+      user: { id: "student-1", email: "scholar@thenextscholar.com", role: "student", email_verified_at: "2026-08-30T00:00:00Z" },
       isRestoring: false,
       sessionError: null,
       signOut: vi.fn(),
     });
 
-    render(
-      <BrowserRouter>
-        <Topbar />
-      </BrowserRouter>,
-    );
+    render(<BrowserRouter><Topbar /></BrowserRouter>);
 
     expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Matches" })).toBeInTheDocument();
@@ -95,11 +77,7 @@ describe("premium header and scholarship search", () => {
   });
 
   it("uses calm scholarship-search microcopy", () => {
-    render(
-      <BrowserRouter>
-        <SearchHarness />
-      </BrowserRouter>,
-    );
+    render(<BrowserRouter><SearchHarness /></BrowserRouter>);
 
     const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
     const search = within(desktopSearch);
@@ -113,31 +91,25 @@ describe("premium header and scholarship search", () => {
   });
 
   it("preserves selected filters when routing to the catalogue", () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <SearchHarness showLocation />
-      </MemoryRouter>,
-    );
+    render(<MemoryRouter initialEntries={["/"]}><SearchHarness showLocation /></MemoryRouter>);
 
     fireEvent.click(screen.getByText("Search destinations"));
-    fireEvent.click(screen.getByRole("button", { name: /Germany/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Master's/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Fully Funded/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Germany\b/ }));
+
+    const degreeDialog = screen.getByRole("dialog", { name: "Choose degree" });
+    fireEvent.click(within(degreeDialog).getByRole("button", { name: /^Master's\b/ }));
+
+    const fundingDialog = screen.getByRole("dialog", { name: "Choose funding" });
+    fireEvent.click(within(fundingDialog).getByRole("button", { name: /^Fully Funded\b/ }));
 
     const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
     fireEvent.click(within(desktopSearch).getByRole("button", { name: "Search scholarships" }));
 
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "/catalogue?country=Germany&degree_level=masters&funding_type=full",
-    );
+    expect(screen.getByTestId("location")).toHaveTextContent("/catalogue?country=Germany&degree_level=masters&funding_type=full");
   });
 
   it("renders the brand mark without the old gradient glow definition", () => {
-    render(
-      <BrowserRouter>
-        <Brand />
-      </BrowserRouter>,
-    );
+    render(<BrowserRouter><Brand /></BrowserRouter>);
 
     expect(document.getElementById("tns-logo-grad")).not.toBeInTheDocument();
     expect(document.getElementById("tns-glow")).not.toBeInTheDocument();
