@@ -1,8 +1,8 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { BrowserRouter } from "react-router-dom";
+import { BrowserRouter, MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({ useAuth: vi.fn() }));
@@ -22,17 +22,25 @@ import {
   type HomeSearchState,
 } from "./features/home/HomePage";
 
-function SearchHarness() {
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname}{location.search}</output>;
+}
+
+function SearchHarness({ showLocation = false }: { showLocation?: boolean }) {
   const [search, setSearch] = useState<HomeSearchState>(initialSearch);
   const [activePopover, setActivePopover] = useState<ActivePopover>(null);
 
   return (
-    <ScholarshipSearch
-      search={search}
-      activePopover={activePopover}
-      onSearchChange={setSearch}
-      onPopoverChange={setActivePopover}
-    />
+    <>
+      <ScholarshipSearch
+        search={search}
+        activePopover={activePopover}
+        onSearchChange={setSearch}
+        onPopoverChange={setActivePopover}
+      />
+      {showLocation ? <LocationProbe /> : null}
+    </>
   );
 }
 
@@ -102,6 +110,24 @@ describe("premium header and scholarship search", () => {
     expect(search.getByText("Any degree")).toBeInTheDocument();
     expect(search.getByText("Funding")).toBeInTheDocument();
     expect(search.getByText("Any funding")).toBeInTheDocument();
+  });
+
+  it("preserves selected filters when routing to the catalogue", () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <SearchHarness showLocation />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByText("Search destinations"));
+    fireEvent.click(screen.getByRole("button", { name: /Germany/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Master's/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Fully Funded/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Search scholarships" }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/catalogue?country=Germany&degree_level=masters&funding_type=full",
+    );
   });
 
   it("renders the brand mark without the old gradient glow definition", () => {
