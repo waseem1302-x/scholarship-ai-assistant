@@ -236,13 +236,9 @@
   flex: 1.05 1 0;
 }
 
-.tns-airbnb-segment.segment-degree {
-  flex: 1 1 0;
-}
-
+.tns-airbnb-segment.segment-degree,
 .tns-airbnb-segment.segment-funding {
   flex: 1 1 0;
-  padding-right: 8px;
 }
 
 .tns-airbnb-segment:hover {
@@ -317,7 +313,7 @@
   height: 48px !important;
   min-width: 48px;
   min-height: 48px;
-  margin-left: auto;
+  margin: 8px 9px 8px 4px;
   padding: 0 !important;
   border: 0;
   border-radius: 50%;
@@ -426,7 +422,7 @@
   backdrop-filter: none !important;
 }
 
-/* Compact home header keeps the search useful without visual heaviness. */
+/* Compact home header keeps search available without restoring the heavy hero header. */
 .tns-header--home.tns-header--search-compact:not(.tns-header--search-open) {
   min-height: 76px !important;
 }
@@ -466,13 +462,11 @@
   height: 36px !important;
   min-width: 36px;
   min-height: 36px;
+  margin: 6px 7px 6px 3px;
 }
 
 /* Mobile: one decisive 56px search trigger plus quiet shortcuts. */
-.tns-mobile-airbnb-shell {
-  display: none;
-}
-
+.tns-mobile-airbnb-shell,
 .tns-mobile-search-card {
   display: none;
 }
@@ -521,10 +515,14 @@
 }
 
 @media (max-width: 767px) {
-  .tns-header,
+  .tns-header:not(.tns-header--home) {
+    min-height: 76px !important;
+  }
+
   .tns-header--home,
   .tns-header--home.tns-header--search-compact:not(.tns-header--search-open) {
-    min-height: 76px !important;
+    min-height: 124px !important;
+    height: auto !important;
   }
 
   .tns-nav-top {
@@ -532,25 +530,32 @@
     min-height: 76px;
   }
 
+  .tns-header--home .tns-nav-top {
+    display: none !important;
+  }
+
   .tns-brand-title {
     font-size: 14px;
   }
 
-  .tns-header-search-bar {
+  .tns-header--home .tns-header-search-bar,
+  .tns-header--home.tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar,
+  .tns-header--home.tns-header--search-open .tns-header-search-bar {
     position: static !important;
-    min-height: 0;
-    padding: 0;
+    display: block;
+    width: min(100% - 32px, 560px);
+    min-height: 124px;
+    margin: 0 auto;
+    padding: 12px 0 10px;
   }
 
-  .tns-header-search-bar .tns-search-container,
-  .tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar .tns-search-container {
-    position: fixed;
-    top: 88px;
-    right: 24px;
-    left: 24px;
-    width: auto;
+  .tns-header--home .tns-header-search-bar .tns-search-container,
+  .tns-header--home.tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar .tns-search-container,
+  .tns-header--home.tns-header--search-open .tns-header-search-bar .tns-search-container {
+    position: static !important;
+    width: 100%;
     max-width: none;
-    z-index: 76;
+    margin: 0;
   }
 
   .tns-airbnb-search-pill,
