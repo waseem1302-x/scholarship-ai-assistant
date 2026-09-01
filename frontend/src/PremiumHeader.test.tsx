@@ -123,7 +123,9 @@ describe("premium header and scholarship search", () => {
     fireEvent.click(screen.getByRole("button", { name: /Germany/ }));
     fireEvent.click(screen.getByRole("button", { name: /Master's/ }));
     fireEvent.click(screen.getByRole("button", { name: /Fully Funded/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Search scholarships" }));
+
+    const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
+    fireEvent.click(within(desktopSearch).getByRole("button", { name: "Search scholarships" }));
 
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/catalogue?country=Germany&degree_level=masters&funding_type=full",
