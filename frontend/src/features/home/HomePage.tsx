@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
@@ -290,6 +290,36 @@ const trustMetrics = [
 /*  Search Pill Component (Exact Airbnb Hover & Active Mechanics)       */
 /* ------------------------------------------------------------------ */
 
+function SegmentClearButton({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="tns-segment-clear"
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClear();
+      }}
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+        <path
+          d="M9.5 2.5 2.5 9.5M2.5 2.5l7 7"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
+      </svg>
+    </button>
+  );
+}
+
 export function SearchPill({
   search,
   activePopover,
@@ -303,6 +333,13 @@ export function SearchPill({
 }) {
   const navigate = useNavigate();
   const searchContainerRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLFormElement>(null);
+  const whereRef = useRef<HTMLDivElement>(null);
+  const degreeRef = useRef<HTMLDivElement>(null);
+  const fundingRef = useRef<HTMLDivElement>(null);
+  const whereInputRef = useRef<HTMLInputElement>(null);
+  const [hoveredSegment, setHoveredSegment] = useState<Exclude<ActivePopover, null> | null>(null);
+  const [highlight, setHighlight] = useState({ left: 0, width: 0, visible: false });
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -326,6 +363,45 @@ export function SearchPill({
         openPopover(popover);
       }
     };
+
+  useLayoutEffect(() => {
+    const pill = pillRef.current;
+    if (!pill) return;
+
+    function measure() {
+      const refs = { where: whereRef, degree: degreeRef, funding: fundingRef };
+      const el = activePopover ? refs[activePopover].current : null;
+      if (!el || !pill) {
+        setHighlight((current) => ({ ...current, visible: false }));
+        return;
+      }
+      const pillBox = pill.getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      setHighlight({
+        left: box.left - pillBox.left,
+        width: box.width,
+        visible: true,
+      });
+    }
+
+    measure();
+    const frame = window.requestAnimationFrame(measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(pill);
+    window.addEventListener("resize", measure);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [activePopover, search.country, search.degree_level, search.funding_type]);
+
+  useEffect(() => {
+    if (activePopover === "where") {
+      whereInputRef.current?.focus();
+    }
+  }, [activePopover]);
 
   useEffect(() => {
     if (!activePopover) return;
@@ -351,112 +427,19 @@ export function SearchPill({
     };
   }, [activePopover, onPopoverChange]);
 
-  const wherePopover =
-    activePopover === "where" ? (
-      <div
-        className="tns-popover-panel tns-popover-where is-open"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Popular scholarship destinations"
-      >
-        <h3 className="tns-popover-title">Popular scholarship destinations</h3>
-        <div className="tns-region-grid">
-          <button
-            type="button"
-            className="tns-region-card"
-            onClick={() => {
-              onSearchChange((s) => ({ ...s, country: "" }));
-              onPopoverChange("degree");
-            }}
-          >
-            <div className="tns-region-thumb">🌐</div>
-            <span className="tns-region-copy">
-              <span className="tns-region-name">Anywhere</span>
-              <span className="tns-region-hint">Search every destination</span>
-            </span>
-          </button>
-          {popularDestinations.map((d) => (
-            <button
-              key={d.country}
-              type="button"
-              className="tns-region-card"
-              onClick={() => {
-                onSearchChange((s) => ({ ...s, country: d.country }));
-                onPopoverChange("degree");
-              }}
-            >
-              <div className="tns-region-thumb">{d.flag}</div>
-              <span className="tns-region-copy">
-                <span className="tns-region-name">{d.country}</span>
-                <span className="tns-region-hint">{d.hint}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    ) : null;
+  const destinationQuery = search.country.trim().toLowerCase();
+  const filteredDestinations = popularDestinations.filter(
+    (destination) =>
+      !destinationQuery ||
+      destination.country.toLowerCase().includes(destinationQuery) ||
+      destination.hint.toLowerCase().includes(destinationQuery),
+  );
+  const showAnywhere =
+    !destinationQuery || "anywhere".includes(destinationQuery) || "every destination".includes(destinationQuery);
 
-  const degreePopover =
-    activePopover === "degree" ? (
-      <div
-        className="tns-popover-panel tns-popover-degree is-open"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Academic degree level"
-      >
-        <h3 className="tns-popover-title">Academic Degree Level</h3>
-        <div className="tns-popover-list">
-          {degreeOptions.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className="tns-popover-row"
-              onClick={() => {
-                onSearchChange((s) => ({ ...s, degree_level: opt.value }));
-                onPopoverChange("funding");
-              }}
-            >
-              <span className="tns-popover-icon">{opt.icon}</span>
-              <span className="tns-popover-row-text">
-                <span className="tns-popover-row-title">{opt.label}</span>
-                <span className="tns-popover-row-desc">{opt.desc}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    ) : null;
-
-  const fundingPopover =
-    activePopover === "funding" ? (
-      <div
-        className="tns-popover-panel tns-popover-funding is-open"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Funding coverage"
-      >
-        <h3 className="tns-popover-title">Funding Coverage</h3>
-        <div className="tns-popover-list">
-          {fundingOptions.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className="tns-popover-row"
-              onClick={() => {
-                onSearchChange((s) => ({ ...s, funding_type: opt.value }));
-                onPopoverChange(null);
-              }}
-            >
-              <span className="tns-popover-icon">{opt.icon}</span>
-              <span className="tns-popover-row-text">
-                <span className="tns-popover-row-title">{opt.label}</span>
-                <span className="tns-popover-row-desc">{opt.desc}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-    ) : null;
+  function showClear(segment: Exclude<ActivePopover, null>, hasValue: boolean) {
+    return hasValue && (activePopover === segment || hoveredSegment === segment);
+  }
 
   return (
     <div className={`tns-search-container ${isAnyActive ? "tns-search-container--open" : ""}`} ref={searchContainerRef}>

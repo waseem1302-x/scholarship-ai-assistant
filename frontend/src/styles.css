@@ -4738,12 +4738,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   position: relative;
   cursor: pointer;
   border-radius: 32px;
-  transition:
-    background-color 0.15s ease,
-    box-shadow 0.2s var(--ease-airbnb);
   background-color: transparent;
   z-index: 1;
   outline: none;
+  transition:
+    background-color 220ms var(--ease-airbnb),
+    box-shadow 220ms var(--ease-airbnb);
 }
 .segment-where {
   flex: 1.15 1 0;
@@ -4798,13 +4798,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .tns-airbnb-search-pill.has-active-segment .tns-airbnb-segment:hover:not(.is-active) {
   background-color: #DDDDDD;
-}
-
-/* Smooth transition on the segment itself */
-.tns-airbnb-segment {
-  transition:
-    background-color 280ms ease,
-    box-shadow 320ms var(--ease-airbnb);
 }
 
 .tns-airbnb-segment.is-active {
@@ -4920,13 +4913,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 /*  POPOVER — Airbnb "bloom from segment" entrance                    */
 /* ------------------------------------------------------------------ */
 /*
- * Airbnb's popover doesn't just fade — it appears to grow outward from the
- * active segment like a bloom. Achieved by:
- *   - Starting compressed (scale 0.92) and slightly above (translateY -12px)
- *   - transform-origin: top center  →  anchors the expansion to the top edge
- *     so the panel "opens downward and outward" from the segment boundary
- *   - Slower timing (340ms) with the spring cubic-bezier for a physical feel
- *   - Opacity starts at 0 and reaches full slightly before the scale settles
+ * Segment background-color transitions first (220ms). The popover then blooms
+ * with a 180ms delay so it follows the active highlight instead of appearing
+ * at the same instant. Animation is used (not transition) because the panel
+ * mounts already `.is-open`.
  */
 .tns-desktop-popover-layer {
   position: absolute;
@@ -4940,6 +4930,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   pointer-events: none;
 }
 
+@keyframes tns-popover-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .tns-popover-panel {
   position: absolute;
   top: 74px;
@@ -4950,18 +4951,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   z-index: 240;
   opacity: 0;
   pointer-events: none;
-  /* compressed start — slightly small and clipped above the pill */
-  transform: translateY(-12px) scale(0.92);
+  transform: translateY(-10px) scale(0.96);
   transform-origin: top center;
-  transition:
-    opacity 280ms ease,
-    transform 360ms var(--ease-airbnb);
 }
 .tns-popover-panel.is-open {
-  opacity: 1;
   pointer-events: auto;
-  /* blooms to full size, anchored at top — expands downward & outward */
-  transform: translateY(0) scale(1);
+  /* Holds the compressed state during the delay, then blooms after the
+     active-segment background-color has started transitioning. */
+  animation: tns-popover-enter 320ms var(--ease-airbnb) 180ms both;
 }
 
 .tns-popover-where {
@@ -5036,12 +5033,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .tns-popover-degree {
   left: 260px;
-  transform: translateY(-8px);
   width: 360px;
   padding: 18px;
-}
-.tns-popover-degree.is-open {
-  transform: translateY(0);
 }
 .tns-popover-list {
   display: flex;
