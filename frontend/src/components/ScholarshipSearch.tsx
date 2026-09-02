@@ -199,6 +199,7 @@ export function ScholarshipSearch({
               <button
                 type="button"
                 className="tns-region-card"
+                aria-label="Anywhere"
                 onClick={() => {
                   onSearchChange((current) => ({ ...current, country: "" }));
                   onPopoverChange("degree");
@@ -214,6 +215,7 @@ export function ScholarshipSearch({
                   key={destination.country}
                   type="button"
                   className={`tns-region-card ${search.country === destination.country ? "is-selected" : ""}`}
+                  aria-label={destination.country}
                   onClick={() => {
                     onSearchChange((current) => ({ ...current, country: destination.country }));
                     onPopoverChange("degree");
@@ -238,6 +240,7 @@ export function ScholarshipSearch({
                   key={option.value || "any"}
                   type="button"
                   className={`tns-popover-row ${search.degree_level === option.value ? "is-selected" : ""}`}
+                  aria-label={option.value ? option.label : "Any degree"}
                   onClick={() => {
                     onSearchChange((current) => ({ ...current, degree_level: option.value }));
                     onPopoverChange("funding");
@@ -262,6 +265,7 @@ export function ScholarshipSearch({
                   key={option.value || "any"}
                   type="button"
                   className={`tns-popover-row ${search.funding_type === option.value ? "is-selected" : ""}`}
+                  aria-label={option.value ? option.label : "Any funding"}
                   onClick={() => {
                     onSearchChange((current) => ({ ...current, funding_type: option.value }));
                     onPopoverChange(null);

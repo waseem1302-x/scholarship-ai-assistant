@@ -508,14 +508,7 @@ export function CataloguePage() {
     user?.role === "student",
   );
 
-  const [localSavedIds, setLocalSavedIds] = useState<Set<string>>(() => {
-    try {
-      const stored = localStorage.getItem("tns_bookmarked_ids");
-      return stored ? new Set<string>(JSON.parse(stored)) : new Set<string>();
-    } catch {
-      return new Set<string>();
-    }
-  });
+  const [localSavedIds, setLocalSavedIds] = useState<Set<string>>(() => new Set<string>());
 
   const savedSet = useMemo(() => {
     const set = new Set(localSavedIds);
@@ -542,9 +535,6 @@ export function CataloguePage() {
       const next = new Set(prev);
       if (next.has(oppId)) next.delete(oppId);
       else next.add(oppId);
-      try {
-        localStorage.setItem("tns_bookmarked_ids", JSON.stringify(Array.from(next)));
-      } catch {}
       return next;
     });
   }
