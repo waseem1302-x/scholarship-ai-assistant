@@ -219,7 +219,7 @@ describe("HomePage - The Next Scholar", () => {
     expect(container.querySelector("#destination-popover")).toBe(destinationPopover);
   });
 
-  it("anchors the destination dialog to its field and advances to degree", () => {
+  it("keeps the destination dialog in the shared shell and advances to degree", () => {
     render(
       <BrowserRouter>
         <ScholarshipSearchHarness />
@@ -233,7 +233,7 @@ describe("HomePage - The Next Scholar", () => {
     const destinationPopover = screen.getByRole("dialog", { name: /popular scholarship destinations/i });
     expect(destination).toHaveAttribute("aria-expanded", "true");
     expect(destinationPopover).toHaveAttribute("id", "destination-popover");
-    expect(destination.closest(".tns-search-field")).toContainElement(destinationPopover);
+    expect(search.querySelector(".tns-popover-shell")).toContainElement(destinationPopover);
 
     fireEvent.click(within(destinationPopover).getByRole("option", { name: /Germany/ }));
 

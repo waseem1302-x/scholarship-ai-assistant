@@ -141,6 +141,27 @@ describe("premium header and scholarship search", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
   });
 
+  it("keeps one desktop popover surface while switching search segments", () => {
+    render(<MemoryRouter initialEntries={["/"]}><SearchHarness /></MemoryRouter>);
+
+    const search = screen.getByRole("search", { name: "Search verified scholarships" });
+    const countryInput = within(search).getByRole("combobox", { name: "Search country" });
+    fireEvent.focus(countryInput);
+
+    const shell = search.querySelector(".tns-popover-shell");
+    const destinationPanel = document.getElementById("destination-popover");
+
+    expect(shell).toHaveAttribute("data-active-popover", "where");
+    expect(destinationPanel).toHaveAttribute("aria-hidden", "false");
+
+    fireEvent.click(within(search).getByRole("button", { name: "Degree Any degree" }));
+
+    expect(search.querySelector(".tns-popover-shell")).toBe(shell);
+    expect(shell).toHaveAttribute("data-active-popover", "degree");
+    expect(destinationPanel).toHaveAttribute("aria-hidden", "true");
+    expect(document.getElementById("degree-popover")).toHaveAttribute("aria-hidden", "false");
+  });
+
   it("uses the same canonical destination suggestions in the mobile search", () => {
     render(<MemoryRouter initialEntries={["/"]}><SearchHarness showLocation /></MemoryRouter>);
 

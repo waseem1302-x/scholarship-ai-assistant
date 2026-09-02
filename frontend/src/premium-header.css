@@ -377,7 +377,7 @@ body .tns-header--home ~ .tns-route-stage {
   position: absolute;
   top: 1px;
   left: 1px;
-  z-index: 1;
+  z-index: 3;
   width: calc((100% - 2px) / 3);
   height: 64px;
   border-radius: var(--tns-radius-search);
@@ -397,7 +397,7 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-search-field {
   position: relative;
-  z-index: 2;
+  z-index: auto;
   min-width: 0;
   height: 64px;
   transition: height 240ms var(--tns-ease);
@@ -405,7 +405,7 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-airbnb-segment {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   align-items: center;
   width: 100%;
@@ -433,7 +433,7 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 .tns-airbnb-segment.is-active {
-  z-index: 2;
+  z-index: 4;
   background: transparent !important;
   box-shadow: none !important;
 }
@@ -499,6 +499,10 @@ body .tns-header--home ~ .tns-route-stage {
   outline: 0;
   cursor: text;
   font-family: inherit;
+}
+
+.tns-destination-input:focus-visible {
+  outline: none;
 }
 
 .tns-destination-input::placeholder {
@@ -607,16 +611,16 @@ body .tns-header--home ~ .tns-route-stage {
   transform: translateX(0);
 }
 
-/* Locally anchored search popovers */
-.tns-popover-panel {
+/* Shared desktop popover surface */
+.tns-popover-shell {
   position: absolute;
   top: calc(100% + 13px);
   left: 0;
   z-index: 240;
+  display: grid;
   width: min(420px, calc(100vw - 64px));
   max-height: min(560px, calc(100vh - 190px));
-  padding: 22px;
-  overflow-y: auto;
+  overflow: hidden;
   border: 1px solid rgba(226, 232, 240, 0.94);
   border-radius: var(--tns-radius-popover);
   background: var(--tns-surface) !important;
@@ -630,8 +634,7 @@ body .tns-header--home ~ .tns-route-stage {
   transition: opacity 160ms var(--tns-ease), transform 180ms var(--tns-ease), visibility 0s linear 180ms;
 }
 
-.tns-popover-panel.is-open {
-  z-index: 241;
+.tns-popover-shell.is-open {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
@@ -639,10 +642,44 @@ body .tns-header--home ~ .tns-route-stage {
   transition-delay: 0s;
 }
 
-.segment-funding .tns-popover-panel {
-  right: 0;
-  left: auto;
-  transform-origin: top right;
+.tns-popover-panel {
+  grid-area: 1 / 1;
+  min-width: 0;
+  max-height: min(560px, calc(100vh - 190px));
+  padding: 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(6px);
+  will-change: opacity, transform;
+  transition: opacity 120ms var(--tns-ease), transform 180ms var(--tns-ease), visibility 0s linear 160ms;
+}
+
+.tns-popover-panel::-webkit-scrollbar { width: 6px; }
+.tns-popover-panel::-webkit-scrollbar-track { background: transparent; }
+.tns-popover-panel::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+.tns-popover-panel::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+.tns-popover-shell[data-active-popover="degree"] .tns-popover-where,
+.tns-popover-shell[data-active-popover="funding"] .tns-popover-where,
+.tns-popover-shell[data-active-popover="funding"] .tns-popover-degree {
+  transform: translateX(-6px);
+}
+
+.tns-popover-panel.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+  transition-delay: 40ms, 0s, 0s;
 }
 
 .tns-popover-title {
