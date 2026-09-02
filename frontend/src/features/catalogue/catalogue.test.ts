@@ -10,8 +10,15 @@ import {
   getOpportunityBadges,
 } from "./catalogue";
 import { defaultCatalogueFilters, type OpportunitySummary } from "./types";
+import { filterDestinationOptions, resolveDestinationOption } from "./searchOptions";
 
 describe("catalogue query contract", () => {
+  it("filters canonical destinations and resolves common aliases", () => {
+    expect(filterDestinationOptions("jap").map((option) => option.country)).toEqual(["Japan"]);
+    expect(resolveDestinationOption(" uk ")?.country).toBe("United Kingdom");
+    expect(resolveDestinationOption("Atlantis")).toBeNull();
+  });
+
   it("keeps open-now enabled and includes only selected structured filters", () => {
     const params = catalogueSearch(
       {

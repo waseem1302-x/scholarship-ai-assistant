@@ -25,35 +25,11 @@ import {
   type OpportunitySearchResponse,
   type OpportunitySummary,
 } from "./types";
+import { degreeOptions, destinationOptions, fundingOptions } from "./searchOptions";
 
-const COMMON_COUNTRIES = [
-  "United Kingdom",
-  "United States",
-  "Germany",
-  "Japan",
-  "Australia",
-  "Canada",
-  "Singapore",
-  "Malaysia",
-  "Netherlands",
-  "France",
-];
-
-const DEGREE_OPTIONS: { value: DegreeLevel; label: string }[] = [
-  { value: "bachelors", label: "Bachelor's" },
-  { value: "masters", label: "Master's" },
-  { value: "phd", label: "PhD" },
-  { value: "postdoc", label: "Postdoctoral" },
-  { value: "short_course", label: "Short course" },
-];
-
-const FUNDING_OPTIONS: { value: FundingType; label: string }[] = [
-  { value: "full", label: "Fully funded" },
-  { value: "partial", label: "Partial funding" },
-  { value: "tuition_only", label: "Tuition waiver" },
-  { value: "stipend_only", label: "Stipend only" },
-  { value: "unknown", label: "Self-funded" },
-];
+const COMMON_COUNTRIES = destinationOptions.map((option) => option.country);
+const DEGREE_OPTIONS = degreeOptions.filter((option) => option.value);
+const FUNDING_OPTIONS = fundingOptions.filter((option) => option.value);
 
 const PROVIDER_TYPES = [
   "Government",

@@ -90,7 +90,8 @@ describe("The Next Scholar Topbar Navigation", () => {
       </BrowserRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Destination Anywhere" }));
+    const search = screen.getByRole("search", { name: /search verified scholarships/i });
+    fireEvent.focus(within(search).getByRole("combobox", { name: /search country/i }));
     expect(screen.getByRole("dialog", { name: /popular scholarship destinations/i })).toBeInTheDocument();
 
     fireEvent.mouseDown(document.body);

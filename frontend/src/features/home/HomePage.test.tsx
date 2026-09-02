@@ -159,12 +159,13 @@ describe("HomePage - The Next Scholar", () => {
       </BrowserRouter>,
     );
 
-    const destination = screen.getByRole("button", { name: /destination anywhere/i });
-    const degree = screen.getByRole("button", { name: /degree any degree/i });
-    const funding = screen.getByRole("button", { name: /funding any funding/i });
+    const search = screen.getByRole("search", { name: /search verified scholarships/i });
+    const destination = within(search).getByRole("combobox", { name: /search country/i });
+    const degree = within(search).getByRole("button", { name: /degree any degree/i });
+    const funding = within(search).getByRole("button", { name: /funding any funding/i });
 
-    expect(destination.tagName).toBe("BUTTON");
-    expect(destination).toHaveAttribute("aria-controls", "destination-popover");
+    expect(destination.tagName).toBe("INPUT");
+    expect(destination).toHaveAttribute("aria-controls", "desktop-destination-suggestions");
     expect(degree).toHaveAttribute("aria-controls", "degree-popover");
     expect(funding).toHaveAttribute("aria-controls", "funding-popover");
     expect(destination).toHaveAttribute("aria-expanded", "false");
@@ -183,10 +184,10 @@ describe("HomePage - The Next Scholar", () => {
     expect(indicator).toBeInTheDocument();
     expect(search).toHaveAttribute("data-active-segment", "none");
 
-    fireEvent.click(screen.getByRole("button", { name: /destination anywhere/i }));
+    fireEvent.focus(within(search).getByRole("combobox", { name: /search country/i }));
     expect(search).toHaveAttribute("data-active-segment", "where");
 
-    fireEvent.click(screen.getByRole("button", { name: /degree any degree/i }));
+    fireEvent.click(within(search).getByRole("button", { name: /degree any degree/i }));
     expect(search).toHaveAttribute("data-active-segment", "degree");
     expect(container.querySelector(".tns-active-segment-indicator")).toBe(indicator);
   });
@@ -206,11 +207,12 @@ describe("HomePage - The Next Scholar", () => {
     expect(degreePopover).toHaveAttribute("aria-hidden", "true");
     expect(fundingPopover).toHaveAttribute("aria-hidden", "true");
 
-    fireEvent.click(screen.getByRole("button", { name: /destination anywhere/i }));
+    const search = screen.getByRole("search", { name: /search verified scholarships/i });
+    fireEvent.focus(within(search).getByRole("combobox", { name: /search country/i }));
     expect(destinationPopover).toHaveAttribute("aria-hidden", "false");
     expect(degreePopover).toHaveAttribute("aria-hidden", "true");
 
-    fireEvent.click(screen.getByRole("button", { name: /degree any degree/i }));
+    fireEvent.click(within(search).getByRole("button", { name: /degree any degree/i }));
     expect(destinationPopover).toHaveAttribute("aria-hidden", "true");
     expect(degreePopover).toHaveAttribute("aria-hidden", "false");
     expect(container.querySelector("#destination-popover")).toBe(destinationPopover);
@@ -223,18 +225,78 @@ describe("HomePage - The Next Scholar", () => {
       </BrowserRouter>,
     );
 
-    const destination = screen.getByRole("button", { name: /destination anywhere/i });
-    fireEvent.click(destination);
+    const search = screen.getByRole("search", { name: /search verified scholarships/i });
+    const destination = within(search).getByRole("combobox", { name: /search country/i });
+    fireEvent.focus(destination);
 
     const destinationPopover = screen.getByRole("dialog", { name: /popular scholarship destinations/i });
     expect(destination).toHaveAttribute("aria-expanded", "true");
     expect(destinationPopover).toHaveAttribute("id", "destination-popover");
     expect(destination.closest(".tns-search-field")).toContainElement(destinationPopover);
 
-    fireEvent.click(within(destinationPopover).getByRole("button", { name: "Germany" }));
+    fireEvent.click(within(destinationPopover).getByRole("option", { name: /Germany/ }));
 
     expect(screen.getByRole("button", { name: /degree any degree/i })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("dialog", { name: /choose degree/i })).toBeInTheDocument();
+  });
+
+  it("filters destination suggestions and stores the canonical country", () => {
+    render(
+      <BrowserRouter>
+        <ScholarshipSearchHarness />
+      </BrowserRouter>,
+    );
+
+    const search = screen.getByRole("search", { name: /search verified scholarships/i });
+    const countryInput = within(search).getByRole("combobox", { name: /search country/i });
+
+    fireEvent.focus(countryInput);
+    fireEvent.change(countryInput, { target: { value: "jap" } });
+
+    const suggestions = screen.getByRole("listbox", { name: /destination suggestions/i });
+    expect(within(suggestions).getByRole("option", { name: /Japan/i })).toBeInTheDocument();
+    expect(within(suggestions).queryByRole("option", { name: /Germany/i })).not.toBeInTheDocument();
+
+    fireEvent.click(within(suggestions).getByRole("option", { name: /Japan/i }));
+
+    expect(countryInput).toHaveValue("Japan");
+    expect(screen.getByRole("button", { name: /degree any degree/i })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("supports keyboard selection in the destination combobox", () => {
+    render(
+      <BrowserRouter>
+        <ScholarshipSearchHarness />
+      </BrowserRouter>,
+    );
+
+    const search = screen.getByRole("search", { name: /search verified scholarships/i });
+    const countryInput = within(search).getByRole("combobox", { name: /search country/i });
+
+    fireEvent.focus(countryInput);
+    fireEvent.change(countryInput, { target: { value: "net" } });
+    fireEvent.keyDown(countryInput, { key: "ArrowDown" });
+    fireEvent.keyDown(countryInput, { key: "Enter" });
+
+    expect(countryInput).toHaveValue("Netherlands");
+  });
+
+  it("clears a typed destination without closing the search", () => {
+    render(
+      <BrowserRouter>
+        <ScholarshipSearchHarness />
+      </BrowserRouter>,
+    );
+
+    const search = screen.getByRole("search", { name: /search verified scholarships/i });
+    const countryInput = within(search).getByRole("combobox", { name: /search country/i });
+
+    fireEvent.focus(countryInput);
+    fireEvent.change(countryInput, { target: { value: "Japan" } });
+    fireEvent.click(within(search).getByRole("button", { name: /clear destination/i }));
+
+    expect(countryInput).toHaveValue("");
+    expect(countryInput).toHaveAttribute("aria-expanded", "true");
   });
 
   it("shows a complete mobile search sheet with country degree and funding fields", () => {

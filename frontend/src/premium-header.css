@@ -415,6 +415,11 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-airbnb-segment:active { transform: scale(0.992); }
 
+.tns-airbnb-segment:focus-within {
+  outline: 3px solid rgba(37, 99, 235, 0.3);
+  outline-offset: 3px;
+}
+
 .tns-segment-text-col {
   display: flex;
   flex: 1;
@@ -424,6 +429,8 @@ body .tns-header--home ~ .tns-route-stage {
   gap: 3px;
   transition: gap 200ms var(--tns-ease);
 }
+
+.segment-where .tns-segment-text-col { padding-right: 34px; }
 
 .tns-segment-label {
   display: block;
@@ -457,6 +464,44 @@ body .tns-header--home ~ .tns-route-stage {
   color: var(--tns-text-primary) !important;
   font-weight: 550 !important;
 }
+
+.tns-destination-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: 0;
+  cursor: text;
+  font-family: inherit;
+}
+
+.tns-destination-input::placeholder {
+  color: var(--tns-text-secondary);
+  opacity: 1;
+}
+
+.tns-destination-clear {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tns-text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.tns-destination-clear:hover { background: rgba(15, 23, 42, 0.07); }
 
 .tns-search-divider {
   position: absolute;
@@ -612,6 +657,22 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-region-card.is-selected,
 .tns-popover-row.is-selected { border-color: #bfdbfe; background: var(--tns-brand-soft); }
+
+.tns-destination-empty,
+.tns-search-error {
+  margin: 0;
+  color: var(--tns-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tns-destination-empty { padding: 10px 12px; }
+
+.tns-search-error {
+  margin-top: 12px;
+  color: #b42318;
+  font-weight: 550;
+}
 
 .tns-region-copy,
 .tns-popover-row-text {
@@ -940,7 +1001,7 @@ body .tns-header--home ~ .tns-route-stage {
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
   }
 
-  .tns-mobile-search-field { display: grid; flex: 1; gap: 5px; }
+  .tns-mobile-search-field { position: relative; display: grid; flex: 1; gap: 5px; }
 
   .tns-mobile-field-label {
     color: var(--tns-text-primary);
@@ -957,6 +1018,50 @@ body .tns-header--home ~ .tns-route-stage {
     font: inherit;
     font-size: 15px;
     outline: none;
+  }
+
+  .tns-mobile-input { padding-right: 34px; }
+
+  .tns-destination-clear--mobile {
+    top: auto;
+    right: 0;
+    bottom: -4px;
+    transform: none;
+  }
+
+  .tns-mobile-destination-suggestions {
+    display: grid;
+    max-height: 220px;
+    margin-top: -8px;
+    padding: 6px;
+    overflow-y: auto;
+    border: 1px solid var(--tns-border);
+    border-radius: 16px;
+    background: var(--tns-surface);
+  }
+
+  .tns-mobile-destination-suggestions[aria-hidden="true"] { display: none; }
+
+  .tns-mobile-destination-suggestions button {
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--tns-text-primary);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .tns-mobile-destination-suggestions button:hover,
+  .tns-mobile-destination-suggestions button.is-selected {
+    background: var(--tns-brand-soft);
+  }
+
+  .tns-mobile-search-card > .tns-search-error {
+    margin: -6px 4px 0;
   }
 
   .tns-mobile-search-btn {

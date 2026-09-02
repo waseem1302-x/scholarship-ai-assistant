@@ -470,7 +470,9 @@ def test_public_search_filters_verified_opportunities(
     for opportunity in [malaysia, turkey]:
         publish_opportunity(client, headers, opportunity)
 
-    filtered = client.get("/api/v1/opportunities?country=Malaysia&degree_level=masters")
+    filtered = client.get(
+        "/api/v1/opportunities?country=Malaysia&degree_level=masters&funding_type=full"
+    )
     assert filtered.status_code == 200
     assert [item["name"] for item in response_items(filtered)] == [
         "Malaysia International Scholarship"

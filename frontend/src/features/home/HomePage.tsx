@@ -9,54 +9,14 @@ import {
   UKLandmarkSvg,
   USLandmarkSvg,
 } from "../../components/DestinationLandmarks";
-import {
-  type DegreeLevel,
-  type FundingType,
-} from "../catalogue/types";
-
-/* ------------------------------------------------------------------ */
-/*  Types & Options                                                   */
-/* ------------------------------------------------------------------ */
-
-export interface HomeSearchState {
-  country: string;
-  degree_level: DegreeLevel | "";
-  funding_type: FundingType | "";
-}
-
-export type ActivePopover = "where" | "degree" | "funding" | null;
-
-export const initialSearch: HomeSearchState = {
-  country: "",
-  degree_level: "",
-  funding_type: "",
-};
-
-export const popularDestinations = [
-  { country: "Germany", flag: "🇩🇪", hint: "DAAD, Free tuition public universities" },
-  { country: "United States", flag: "🇺🇸", hint: "Fulbright, Harvard, MIT" },
-  { country: "United Kingdom", flag: "🇬🇧", hint: "Chevening, Oxford, Cambridge" },
-  { country: "Canada", flag: "🇨🇦", hint: "Vanier, Toronto, McGill" },
-  { country: "Australia", flag: "🇦🇺", hint: "Australia Awards, Melbourne" },
-  { country: "Europe", flag: "🇪🇺", hint: "Erasmus Mundus Joint Masters" },
-];
-
-export const degreeOptions: { label: string; value: DegreeLevel | ""; icon: string; desc: string }[] = [
-  { label: "All Degree Levels", value: "", icon: "🌐", desc: "Bachelor's, Master's, PhD" },
-  { label: "Bachelor's", value: "bachelors", icon: "🎓", desc: "Undergraduate & freshman grants" },
-  { label: "Master's", value: "masters", icon: "📚", desc: "Postgraduate & professional degrees" },
-  { label: "PhD / Doctorate", value: "phd", icon: "🔬", desc: "Research fellowships & doctorates" },
-  { label: "Postdoc", value: "postdoc", icon: "🧪", desc: "Postdoctoral scientific research" },
-  { label: "Short course", value: "short_course", icon: "⚡", desc: "Summer schools & training" },
-];
-
-export const fundingOptions: { label: string; value: FundingType | ""; icon: string; desc: string }[] = [
-  { label: "All Funding Types", value: "", icon: "💎", desc: "Fully funded, Partial, etc." },
-  { label: "Fully Funded", value: "full", icon: "🏆", desc: "Tuition + monthly living stipend + flights" },
-  { label: "Partial Funding", value: "partial", icon: "💵", desc: "Tuition discount or partial stipend" },
-  { label: "Tuition Only", value: "tuition_only", icon: "🏛️", desc: "100% tuition waiver coverage" },
-  { label: "Stipend Only", value: "stipend_only", icon: "💳", desc: "Monthly living allowance grant" },
-];
+export {
+  degreeOptions,
+  fundingOptions,
+  initialSearch,
+  popularDestinations,
+  type ActivePopover,
+  type HomeSearchState,
+} from "../catalogue/searchOptions";
 
 /* ------------------------------------------------------------------ */
 /*  Featured Scholarships Data                                        */

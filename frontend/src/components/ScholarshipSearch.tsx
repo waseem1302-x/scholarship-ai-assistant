@@ -1,13 +1,15 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
   degreeOptions,
+  filterDestinationOptions,
   fundingOptions,
-  popularDestinations,
+  resolveDestinationOption,
   type ActivePopover,
+  type DestinationOption,
   type HomeSearchState,
-} from "../features/home/HomePage";
+} from "../features/catalogue/searchOptions";
 import type { DegreeLevel, FundingType } from "../features/catalogue/types";
 
 interface ScholarshipSearchProps {
@@ -27,7 +29,15 @@ export function ScholarshipSearch({
 }: ScholarshipSearchProps) {
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
+  const desktopCountryInputRef = useRef<HTMLInputElement>(null);
+  const [highlightedDestination, setHighlightedDestination] = useState(-1);
+  const [destinationError, setDestinationError] = useState<"desktop" | "mobile" | null>(null);
+  const [mobileDestinationFocused, setMobileDestinationFocused] = useState(false);
   const isOpen = activePopover !== null;
+  const destinationSuggestions = useMemo(
+    () => filterDestinationOptions(search.country),
+    [search.country],
+  );
 
   function openPopover(popover: SearchPopover) {
     onPopoverChange(activePopover === popover ? null : popover);
@@ -35,15 +45,73 @@ export function ScholarshipSearch({
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    const typedCountry = search.country.trim();
+    const resolvedDestination = resolveDestinationOption(typedCountry);
+    if (typedCountry && !resolvedDestination) {
+      const errorSource = event.currentTarget.classList.contains("tns-airbnb-search-pill") ? "desktop" : "mobile";
+      setDestinationError(errorSource);
+      onPopoverChange("where");
+      if (errorSource === "desktop") {
+        desktopCountryInputRef.current?.focus();
+      } else {
+        setMobileDestinationFocused(true);
+      }
+      return;
+    }
+
+    const country = resolvedDestination?.country ?? "";
+    setDestinationError(null);
     onPopoverChange(null);
+    if (country !== search.country) {
+      onSearchChange((current) => ({ ...current, country }));
+    }
 
     const params = new URLSearchParams();
-    if (search.country) params.set("country", search.country);
+    if (country) params.set("country", country);
     if (search.degree_level) params.set("degree_level", search.degree_level);
     if (search.funding_type) params.set("funding_type", search.funding_type);
 
     const query = params.toString();
     navigate(query ? `/catalogue?${query}` : "/catalogue");
+  }
+
+  function updateCountry(country: string) {
+    setDestinationError(null);
+    setHighlightedDestination(-1);
+    onSearchChange((current) => ({ ...current, country }));
+  }
+
+  function selectDestination(destination: DestinationOption | null, advanceToDegree: boolean) {
+    updateCountry(destination?.country ?? "");
+    onPopoverChange(advanceToDegree ? "degree" : "where");
+  }
+
+  function handleDestinationKeyDown(event: React.KeyboardEvent<HTMLInputElement>, advanceToDegree: boolean) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      onPopoverChange("where");
+      setHighlightedDestination((current) =>
+        Math.min(current + 1, destinationSuggestions.length - 1),
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlightedDestination((current) => Math.max(current - 1, 0));
+      return;
+    }
+
+    if (event.key === "Enter" && highlightedDestination >= 0) {
+      event.preventDefault();
+      selectDestination(destinationSuggestions[highlightedDestination], advanceToDegree);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      onPopoverChange(null);
+    }
   }
 
   useEffect(() => {
@@ -128,23 +196,54 @@ export function ScholarshipSearch({
         <span className="tns-active-segment-indicator" aria-hidden="true" />
 
         <div className="tns-search-field segment-where">
-          <button
-            type="button"
+          <div
             className={`tns-airbnb-segment ${activePopover === "where" ? "is-active" : ""}`}
-            onClick={() => openPopover("where")}
-            aria-label={`Destination ${search.country || "Anywhere"}`}
-            aria-expanded={activePopover === "where"}
-            aria-controls="destination-popover"
-            aria-haspopup="dialog"
+            onClick={() => {
+              onPopoverChange("where");
+              desktopCountryInputRef.current?.focus();
+            }}
           >
             <span className="tns-segment-text-col">
-              <span className="tns-segment-label">Destination</span>
-              <span className={`tns-segment-input ${search.country ? "is-filled" : ""}`}>
-                {search.country || "Anywhere"}
-              </span>
+              <label className="tns-segment-label" htmlFor="desktop-country-search">Destination</label>
+              <input
+                id="desktop-country-search"
+                ref={desktopCountryInputRef}
+                type="text"
+                className={`tns-segment-input tns-destination-input ${search.country ? "is-filled" : ""}`}
+                value={search.country}
+                placeholder="Anywhere"
+                autoComplete="off"
+                role="combobox"
+                aria-label="Search country"
+                aria-autocomplete="list"
+                aria-expanded={activePopover === "where"}
+                aria-controls="desktop-destination-suggestions"
+                aria-activedescendant={highlightedDestination >= 0 ? `desktop-destination-${highlightedDestination}` : undefined}
+                aria-invalid={destinationError === "desktop"}
+                aria-describedby={destinationError === "desktop" ? "desktop-destination-error" : undefined}
+                onFocus={() => onPopoverChange("where")}
+                onChange={(event) => updateCountry(event.target.value)}
+                onKeyDown={(event) => handleDestinationKeyDown(event, true)}
+              />
             </span>
+            {search.country && (
+              <button
+                type="button"
+                className="tns-destination-clear"
+                aria-label="Clear destination"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  updateCountry("");
+                  onPopoverChange("where");
+                  desktopCountryInputRef.current?.focus();
+                }}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            )}
             <span className="tns-search-divider" aria-hidden="true" />
-          </button>
+          </div>
 
           <div
             id="destination-popover"
@@ -154,40 +253,47 @@ export function ScholarshipSearch({
             aria-hidden={activePopover !== "where"}
             inert={activePopover !== "where"}
           >
-              <h3 className="tns-popover-title">Popular scholarship destinations</h3>
-              <div className="tns-region-grid">
-                <button
-                  type="button"
-                  className="tns-region-card"
-                  aria-label="Anywhere"
-                  onClick={() => {
-                    onSearchChange((current) => ({ ...current, country: "" }));
-                    onPopoverChange("degree");
-                  }}
-                >
-                  <span className="tns-region-copy">
-                    <span className="tns-region-name">Anywhere</span>
-                    <span className="tns-region-hint">Search every destination</span>
-                  </span>
-                </button>
-                {popularDestinations.map((destination) => (
+              <h3 className="tns-popover-title">
+                {search.country.trim() ? "Matching destinations" : "Popular scholarship destinations"}
+              </h3>
+              <div id="desktop-destination-suggestions" className="tns-region-grid" role="listbox" aria-label="Destination suggestions">
+                {!search.country.trim() && (
                   <button
+                    type="button"
+                    className="tns-region-card"
+                    role="option"
+                    aria-selected={!search.country}
+                    onClick={() => selectDestination(null, true)}
+                  >
+                    <span className="tns-region-copy">
+                      <span className="tns-region-name">Anywhere</span>
+                      <span className="tns-region-hint">Search every destination</span>
+                    </span>
+                  </button>
+                )}
+                {destinationSuggestions.map((destination, index) => (
+                  <button
+                    id={`desktop-destination-${index}`}
                     key={destination.country}
                     type="button"
-                    className={`tns-region-card ${search.country === destination.country ? "is-selected" : ""}`}
+                    className={`tns-region-card ${search.country === destination.country || highlightedDestination === index ? "is-selected" : ""}`}
+                    role="option"
                     aria-label={destination.country}
-                    onClick={() => {
-                      onSearchChange((current) => ({ ...current, country: destination.country }));
-                      onPopoverChange("degree");
-                    }}
+                    aria-selected={search.country === destination.country || highlightedDestination === index}
+                    onMouseEnter={() => setHighlightedDestination(index)}
+                    onClick={() => selectDestination(destination, true)}
                   >
                     <span className="tns-region-copy">
                       <span className="tns-region-name">{destination.country}</span>
-                      <span className="tns-region-hint">{destination.hint}</span>
+                      <span className="tns-region-hint">{destination.hint ?? "Scholarships in this destination"}</span>
                     </span>
                   </button>
                 ))}
+                {search.country.trim() && destinationSuggestions.length === 0 && (
+                  <p className="tns-destination-empty">No matching destinations</p>
+                )}
               </div>
+              {destinationError === "desktop" && <p id="desktop-destination-error" className="tns-search-error" role="alert">Choose a destination from the suggestions.</p>}
           </div>
         </div>
 
@@ -318,18 +424,84 @@ export function ScholarshipSearch({
           </button>
         </div>
 
-        <label className="tns-mobile-search-row">
+        <div className="tns-mobile-search-row">
           <span className="tns-mobile-search-field">
-            <span className="tns-mobile-field-label">Where</span>
+            <label className="tns-mobile-field-label" htmlFor="mobile-country-search">Where</label>
             <input
+              id="mobile-country-search"
               type="text"
               className="tns-mobile-input"
               placeholder="Search destinations"
               value={search.country}
-              onChange={(event) => onSearchChange((current) => ({ ...current, country: event.target.value }))}
+              autoComplete="off"
+              role="combobox"
+              aria-label="Search country"
+              aria-autocomplete="list"
+              aria-expanded={activePopover === "where"}
+              aria-controls="mobile-destination-suggestions"
+              aria-activedescendant={highlightedDestination >= 0 ? `mobile-destination-${highlightedDestination}` : undefined}
+              aria-invalid={destinationError === "mobile"}
+              aria-describedby={destinationError === "mobile" ? "mobile-destination-error" : undefined}
+              onFocus={() => {
+                setMobileDestinationFocused(true);
+                onPopoverChange("where");
+              }}
+              onChange={(event) => {
+                setMobileDestinationFocused(true);
+                updateCountry(event.target.value);
+                onPopoverChange("where");
+              }}
+              onKeyDown={(event) => handleDestinationKeyDown(event, false)}
             />
+            {search.country && (
+              <button
+                type="button"
+                className="tns-destination-clear tns-destination-clear--mobile"
+                aria-label="Clear destination"
+                onClick={() => {
+                  updateCountry("");
+                  setMobileDestinationFocused(true);
+                  onPopoverChange("where");
+                }}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            )}
           </span>
-        </label>
+        </div>
+
+        <div
+          id="mobile-destination-suggestions"
+          className="tns-mobile-destination-suggestions"
+          role="listbox"
+          aria-label="Destination suggestions"
+          aria-hidden={activePopover !== "where" || !mobileDestinationFocused}
+          inert={activePopover !== "where" || !mobileDestinationFocused}
+        >
+          {!search.country.trim() && (
+            <button type="button" role="option" aria-selected={!search.country} onClick={() => selectDestination(null, false)}>
+              Anywhere
+            </button>
+          )}
+          {destinationSuggestions.map((destination, index) => (
+            <button
+              id={`mobile-destination-${index}`}
+              key={destination.country}
+              type="button"
+              role="option"
+              aria-label={destination.country}
+              aria-selected={search.country === destination.country || highlightedDestination === index}
+              className={search.country === destination.country || highlightedDestination === index ? "is-selected" : ""}
+              onClick={() => selectDestination(destination, false)}
+            >
+              {destination.country}
+            </button>
+          ))}
+          {search.country.trim() && destinationSuggestions.length === 0 && (
+            <p className="tns-destination-empty">No matching destinations</p>
+          )}
+        </div>
+        {destinationError === "mobile" && <p id="mobile-destination-error" className="tns-search-error" role="alert">Choose a destination from the suggestions.</p>}
 
         <label className="tns-mobile-search-row">
           <span className="tns-mobile-search-field">

@@ -82,12 +82,12 @@ describe("premium header and scholarship search", () => {
     const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
     const search = within(desktopSearch);
 
-    const destination = search.getByRole("button", { name: "Destination Anywhere" });
+    const destination = search.getByRole("combobox", { name: "Search country" });
     const degree = search.getByRole("button", { name: "Degree Any degree" });
     const funding = search.getByRole("button", { name: "Funding Any funding" });
 
-    expect(within(destination).getByText("Destination")).toBeInTheDocument();
-    expect(within(destination).getByText("Anywhere")).toBeInTheDocument();
+    expect(destination).toHaveAttribute("placeholder", "Anywhere");
+    expect(search.getByText("Destination")).toBeInTheDocument();
     expect(within(degree).getByText("Degree")).toBeInTheDocument();
     expect(within(degree).getByText("Any degree")).toBeInTheDocument();
     expect(within(funding).getByText("Funding")).toBeInTheDocument();
@@ -97,8 +97,10 @@ describe("premium header and scholarship search", () => {
   it("preserves selected filters when routing to the catalogue", () => {
     render(<MemoryRouter initialEntries={["/"]}><SearchHarness showLocation /></MemoryRouter>);
 
-    fireEvent.click(screen.getByRole("button", { name: "Destination Anywhere" }));
-    fireEvent.click(screen.getByRole("button", { name: /^Germany\b/ }));
+    const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
+    const countryInput = within(desktopSearch).getByRole("combobox", { name: "Search country" });
+    fireEvent.focus(countryInput);
+    fireEvent.click(screen.getByRole("option", { name: /^Germany\b/ }));
 
     const degreeDialog = screen.getByRole("dialog", { name: "Choose degree" });
     fireEvent.click(within(degreeDialog).getByRole("button", { name: /^Master's\b/ }));
@@ -106,10 +108,38 @@ describe("premium header and scholarship search", () => {
     const fundingDialog = screen.getByRole("dialog", { name: "Choose funding" });
     fireEvent.click(within(fundingDialog).getByRole("button", { name: /^Fully Funded\b/ }));
 
-    const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
     fireEvent.click(within(desktopSearch).getByRole("button", { name: "Search scholarships" }));
 
     expect(screen.getByTestId("location")).toHaveTextContent("/catalogue?country=Germany&degree_level=masters&funding_type=full");
+  });
+
+  it("keeps an unknown typed destination on the search form until a suggestion is selected", () => {
+    render(<MemoryRouter initialEntries={["/"]}><SearchHarness showLocation /></MemoryRouter>);
+
+    const search = screen.getByRole("search", { name: "Search verified scholarships" });
+    const countryInput = within(search).getByRole("combobox", { name: /search country/i });
+
+    fireEvent.focus(countryInput);
+    fireEvent.change(countryInput, { target: { value: "Atlantis" } });
+    fireEvent.click(within(search).getByRole("button", { name: "Search scholarships" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose a destination from the suggestions");
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
+  });
+
+  it("uses the same canonical destination suggestions in the mobile search", () => {
+    render(<MemoryRouter initialEntries={["/"]}><SearchHarness showLocation /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole("button", { name: /start your search/i }));
+    const mobileSearch = screen.getByRole("dialog", { name: /scholarship search/i });
+    const countryInput = within(mobileSearch).getByRole("combobox", { name: /search country/i });
+
+    fireEvent.change(countryInput, { target: { value: "mal" } });
+    const suggestions = within(mobileSearch).getByRole("listbox", { name: /destination suggestions/i });
+    fireEvent.click(within(suggestions).getByRole("option", { name: /Malaysia/i }));
+    fireEvent.click(within(mobileSearch).getByRole("button", { name: /search scholarships/i }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/catalogue?country=Malaysia");
   });
 
   it("renders the brand mark without the old gradient glow definition", () => {
