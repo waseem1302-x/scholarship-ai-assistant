@@ -67,14 +67,6 @@ export function ScholarshipSearch({
     };
   }, [activePopover, onPopoverChange]);
 
-  const handleSegmentKey =
-    (popover: SearchPopover) => (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        openPopover(popover);
-      }
-    };
-
   const degreeLabel = search.degree_level
     ? degreeOptions.find((option) => option.value === search.degree_level)?.label ?? "Any degree"
     : "Any degree";
@@ -132,54 +124,157 @@ export function ScholarshipSearch({
         role="search"
         aria-label="Search verified scholarships"
       >
-        <div
-          className={`tns-airbnb-segment segment-where ${activePopover === "where" ? "is-active" : ""}`}
-          onClick={() => openPopover("where")}
-          onKeyDown={handleSegmentKey("where")}
-          role="button"
-          tabIndex={0}
-          aria-expanded={activePopover === "where"}
-        >
-          <div className="tns-segment-text-col">
-            <span className="tns-segment-label">Where</span>
-            <span className={`tns-segment-input ${search.country ? "is-filled" : ""}`}>
-              {search.country || "Search destinations"}
+        <div className="tns-search-field segment-where">
+          <button
+            type="button"
+            className={`tns-airbnb-segment ${activePopover === "where" ? "is-active" : ""}`}
+            onClick={() => openPopover("where")}
+            aria-label={`Destination ${search.country || "Anywhere"}`}
+            aria-expanded={activePopover === "where"}
+            aria-controls="destination-popover"
+            aria-haspopup="dialog"
+          >
+            <span className="tns-segment-text-col">
+              <span className="tns-segment-label">Destination</span>
+              <span className={`tns-segment-input ${search.country ? "is-filled" : ""}`}>
+                {search.country || "Anywhere"}
+              </span>
             </span>
-          </div>
-          <div className="tns-search-divider" aria-hidden="true" />
+            <span className="tns-search-divider" aria-hidden="true" />
+          </button>
+
+          {activePopover === "where" ? (
+            <div
+              id="destination-popover"
+              className="tns-popover-panel tns-popover-where is-open"
+              role="dialog"
+              aria-label="Popular scholarship destinations"
+            >
+              <h3 className="tns-popover-title">Popular scholarship destinations</h3>
+              <div className="tns-region-grid">
+                <button
+                  type="button"
+                  className="tns-region-card"
+                  aria-label="Anywhere"
+                  onClick={() => {
+                    onSearchChange((current) => ({ ...current, country: "" }));
+                    onPopoverChange("degree");
+                  }}
+                >
+                  <span className="tns-region-copy">
+                    <span className="tns-region-name">Anywhere</span>
+                    <span className="tns-region-hint">Search every destination</span>
+                  </span>
+                </button>
+                {popularDestinations.map((destination) => (
+                  <button
+                    key={destination.country}
+                    type="button"
+                    className={`tns-region-card ${search.country === destination.country ? "is-selected" : ""}`}
+                    aria-label={destination.country}
+                    onClick={() => {
+                      onSearchChange((current) => ({ ...current, country: destination.country }));
+                      onPopoverChange("degree");
+                    }}
+                  >
+                    <span className="tns-region-copy">
+                      <span className="tns-region-name">{destination.country}</span>
+                      <span className="tns-region-hint">{destination.hint}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        <div
-          className={`tns-airbnb-segment segment-degree ${activePopover === "degree" ? "is-active" : ""}`}
-          onClick={() => openPopover("degree")}
-          onKeyDown={handleSegmentKey("degree")}
-          role="button"
-          tabIndex={0}
-          aria-expanded={activePopover === "degree"}
-        >
-          <div className="tns-segment-text-col">
-            <span className="tns-segment-label">Degree</span>
-            <span className={`tns-segment-input ${search.degree_level ? "is-filled" : ""}`}>
-              {degreeLabel}
+        <div className="tns-search-field segment-degree">
+          <button
+            type="button"
+            className={`tns-airbnb-segment ${activePopover === "degree" ? "is-active" : ""}`}
+            onClick={() => openPopover("degree")}
+            aria-label={`Degree ${degreeLabel}`}
+            aria-expanded={activePopover === "degree"}
+            aria-controls="degree-popover"
+            aria-haspopup="dialog"
+          >
+            <span className="tns-segment-text-col">
+              <span className="tns-segment-label">Degree</span>
+              <span className={`tns-segment-input ${search.degree_level ? "is-filled" : ""}`}>
+                {degreeLabel}
+              </span>
             </span>
-          </div>
-          <div className="tns-search-divider" aria-hidden="true" />
+            <span className="tns-search-divider" aria-hidden="true" />
+          </button>
+
+          {activePopover === "degree" ? (
+            <div id="degree-popover" className="tns-popover-panel tns-popover-degree is-open" role="dialog" aria-label="Choose degree">
+              <h3 className="tns-popover-title">Choose degree</h3>
+              <div className="tns-popover-list">
+                {degreeOptions.map((option) => (
+                  <button
+                    key={option.value || "any"}
+                    type="button"
+                    className={`tns-popover-row ${search.degree_level === option.value ? "is-selected" : ""}`}
+                    aria-label={option.value ? option.label : "Any degree"}
+                    onClick={() => {
+                      onSearchChange((current) => ({ ...current, degree_level: option.value }));
+                      onPopoverChange("funding");
+                    }}
+                  >
+                    <span className="tns-popover-row-text">
+                      <span className="tns-popover-row-title">{option.value ? option.label : "Any degree"}</span>
+                      <span className="tns-popover-row-desc">{option.desc}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        <div
-          className={`tns-airbnb-segment segment-funding ${activePopover === "funding" ? "is-active" : ""}`}
-          onClick={() => openPopover("funding")}
-          onKeyDown={handleSegmentKey("funding")}
-          role="button"
-          tabIndex={0}
-          aria-expanded={activePopover === "funding"}
-        >
-          <div className="tns-segment-text-col">
-            <span className="tns-segment-label">Funding</span>
-            <span className={`tns-segment-input ${search.funding_type ? "is-filled" : ""}`}>
-              {fundingLabel}
+        <div className="tns-search-field segment-funding">
+          <button
+            type="button"
+            className={`tns-airbnb-segment ${activePopover === "funding" ? "is-active" : ""}`}
+            onClick={() => openPopover("funding")}
+            aria-label={`Funding ${fundingLabel}`}
+            aria-expanded={activePopover === "funding"}
+            aria-controls="funding-popover"
+            aria-haspopup="dialog"
+          >
+            <span className="tns-segment-text-col">
+              <span className="tns-segment-label">Funding</span>
+              <span className={`tns-segment-input ${search.funding_type ? "is-filled" : ""}`}>
+                {fundingLabel}
+              </span>
             </span>
-          </div>
+          </button>
+
+          {activePopover === "funding" ? (
+            <div id="funding-popover" className="tns-popover-panel tns-popover-funding is-open" role="dialog" aria-label="Choose funding">
+              <h3 className="tns-popover-title">Choose funding</h3>
+              <div className="tns-popover-list">
+                {fundingOptions.map((option) => (
+                  <button
+                    key={option.value || "any"}
+                    type="button"
+                    className={`tns-popover-row ${search.funding_type === option.value ? "is-selected" : ""}`}
+                    aria-label={option.value ? option.label : "Any funding"}
+                    onClick={() => {
+                      onSearchChange((current) => ({ ...current, funding_type: option.value }));
+                      onPopoverChange(null);
+                    }}
+                  >
+                    <span className="tns-popover-row-text">
+                      <span className="tns-popover-row-title">{option.value ? option.label : "Any funding"}</span>
+                      <span className="tns-popover-row-desc">{option.desc}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <button type="submit" className="tns-search-submit-btn" aria-label="Search scholarships">
@@ -190,97 +285,6 @@ export function ScholarshipSearch({
           <span className="tns-search-btn-text">Search</span>
         </button>
       </form>
-
-      <div className="tns-desktop-popover-layer" aria-live="polite">
-        {activePopover === "where" ? (
-          <div className="tns-popover-panel tns-popover-where is-open" role="dialog" aria-label="Popular scholarship destinations">
-            <h3 className="tns-popover-title">Popular scholarship destinations</h3>
-            <div className="tns-region-grid">
-              <button
-                type="button"
-                className="tns-region-card"
-                aria-label="Anywhere"
-                onClick={() => {
-                  onSearchChange((current) => ({ ...current, country: "" }));
-                  onPopoverChange("degree");
-                }}
-              >
-                <span className="tns-region-copy">
-                  <span className="tns-region-name">Anywhere</span>
-                  <span className="tns-region-hint">Search every destination</span>
-                </span>
-              </button>
-              {popularDestinations.map((destination) => (
-                <button
-                  key={destination.country}
-                  type="button"
-                  className={`tns-region-card ${search.country === destination.country ? "is-selected" : ""}`}
-                  aria-label={destination.country}
-                  onClick={() => {
-                    onSearchChange((current) => ({ ...current, country: destination.country }));
-                    onPopoverChange("degree");
-                  }}
-                >
-                  <span className="tns-region-copy">
-                    <span className="tns-region-name">{destination.country}</span>
-                    <span className="tns-region-hint">{destination.hint}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {activePopover === "degree" ? (
-          <div className="tns-popover-panel tns-popover-degree is-open" role="dialog" aria-label="Choose degree">
-            <h3 className="tns-popover-title">Choose degree</h3>
-            <div className="tns-popover-list">
-              {degreeOptions.map((option) => (
-                <button
-                  key={option.value || "any"}
-                  type="button"
-                  className={`tns-popover-row ${search.degree_level === option.value ? "is-selected" : ""}`}
-                  aria-label={option.value ? option.label : "Any degree"}
-                  onClick={() => {
-                    onSearchChange((current) => ({ ...current, degree_level: option.value }));
-                    onPopoverChange("funding");
-                  }}
-                >
-                  <span className="tns-popover-row-text">
-                    <span className="tns-popover-row-title">{option.value ? option.label : "Any degree"}</span>
-                    <span className="tns-popover-row-desc">{option.desc}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {activePopover === "funding" ? (
-          <div className="tns-popover-panel tns-popover-funding is-open" role="dialog" aria-label="Choose funding">
-            <h3 className="tns-popover-title">Choose funding</h3>
-            <div className="tns-popover-list">
-              {fundingOptions.map((option) => (
-                <button
-                  key={option.value || "any"}
-                  type="button"
-                  className={`tns-popover-row ${search.funding_type === option.value ? "is-selected" : ""}`}
-                  aria-label={option.value ? option.label : "Any funding"}
-                  onClick={() => {
-                    onSearchChange((current) => ({ ...current, funding_type: option.value }));
-                    onPopoverChange(null);
-                  }}
-                >
-                  <span className="tns-popover-row-text">
-                    <span className="tns-popover-row-title">{option.value ? option.label : "Any funding"}</span>
-                    <span className="tns-popover-row-desc">{option.desc}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
 
       <form
         className={`tns-mobile-search-card ${isOpen ? "tns-mobile-search-card--open" : ""}`}

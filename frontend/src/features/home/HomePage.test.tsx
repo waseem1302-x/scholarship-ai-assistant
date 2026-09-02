@@ -4,6 +4,8 @@ import { useState } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ScholarshipSearch } from "../../components/ScholarshipSearch";
+
 const authState = vi.hoisted(() => ({
   user: null as { email: string; role: string } | null,
 }));
@@ -12,14 +14,14 @@ vi.mock("../../auth/AuthProvider", () => ({
   useAuth: () => ({ user: authState.user, isRestoring: false }),
 }));
 
-import { HomePage, SearchPill, initialSearch, type ActivePopover, type HomeSearchState } from "./HomePage";
+import { HomePage, initialSearch, type ActivePopover, type HomeSearchState } from "./HomePage";
 
-function SearchPillHarness() {
+function ScholarshipSearchHarness() {
   const [search, setSearch] = useState<HomeSearchState>(initialSearch);
   const [activePopover, setActivePopover] = useState<ActivePopover>(null);
 
   return (
-    <SearchPill
+    <ScholarshipSearch
       search={search}
       activePopover={activePopover}
       onSearchChange={setSearch}
@@ -143,41 +145,64 @@ describe("HomePage - The Next Scholar", () => {
   it("exposes the desktop scholarship search as a search landmark", () => {
     render(
       <BrowserRouter>
-        <SearchPillHarness />
+        <ScholarshipSearchHarness />
       </BrowserRouter>,
     );
 
     expect(screen.getByRole("search", { name: /search verified scholarships/i })).toBeInTheDocument();
   });
 
-  it("renders desktop popovers outside of the active search segment", () => {
+  it("uses native expanded-state controls for each desktop search field", () => {
     render(
       <BrowserRouter>
-        <SearchPillHarness />
+        <ScholarshipSearchHarness />
       </BrowserRouter>,
     );
 
-    const whereSegment = screen.getByText("Search destinations").closest(".tns-airbnb-segment");
-    expect(whereSegment).toBeInTheDocument();
+    const destination = screen.getByRole("button", { name: /destination anywhere/i });
+    const degree = screen.getByRole("button", { name: /degree any degree/i });
+    const funding = screen.getByRole("button", { name: /funding any funding/i });
 
-    fireEvent.click(screen.getByText("Search destinations"));
+    expect(destination.tagName).toBe("BUTTON");
+    expect(destination).toHaveAttribute("aria-controls", "destination-popover");
+    expect(degree).toHaveAttribute("aria-controls", "degree-popover");
+    expect(funding).toHaveAttribute("aria-controls", "funding-popover");
+    expect(destination).toHaveAttribute("aria-expanded", "false");
+  });
 
-    expect(screen.getByRole("dialog", { name: /popular scholarship destinations/i })).toBeInTheDocument();
-    expect(within(whereSegment as HTMLElement).queryByRole("dialog")).not.toBeInTheDocument();
+  it("anchors the destination dialog to its field and advances to degree", () => {
+    render(
+      <BrowserRouter>
+        <ScholarshipSearchHarness />
+      </BrowserRouter>,
+    );
+
+    const destination = screen.getByRole("button", { name: /destination anywhere/i });
+    fireEvent.click(destination);
+
+    const destinationPopover = screen.getByRole("dialog", { name: /popular scholarship destinations/i });
+    expect(destination).toHaveAttribute("aria-expanded", "true");
+    expect(destinationPopover).toHaveAttribute("id", "destination-popover");
+    expect(destination.closest(".tns-search-field")).toContainElement(destinationPopover);
+
+    fireEvent.click(within(destinationPopover).getByRole("button", { name: "Germany" }));
+
+    expect(screen.getByRole("button", { name: /degree any degree/i })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("dialog", { name: /choose degree/i })).toBeInTheDocument();
   });
 
   it("shows a complete mobile search sheet with country degree and funding fields", () => {
     render(
       <BrowserRouter>
-        <SearchPillHarness />
+        <ScholarshipSearchHarness />
       </BrowserRouter>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /start your search/i }));
 
     const mobileSheet = screen.getByRole("dialog", { name: /scholarship search/i });
-    expect(within(mobileSheet).getByText("Where?")).toBeInTheDocument();
-    expect(within(mobileSheet).getByText("Degree level")).toBeInTheDocument();
-    expect(within(mobileSheet).getByText("Funding type")).toBeInTheDocument();
+    expect(within(mobileSheet).getByText("Where")).toBeInTheDocument();
+    expect(within(mobileSheet).getByText("Degree")).toBeInTheDocument();
+    expect(within(mobileSheet).getByText("Funding")).toBeInTheDocument();
   });
 });
