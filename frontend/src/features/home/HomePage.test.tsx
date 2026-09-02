@@ -39,18 +39,39 @@ describe("HomePage - The Next Scholar", () => {
 
   afterEach(cleanup);
 
-  it("renders the hero section with serif headline and crimson accent", () => {
-    render(
+  it("presents profile-based scholarship matching as the primary hero journey", () => {
+    const { container } = render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
     );
 
-    expect(screen.getByText("Find scholarships.")).toBeInTheDocument();
-    expect(screen.getByText("Build stronger applications.")).toBeInTheDocument();
+    const hero = screen.getByRole("region", { name: /find scholarships that fit you/i });
+
+    expect(within(hero).getByText("Find scholarships")).toBeInTheDocument();
+    expect(within(hero).getByText("that fit you.")).toBeInTheDocument();
     expect(
-      screen.getByText(/Discover 50,000\+ verified scholarships worldwide/i),
+      within(hero).getByText(/Create your profile once. We compare it with verified eligibility criteria/i),
     ).toBeInTheDocument();
+    expect(within(hero).getByRole("link", { name: /find my matches/i })).toHaveAttribute("href", "/profile");
+    expect(within(hero).getByRole("link", { name: /find my matches/i })).toHaveClass("tns-hero-cta--primary");
+    expect(within(hero).getByRole("link", { name: /explore scholarships/i })).toHaveAttribute("href", "/scholarships");
+    expect(within(hero).getByText("Profile once")).toBeInTheDocument();
+    expect(within(hero).getByText("Verified criteria")).toBeInTheDocument();
+    expect(within(hero).getByText("Clear reasons")).toBeInTheDocument();
+    expect(within(hero).getByText("Your profile")).toBeInTheDocument();
+    expect(within(hero).getByText("Strong match")).toBeInTheDocument();
+    expect(within(hero).getByText("How it works")).toBeInTheDocument();
+    expect(within(hero).getByText("Why it fits")).toBeInTheDocument();
+    expect(within(hero).getByText("3 criteria aligned")).toBeInTheDocument();
+    expect(container.querySelector(".tns-match-bridge")).not.toHaveTextContent(/criteria aligned/i);
+    expect(container.querySelector(".tns-fit-reasons-head")).toHaveTextContent("3 criteria aligned");
+    expect(within(hero).getByText("Degree requirement met")).toBeInTheDocument();
+    expect(within(hero).getByText("Field aligned")).toBeInTheDocument();
+    expect(within(hero).getByText("Open to your nationality")).toBeInTheDocument();
+    expect(within(hero).getByRole("heading", { name: "Erasmus Mundus Joint Master" })).toBeInTheDocument();
+    expect(within(hero).queryByText("94% Match")).not.toBeInTheDocument();
+    expect(within(hero).queryByText("More aligned opportunities")).not.toBeInTheDocument();
   });
 
   it("renders the AI-powered matching banner with circular gauges", () => {
@@ -123,7 +144,7 @@ describe("HomePage - The Next Scholar", () => {
       </BrowserRouter>,
     );
 
-    expect(screen.getByText("How it works")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "How it works" })).toBeInTheDocument();
     expect(screen.getByText("Discover")).toBeInTheDocument();
     expect(screen.getByText("Save")).toBeInTheDocument();
     expect(screen.getByText("Track")).toBeInTheDocument();
@@ -132,16 +153,19 @@ describe("HomePage - The Next Scholar", () => {
   });
 
   it("renders Trust bar metrics", () => {
-    render(
+    const { container } = render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
     );
 
-    expect(screen.getByText("500+")).toBeInTheDocument();
-    expect(screen.getByText("120+")).toBeInTheDocument();
-    expect(screen.getByText("Bachelor • Master • PhD")).toBeInTheDocument();
-    expect(screen.getByText("Fully Funded")).toBeInTheDocument();
+    const trustBar = container.querySelector(".tns-trust-bar-section");
+
+    expect(trustBar).toBeInTheDocument();
+    expect(within(trustBar as HTMLElement).getByText("500+")).toBeInTheDocument();
+    expect(within(trustBar as HTMLElement).getByText("120+")).toBeInTheDocument();
+    expect(within(trustBar as HTMLElement).getByText("Bachelor • Master • PhD")).toBeInTheDocument();
+    expect(within(trustBar as HTMLElement).getByText("Fully Funded")).toBeInTheDocument();
   });
 
   it("exposes the desktop scholarship search as a search landmark", () => {
