@@ -262,7 +262,7 @@ export function Topbar() {
           <div className="tns-header-search-bar page-width">
             <ScholarshipSearch
               search={search}
-              mode={homeSearchCompact ? "compact" : "expanded"}
+              mode={homeSearchCompact && !activePopover ? "compact" : "expanded"}
               activePopover={activePopover}
               onSearchChange={setSearch}
               onPopoverChange={setActivePopover}

@@ -106,14 +106,23 @@ describe("premium header and scholarship search", () => {
 
     const destination = search.getByRole("combobox", { name: "Search country" });
     const degree = search.getByRole("button", { name: "Degree Any degree" });
-    const funding = search.getByRole("button", { name: "Funding Any funding" });
+    const funding = search.getByRole("button", { name: "Funding Full funding" });
 
     expect(destination).toHaveAttribute("placeholder", "Anywhere");
     expect(search.getByText("Destination")).toBeInTheDocument();
     expect(within(degree).getByText("Degree")).toBeInTheDocument();
     expect(within(degree).getByText("Any degree")).toBeInTheDocument();
     expect(within(funding).getByText("Funding")).toBeInTheDocument();
-    expect(within(funding).getByText("Any funding")).toBeInTheDocument();
+    expect(within(funding).getByText("Full funding")).toBeInTheDocument();
+  });
+
+  it("uses full funding as a real default search filter", () => {
+    render(<MemoryRouter initialEntries={["/"]}><SearchHarness showLocation /></MemoryRouter>);
+
+    const search = screen.getByRole("search", { name: "Search verified scholarships" });
+    fireEvent.click(within(search).getByRole("button", { name: "Search scholarships" }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/catalogue?funding_type=full");
   });
 
   it("preserves selected filters when routing to the catalogue", () => {
@@ -149,23 +158,29 @@ describe("premium header and scholarship search", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
   });
 
-  it("keeps one desktop popover surface while switching search segments", () => {
+  it("keeps each desktop popover owned by its search segment", () => {
     render(<MemoryRouter initialEntries={["/"]}><SearchHarness /></MemoryRouter>);
 
     const search = screen.getByRole("search", { name: "Search verified scholarships" });
     const countryInput = within(search).getByRole("combobox", { name: "Search country" });
-    fireEvent.focus(countryInput);
+    const destinationField = countryInput.closest(".tns-search-field") as HTMLElement;
+    const degreeButton = within(search).getByRole("button", { name: "Degree Any degree" });
+    const degreeField = degreeButton.closest(".tns-search-field") as HTMLElement;
+    const fundingButton = within(search).getByRole("button", { name: "Funding Full funding" });
+    const fundingField = fundingButton.closest(".tns-search-field") as HTMLElement;
 
-    const shell = search.querySelector(".tns-popover-shell");
+    expect(within(destinationField).getByRole("dialog", { hidden: true })).toHaveAttribute("id", "destination-popover");
+    expect(within(degreeField).getByRole("dialog", { hidden: true })).toHaveAttribute("id", "degree-popover");
+    expect(within(fundingField).getByRole("dialog", { hidden: true })).toHaveAttribute("id", "funding-popover");
+    expect(search.querySelector(".tns-popover-shell")).not.toBeInTheDocument();
+
+    fireEvent.focus(countryInput);
     const destinationPanel = document.getElementById("destination-popover");
 
-    expect(shell).toHaveAttribute("data-active-popover", "where");
     expect(destinationPanel).toHaveAttribute("aria-hidden", "false");
 
-    fireEvent.click(within(search).getByRole("button", { name: "Degree Any degree" }));
+    fireEvent.click(degreeButton);
 
-    expect(search.querySelector(".tns-popover-shell")).toBe(shell);
-    expect(shell).toHaveAttribute("data-active-popover", "degree");
     expect(destinationPanel).toHaveAttribute("aria-hidden", "true");
     expect(document.getElementById("degree-popover")).toHaveAttribute("aria-hidden", "false");
   });
@@ -175,8 +190,9 @@ describe("premium header and scholarship search", () => {
 
     const search = screen.getByRole("search", { name: "Search verified scholarships" });
     expect(search).toHaveAttribute("data-search-mode", "compact");
+    expect(search.querySelector(".tns-compact-location-icon")).toHaveAttribute("aria-hidden", "true");
 
-    fireEvent.click(within(search).getByRole("button", { name: "Funding Any funding" }));
+    fireEvent.click(within(search).getByRole("button", { name: "Funding Full funding" }));
     expect(screen.getByRole("dialog", { name: "Choose funding" })).toBeInTheDocument();
   });
 
@@ -192,7 +208,7 @@ describe("premium header and scholarship search", () => {
     fireEvent.click(within(suggestions).getByRole("option", { name: /Malaysia/i }));
     fireEvent.click(within(mobileSearch).getByRole("button", { name: /search scholarships/i }));
 
-    expect(screen.getByTestId("location")).toHaveTextContent("/catalogue?country=Malaysia");
+    expect(screen.getByTestId("location")).toHaveTextContent("/catalogue?country=Malaysia&funding_type=full");
   });
 
   it("renders the brand mark without the old gradient glow definition", () => {

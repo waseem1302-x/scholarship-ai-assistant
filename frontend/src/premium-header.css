@@ -2,6 +2,8 @@
   --tns-text-primary: #0f172a;
   --tns-text-secondary: #64748b;
   --tns-surface: #ffffff;
+  --tns-header-surface: linear-gradient(180deg, #ffffff 39.9%, #f8f8f8 100%);
+  --tns-header-divider: #ebebeb;
   --tns-surface-subtle: #f7f9fc;
   --tns-surface-hover: #f1f5f9;
   --tns-surface-active: #ffffff;
@@ -11,7 +13,7 @@
   --tns-brand-hover: #1d4ed8;
   --tns-brand-soft: #eff6ff;
   --tns-opportunity: #facc15;
-  --tns-shadow-header: 0 1px 0 rgba(15, 23, 42, 0.08);
+  --tns-shadow-header: none;
   --tns-shadow-search: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 28px rgba(15, 23, 42, 0.1);
   --tns-shadow-active: 0 6px 18px rgba(15, 23, 42, 0.1);
   --tns-shadow-popover: 0 20px 48px rgba(15, 23, 42, 0.14), 0 4px 12px rgba(15, 23, 42, 0.05);
@@ -52,9 +54,9 @@
   display: block;
   width: 100%;
   height: 176px;
-  border-bottom: 1px solid var(--tns-border);
-  background: var(--tns-surface);
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+  border-bottom: 1px solid var(--tns-header-divider);
+  background: var(--tns-header-surface);
+  box-shadow: none;
   pointer-events: none;
   will-change: height;
   transition: height 220ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
@@ -373,27 +375,37 @@ body .tns-header--home ~ .tns-route-stage {
   box-shadow: 0 14px 38px rgba(15, 23, 42, 0.11);
 }
 
-.tns-active-segment-indicator {
+.tns-segment-surface {
   position: absolute;
   top: 1px;
+  right: 1px;
+  bottom: 1px;
   left: 1px;
-  z-index: 3;
-  width: calc((100% - 2px) / 3);
-  height: 64px;
+  z-index: 1;
   border-radius: var(--tns-radius-search);
-  background: var(--tns-surface-active);
-  box-shadow: var(--tns-shadow-active);
+  background: transparent;
+  box-shadow: none;
   opacity: 0;
   pointer-events: none;
-  transform: translateX(0);
+  transform: scale(0.965);
   transform-origin: center;
   will-change: transform, opacity;
-  transition: transform 220ms var(--tns-ease), opacity 120ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
+  transition: background 140ms var(--tns-ease), box-shadow 180ms var(--tns-ease), opacity 140ms var(--tns-ease), transform 180ms var(--tns-ease);
 }
 
-.tns-airbnb-search-pill.has-active-segment .tns-active-segment-indicator { opacity: 1; }
-.tns-airbnb-search-pill[data-active-segment="degree"] .tns-active-segment-indicator { transform: translateX(100%); }
-.tns-airbnb-search-pill[data-active-segment="funding"] .tns-active-segment-indicator { transform: translateX(200%); }
+.tns-airbnb-search-pill:not(.has-active-segment) .tns-search-field:hover > .tns-segment-surface,
+.tns-airbnb-search-pill.has-active-segment .tns-search-field:not(.is-active):hover > .tns-segment-surface {
+  background: var(--tns-surface-hover);
+  opacity: 1;
+  transform: scale(1);
+}
+
+.tns-search-field.is-active > .tns-segment-surface {
+  background: var(--tns-surface-active);
+  box-shadow: var(--tns-shadow-active);
+  opacity: 1;
+  transform: scale(1);
+}
 
 .tns-search-field {
   position: relative;
@@ -402,6 +414,8 @@ body .tns-header--home ~ .tns-route-stage {
   height: 64px;
   transition: height 220ms var(--tns-ease);
 }
+
+.tns-search-field.is-active { z-index: 5; }
 
 .tns-airbnb-segment {
   position: relative;
@@ -427,10 +441,7 @@ body .tns-header--home ~ .tns-route-stage {
 .segment-where .tns-airbnb-segment { padding-left: 28px; }
 .segment-funding .tns-airbnb-segment { padding-right: 120px; }
 
-.tns-airbnb-search-pill:not(.has-active-segment) .tns-airbnb-segment:hover,
-.tns-airbnb-search-pill.has-active-segment .tns-airbnb-segment:hover:not(.is-active) {
-  background: var(--tns-surface-hover);
-}
+.tns-airbnb-segment:hover { background: transparent; }
 
 .tns-airbnb-segment.is-active {
   z-index: 4;
@@ -442,6 +453,16 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-airbnb-segment:focus-within {
   outline: none;
+}
+
+.tns-airbnb-segment:focus-visible {
+  outline: none;
+}
+
+.tns-search-field:has(> .tns-airbnb-segment:focus-visible):not(.is-active) > .tns-segment-surface {
+  background: var(--tns-brand-soft);
+  opacity: 1;
+  transform: scale(1);
 }
 
 .segment-where:has(.tns-destination-input:focus-visible) .tns-segment-label {
@@ -459,6 +480,16 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 .segment-where .tns-segment-text-col { padding-right: 34px; }
+
+.tns-compact-location-icon {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--tns-text-primary);
+}
 
 .tns-segment-label {
   display: block;
@@ -557,7 +588,7 @@ body .tns-header--home ~ .tns-route-stage {
   position: absolute;
   top: 50%;
   right: 8px;
-  z-index: 3;
+  z-index: 6;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -615,69 +646,71 @@ body .tns-header--home ~ .tns-route-stage {
   transform: translateX(0);
 }
 
-/* Shared desktop popover surface */
-.tns-popover-shell {
+/* Contextual desktop popovers */
+.tns-segment-popover {
   position: absolute;
   top: calc(100% + 13px);
-  left: 0;
   z-index: 240;
-  display: grid;
   width: min(420px, calc(100vw - 64px));
-  max-height: min(560px, calc(100vh - 190px));
-  overflow: hidden;
-  border: 1px solid rgba(226, 232, 240, 0.94);
-  border-radius: var(--tns-radius-popover);
-  background: var(--tns-surface) !important;
-  box-shadow: var(--tns-shadow-popover);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transform: translateY(-6px) scale(0.985);
-  transform-origin: top left;
-  will-change: opacity, transform;
-  transition: opacity 160ms var(--tns-ease), transform 180ms var(--tns-ease), visibility 0s linear 180ms;
-}
-
-.tns-popover-shell.is-open {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transform: translateY(0) scale(1);
-  transition-delay: 0s;
-}
-
-.tns-popover-panel {
-  grid-area: 1 / 1;
-  min-width: 0;
   max-height: min(560px, calc(100vh - 190px));
   padding: 22px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  border: 1px solid rgba(226, 232, 240, 0.94);
+  border-radius: var(--tns-radius-popover);
+  background: var(--tns-surface) !important;
+  box-shadow: var(--tns-shadow-popover);
   scrollbar-color: #cbd5e1 transparent;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  will-change: opacity;
-  transition: opacity 100ms var(--tns-ease), visibility 0s linear 140ms;
+  will-change: opacity, transform;
+  transition: opacity 100ms var(--tns-ease), transform 100ms var(--tns-ease), visibility 0s linear 100ms;
 }
 
-.tns-popover-panel::-webkit-scrollbar { width: 6px; }
-.tns-popover-panel::-webkit-scrollbar-track { background: transparent; }
-.tns-popover-panel::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: #cbd5e1;
+.segment-where > .tns-segment-popover {
+  left: 0;
+  transform: translateY(-6px) scale(0.985);
+  transform-origin: top left;
 }
-.tns-popover-panel::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
-.tns-popover-panel.is-open {
+.segment-degree > .tns-segment-popover {
+  left: 50%;
+  transform: translate(-50%, -6px) scale(0.985);
+  transform-origin: top center;
+}
+
+.segment-funding > .tns-segment-popover {
+  right: 0;
+  transform: translateY(-6px) scale(0.985);
+  transform-origin: top right;
+}
+
+.tns-segment-popover.is-open {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transition: opacity 140ms var(--tns-ease), visibility 0s;
-  transition-delay: 20ms, 0s;
+  transition: opacity 160ms var(--tns-ease), transform 180ms var(--tns-ease), visibility 0s;
 }
+
+.segment-where > .tns-segment-popover.is-open,
+.segment-funding > .tns-segment-popover.is-open {
+  transform: translateY(0) scale(1);
+}
+
+.segment-degree > .tns-segment-popover.is-open {
+  transform: translate(-50%, 0) scale(1);
+}
+
+.tns-segment-popover::-webkit-scrollbar { width: 6px; }
+.tns-segment-popover::-webkit-scrollbar-track { background: transparent; }
+.tns-segment-popover::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+.tns-segment-popover::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 .tns-popover-title {
   margin: 0 0 15px;
@@ -813,8 +846,26 @@ body .tns-header--home ~ .tns-route-stage {
   min-height: 46px;
 }
 
-.tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-segment { padding-inline: 15px; }
+.tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-segment { padding-inline: 14px; }
 .tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-segment:hover { background: transparent; }
+.tns-header--search-compact:not(.tns-header--search-open) .tns-search-field:hover > .tns-segment-surface {
+  opacity: 0;
+  transform: scale(0.965);
+}
+.tns-header--search-compact:not(.tns-header--search-open) .segment-where .tns-airbnb-segment {
+  gap: 8px;
+  padding-left: 14px;
+  padding-right: 10px;
+}
+.tns-header--search-compact:not(.tns-header--search-open) .segment-where .tns-segment-text-col {
+  padding-right: 0;
+}
+.tns-header--search-compact:not(.tns-header--search-open) .segment-funding .tns-airbnb-segment {
+  padding-right: 48px;
+}
+.tns-header--search-compact:not(.tns-header--search-open) .tns-compact-location-icon {
+  display: inline-flex;
+}
 .tns-header--search-compact:not(.tns-header--search-open) .tns-segment-text-col { gap: 0; }
 .tns-header--search-compact:not(.tns-header--search-open) .tns-segment-label {
   max-height: 0;
@@ -832,10 +883,6 @@ body .tns-header--home ~ .tns-route-stage {
   color: var(--tns-text-primary);
 }
 
-.tns-airbnb-search-pill[data-search-mode="compact"] .tns-active-segment-indicator {
-  transition: opacity 120ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
-}
-
 .tns-header--search-compact:not(.tns-header--search-open) .tns-search-submit-btn {
   width: 36px !important;
   height: 36px !important;
@@ -851,7 +898,6 @@ body .tns-header--home ~ .tns-route-stage {
 .tns-brand:focus-visible,
 .tns-nav-link:focus-visible,
 .tns-login-link:focus-visible,
-.tns-airbnb-segment:focus-visible,
 .tns-search-submit-btn:focus-visible,
 .tns-region-card:focus-visible,
 .tns-popover-row:focus-visible,
@@ -860,10 +906,6 @@ body .tns-header--home ~ .tns-route-stage {
 .tns-mobile-sheet-close:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.3);
   outline-offset: 3px;
-}
-
-.tns-airbnb-segment.is-active:focus-visible {
-  outline: none;
 }
 
 @media (max-width: 1199px) {

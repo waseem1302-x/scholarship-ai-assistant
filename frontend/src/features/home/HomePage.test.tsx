@@ -164,7 +164,7 @@ describe("HomePage - The Next Scholar", () => {
     const search = screen.getByRole("search", { name: /search verified scholarships/i });
     const destination = within(search).getByRole("combobox", { name: /search country/i });
     const degree = within(search).getByRole("button", { name: /degree any degree/i });
-    const funding = within(search).getByRole("button", { name: /funding any funding/i });
+    const funding = within(search).getByRole("button", { name: /funding full funding/i });
 
     expect(destination.tagName).toBe("INPUT");
     expect(destination).toHaveAttribute("aria-controls", "desktop-destination-suggestions");
@@ -173,7 +173,7 @@ describe("HomePage - The Next Scholar", () => {
     expect(destination).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("keeps one active selection surface while switching search fields", () => {
+  it("moves active state between independent search-field surfaces", () => {
     const { container } = render(
       <BrowserRouter>
         <ScholarshipSearchHarness />
@@ -181,20 +181,22 @@ describe("HomePage - The Next Scholar", () => {
     );
 
     const search = screen.getByRole("search", { name: /search verified scholarships/i });
-    const indicator = container.querySelector(".tns-active-segment-indicator");
+    const surfaces = container.querySelectorAll(".tns-segment-surface");
 
-    expect(indicator).toBeInTheDocument();
+    expect(surfaces).toHaveLength(3);
     expect(search).toHaveAttribute("data-active-segment", "none");
 
     fireEvent.focus(within(search).getByRole("combobox", { name: /search country/i }));
     expect(search).toHaveAttribute("data-active-segment", "where");
+    expect(container.querySelector(".segment-where")).toHaveClass("is-active");
 
     fireEvent.click(within(search).getByRole("button", { name: /degree any degree/i }));
     expect(search).toHaveAttribute("data-active-segment", "degree");
-    expect(container.querySelector(".tns-active-segment-indicator")).toBe(indicator);
+    expect(container.querySelector(".segment-where")).not.toHaveClass("is-active");
+    expect(container.querySelector(".segment-degree")).toHaveClass("is-active");
   });
 
-  it("keeps popover shells mounted while exposing only the active dialog", () => {
+  it("keeps contextual popovers mounted while exposing only the active dialog", () => {
     const { container } = render(
       <BrowserRouter>
         <ScholarshipSearchHarness />
@@ -220,7 +222,7 @@ describe("HomePage - The Next Scholar", () => {
     expect(container.querySelector("#destination-popover")).toBe(destinationPopover);
   });
 
-  it("keeps the destination dialog in the shared shell and advances to degree", () => {
+  it("keeps the destination dialog with its field and advances to degree", () => {
     render(
       <BrowserRouter>
         <ScholarshipSearchHarness />
@@ -234,7 +236,7 @@ describe("HomePage - The Next Scholar", () => {
     const destinationPopover = screen.getByRole("dialog", { name: /popular scholarship destinations/i });
     expect(destination).toHaveAttribute("aria-expanded", "true");
     expect(destinationPopover).toHaveAttribute("id", "destination-popover");
-    expect(search.querySelector(".tns-popover-shell")).toContainElement(destinationPopover);
+    expect(destination.closest(".tns-search-field")).toContainElement(destinationPopover);
 
     fireEvent.click(within(destinationPopover).getByRole("option", { name: /Germany/ }));
 

@@ -17,7 +17,7 @@ export interface DestinationOption {
 export const initialSearch: HomeSearchState = {
   country: "",
   degree_level: "",
-  funding_type: "",
+  funding_type: "full",
 };
 
 export const destinationOptions: readonly DestinationOption[] = [

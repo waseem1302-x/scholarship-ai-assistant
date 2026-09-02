@@ -161,8 +161,10 @@ describe("The Next Scholar Topbar Navigation", () => {
     expect(header).toHaveClass("tns-header--search-compact");
 
     const desktopSearch = screen.getByRole("search", { name: /search verified scholarships/i });
+    expect(desktopSearch).toHaveAttribute("data-search-mode", "compact");
     fireEvent.focus(within(desktopSearch).getByRole("combobox", { name: /search country/i }));
     expect(header).toHaveClass("tns-header--search-open");
+    expect(desktopSearch).toHaveAttribute("data-search-mode", "expanded");
 
     await act(async () => {
       window.scrollY = 0;
