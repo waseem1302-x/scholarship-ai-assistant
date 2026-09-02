@@ -82,8 +82,8 @@ describe("premium header and scholarship search", () => {
     const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
     const search = within(desktopSearch);
 
-    expect(search.getByText("Where")).toBeInTheDocument();
-    expect(search.getByText("Search destinations")).toBeInTheDocument();
+    expect(search.getByText("Destination")).toBeInTheDocument();
+    expect(search.getByText("Anywhere")).toBeInTheDocument();
     expect(search.getByText("Degree")).toBeInTheDocument();
     expect(search.getByText("Any degree")).toBeInTheDocument();
     expect(search.getByText("Funding")).toBeInTheDocument();
@@ -93,7 +93,7 @@ describe("premium header and scholarship search", () => {
   it("preserves selected filters when routing to the catalogue", () => {
     render(<MemoryRouter initialEntries={["/"]}><SearchHarness showLocation /></MemoryRouter>);
 
-    fireEvent.click(screen.getByText("Search destinations"));
+    fireEvent.click(screen.getByRole("button", { name: "Destination Anywhere" }));
     fireEvent.click(screen.getByRole("button", { name: /^Germany\b/ }));
 
     const degreeDialog = screen.getByRole("dialog", { name: "Choose degree" });
