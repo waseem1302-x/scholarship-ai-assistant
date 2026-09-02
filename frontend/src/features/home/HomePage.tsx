@@ -9,15 +9,6 @@ import {
   UKLandmarkSvg,
   USLandmarkSvg,
 } from "../../components/DestinationLandmarks";
-export {
-  degreeOptions,
-  fundingOptions,
-  initialSearch,
-  popularDestinations,
-  type ActivePopover,
-  type HomeSearchState,
-} from "../catalogue/searchOptions";
-
 /* ------------------------------------------------------------------ */
 /*  Featured Scholarships Data                                        */
 /* ------------------------------------------------------------------ */

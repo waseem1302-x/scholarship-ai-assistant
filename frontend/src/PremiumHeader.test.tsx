@@ -20,7 +20,7 @@ import {
   initialSearch,
   type ActivePopover,
   type HomeSearchState,
-} from "./features/home/HomePage";
+} from "./features/catalogue/searchOptions";
 
 function LocationProbe() {
   const location = useLocation();

@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ScholarshipSearch } from "../../components/ScholarshipSearch";
+import { initialSearch, type ActivePopover, type HomeSearchState } from "../catalogue/searchOptions";
 
 const authState = vi.hoisted(() => ({
   user: null as { email: string; role: string } | null,
@@ -14,7 +15,7 @@ vi.mock("../../auth/AuthProvider", () => ({
   useAuth: () => ({ user: authState.user, isRestoring: false }),
 }));
 
-import { HomePage, initialSearch, type ActivePopover, type HomeSearchState } from "./HomePage";
+import { HomePage } from "./HomePage";
 
 function ScholarshipSearchHarness() {
   const [search, setSearch] = useState<HomeSearchState>(initialSearch);

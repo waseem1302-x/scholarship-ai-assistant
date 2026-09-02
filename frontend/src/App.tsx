@@ -6,7 +6,8 @@ import { EmailVerificationNotice } from "./auth/AccountLifecycle";
 import { AuthForm, AuthProvider, useAuth } from "./auth/AuthProvider";
 import { Brand } from "./components/BrandLogo";
 import { ScholarshipSearch } from "./components/ScholarshipSearch";
-import { HomePage, initialSearch, type ActivePopover } from "./features/home/HomePage";
+import { initialSearch, type ActivePopover } from "./features/catalogue/searchOptions";
+import { HomePage } from "./features/home/HomePage";
 
 const EmailVerificationPage = lazy(() => import("./auth/AccountLifecycle").then((m) => ({ default: m.EmailVerificationPage })));
 const PasswordResetPage = lazy(() => import("./auth/AccountLifecycle").then((m) => ({ default: m.PasswordResetPage })));
