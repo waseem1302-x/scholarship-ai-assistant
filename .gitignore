@@ -23,6 +23,7 @@ build/
 *.db
 .idea/
 .vscode/
+/.worktrees/
 
 # Local catalogue/runtime caches and operator credentials; never commit these.
 .catalogue-local/
