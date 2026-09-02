@@ -1,18 +1,6 @@
 import type { OpportunitySummary } from "../catalogue/types";
 
 export type TestStatus = "unknown" | "not_taken" | "planned" | "taken" | "not_required";
-export type ApplicationStatus =
-  | "interested"
-  | "researching"
-  | "preparing_documents"
-  | "waiting_for_recommendation"
-  | "ready_to_apply"
-  | "submitted"
-  | "interview_stage"
-  | "accepted"
-  | "rejected"
-  | "withdrawn"
-  | "expired";
 
 export interface StudentProfile {
   id: string;
@@ -112,30 +100,6 @@ export interface OpportunityMatch {
   disclaimer: string;
 }
 
-export interface MatchListResponse {
-  profile_id: string;
-  results: OpportunityMatch[];
-}
-
-export interface ChecklistItem {
-  name: string;
-  is_complete: boolean;
-  notes: string | null;
-}
-
-export interface SavedOpportunity {
-  id: string;
-  status: ApplicationStatus;
-  personal_notes: string | null;
-  personal_deadline: string | null;
-  document_checklist: ChecklistItem[];
-  recommendation_letters: ChecklistItem[];
-  test_requirements: ChecklistItem[];
-  submitted_at: string | null;
-  outcome_notes: string | null;
-  opportunity: OpportunitySummary;
-}
-
 export type CommandLifecycle = "saved" | "preparing" | "ready_to_submit" | "submitted" | "decision_received" | "accepted" | "declined" | "withdrawn";
 export type TaskStatus = "todo" | "in_progress" | "blocked" | "completed" | "dismissed";
 export type DeadlineUrgency = "upcoming" | "due_soon" | "overdue" | "deadline_changed" | "deadline_uncertain";
@@ -159,11 +123,6 @@ export interface Application {
   tasks: ApplicationTask[]; reminders: ApplicationReminder[]; documents: ApplicationDocument[];
 }
 export interface CommandCentre { urgent_tasks: ApplicationTask[]; blocked_tasks: ApplicationTask[]; blocked_applications: Application[]; approaching_deadlines: Application[]; submitted_applications: Application[]; upcoming_reminders: ApplicationReminder[]; recently_changed_opportunities: Application[]; }
-
-export const applicationStatuses: ApplicationStatus[] = [
-  "interested", "researching", "preparing_documents", "waiting_for_recommendation", "ready_to_apply",
-  "submitted", "interview_stage", "accepted", "rejected", "withdrawn", "expired",
-];
 
 export const emptyProfileDraft: ProfileDraft = {
   nationality: "", country_of_residence: "", current_education_level: "", target_degree_level: "", intended_field: "", academic_discipline: "", cgpa: "", percentage: "", grading_scale: "", english_test_status: "unknown", ielts_score: "", toefl_score: "", duolingo_score: "", gre_status: "unknown", gre_score: "", work_experience_months: "", research_experience: "", publications: "", leadership_experience: "", financial_need: "", preferred_destination_countries: "", preferred_study_mode: "", target_intake: "", target_intake_year: "", application_constraints: "", additional_eligibility_information: "",

@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom";
 
-export function BrandLogoIcon({ className = "", size = 30 }: { className?: string; size?: number }) {
+function BrandLogoIcon({ className = "", size = 30 }: { className?: string; size?: number }) {
   return (
     <svg
       width={size}

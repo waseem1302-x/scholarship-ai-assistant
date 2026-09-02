@@ -2,7 +2,6 @@ import { ApiError, apiClient } from "../../api/client";
 
 import {
   defaultCatalogueFilters,
-  type CatalogueAvailability,
   type CatalogueFilters,
   type OpportunityDetail,
   type OpportunitySearchResponse,
@@ -54,12 +53,6 @@ export function catalogueSearch(filters: CatalogueFilters, offset = 0): URLSearc
   return params;
 }
 
-export function availabilityLabel(availability: CatalogueAvailability): string {
-  if (availability === "open") return "open opportunities";
-  if (availability === "upcoming") return "upcoming opportunities";
-  return "verified opportunities";
-}
-
 export function readableValue(value: string): string {
   return value.replaceAll("_", " ");
 }
@@ -91,9 +84,9 @@ export function deadlineLabel(value: string | null): string {
   return `Deadline ${formatDate(value)}`;
 }
 
-export type UrgencyTier = "critical" | "soon" | "comfortable" | "relaxed" | "closed" | "varies";
+type UrgencyTier = "critical" | "soon" | "comfortable" | "relaxed" | "closed" | "varies";
 
-export interface DeadlineUrgency {
+interface DeadlineUrgency {
   label: string;
   tier: UrgencyTier;
   icon: string;
@@ -194,7 +187,7 @@ export function getDestinationImage(country?: string | null, name?: string | nul
   return "https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=600&q=80";
 }
 
-export interface CardBadges {
+interface CardBadges {
   fundingBadge: { label: string; tier: "full" | "partial" };
   highlightBadge?: { label: string; style: "top" | "popular" | "new" };
 }

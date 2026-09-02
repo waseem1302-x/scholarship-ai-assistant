@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export interface ServerQueryState<T> {
+interface ServerQueryState<T> {
   data: T | null;
   error: unknown;
   isLoading: boolean;

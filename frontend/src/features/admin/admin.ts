@@ -104,7 +104,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function jsonImportRows(input: string): Record<string, unknown>[] {
+function jsonImportRows(input: string): Record<string, unknown>[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(input);
@@ -121,7 +121,7 @@ export function jsonImportRows(input: string): Record<string, unknown>[] {
   return rows;
 }
 
-export interface AdminWorkspacePage {
+interface AdminWorkspacePage {
   queueOffset?: number;
   issueOffset?: number;
 }
@@ -136,7 +136,7 @@ export async function getAdminWorkspace({
   ]);
 }
 
-export function adminOpportunitySearch(filters: AdminOpportunityFilters, offset = 0): URLSearchParams {
+function adminOpportunitySearch(filters: AdminOpportunityFilters, offset = 0): URLSearchParams {
   const params = new URLSearchParams({ limit: "20", offset: String(offset) });
   for (const [key, value] of Object.entries(filters)) {
     if (value) params.set(key, value);

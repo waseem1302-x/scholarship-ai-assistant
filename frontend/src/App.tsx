@@ -417,7 +417,7 @@ function AuthPage() {
   );
 }
 
-export function Dashboard() {
+function Dashboard() {
   const { user, isRestoring } = useAuth();
   if (!isRestoring && !user) {
     return <Navigate replace to="/auth" />;

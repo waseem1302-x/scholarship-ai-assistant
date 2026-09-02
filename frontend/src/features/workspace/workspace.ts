@@ -1,5 +1,5 @@
 import { ApiError, apiClient } from "../../api/client";
-import { emptyProfileDraft, type Application, type ApplicationDocument, type ApplicationEvent, type ApplicationReminder, type ApplicationTask, type CommandCentre, type OpportunityMatch, type ProfileDraft, type SavedOpportunity, type StudentProfile } from "./types";
+import { emptyProfileDraft, type Application, type ApplicationDocument, type ApplicationEvent, type ApplicationReminder, type ApplicationTask, type CommandCentre, type OpportunityMatch, type ProfileDraft, type StudentProfile } from "./types";
 
 export function humanize(value: string): string {
   return value.replaceAll("_", " ");
@@ -79,22 +79,6 @@ export function profileRequired(error: unknown): boolean {
   return error instanceof ApiError && error.status === 400;
 }
 
-export async function getSaved(): Promise<SavedOpportunity[]> {
-  return apiClient.request<SavedOpportunity[]>("/saved-opportunities");
-}
-
-export async function saveOpportunity(opportunityId: string): Promise<SavedOpportunity> {
-  return apiClient.request<SavedOpportunity>("/saved-opportunities", { method: "POST", body: JSON.stringify({ opportunity_id: opportunityId, status: "interested" }) });
-}
-
-export async function updateSaved(id: string, update: object): Promise<SavedOpportunity> {
-  return apiClient.request<SavedOpportunity>(`/saved-opportunities/${id}`, { method: "PATCH", body: JSON.stringify(update) });
-}
-
-export async function deleteSaved(id: string): Promise<void> {
-  return apiClient.request<void>(`/saved-opportunities/${id}`, { method: "DELETE" });
-}
-
 export async function createApplication(opportunityId: string): Promise<Application> {
   return apiClient.request<Application>("/applications", { method: "POST", body: JSON.stringify({ opportunity_id: opportunityId }) });
 }
@@ -126,10 +110,6 @@ export async function updateApplicationTask(applicationId: string, taskId: strin
 
 export async function createApplicationTask(applicationId: string, task: object): Promise<ApplicationTask> {
   return apiClient.request<ApplicationTask>(`/applications/${applicationId}/tasks`, { method: "POST", body: JSON.stringify(task) });
-}
-
-export async function deleteApplicationTask(applicationId: string, taskId: string): Promise<void> {
-  return apiClient.request<void>(`/applications/${applicationId}/tasks/${taskId}`, { method: "DELETE" });
 }
 
 export async function createApplicationReminder(applicationId: string, reminder: object): Promise<ApplicationReminder> {

@@ -30,7 +30,7 @@ interface CredentialResponse {
   expires_at?: string;
 }
 
-export interface AdminMfaStepUp {
+interface AdminMfaStepUp {
   step_up_token: string;
   expires_at: string;
 }
@@ -81,7 +81,7 @@ function errorCode(body: ApiErrorBody | null): string | undefined {
   return body?.error?.code;
 }
 
-export interface BetaInvitationDelivery {
+interface BetaInvitationDelivery {
   id: string;
   email: string;
   expires_at: string;
