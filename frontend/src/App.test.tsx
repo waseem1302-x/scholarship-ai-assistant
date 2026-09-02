@@ -31,11 +31,13 @@ describe("The Next Scholar Topbar Navigation", () => {
       </BrowserRouter>,
     );
 
-    expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
-    expect(screen.getByText("How it works")).toBeInTheDocument();
-    expect(screen.getByText("For students")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Get Started" })).not.toBeInTheDocument();
+    const navigation = within(screen.getByRole("navigation", { name: "Product navigation" }));
+    expect(navigation.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "How It Works" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "Find Matches" })).toBeInTheDocument();
+    const authActions = within(document.querySelector(".tns-auth-actions") as HTMLElement);
+    expect(authActions.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
+    expect(authActions.getByRole("link", { name: "Get Started" })).toBeInTheDocument();
   });
 
   it("renders the approved two-line scholarship brand", () => {
@@ -156,10 +158,12 @@ describe("The Next Scholar Topbar Navigation", () => {
       </BrowserRouter>,
     );
 
-    expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Matches" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Applications" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Guidance" })).toBeInTheDocument();
+    const navigation = within(screen.getByRole("navigation", { name: "Product navigation" }));
+    expect(navigation.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "Matches" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "Applications" })).toBeInTheDocument();
+    expect(navigation.queryByRole("link", { name: "Guidance" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "User account menu" })).toBeInTheDocument();
   });
 
@@ -188,7 +192,8 @@ describe("The Next Scholar Topbar Navigation", () => {
 
     fireEvent.click(userBtn);
     expect(screen.getByRole("menu")).toBeInTheDocument();
-    expect(screen.getByText(/Profile & criteria/i)).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Profile" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Saved Scholarships" })).toBeInTheDocument();
 
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();

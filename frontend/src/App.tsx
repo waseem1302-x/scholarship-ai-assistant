@@ -24,7 +24,7 @@ const DocumentLabPage = lazy(() => import("./features/document-lab/DocumentLabPa
 const CommunityPage = lazy(() => import("./features/community/CommunityPage").then((m) => ({ default: m.CommunityPage })));
 
 export function Topbar() {
-  const { user, signOut } = useAuth();
+  const { user, isRestoring, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const isHome = location.pathname === "/";
@@ -37,6 +37,32 @@ export function Topbar() {
   const [homeSearchCompact, setHomeSearchCompact] = useState(false);
 
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const navigationItems = !user
+    ? [
+        { label: "Scholarships", to: "/scholarships" },
+        { label: "How It Works", to: "/how-it-works" },
+        { label: "Find Matches", to: "/matches" },
+      ]
+    : user.role === "admin"
+      ? [
+          { label: "Dashboard", to: "/dashboard" },
+          { label: "Scholarships", to: "/scholarships" },
+          { label: "Admin", to: "/admin" },
+        ]
+      : [
+          { label: "Dashboard", to: "/dashboard" },
+          { label: "Scholarships", to: "/scholarships" },
+          { label: "Matches", to: "/matches" },
+          { label: "Applications", to: "/applications" },
+        ];
+
+  function navigationLinkClass(to: string) {
+    const path = location.pathname;
+    const active = to === "/scholarships"
+      ? path === "/scholarships" || path.startsWith("/scholarship/") || path === "/catalogue" || path.startsWith("/catalogue/")
+      : path === to;
+    return `tns-nav-link ${active ? "active" : ""}`;
+  }
 
   useEffect(() => {
     setMenuOpen(false);
@@ -129,75 +155,24 @@ export function Topbar() {
         <div className="tns-nav-top page-width">
           <Brand />
 
-          <nav className="tns-nav-center" aria-label="Product navigation">
-            {!user ? (
-              <>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/catalogue"
-                >
-                  Scholarships
-                </NavLink>
-                <a
-                  className="tns-nav-link"
-                  href="/#how-it-works"
-                  onClick={(event) => {
-                    if (location.pathname === "/") {
-                      event.preventDefault();
-                      document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" });
-                    }
-                  }}
-                >
-                  How it works
-                </a>
-                <a
-                  className="tns-nav-link"
-                  href="/#for-students"
-                  onClick={(event) => {
-                    if (location.pathname === "/") {
-                      event.preventDefault();
-                      document.getElementById("for-students")?.scrollIntoView({ behavior: "smooth" });
-                    }
-                  }}
-                >
-                  For students
-                </a>
-              </>
-            ) : (
-              <>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/catalogue"
-                >
-                  Scholarships
-                </NavLink>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/matches"
-                >
-                  Matches
-                </NavLink>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/applications"
-                >
-                  Applications
-                </NavLink>
-                <NavLink
-                  className={({ isActive }) => `tns-nav-link ${isActive ? "active" : ""}`}
-                  to="/assistant"
-                >
-                  Guidance
-                </NavLink>
-              </>
-            )}
+          <nav className="tns-nav-center" aria-label="Product navigation" aria-busy={isRestoring}>
+            {!isRestoring ? navigationItems.map((item) => (
+              <NavLink key={item.to} className={navigationLinkClass(item.to)} to={item.to}>
+                {item.label}
+              </NavLink>
+            )) : null}
           </nav>
 
           <div className="tns-nav-right">
-            {!user ? (
+            {isRestoring ? (
+              <span className="tns-auth-placeholder" aria-hidden="true" />
+            ) : !user ? (
               <div className="tns-auth-actions">
-                <NavLink className="tns-login-link" to="/auth">
+                <NavLink className="tns-login-link" to="/login">
                   Sign in
+                </NavLink>
+                <NavLink className="tns-get-started-btn" to="/register">
+                  Get Started
                 </NavLink>
               </div>
             ) : (
@@ -222,20 +197,20 @@ export function Topbar() {
 
                 {menuOpen ? (
                   <div className="tns-dropdown-menu" role="menu">
-                    <NavLink className="tns-dropdown-item" to="/dashboard" onClick={() => setMenuOpen(false)} role="menuitem">
-                      <strong>Dashboard</strong>
-                    </NavLink>
-                    <NavLink className="tns-dropdown-item" to="/applications" onClick={() => setMenuOpen(false)} role="menuitem">
-                      Applications tracker
-                    </NavLink>
-                    <NavLink className="tns-dropdown-item" to="/matches" onClick={() => setMenuOpen(false)} role="menuitem">
-                      Explainable matches
-                    </NavLink>
-                    <NavLink className="tns-dropdown-item" to="/profile" onClick={() => setMenuOpen(false)} role="menuitem">
-                      Profile & criteria
-                    </NavLink>
-                    {user.role === "admin" ? (
+                    {user.role === "student" ? (
                       <>
+                        <NavLink className="tns-dropdown-item" to="/profile" onClick={() => setMenuOpen(false)} role="menuitem">
+                          Profile
+                        </NavLink>
+                        <NavLink className="tns-dropdown-item" to="/saved" onClick={() => setMenuOpen(false)} role="menuitem">
+                          Saved Scholarships
+                        </NavLink>
+                      </>
+                    ) : (
+                      <>
+                        <NavLink className="tns-dropdown-item" to="/dashboard" onClick={() => setMenuOpen(false)} role="menuitem">
+                          Dashboard
+                        </NavLink>
                         <div className="tns-dropdown-divider" />
                         <NavLink className="tns-dropdown-item" to="/admin" onClick={() => setMenuOpen(false)} role="menuitem">
                           Admin workspace
@@ -244,7 +219,7 @@ export function Topbar() {
                           Security & audit
                         </NavLink>
                       </>
-                    ) : null}
+                    )}
                     <div className="tns-dropdown-divider" />
                     <button
                       className="tns-dropdown-item tns-logout-btn"
@@ -304,45 +279,38 @@ export function Topbar() {
               </button>
             </div>
             <div className="tns-mobile-drawer-links">
-              {!user ? (
+              {!isRestoring ? (
                 <>
-                  <NavLink to="/catalogue" onClick={() => setMobileDrawerOpen(false)}>
-                    Scholarships
-                  </NavLink>
-                  <a href="/#how-it-works" onClick={() => setMobileDrawerOpen(false)}>
-                    How it works
-                  </a>
-                  <a href="/#for-students" onClick={() => setMobileDrawerOpen(false)}>
-                    For students
-                  </a>
+                  {navigationItems.map((item) => (
+                    <NavLink key={item.to} to={item.to} onClick={() => setMobileDrawerOpen(false)}>
+                      {item.label}
+                    </NavLink>
+                  ))}
                   <div className="tns-mobile-drawer-divider" />
-                  <NavLink to="/auth" className="tns-mobile-login-link" onClick={() => setMobileDrawerOpen(false)}>
-                    Sign in
-                  </NavLink>
+                  {!user ? (
+                    <>
+                      <NavLink to="/login" className="tns-mobile-login-link" onClick={() => setMobileDrawerOpen(false)}>
+                        Sign in
+                      </NavLink>
+                      <NavLink to="/register" className="tns-mobile-get-started-btn" onClick={() => setMobileDrawerOpen(false)}>
+                        Get Started
+                      </NavLink>
+                    </>
+                  ) : (
+                    <>
+                      {user.role === "student" ? (
+                        <>
+                          <NavLink to="/profile" onClick={() => setMobileDrawerOpen(false)}>Profile</NavLink>
+                          <NavLink to="/saved" onClick={() => setMobileDrawerOpen(false)}>Saved Scholarships</NavLink>
+                        </>
+                      ) : null}
+                      <button type="button" className="tns-mobile-logout-btn" onClick={logout}>
+                        Log out
+                      </button>
+                    </>
+                  )}
                 </>
-              ) : (
-                <>
-                  <NavLink to="/catalogue" onClick={() => setMobileDrawerOpen(false)}>
-                    Scholarships
-                  </NavLink>
-                  <NavLink to="/matches" onClick={() => setMobileDrawerOpen(false)}>
-                    Matches
-                  </NavLink>
-                  <NavLink to="/applications" onClick={() => setMobileDrawerOpen(false)}>
-                    Applications
-                  </NavLink>
-                  <NavLink to="/assistant" onClick={() => setMobileDrawerOpen(false)}>
-                    Guidance
-                  </NavLink>
-                  <NavLink to="/profile" onClick={() => setMobileDrawerOpen(false)}>
-                    Profile & settings
-                  </NavLink>
-                  <div className="tns-mobile-drawer-divider" />
-                  <button type="button" className="tns-mobile-logout-btn" onClick={logout}>
-                    Log out
-                  </button>
-                </>
-              )}
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -352,16 +320,16 @@ export function Topbar() {
 
       {isHome && activePopover ? <div className="tns-home-search-backdrop" aria-hidden="true" /> : null}
 
-      <nav className="tns-mobile-bottom-bar" aria-label="Mobile Navigation">
-        <NavLink to="/" className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+      {!isRestoring ? <nav className="tns-mobile-bottom-bar" aria-label="Mobile Navigation">
+        <NavLink to={user ? "/dashboard" : "/"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
             </svg>
           </span>
-          <span className="tns-tab-label">Home</span>
+          <span className="tns-tab-label">{user ? "Dashboard" : "Home"}</span>
         </NavLink>
-        <NavLink to="/catalogue" className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+        <NavLink to="/scholarships" className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <circle cx="12" cy="12" r="10" />
@@ -370,33 +338,33 @@ export function Topbar() {
           </span>
           <span className="tns-tab-label">Explore</span>
         </NavLink>
-        <NavLink to={user ? "/applications" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+        <NavLink to="/matches" className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
             </svg>
           </span>
-          <span className="tns-tab-label">Saved</span>
+          <span className="tns-tab-label">Matches</span>
         </NavLink>
-        <NavLink to={user ? "/dashboard" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+        <NavLink to={user ? "/applications" : "/login"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="M3 3v18h18" />
               <path d="m19 9-5 5-4-4-3 3" />
             </svg>
           </span>
-          <span className="tns-tab-label">Track</span>
+          <span className="tns-tab-label">{user ? "Applications" : "Sign in"}</span>
         </NavLink>
-        <NavLink to={user ? "/profile" : "/auth"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
+        <NavLink to={user ? "/profile" : "/register"} className={({ isActive }) => `tns-bottom-tab ${isActive ? "active" : ""}`}>
           <span className="tns-tab-icon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
           </span>
-          <span className="tns-tab-label">Profile</span>
+          <span className="tns-tab-label">{user ? "Profile" : "Get Started"}</span>
         </NavLink>
-      </nav>
+      </nav> : null}
     </>
   );
 }
@@ -418,6 +386,42 @@ function AuthPage() {
       <AuthForm />
     </main>
   );
+}
+
+function PublicMatchesPage() {
+  return (
+    <main className="workspace-tool page-width">
+      <section className="tool-header">
+        <div>
+          <p className="eyebrow">Profile-based matching</p>
+          <h1>Find scholarships that fit your profile.</h1>
+          <p className="lead">
+            Add your study goals, background, and funding preferences to receive transparent,
+            criteria-based scholarship matches.
+          </p>
+        </div>
+      </section>
+      <section className="catalogue-message">
+        <h2>Understand why each opportunity matches</h2>
+        <p>
+          The Next Scholar compares your profile with verified eligibility criteria and explains
+          confirmed alignment, missing information, and possible mismatches.
+        </p>
+        <div className="hero-actions">
+          <NavLink className="button button-primary" to="/register">Create your profile</NavLink>
+          <NavLink className="button button-quiet" to="/scholarships">Browse scholarships</NavLink>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function MatchesRoute() {
+  const { user, isRestoring } = useAuth();
+  if (isRestoring) {
+    return <main className="page-width loading-page" aria-live="polite">Restoring your secure session...</main>;
+  }
+  return user ? <MatchesPage /> : <PublicMatchesPage />;
 }
 
 function Dashboard() {
@@ -494,15 +498,21 @@ function AppRoutes() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/auth" element={<AuthPage />} />
+            <Route path="/login" element={<AuthPage />} />
+            <Route path="/register" element={<AuthPage />} />
             <Route path="/auth/password-reset" element={<PasswordResetPage />} />
             <Route path="/verify-email" element={<EmailVerificationPage />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/scholarships" element={<CataloguePage />} />
+            <Route path="/scholarship/:opportunityId" element={<OpportunityDetailPage />} />
             <Route path="/catalogue" element={<CataloguePage />} />
             <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
+            <Route path="/how-it-works" element={<Navigate replace to="/#how-it-works" />} />
             <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/matches" element={<MatchesPage />} />
+            <Route path="/matches" element={<MatchesRoute />} />
             <Route path="/tracker" element={<Navigate replace to="/applications" />} />
             <Route path="/applications" element={<CommandCentrePage />} />
+            <Route path="/saved" element={<CommandCentrePage initialLifecycle="saved" />} />
             <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
             <Route path="/assistant" element={<AssistantPage />} />
             <Route path="/document-lab" element={<DocumentLabPage />} />

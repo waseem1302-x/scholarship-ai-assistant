@@ -3,7 +3,7 @@ import { Link, Navigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
 import { formatDate } from "../catalogue/catalogue";
-import type { Application, CommandCentre } from "./types";
+import type { Application, CommandCentre, CommandLifecycle } from "./types";
 import {
   deleteApplicationData,
   exportApplicationData,
@@ -197,7 +197,7 @@ export function DashboardSections({ centre }: { centre: CommandCentre }) {
   );
 }
 
-export function CommandCentrePage() {
+export function CommandCentrePage({ initialLifecycle }: { initialLifecycle?: CommandLifecycle } = {}) {
   const { user, isRestoring } = useAuth();
   const [applications, setApplications] = useState<Application[]>([]);
   const [centre, setCentre] = useState<CommandCentre | null>(null);
@@ -262,6 +262,10 @@ export function CommandCentrePage() {
 
   const activePreparing = applications.filter((a) => a.lifecycle === "preparing").length;
   const activeSaved = applications.filter((a) => a.lifecycle === "saved").length;
+  const visibleApplications = initialLifecycle
+    ? applications.filter((application) => application.lifecycle === initialLifecycle)
+    : applications;
+  const isSavedView = initialLifecycle === "saved";
 
   return (
     <main className="command-centre-page" aria-busy={loading}>
@@ -270,10 +274,12 @@ export function CommandCentrePage() {
         {/* Header Title & Tools Bar */}
         <section className="command-header-toolbar">
           <div className="command-header-copy">
-            <span className="eyebrow-pill">🎯 Real-Time Decision System</span>
-            <h1>Application Command Centre</h1>
+            <span className="eyebrow-pill">{isSavedView ? "Saved opportunities" : "🎯 Real-Time Decision System"}</span>
+            <h1>{isSavedView ? "Saved Scholarships" : "Application Command Centre"}</h1>
             <p className="lead">
-              Active workflows, deadline risk radar, and next actions — grounded with your personal evidence.
+              {isSavedView
+                ? "Review opportunities you saved and start preparing when you are ready."
+                : "Active workflows, deadline risk radar, and next actions — grounded with your personal evidence."}
             </p>
           </div>
 
@@ -353,11 +359,13 @@ export function CommandCentrePage() {
         ) : null}
 
         {/* 3. Empty Applications State */}
-        {!loading && !error && !applications.length ? (
+        {!loading && !error && !visibleApplications.length ? (
           <div className="clean-feed-card empty-applications-card">
-            <h2>No application workspaces created yet</h2>
+            <h2>{isSavedView ? "No saved scholarships yet" : "No application workspaces created yet"}</h2>
             <p>
-              Open any verified scholarship in the catalogue and create a tracked application workspace to get deadline alerts, task milestones, and document audits.
+              {isSavedView
+                ? "Save a verified scholarship to keep it here for later."
+                : "Open any verified scholarship in the catalogue and create a tracked application workspace to get deadline alerts, task milestones, and document audits."}
             </p>
             <Link className="button button-primary" to="/catalogue">
               Explore Verified Scholarships ➔
@@ -366,15 +374,15 @@ export function CommandCentrePage() {
         ) : null}
 
         {/* 4. Active Applications Cards Stream */}
-        {!loading && !error && applications.length > 0 ? (
+        {!loading && !error && visibleApplications.length > 0 ? (
           <section className="applications-workspaces-stream" aria-label="Active application workspaces">
             <div className="stream-header-row">
-              <h2>Your Tracked Applications ({applications.length})</h2>
+              <h2>{isSavedView ? `Saved Opportunities (${visibleApplications.length})` : `Your Tracked Applications (${visibleApplications.length})`}</h2>
               <span className="stream-sort-label">Prioritized by deadline urgency</span>
             </div>
 
             <div className="applications-card-grid">
-              {applications.map((application) => (
+              {visibleApplications.map((application) => (
                 <ApplicationCard key={application.id} application={application} onChanged={load} />
               ))}
             </div>

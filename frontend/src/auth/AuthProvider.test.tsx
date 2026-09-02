@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => {
@@ -20,7 +21,7 @@ vi.mock("../api/client", () => ({
   ApiError: apiMocks.ApiError,
 }));
 
-import { AuthProvider, useAuth } from "./AuthProvider";
+import { AuthForm, AuthProvider, useAuth } from "./AuthProvider";
 
 const user = {
   id: "student-id",
@@ -114,5 +115,21 @@ describe("AuthProvider session restoration", () => {
       await screen.findByText(/could not restore your session because the service is temporarily unavailable/i),
     ).toBeInTheDocument();
     expect(screen.getByText("signed out")).toBeInTheDocument();
+  });
+});
+
+describe("AuthForm route mode", () => {
+  it("opens registration mode on the register route", () => {
+    apiMocks.restoreSession.mockResolvedValue(null);
+
+    render(
+      <MemoryRouter initialEntries={["/register"]}>
+        <AuthProvider>
+          <AuthForm />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("tab", { name: "Create account" })).toHaveAttribute("aria-selected", "true");
   });
 });

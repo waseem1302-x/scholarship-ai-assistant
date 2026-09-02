@@ -52,11 +52,13 @@ describe("premium header and scholarship search", () => {
 
     render(<BrowserRouter><Topbar /></BrowserRouter>);
 
-    expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
-    expect(screen.getByText("How it works")).toBeInTheDocument();
-    expect(screen.getByText("For students")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Get Started" })).not.toBeInTheDocument();
+    const navigation = within(screen.getByRole("navigation", { name: "Product navigation" }));
+    expect(navigation.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "How It Works" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "Find Matches" })).toHaveAttribute("href", "/matches");
+    const authActions = within(document.querySelector(".tns-auth-actions") as HTMLElement);
+    expect(authActions.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
+    expect(authActions.getByRole("link", { name: "Get Started" })).toHaveAttribute("href", "/register");
     expect(document.querySelector(".tns-home-nav-icon")).not.toBeInTheDocument();
   });
 
@@ -70,10 +72,22 @@ describe("premium header and scholarship search", () => {
 
     render(<BrowserRouter><Topbar /></BrowserRouter>);
 
-    expect(screen.getByRole("link", { name: "Scholarships" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Matches" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Applications" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Guidance" })).toBeInTheDocument();
+    const navigation = within(screen.getByRole("navigation", { name: "Product navigation" }));
+    expect(navigation.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "Scholarships" })).toHaveAttribute("href", "/scholarships");
+    expect(navigation.getByRole("link", { name: "Matches" })).toBeInTheDocument();
+    expect(navigation.getByRole("link", { name: "Applications" })).toBeInTheDocument();
+    expect(navigation.queryByRole("link", { name: "Guidance" })).not.toBeInTheDocument();
+  });
+
+  it("does not flash signed-out actions while restoring a session", () => {
+    auth.useAuth.mockReturnValue({ user: null, isRestoring: true, sessionError: null, signOut: vi.fn() });
+
+    render(<BrowserRouter><Topbar /></BrowserRouter>);
+
+    expect(screen.getByRole("navigation", { name: "Product navigation" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Dashboard" })).not.toBeInTheDocument();
   });
 
   it("uses calm scholarship-search microcopy", () => {

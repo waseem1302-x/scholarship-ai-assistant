@@ -240,8 +240,31 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-login-link:hover { background: var(--tns-surface-hover); }
 
-.tns-get-started-btn,
-.tns-mobile-get-started-btn { display: none !important; }
+.tns-get-started-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 17px;
+  border-radius: 999px;
+  background: var(--tns-brand);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+  transition: background 180ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
+}
+
+.tns-get-started-btn:hover {
+  background: var(--tns-brand-hover);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+}
+
+.tns-auth-placeholder {
+  display: block;
+  width: 174px;
+  height: 40px;
+}
 
 .tns-user-menu-wrapper { position: relative; }
 
@@ -290,6 +313,8 @@ body .tns-header--home ~ .tns-route-stage {
   height: 40px;
   padding: 0;
 }
+
+.tns-mobile-drawer { display: none; }
 
 /* Expanded search row */
 .tns-header .tns-header-search-bar {
@@ -808,6 +833,75 @@ body .tns-header--home ~ .tns-route-stage {
   }
 
   .tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar .tns-search-container { width: 100%; }
+}
+
+@media (max-width: 900px) {
+  .tns-mobile-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    padding: 22px 24px 32px;
+    background: var(--tns-surface);
+  }
+
+  .tns-mobile-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .tns-drawer-close-btn {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid var(--tns-border);
+    border-radius: 999px;
+    background: var(--tns-surface);
+    color: var(--tns-text-primary);
+    cursor: pointer;
+  }
+
+  .tns-mobile-drawer-links {
+    display: grid;
+    gap: 6px;
+    margin-top: 36px;
+  }
+
+  .tns-mobile-drawer-links a,
+  .tns-mobile-logout-btn {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--tns-text-primary);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .tns-mobile-drawer-links a:hover,
+  .tns-mobile-logout-btn:hover { background: var(--tns-surface-hover); }
+
+  .tns-mobile-drawer-divider {
+    height: 1px;
+    margin: 8px 0;
+    background: var(--tns-border);
+  }
+
+  .tns-mobile-drawer-links .tns-mobile-get-started-btn {
+    justify-content: center;
+    background: var(--tns-brand);
+    color: #fff;
+  }
 }
 
 @media (max-width: 768px) {

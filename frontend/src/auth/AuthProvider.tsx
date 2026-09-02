@@ -1,5 +1,5 @@
 import { createContext, type FormEvent, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { ApiError, apiClient, type User } from "../api/client";
 
@@ -158,9 +158,16 @@ function FacebookIcon() {
 
 export function AuthForm() {
   const { signIn } = useAuth();
-  const [mode, setMode] = useState<AuthMode>("login");
+  const location = useLocation();
+  const routeMode: AuthMode = location.pathname === "/register" ? "register" : "login";
+  const [mode, setMode] = useState<AuthMode>(routeMode);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMode(routeMode);
+    setError(null);
+  }, [routeMode]);
 
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
