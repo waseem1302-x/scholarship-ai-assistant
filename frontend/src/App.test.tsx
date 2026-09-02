@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +36,26 @@ describe("The Next Scholar Topbar Navigation", () => {
     expect(screen.getByText("For students")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Get Started" })).not.toBeInTheDocument();
+  });
+
+  it("renders the approved two-line scholarship brand", () => {
+    auth.useAuth.mockReturnValue({
+      user: null,
+      isRestoring: false,
+      sessionError: null,
+      signOut: vi.fn(),
+    });
+
+    render(
+      <BrowserRouter>
+        <Topbar />
+      </BrowserRouter>,
+    );
+
+    const brand = screen.getByRole("link", { name: "The Next Scholar home" });
+    expect(within(brand).getByText("The Next")).toBeInTheDocument();
+    expect(within(brand).getByText("Scholar")).toBeInTheDocument();
+    expect(brand.querySelector(".tns-brand-opportunity-accent")).toBeInTheDocument();
   });
 
   it("keeps the home navigation text-first without decorative emoji icons", () => {

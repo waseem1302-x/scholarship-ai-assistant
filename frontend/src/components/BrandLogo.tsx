@@ -1,26 +1,40 @@
 import { NavLink } from "react-router-dom";
 
-function BrandLogoIcon({ className = "", size = 30 }: { className?: string; size?: number }) {
+function BrandLogoIcon({ className = "", size = 40 }: { className?: string; size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 36 36"
+      viewBox="0 0 64 64"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
       aria-hidden="true"
     >
+      <defs>
+        <linearGradient id="tns-logo-primary" x1="8" y1="8" x2="53" y2="58" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#1677F2" />
+          <stop offset="1" stopColor="#2563EB" />
+        </linearGradient>
+        <linearGradient id="tns-logo-secondary" x1="14" y1="30" x2="45" y2="58" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#2563EB" />
+          <stop offset="1" stopColor="#3B82F6" />
+        </linearGradient>
+      </defs>
       <path
-        d="M18 2.5C18.8 3.8 20.4 6.8 23.5 11.2C26.8 15.8 29.5 20.2 29 24.5C28.3 30.1 23.8 34 18 34C12.2 34 7.7 30.1 7 24.5C6.5 20.2 9.2 15.8 12.5 11.2C15.6 6.8 17.2 3.8 18 2.5Z"
-        fill="#B91C43"
+        d="M4.7 18.2 29.2 6.3a6 6 0 0 1 5.3 0l24.6 11.9c1.8.9 1.8 3.4 0 4.3L34.5 34.4a6 6 0 0 1-5.3 0L4.7 22.5c-1.8-.9-1.8-3.4 0-4.3Z"
+        fill="url(#tns-logo-primary)"
       />
       <path
-        d="M18 9.5C19.8 13.2 24.5 19.8 24 23.8C23.6 27.2 20.8 29.5 18 29.5C15.2 29.5 12.4 27.2 12 23.8C11.5 19.8 16.2 13.2 18 9.5Z"
-        fill="#FFFFFF"
-        fillOpacity="0.98"
+        d="M11.8 29.7 22.5 35v10.7l18.8 13.6c2.1 1.5 5 .1 5-2.5V29.7l-10.7 5.2v9.7L17.3 31.3c-2.2-1.6-5.5 0-5.5 2.8v21c0 2.2 1.8 4 4 4h6.7V46.2l-10.7-7.8v-8.7Z"
+        fill="url(#tns-logo-secondary)"
       />
-      <circle cx="18" cy="22.5" r="3.2" fill="#B91C43" />
+      <path d="M53.1 22.3v15.2" stroke="#FACC15" strokeWidth="2.6" strokeLinecap="round" />
+      <path
+        className="tns-brand-opportunity-accent"
+        d="m53.1 35.4 2.1 4.3 4.3 2.1-4.3 2.1-2.1 4.3-2.1-4.3-4.3-2.1 4.3-2.1 2.1-4.3Z"
+        fill="#FACC15"
+      />
     </svg>
   );
 }
@@ -45,7 +59,10 @@ export function Brand({
         <BrandLogoIcon />
       </span>
       <span className="tns-brand-text-block">
-        <span className="tns-brand-title">The Next Scholar</span>
+        <span className="tns-brand-title">
+          <span className="tns-brand-title-line">The Next</span>
+          <span className="tns-brand-title-line tns-brand-title-line--accent">Scholar</span>
+        </span>
         {showDomain ? <span className="tns-brand-domain">thenextscholar.com</span> : null}
       </span>
     </NavLink>
