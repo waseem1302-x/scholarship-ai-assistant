@@ -64,7 +64,9 @@ export function Topbar() {
     function updateHeaderSearchState() {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
-        setHomeSearchCompact(window.scrollY > 72);
+        setHomeSearchCompact((isCompact) => (
+          isCompact ? window.scrollY >= 48 : window.scrollY > 96
+        ));
       });
     }
 

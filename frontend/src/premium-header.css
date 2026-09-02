@@ -33,11 +33,11 @@
   background: var(--tns-surface);
   box-shadow: none;
   isolation: isolate;
-  transition: min-height 220ms var(--tns-ease), border-color 180ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
+  transition: border-color 180ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
 }
 
 .tns-header.tns-header--home {
-  min-height: 152px !important;
+  min-height: 72px !important;
 }
 
 .tns-header::before,
@@ -52,7 +52,7 @@
 
 .tns-header--home ~ .tns-route-stage,
 body .tns-header--home ~ .tns-route-stage {
-  padding-top: 0 !important;
+  padding-top: 104px !important;
 }
 
 .tns-nav-top,
@@ -277,15 +277,22 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 /* Expanded search row */
-.tns-header-search-bar {
-  position: relative;
+.tns-header .tns-header-search-bar {
+  position: absolute;
+  top: 72px;
+  left: 50%;
   z-index: 6;
   display: flex;
   align-items: flex-start;
   justify-content: center;
+  width: min(840px, calc(100vw - 96px));
+  max-width: 840px;
   min-height: 80px;
   padding: 3px 0 11px;
-  transition: min-height 220ms var(--tns-ease), padding 220ms var(--tns-ease), transform 220ms var(--tns-ease);
+  transform: translateX(-50%);
+  transform-origin: top center;
+  will-change: top, width;
+  transition: top 240ms var(--tns-ease), width 240ms var(--tns-ease), min-height 240ms var(--tns-ease), padding 240ms var(--tns-ease);
 }
 
 .tns-header-search-bar .tns-search-container {
@@ -293,8 +300,8 @@ body .tns-header--home ~ .tns-route-stage {
   z-index: 6;
   display: flex;
   justify-content: center;
-  width: min(840px, calc(100vw - 96px));
-  max-width: 840px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
 }
 
@@ -315,7 +322,8 @@ body .tns-header--home ~ .tns-route-stage {
   border-radius: var(--tns-radius-search);
   background: var(--tns-surface);
   box-shadow: var(--tns-shadow-search);
-  transition: background 180ms var(--tns-ease), border-color 180ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
+  will-change: height, grid-template-columns;
+  transition: height 240ms var(--tns-ease), min-height 240ms var(--tns-ease), grid-template-columns 240ms var(--tns-ease), background 180ms var(--tns-ease), border-color 180ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
 }
 
 .tns-airbnb-search-pill.has-active-segment {
@@ -328,6 +336,7 @@ body .tns-header--home ~ .tns-route-stage {
   position: relative;
   min-width: 0;
   height: 64px;
+  transition: height 240ms var(--tns-ease);
 }
 
 .tns-airbnb-segment {
@@ -348,7 +357,7 @@ body .tns-header--home ~ .tns-route-stage {
   box-shadow: none;
   cursor: pointer;
   appearance: none;
-  transition: background 160ms var(--tns-ease), box-shadow 180ms var(--tns-ease), transform 140ms var(--tns-ease);
+  transition: height 240ms var(--tns-ease), min-height 240ms var(--tns-ease), padding 240ms var(--tns-ease), background 160ms var(--tns-ease), box-shadow 180ms var(--tns-ease), transform 140ms var(--tns-ease);
 }
 
 .segment-where .tns-airbnb-segment { padding-left: 28px; }
@@ -374,17 +383,23 @@ body .tns-header--home ~ .tns-route-stage {
   flex-direction: column;
   justify-content: center;
   gap: 3px;
+  transition: gap 200ms var(--tns-ease);
 }
 
 .tns-segment-label {
   display: block;
+  max-height: 14px;
   margin: 0;
+  overflow: hidden;
   color: var(--tns-text-primary) !important;
   font-size: 12px !important;
   font-weight: 650 !important;
   line-height: 1.1;
   letter-spacing: -0.005em !important;
   text-transform: none !important;
+  opacity: 1;
+  transform: translateY(0);
+  transition: max-height 180ms var(--tns-ease), opacity 140ms var(--tns-ease), transform 180ms var(--tns-ease);
 }
 
 .tns-segment-input {
@@ -436,7 +451,7 @@ body .tns-header--home ~ .tns-route-stage {
   color: #fff;
   box-shadow: 0 7px 18px rgba(37, 99, 235, 0.24) !important;
   cursor: pointer;
-  transition: background 160ms var(--tns-ease), box-shadow 160ms var(--tns-ease), transform 140ms var(--tns-ease) !important;
+  transition: width 240ms var(--tns-ease), height 240ms var(--tns-ease), min-width 240ms var(--tns-ease), min-height 240ms var(--tns-ease), margin 240ms var(--tns-ease), background 160ms var(--tns-ease), box-shadow 160ms var(--tns-ease), transform 140ms var(--tns-ease) !important;
 }
 
 .tns-search-submit-btn::before,
@@ -565,7 +580,6 @@ body .tns-header--home ~ .tns-route-stage {
 
 /* Compact home header */
 .tns-header--home.tns-header--search-compact:not(.tns-header--search-open) {
-  min-height: 72px !important;
   border-bottom-color: var(--tns-border);
   box-shadow: var(--tns-shadow-header);
 }
@@ -577,16 +591,13 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar {
-  position: absolute;
   top: 8px;
-  left: 50%;
   width: 410px;
   min-height: 56px;
   padding: 0;
-  transform: translateX(-50%);
 }
 
-.tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar .tns-search-container { width: 410px; }
+.tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar .tns-search-container { width: 100%; }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-search-pill {
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.82fr) minmax(0, 0.93fr) 52px;
@@ -602,7 +613,12 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-segment { padding-inline: 15px; }
-.tns-header--search-compact:not(.tns-header--search-open) .tns-segment-label { display: none; }
+.tns-header--search-compact:not(.tns-header--search-open) .tns-segment-text-col { gap: 0; }
+.tns-header--search-compact:not(.tns-header--search-open) .tns-segment-label {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-3px);
+}
 .tns-header--search-compact:not(.tns-header--search-open) .tns-segment-input { font-size: 12px !important; }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-search-submit-btn {
@@ -634,7 +650,7 @@ body .tns-header--home ~ .tns-route-stage {
 @media (max-width: 1199px) {
   .tns-header .page-width { width: calc(100% - 48px); }
   .tns-nav-center { gap: 22px; }
-  .tns-header-search-bar .tns-search-container { width: min(840px, calc(100vw - 64px)); }
+  .tns-header .tns-header-search-bar { width: min(840px, calc(100vw - 64px)); }
 }
 
 @media (max-width: 900px) and (min-width: 769px) {
@@ -643,7 +659,7 @@ body .tns-header--home ~ .tns-route-stage {
   .tns-user-menu-wrapper { display: none !important; }
 
   .tns-mobile-hamburger-btn { display: flex !important; }
-  .tns-header-search-bar .tns-search-container { width: calc(100vw - 48px); }
+  .tns-header .tns-header-search-bar { width: calc(100vw - 48px); }
 
   .tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar {
     width: min(410px, calc(100vw - 176px));

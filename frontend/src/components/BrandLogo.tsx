@@ -25,8 +25,13 @@ function BrandLogoIcon({ className = "", size = 40 }: { className?: string; size
         d="M4.7 18.2 29.2 6.3a6 6 0 0 1 5.3 0l24.6 11.9c1.8.9 1.8 3.4 0 4.3L34.5 34.4a6 6 0 0 1-5.3 0L4.7 22.5c-1.8-.9-1.8-3.4 0-4.3Z"
         fill="url(#tns-logo-primary)"
       />
+      <path d="m11.8 29.6 10.7 5.2v24.3h-6.7a4 4 0 0 1-4-4V29.6Z" fill="url(#tns-logo-primary)" />
       <path
-        d="M11.8 29.7 22.5 35v10.7l18.8 13.6c2.1 1.5 5 .1 5-2.5V29.7l-10.7 5.2v9.7L17.3 31.3c-2.2-1.6-5.5 0-5.5 2.8v21c0 2.2 1.8 4 4 4h6.7V46.2l-10.7-7.8v-8.7Z"
+        d="m41.5 31 10.7-5.2v27.8c0 3.2-1.8 5.9-4.5 7.2a5.9 5.9 0 0 1-6.2-.9V31Z"
+        fill="url(#tns-logo-secondary)"
+      />
+      <path
+        d="M16.5 31.1c1.2-.4 2.5-.2 3.5.5l28.2 20.6a5.1 5.1 0 0 1 1.2 6.3c-1.6 2.7-5.2 3.3-7.7 1.4L16.1 40.7c-3.8-2.8-3.5-8.1.4-9.6Z"
         fill="url(#tns-logo-secondary)"
       />
       <path d="M53.1 22.3v15.2" stroke="#FACC15" strokeWidth="2.6" strokeLinecap="round" />

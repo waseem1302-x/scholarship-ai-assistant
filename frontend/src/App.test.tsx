@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -95,6 +95,45 @@ describe("The Next Scholar Topbar Navigation", () => {
 
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("dialog", { name: /popular scholarship destinations/i })).not.toBeInTheDocument();
+  });
+
+  it("uses separate enter and exit thresholds to prevent scroll-state thrashing", async () => {
+    auth.useAuth.mockReturnValue({
+      user: null,
+      isRestoring: false,
+      sessionError: null,
+      signOut: vi.fn(),
+    });
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 0, writable: true });
+
+    render(
+      <BrowserRouter>
+        <Topbar />
+      </BrowserRouter>,
+    );
+
+    const header = document.querySelector(".tns-header");
+
+    await act(async () => {
+      window.scrollY = 97;
+      fireEvent.scroll(window);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+    expect(header).toHaveClass("tns-header--search-compact");
+
+    await act(async () => {
+      window.scrollY = 70;
+      fireEvent.scroll(window);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+    expect(header).toHaveClass("tns-header--search-compact");
+
+    await act(async () => {
+      window.scrollY = 47;
+      fireEvent.scroll(window);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+    expect(header).not.toHaveClass("tns-header--search-compact");
   });
 
   it("renders task-focused navigation after user logs in", () => {
