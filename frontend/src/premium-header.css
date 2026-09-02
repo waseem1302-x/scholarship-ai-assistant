@@ -71,6 +71,7 @@
 .tns-header--home ~ .tns-route-stage,
 body .tns-header--home ~ .tns-route-stage {
   padding-top: 104px !important;
+  transition: padding-top 220ms var(--tns-ease);
 }
 
 .tns-nav-top,
@@ -858,7 +859,13 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-header--home.tns-header--search-compact:not(.tns-header--search-open)::before {
   height: 72px;
+  border-bottom-color: transparent;
   box-shadow: var(--tns-shadow-header);
+}
+
+.tns-header--home.tns-header--search-compact:not(.tns-header--search-open) ~ .tns-route-stage,
+body .tns-header--home.tns-header--search-compact:not(.tns-header--search-open) ~ .tns-route-stage {
+  padding-top: 0 !important;
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-nav-center {
