@@ -15,7 +15,7 @@ def test_react_frontend_is_served_at_the_canonical_root(client: TestClient) -> N
 
     assert response.status_code == 200
     assert '<div id="root"></div>' in response.text
-    assert "Source-backed Scholarship Assistant" in response.text
+    assert "The Next Scholar" in response.text
 
     bundle = client.get(frontend_asset_path(response.text, "js"))
     stylesheet = client.get(frontend_asset_path(response.text, "css"))

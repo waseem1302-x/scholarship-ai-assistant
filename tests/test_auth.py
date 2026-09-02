@@ -358,7 +358,7 @@ def test_root_serves_frontend(client: TestClient) -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Source-backed Scholarship Assistant" in response.text
+    assert "The Next Scholar" in response.text
     assert '<div id="root"></div>' in response.text
 
 
