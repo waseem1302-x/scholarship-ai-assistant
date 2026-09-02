@@ -185,6 +185,29 @@ describe("premium header and scholarship search", () => {
     expect(document.getElementById("degree-popover")).toHaveAttribute("aria-hidden", "false");
   });
 
+  it("coordinates contextual popover switches with their travel direction", () => {
+    render(<MemoryRouter initialEntries={["/"]}><SearchHarness /></MemoryRouter>);
+
+    const search = screen.getByRole("search", { name: "Search verified scholarships" });
+    const countryInput = within(search).getByRole("combobox", { name: "Search country" });
+    const degreeButton = within(search).getByRole("button", { name: "Degree Any degree" });
+    const fundingButton = within(search).getByRole("button", { name: "Funding Full funding" });
+
+    fireEvent.focus(countryInput);
+    fireEvent.click(degreeButton);
+
+    expect(search).toHaveAttribute("data-popover-direction", "forward");
+    expect(document.getElementById("destination-popover")).toHaveClass("is-leaving");
+    expect(document.getElementById("degree-popover")).toHaveClass("is-open");
+
+    fireEvent.click(fundingButton);
+    fireEvent.click(degreeButton);
+
+    expect(search).toHaveAttribute("data-popover-direction", "backward");
+    expect(document.getElementById("funding-popover")).toHaveClass("is-leaving");
+    expect(document.getElementById("degree-popover")).toHaveClass("is-open");
+  });
+
   it("exposes compact interaction mode without changing search behavior", () => {
     render(<MemoryRouter initialEntries={["/"]}><SearchHarness mode="compact" /></MemoryRouter>);
 

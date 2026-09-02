@@ -2,7 +2,7 @@
   --tns-text-primary: #0f172a;
   --tns-text-secondary: #64748b;
   --tns-surface: #ffffff;
-  --tns-header-surface: linear-gradient(180deg, #ffffff 39.9%, #f8f8f8 100%);
+  --tns-header-surface: #f8f8f8;
   --tns-header-divider: #ebebeb;
   --tns-surface-subtle: #f7f9fc;
   --tns-surface-hover: #f1f5f9;
@@ -40,6 +40,7 @@
 
 .tns-header.tns-header--home {
   min-height: 72px !important;
+  background: var(--tns-header-surface);
 }
 
 .tns-header::before {
@@ -390,14 +391,14 @@ body .tns-header--home ~ .tns-route-stage {
   transform: scale(0.965);
   transform-origin: center;
   will-change: transform, opacity;
-  transition: background 140ms var(--tns-ease), box-shadow 180ms var(--tns-ease), opacity 140ms var(--tns-ease), transform 180ms var(--tns-ease);
+  transition: background-color 180ms var(--tns-ease), box-shadow 180ms var(--tns-ease), opacity 140ms var(--tns-ease), transform 180ms var(--tns-ease);
 }
 
 .tns-airbnb-search-pill:not(.has-active-segment) .tns-search-field:hover > .tns-segment-surface,
 .tns-airbnb-search-pill.has-active-segment .tns-search-field:not(.is-active):hover > .tns-segment-surface {
   background: var(--tns-surface-hover);
   opacity: 1;
-  transform: scale(1);
+  transform: scale(0.975);
 }
 
 .tns-search-field.is-active > .tns-segment-surface {
@@ -448,8 +449,6 @@ body .tns-header--home ~ .tns-route-stage {
   background: transparent !important;
   box-shadow: none !important;
 }
-
-.tns-airbnb-segment:active { transform: scale(0.992); }
 
 .tns-airbnb-segment:focus-within {
   outline: none;
@@ -522,6 +521,11 @@ body .tns-header--home ~ .tns-route-stage {
 .tns-segment-input.is-filled {
   color: var(--tns-text-primary) !important;
   font-weight: 550 !important;
+}
+
+.tns-airbnb-search-pill[data-search-mode="expanded"] .segment-funding .tns-segment-input.is-filled {
+  color: var(--tns-text-secondary) !important;
+  font-weight: 400 !important;
 }
 
 .tns-destination-input {
@@ -648,6 +652,9 @@ body .tns-header--home ~ .tns-route-stage {
 
 /* Contextual desktop popovers */
 .tns-segment-popover {
+  --tns-popover-anchor-x: 0%;
+  --tns-popover-enter-x: var(--tns-popover-anchor-x);
+  --tns-popover-exit-x: var(--tns-popover-anchor-x);
   position: absolute;
   top: calc(100% + 13px);
   z-index: 240;
@@ -667,41 +674,77 @@ body .tns-header--home ~ .tns-route-stage {
   visibility: hidden;
   pointer-events: none;
   will-change: opacity, transform;
-  transition: opacity 100ms var(--tns-ease), transform 100ms var(--tns-ease), visibility 0s linear 100ms;
+  transform: translate(var(--tns-popover-anchor-x), -6px) scale(0.985);
+  transition: opacity 100ms var(--tns-ease), visibility 0s linear 100ms;
 }
 
 .segment-where > .tns-segment-popover {
   left: 0;
-  transform: translateY(-6px) scale(0.985);
   transform-origin: top left;
 }
 
 .segment-degree > .tns-segment-popover {
+  --tns-popover-anchor-x: -50%;
   left: 50%;
-  transform: translate(-50%, -6px) scale(0.985);
   transform-origin: top center;
 }
 
 .segment-funding > .tns-segment-popover {
   right: 0;
-  transform: translateY(-6px) scale(0.985);
   transform-origin: top right;
 }
 
 .tns-segment-popover.is-open {
+  z-index: 2;
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transition: opacity 160ms var(--tns-ease), transform 180ms var(--tns-ease), visibility 0s;
+  animation: tnsPopoverEnter 180ms var(--tns-ease) both;
 }
 
-.segment-where > .tns-segment-popover.is-open,
-.segment-funding > .tns-segment-popover.is-open {
-  transform: translateY(0) scale(1);
+.tns-segment-popover.is-leaving {
+  z-index: 1;
+  visibility: visible;
+  pointer-events: none;
+  animation: tnsPopoverExit 160ms var(--tns-ease) both;
 }
 
-.segment-degree > .tns-segment-popover.is-open {
-  transform: translate(-50%, 0) scale(1);
+.tns-airbnb-search-pill[data-popover-direction="forward"] .tns-segment-popover.is-open {
+  --tns-popover-enter-x: calc(var(--tns-popover-anchor-x) + 8px);
+}
+
+.tns-airbnb-search-pill[data-popover-direction="backward"] .tns-segment-popover.is-open {
+  --tns-popover-enter-x: calc(var(--tns-popover-anchor-x) - 8px);
+}
+
+.tns-airbnb-search-pill[data-popover-direction="forward"] .tns-segment-popover.is-leaving {
+  --tns-popover-exit-x: calc(var(--tns-popover-anchor-x) - 8px);
+}
+
+.tns-airbnb-search-pill[data-popover-direction="backward"] .tns-segment-popover.is-leaving {
+  --tns-popover-exit-x: calc(var(--tns-popover-anchor-x) + 8px);
+}
+
+@keyframes tnsPopoverEnter {
+  from {
+    opacity: 0;
+    transform: translate(var(--tns-popover-enter-x), -4px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translate(var(--tns-popover-anchor-x), 0) scale(1);
+  }
+}
+
+@keyframes tnsPopoverExit {
+  from {
+    opacity: 1;
+    transform: translate(var(--tns-popover-anchor-x), 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--tns-popover-exit-x), -2px) scale(0.99);
+  }
 }
 
 .tns-segment-popover::-webkit-scrollbar { width: 6px; }
@@ -825,16 +868,16 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar {
-  top: 8px;
+  top: 12px;
   width: 410px;
-  min-height: 56px;
+  min-height: 48px;
   padding: 0;
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar .tns-search-container { width: 100%; }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-search-pill {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.28fr) minmax(0, 0.85fr) minmax(0, 1.18fr);
   height: 48px;
   min-height: 48px;
   box-shadow: 0 3px 14px rgba(15, 23, 42, 0.1);
@@ -847,6 +890,9 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-segment { padding-inline: 14px; }
+.tns-header--search-compact:not(.tns-header--search-open) .segment-degree .tns-airbnb-segment {
+  padding-inline: 10px;
+}
 .tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-segment:hover { background: transparent; }
 .tns-header--search-compact:not(.tns-header--search-open) .tns-search-field:hover > .tns-segment-surface {
   opacity: 0;
@@ -874,9 +920,9 @@ body .tns-header--home ~ .tns-route-stage {
 }
 .tns-header--search-compact:not(.tns-header--search-open) .tns-segment-input {
   color: var(--tns-text-primary) !important;
-  font-size: 13px !important;
-  font-weight: 600 !important;
-  line-height: 18px;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  line-height: 22px;
 }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-destination-input::placeholder {

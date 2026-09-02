@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -22,6 +22,13 @@ interface ScholarshipSearchProps {
 }
 
 type SearchPopover = Exclude<ActivePopover, null>;
+type PopoverDirection = "none" | "forward" | "backward";
+
+const popoverOrder: Record<SearchPopover, number> = {
+  where: 0,
+  degree: 1,
+  funding: 2,
+};
 
 export function ScholarshipSearch({
   search,
@@ -33,17 +40,43 @@ export function ScholarshipSearch({
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const desktopCountryInputRef = useRef<HTMLInputElement>(null);
+  const popoverTransitionTimerRef = useRef<number | null>(null);
   const [highlightedDestination, setHighlightedDestination] = useState(-1);
   const [destinationError, setDestinationError] = useState<"desktop" | "mobile" | null>(null);
   const [mobileDestinationFocused, setMobileDestinationFocused] = useState(false);
+  const [popoverDirection, setPopoverDirection] = useState<PopoverDirection>("none");
+  const [leavingPopover, setLeavingPopover] = useState<SearchPopover | null>(null);
   const isOpen = activePopover !== null;
   const destinationSuggestions = useMemo(
     () => filterDestinationOptions(search.country),
     [search.country],
   );
 
+  const changePopover = useCallback((nextPopover: ActivePopover) => {
+    if (popoverTransitionTimerRef.current !== null) {
+      window.clearTimeout(popoverTransitionTimerRef.current);
+      popoverTransitionTimerRef.current = null;
+    }
+
+    if (activePopover && nextPopover && activePopover !== nextPopover) {
+      setPopoverDirection(
+        popoverOrder[nextPopover] > popoverOrder[activePopover] ? "forward" : "backward",
+      );
+      setLeavingPopover(activePopover);
+      popoverTransitionTimerRef.current = window.setTimeout(() => {
+        setLeavingPopover(null);
+        popoverTransitionTimerRef.current = null;
+      }, 160);
+    } else {
+      setPopoverDirection("none");
+      setLeavingPopover(null);
+    }
+
+    onPopoverChange(nextPopover);
+  }, [activePopover, onPopoverChange]);
+
   function openPopover(popover: SearchPopover) {
-    onPopoverChange(activePopover === popover ? null : popover);
+    changePopover(activePopover === popover ? null : popover);
   }
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -54,7 +87,7 @@ export function ScholarshipSearch({
     if (typedCountry && !resolvedDestination) {
       const errorSource = event.currentTarget.classList.contains("tns-airbnb-search-pill") ? "desktop" : "mobile";
       setDestinationError(errorSource);
-      onPopoverChange("where");
+      changePopover("where");
       if (errorSource === "desktop") {
         desktopCountryInputRef.current?.focus();
       } else {
@@ -65,7 +98,7 @@ export function ScholarshipSearch({
 
     const country = resolvedDestination?.country ?? "";
     setDestinationError(null);
-    onPopoverChange(null);
+    changePopover(null);
     if (country !== search.country) {
       onSearchChange((current) => ({ ...current, country }));
     }
@@ -87,13 +120,13 @@ export function ScholarshipSearch({
 
   function selectDestination(destination: DestinationOption | null, advanceToDegree: boolean) {
     updateCountry(destination?.country ?? "");
-    onPopoverChange(advanceToDegree ? "degree" : "where");
+    changePopover(advanceToDegree ? "degree" : "where");
   }
 
   function handleDestinationKeyDown(event: React.KeyboardEvent<HTMLInputElement>, advanceToDegree: boolean) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      onPopoverChange("where");
+      changePopover("where");
       setHighlightedDestination((current) =>
         Math.min(current + 1, destinationSuggestions.length - 1),
       );
@@ -113,7 +146,7 @@ export function ScholarshipSearch({
     }
 
     if (event.key === "Escape") {
-      onPopoverChange(null);
+      changePopover(null);
     }
   }
 
@@ -122,12 +155,12 @@ export function ScholarshipSearch({
 
     function closeOnOutsideClick(event: MouseEvent) {
       if (!containerRef.current?.contains(event.target as Node)) {
-        onPopoverChange(null);
+        changePopover(null);
       }
     }
 
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") onPopoverChange(null);
+      if (event.key === "Escape") changePopover(null);
     }
 
     document.addEventListener("mousedown", closeOnOutsideClick);
@@ -136,7 +169,13 @@ export function ScholarshipSearch({
       document.removeEventListener("mousedown", closeOnOutsideClick);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [activePopover, onPopoverChange]);
+  }, [activePopover, changePopover]);
+
+  useEffect(() => () => {
+    if (popoverTransitionTimerRef.current !== null) {
+      window.clearTimeout(popoverTransitionTimerRef.current);
+    }
+  }, []);
 
   const degreeLabel = search.degree_level
     ? degreeOptions.find((option) => option.value === search.degree_level)?.label ?? "Any degree"
@@ -174,7 +213,7 @@ export function ScholarshipSearch({
             className="tns-mobile-category-chip is-active"
             onClick={() => {
               onSearchChange({ ...initialSearch });
-              onPopoverChange(null);
+              changePopover(null);
             }}
           >
             All
@@ -194,6 +233,7 @@ export function ScholarshipSearch({
       <form
         className={`tns-airbnb-search-pill ${isOpen ? "has-active-segment" : ""}`}
         data-active-segment={activePopover ?? "none"}
+        data-popover-direction={popoverDirection}
         data-search-mode={mode}
         onSubmit={submit}
         role="search"
@@ -204,7 +244,7 @@ export function ScholarshipSearch({
           <div
             className={`tns-airbnb-segment ${activePopover === "where" ? "is-active" : ""}`}
             onClick={() => {
-              onPopoverChange("where");
+              changePopover("where");
               desktopCountryInputRef.current?.focus();
             }}
           >
@@ -232,7 +272,7 @@ export function ScholarshipSearch({
                 aria-activedescendant={highlightedDestination >= 0 ? `desktop-destination-${highlightedDestination}` : undefined}
                 aria-invalid={destinationError === "desktop"}
                 aria-describedby={destinationError === "desktop" ? "desktop-destination-error" : undefined}
-                onFocus={() => onPopoverChange("where")}
+                onFocus={() => changePopover("where")}
                 onChange={(event) => updateCountry(event.target.value)}
                 onKeyDown={(event) => handleDestinationKeyDown(event, true)}
               />
@@ -246,7 +286,7 @@ export function ScholarshipSearch({
                 onClick={(event) => {
                   event.stopPropagation();
                   updateCountry("");
-                  onPopoverChange("where");
+                  changePopover("where");
                   desktopCountryInputRef.current?.focus();
                 }}
               >
@@ -258,7 +298,7 @@ export function ScholarshipSearch({
 
           <div
             id="destination-popover"
-            className={`tns-segment-popover tns-popover-where ${activePopover === "where" ? "is-open" : ""}`}
+            className={`tns-segment-popover tns-popover-where ${activePopover === "where" ? "is-open" : ""} ${leavingPopover === "where" ? "is-leaving" : ""}`}
             role="dialog"
             aria-label="Popular scholarship destinations"
             aria-hidden={activePopover !== "where"}
@@ -330,7 +370,7 @@ export function ScholarshipSearch({
 
           <div
             id="degree-popover"
-            className={`tns-segment-popover tns-popover-degree ${activePopover === "degree" ? "is-open" : ""}`}
+            className={`tns-segment-popover tns-popover-degree ${activePopover === "degree" ? "is-open" : ""} ${leavingPopover === "degree" ? "is-leaving" : ""}`}
             role="dialog"
             aria-label="Choose degree"
             aria-hidden={activePopover !== "degree"}
@@ -346,7 +386,7 @@ export function ScholarshipSearch({
                   aria-label={option.value ? option.label : "Any degree"}
                   onClick={() => {
                     onSearchChange((current) => ({ ...current, degree_level: option.value }));
-                    onPopoverChange("funding");
+                    changePopover("funding");
                   }}
                 >
                   <span className="tns-popover-row-text">
@@ -379,7 +419,7 @@ export function ScholarshipSearch({
           </button>
           <div
             id="funding-popover"
-            className={`tns-segment-popover tns-popover-funding ${activePopover === "funding" ? "is-open" : ""}`}
+            className={`tns-segment-popover tns-popover-funding ${activePopover === "funding" ? "is-open" : ""} ${leavingPopover === "funding" ? "is-leaving" : ""}`}
             role="dialog"
             aria-label="Choose funding"
             aria-hidden={activePopover !== "funding"}
@@ -395,7 +435,7 @@ export function ScholarshipSearch({
                   aria-label={option.value ? option.label : "Any funding"}
                   onClick={() => {
                     onSearchChange((current) => ({ ...current, funding_type: option.value }));
-                    onPopoverChange(null);
+                    changePopover(null);
                   }}
                 >
                   <span className="tns-popover-row-text">
@@ -428,7 +468,7 @@ export function ScholarshipSearch({
             <span className="tns-mobile-sheet-kicker">Scholarship search</span>
             <h3>Find the right opportunity</h3>
           </div>
-          <button type="button" className="tns-mobile-sheet-close" onClick={() => onPopoverChange(null)} aria-label="Close scholarship search">
+          <button type="button" className="tns-mobile-sheet-close" onClick={() => changePopover(null)} aria-label="Close scholarship search">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
               <line x1="6" y1="6" x2="18" y2="18" />
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -456,12 +496,12 @@ export function ScholarshipSearch({
               aria-describedby={destinationError === "mobile" ? "mobile-destination-error" : undefined}
               onFocus={() => {
                 setMobileDestinationFocused(true);
-                onPopoverChange("where");
+                changePopover("where");
               }}
               onChange={(event) => {
                 setMobileDestinationFocused(true);
                 updateCountry(event.target.value);
-                onPopoverChange("where");
+                changePopover("where");
               }}
               onKeyDown={(event) => handleDestinationKeyDown(event, false)}
             />
@@ -473,7 +513,7 @@ export function ScholarshipSearch({
                 onClick={() => {
                   updateCountry("");
                   setMobileDestinationFocused(true);
-                  onPopoverChange("where");
+                  changePopover("where");
                 }}
               >
                 <span aria-hidden="true">×</span>
