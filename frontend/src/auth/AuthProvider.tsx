@@ -157,7 +157,7 @@ function FacebookIcon() {
 }
 
 export function AuthForm() {
-  const { signIn, signInWithGoogle, signInWithFacebook } = useAuth();
+  const { signIn } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
