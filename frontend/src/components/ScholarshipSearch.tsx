@@ -14,6 +14,7 @@ import type { DegreeLevel, FundingType } from "../features/catalogue/types";
 
 interface ScholarshipSearchProps {
   search: HomeSearchState;
+  mode: "expanded" | "compact";
   activePopover: ActivePopover;
   onSearchChange: (update: HomeSearchState | ((previous: HomeSearchState) => HomeSearchState)) => void;
   onPopoverChange: (popover: ActivePopover) => void;
@@ -23,6 +24,7 @@ type SearchPopover = Exclude<ActivePopover, null>;
 
 export function ScholarshipSearch({
   search,
+  mode,
   activePopover,
   onSearchChange,
   onPopoverChange,
@@ -189,6 +191,7 @@ export function ScholarshipSearch({
       <form
         className={`tns-airbnb-search-pill ${isOpen ? "has-active-segment" : ""}`}
         data-active-segment={activePopover ?? "none"}
+        data-search-mode={mode}
         onSubmit={submit}
         role="search"
         aria-label="Search verified scholarships"

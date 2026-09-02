@@ -24,6 +24,7 @@ function ScholarshipSearchHarness() {
   return (
     <ScholarshipSearch
       search={search}
+      mode="expanded"
       activePopover={activePopover}
       onSearchChange={setSearch}
       onPopoverChange={setActivePopover}

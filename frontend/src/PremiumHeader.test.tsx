@@ -27,13 +27,21 @@ function LocationProbe() {
   return <output data-testid="location">{location.pathname}{location.search}</output>;
 }
 
-function SearchHarness({ showLocation = false }: { showLocation?: boolean }) {
+function SearchHarness({
+  showLocation = false,
+  mode = "expanded",
+}: {
+  showLocation?: boolean;
+  mode?: "expanded" | "compact";
+}) {
   const [search, setSearch] = useState<HomeSearchState>(initialSearch);
   const [activePopover, setActivePopover] = useState<ActivePopover>(null);
+  const searchModeProps = { mode };
 
   return (
     <>
       <ScholarshipSearch
+        {...searchModeProps}
         search={search}
         activePopover={activePopover}
         onSearchChange={setSearch}
@@ -160,6 +168,16 @@ describe("premium header and scholarship search", () => {
     expect(shell).toHaveAttribute("data-active-popover", "degree");
     expect(destinationPanel).toHaveAttribute("aria-hidden", "true");
     expect(document.getElementById("degree-popover")).toHaveAttribute("aria-hidden", "false");
+  });
+
+  it("exposes compact interaction mode without changing search behavior", () => {
+    render(<MemoryRouter initialEntries={["/"]}><SearchHarness mode="compact" /></MemoryRouter>);
+
+    const search = screen.getByRole("search", { name: "Search verified scholarships" });
+    expect(search).toHaveAttribute("data-search-mode", "compact");
+
+    fireEvent.click(within(search).getByRole("button", { name: "Funding Any funding" }));
+    expect(screen.getByRole("dialog", { name: "Choose funding" })).toBeInTheDocument();
   });
 
   it("uses the same canonical destination suggestions in the mobile search", () => {

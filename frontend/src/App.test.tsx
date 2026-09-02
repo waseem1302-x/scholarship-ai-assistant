@@ -100,7 +100,7 @@ describe("The Next Scholar Topbar Navigation", () => {
     expect(screen.queryByRole("dialog", { name: /popular scholarship destinations/i })).not.toBeInTheDocument();
   });
 
-  it("uses separate enter and exit thresholds to prevent scroll-state thrashing", async () => {
+  it("enters compact mode on the first deliberate scroll and keeps a small exit threshold", async () => {
     auth.useAuth.mockReturnValue({
       user: null,
       isRestoring: false,
@@ -118,25 +118,60 @@ describe("The Next Scholar Topbar Navigation", () => {
     const header = document.querySelector(".tns-header");
 
     await act(async () => {
-      window.scrollY = 97;
+      window.scrollY = 9;
       fireEvent.scroll(window);
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     });
     expect(header).toHaveClass("tns-header--search-compact");
 
     await act(async () => {
-      window.scrollY = 70;
+      window.scrollY = 5;
       fireEvent.scroll(window);
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     });
     expect(header).toHaveClass("tns-header--search-compact");
 
     await act(async () => {
-      window.scrollY = 47;
+      window.scrollY = 2;
       fireEvent.scroll(window);
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     });
     expect(header).not.toHaveClass("tns-header--search-compact");
+  });
+
+  it("keeps compact context stable while its search popover is open", async () => {
+    auth.useAuth.mockReturnValue({
+      user: null,
+      isRestoring: false,
+      sessionError: null,
+      signOut: vi.fn(),
+    });
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 9, writable: true });
+
+    render(
+      <BrowserRouter>
+        <Topbar />
+      </BrowserRouter>,
+    );
+
+    const header = document.querySelector(".tns-header");
+    await act(async () => {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+    expect(header).toHaveClass("tns-header--search-compact");
+
+    const desktopSearch = screen.getByRole("search", { name: /search verified scholarships/i });
+    fireEvent.focus(within(desktopSearch).getByRole("combobox", { name: /search country/i }));
+    expect(header).toHaveClass("tns-header--search-open");
+
+    await act(async () => {
+      window.scrollY = 0;
+      fireEvent.scroll(window);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+
+    expect(header).toHaveClass("tns-header--search-compact");
+    expect(header).toHaveClass("tns-header--search-open");
   });
 
   it("renders task-focused navigation after user logs in", () => {

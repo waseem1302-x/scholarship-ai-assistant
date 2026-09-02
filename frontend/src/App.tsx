@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
@@ -37,6 +37,7 @@ export function Topbar() {
   const [homeSearchCompact, setHomeSearchCompact] = useState(false);
 
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const activePopoverRef = useRef<ActivePopover>(activePopover);
   const navigationItems = !user
     ? [
         { label: "Scholarships", to: "/scholarships" },
@@ -64,6 +65,10 @@ export function Topbar() {
     return `tns-nav-link ${active ? "active" : ""}`;
   }
 
+  useLayoutEffect(() => {
+    activePopoverRef.current = activePopover;
+  }, [activePopover]);
+
   useEffect(() => {
     setMenuOpen(false);
     setMobileDrawerOpen(false);
@@ -89,10 +94,12 @@ export function Topbar() {
     let frame = 0;
 
     function updateHeaderSearchState() {
-      window.cancelAnimationFrame(frame);
+      if (frame) return;
       frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        if (activePopoverRef.current) return;
         setHomeSearchCompact((isCompact) => (
-          isCompact ? window.scrollY >= 48 : window.scrollY > 96
+          isCompact ? window.scrollY > 2 : window.scrollY > 8
         ));
       });
     }
@@ -255,6 +262,7 @@ export function Topbar() {
           <div className="tns-header-search-bar page-width">
             <ScholarshipSearch
               search={search}
+              mode={homeSearchCompact ? "compact" : "expanded"}
               activePopover={activePopover}
               onSearchChange={setSearch}
               onPopoverChange={setActivePopover}
