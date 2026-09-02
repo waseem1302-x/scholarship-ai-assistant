@@ -120,10 +120,13 @@ export function ScholarshipSearch({
 
       <form
         className={`tns-airbnb-search-pill ${isOpen ? "has-active-segment" : ""}`}
+        data-active-segment={activePopover ?? "none"}
         onSubmit={submit}
         role="search"
         aria-label="Search verified scholarships"
       >
+        <span className="tns-active-segment-indicator" aria-hidden="true" />
+
         <div className="tns-search-field segment-where">
           <button
             type="button"
@@ -143,13 +146,14 @@ export function ScholarshipSearch({
             <span className="tns-search-divider" aria-hidden="true" />
           </button>
 
-          {activePopover === "where" ? (
-            <div
-              id="destination-popover"
-              className="tns-popover-panel tns-popover-where is-open"
-              role="dialog"
-              aria-label="Popular scholarship destinations"
-            >
+          <div
+            id="destination-popover"
+            className={`tns-popover-panel tns-popover-where ${activePopover === "where" ? "is-open" : ""}`}
+            role="dialog"
+            aria-label="Popular scholarship destinations"
+            aria-hidden={activePopover !== "where"}
+            inert={activePopover !== "where"}
+          >
               <h3 className="tns-popover-title">Popular scholarship destinations</h3>
               <div className="tns-region-grid">
                 <button
@@ -184,8 +188,7 @@ export function ScholarshipSearch({
                   </button>
                 ))}
               </div>
-            </div>
-          ) : null}
+          </div>
         </div>
 
         <div className="tns-search-field segment-degree">
@@ -207,8 +210,14 @@ export function ScholarshipSearch({
             <span className="tns-search-divider" aria-hidden="true" />
           </button>
 
-          {activePopover === "degree" ? (
-            <div id="degree-popover" className="tns-popover-panel tns-popover-degree is-open" role="dialog" aria-label="Choose degree">
+          <div
+            id="degree-popover"
+            className={`tns-popover-panel tns-popover-degree ${activePopover === "degree" ? "is-open" : ""}`}
+            role="dialog"
+            aria-label="Choose degree"
+            aria-hidden={activePopover !== "degree"}
+            inert={activePopover !== "degree"}
+          >
               <h3 className="tns-popover-title">Choose degree</h3>
               <div className="tns-popover-list">
                 {degreeOptions.map((option) => (
@@ -229,8 +238,7 @@ export function ScholarshipSearch({
                   </button>
                 ))}
               </div>
-            </div>
-          ) : null}
+          </div>
         </div>
 
         <div className="tns-search-field segment-funding">
@@ -251,8 +259,14 @@ export function ScholarshipSearch({
             </span>
           </button>
 
-          {activePopover === "funding" ? (
-            <div id="funding-popover" className="tns-popover-panel tns-popover-funding is-open" role="dialog" aria-label="Choose funding">
+          <div
+            id="funding-popover"
+            className={`tns-popover-panel tns-popover-funding ${activePopover === "funding" ? "is-open" : ""}`}
+            role="dialog"
+            aria-label="Choose funding"
+            aria-hidden={activePopover !== "funding"}
+            inert={activePopover !== "funding"}
+          >
               <h3 className="tns-popover-title">Choose funding</h3>
               <div className="tns-popover-list">
                 {fundingOptions.map((option) => (
@@ -273,8 +287,7 @@ export function ScholarshipSearch({
                   </button>
                 ))}
               </div>
-            </div>
-          ) : null}
+          </div>
         </div>
 
         <button type="submit" className="tns-search-submit-btn" aria-label="Search scholarships">

@@ -322,8 +322,9 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-airbnb-search-pill {
   position: relative;
+  isolation: isolate;
   display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.98fr) minmax(0, 1.1fr) 64px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   width: 100% !important;
   max-width: 840px;
@@ -337,8 +338,8 @@ body .tns-header--home ~ .tns-route-stage {
   border-radius: var(--tns-radius-search);
   background: var(--tns-surface);
   box-shadow: var(--tns-shadow-search);
-  will-change: height, grid-template-columns;
-  transition: height 240ms var(--tns-ease), min-height 240ms var(--tns-ease), grid-template-columns 240ms var(--tns-ease), background 180ms var(--tns-ease), border-color 180ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
+  will-change: height;
+  transition: height 240ms var(--tns-ease), min-height 240ms var(--tns-ease), background 180ms var(--tns-ease), border-color 180ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
 }
 
 .tns-airbnb-search-pill.has-active-segment {
@@ -347,8 +348,31 @@ body .tns-header--home ~ .tns-route-stage {
   box-shadow: 0 14px 38px rgba(15, 23, 42, 0.11);
 }
 
+.tns-active-segment-indicator {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  z-index: 1;
+  width: calc((100% - 2px) / 3);
+  height: 64px;
+  border-radius: var(--tns-radius-search);
+  background: var(--tns-surface-active);
+  box-shadow: var(--tns-shadow-active);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(0);
+  transform-origin: center;
+  will-change: transform, opacity;
+  transition: transform 220ms var(--tns-ease), opacity 120ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
+}
+
+.tns-airbnb-search-pill.has-active-segment .tns-active-segment-indicator { opacity: 1; }
+.tns-airbnb-search-pill[data-active-segment="degree"] .tns-active-segment-indicator { transform: translateX(100%); }
+.tns-airbnb-search-pill[data-active-segment="funding"] .tns-active-segment-indicator { transform: translateX(200%); }
+
 .tns-search-field {
   position: relative;
+  z-index: 2;
   min-width: 0;
   height: 64px;
   transition: height 240ms var(--tns-ease);
@@ -376,7 +400,7 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 .segment-where .tns-airbnb-segment { padding-left: 28px; }
-.segment-funding .tns-airbnb-segment { padding-right: 18px; }
+.segment-funding .tns-airbnb-segment { padding-right: 120px; }
 
 .tns-airbnb-search-pill:not(.has-active-segment) .tns-airbnb-segment:hover,
 .tns-airbnb-search-pill.has-active-segment .tns-airbnb-segment:hover:not(.is-active) {
@@ -385,8 +409,8 @@ body .tns-header--home ~ .tns-route-stage {
 
 .tns-airbnb-segment.is-active {
   z-index: 2;
-  background: var(--tns-surface-active) !important;
-  box-shadow: var(--tns-shadow-active) !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .tns-airbnb-segment:active { transform: scale(0.992); }
@@ -446,10 +470,15 @@ body .tns-header--home ~ .tns-route-stage {
 }
 
 .tns-airbnb-segment:hover .tns-search-divider,
-.tns-airbnb-segment.is-active .tns-search-divider,
-.tns-airbnb-search-pill.has-active-segment .tns-search-divider { opacity: 0; }
+.tns-airbnb-search-pill[data-active-segment="where"] .segment-where .tns-search-divider,
+.tns-airbnb-search-pill[data-active-segment="degree"] .segment-where .tns-search-divider,
+.tns-airbnb-search-pill[data-active-segment="degree"] .segment-degree .tns-search-divider,
+.tns-airbnb-search-pill[data-active-segment="funding"] .segment-degree .tns-search-divider { opacity: 0; }
 
 .tns-search-submit-btn {
+  position: absolute;
+  top: 50%;
+  right: 8px;
   z-index: 3;
   display: inline-flex;
   align-items: center;
@@ -458,7 +487,7 @@ body .tns-header--home ~ .tns-route-stage {
   height: 48px !important;
   min-width: 48px;
   min-height: 48px;
-  margin: 8px;
+  margin: 0;
   padding: 0 !important;
   border: 0;
   border-radius: 50%;
@@ -466,6 +495,7 @@ body .tns-header--home ~ .tns-route-stage {
   color: #fff;
   box-shadow: 0 7px 18px rgba(37, 99, 235, 0.24) !important;
   cursor: pointer;
+  transform: translateY(-50%);
   transition: width 240ms var(--tns-ease), height 240ms var(--tns-ease), min-width 240ms var(--tns-ease), min-height 240ms var(--tns-ease), margin 240ms var(--tns-ease), background 160ms var(--tns-ease), box-shadow 160ms var(--tns-ease), transform 140ms var(--tns-ease) !important;
 }
 
@@ -475,11 +505,37 @@ body .tns-header--home ~ .tns-route-stage {
 .tns-search-submit-btn:hover {
   background: var(--tns-brand-hover) !important;
   box-shadow: 0 9px 22px rgba(37, 99, 235, 0.3) !important;
-  transform: translateY(-1px) !important;
+  transform: translateY(calc(-50% - 1px)) !important;
 }
 
-.tns-search-submit-btn:active { transform: scale(0.96) !important; }
-.tns-search-btn-text { display: none !important; }
+.tns-search-submit-btn:active { transform: translateY(-50%) scale(0.96) !important; }
+
+.tns-airbnb-search-pill.has-active-segment .tns-search-submit-btn {
+  width: 100px !important;
+  min-width: 100px;
+  border-radius: 24px;
+}
+
+.tns-search-btn-text {
+  display: block !important;
+  max-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1;
+  opacity: 0;
+  transform: translateX(-4px);
+  white-space: nowrap;
+  transition: max-width 180ms var(--tns-ease), margin-left 180ms var(--tns-ease), opacity 120ms var(--tns-ease), transform 180ms var(--tns-ease);
+}
+
+.tns-airbnb-search-pill.has-active-segment .tns-search-btn-text {
+  max-width: 56px;
+  margin-left: 8px;
+  opacity: 1;
+  transform: translateX(0);
+}
 
 /* Locally anchored search popovers */
 .tns-popover-panel {
@@ -496,22 +552,27 @@ body .tns-header--home ~ .tns-route-stage {
   background: var(--tns-surface) !important;
   box-shadow: var(--tns-shadow-popover);
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
-  transform: translateY(-8px);
+  transform: translateY(-6px) scale(0.985);
   transform-origin: top left;
-  animation: tnsPopoverIn 180ms var(--tns-ease) forwards;
+  will-change: opacity, transform;
+  transition: opacity 160ms var(--tns-ease), transform 180ms var(--tns-ease), visibility 0s linear 180ms;
 }
 
-.tns-popover-panel.is-open { opacity: 1; pointer-events: auto; }
+.tns-popover-panel.is-open {
+  z-index: 241;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  transition-delay: 0s;
+}
 
 .segment-funding .tns-popover-panel {
   right: 0;
   left: auto;
   transform-origin: top right;
-}
-
-@keyframes tnsPopoverIn {
-  to { opacity: 1; transform: translateY(0); }
 }
 
 .tns-popover-title {
@@ -620,7 +681,7 @@ body .tns-header--home ~ .tns-route-stage {
 .tns-header--search-compact:not(.tns-header--search-open) .tns-header-search-bar .tns-search-container { width: 100%; }
 
 .tns-header--search-compact:not(.tns-header--search-open) .tns-airbnb-search-pill {
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.82fr) minmax(0, 0.93fr) 52px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   height: 48px;
   min-height: 48px;
   box-shadow: 0 3px 14px rgba(15, 23, 42, 0.1);
@@ -646,7 +707,7 @@ body .tns-header--home ~ .tns-route-stage {
   height: 36px !important;
   min-width: 36px;
   min-height: 36px;
-  margin: 6px 8px;
+  margin: 0;
 }
 
 .tns-mobile-airbnb-shell,

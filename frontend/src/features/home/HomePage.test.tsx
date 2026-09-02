@@ -170,6 +170,52 @@ describe("HomePage - The Next Scholar", () => {
     expect(destination).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("keeps one active selection surface while switching search fields", () => {
+    const { container } = render(
+      <BrowserRouter>
+        <ScholarshipSearchHarness />
+      </BrowserRouter>,
+    );
+
+    const search = screen.getByRole("search", { name: /search verified scholarships/i });
+    const indicator = container.querySelector(".tns-active-segment-indicator");
+
+    expect(indicator).toBeInTheDocument();
+    expect(search).toHaveAttribute("data-active-segment", "none");
+
+    fireEvent.click(screen.getByRole("button", { name: /destination anywhere/i }));
+    expect(search).toHaveAttribute("data-active-segment", "where");
+
+    fireEvent.click(screen.getByRole("button", { name: /degree any degree/i }));
+    expect(search).toHaveAttribute("data-active-segment", "degree");
+    expect(container.querySelector(".tns-active-segment-indicator")).toBe(indicator);
+  });
+
+  it("keeps popover shells mounted while exposing only the active dialog", () => {
+    const { container } = render(
+      <BrowserRouter>
+        <ScholarshipSearchHarness />
+      </BrowserRouter>,
+    );
+
+    const destinationPopover = container.querySelector("#destination-popover");
+    const degreePopover = container.querySelector("#degree-popover");
+    const fundingPopover = container.querySelector("#funding-popover");
+
+    expect(destinationPopover).toHaveAttribute("aria-hidden", "true");
+    expect(degreePopover).toHaveAttribute("aria-hidden", "true");
+    expect(fundingPopover).toHaveAttribute("aria-hidden", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: /destination anywhere/i }));
+    expect(destinationPopover).toHaveAttribute("aria-hidden", "false");
+    expect(degreePopover).toHaveAttribute("aria-hidden", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: /degree any degree/i }));
+    expect(destinationPopover).toHaveAttribute("aria-hidden", "true");
+    expect(degreePopover).toHaveAttribute("aria-hidden", "false");
+    expect(container.querySelector("#destination-popover")).toBe(destinationPopover);
+  });
+
   it("anchors the destination dialog to its field and advances to degree", () => {
     render(
       <BrowserRouter>

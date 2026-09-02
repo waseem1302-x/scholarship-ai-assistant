@@ -82,12 +82,16 @@ describe("premium header and scholarship search", () => {
     const desktopSearch = screen.getByRole("search", { name: "Search verified scholarships" });
     const search = within(desktopSearch);
 
-    expect(search.getByText("Destination")).toBeInTheDocument();
-    expect(search.getByText("Anywhere")).toBeInTheDocument();
-    expect(search.getByText("Degree")).toBeInTheDocument();
-    expect(search.getByText("Any degree")).toBeInTheDocument();
-    expect(search.getByText("Funding")).toBeInTheDocument();
-    expect(search.getByText("Any funding")).toBeInTheDocument();
+    const destination = search.getByRole("button", { name: "Destination Anywhere" });
+    const degree = search.getByRole("button", { name: "Degree Any degree" });
+    const funding = search.getByRole("button", { name: "Funding Any funding" });
+
+    expect(within(destination).getByText("Destination")).toBeInTheDocument();
+    expect(within(destination).getByText("Anywhere")).toBeInTheDocument();
+    expect(within(degree).getByText("Degree")).toBeInTheDocument();
+    expect(within(degree).getByText("Any degree")).toBeInTheDocument();
+    expect(within(funding).getByText("Funding")).toBeInTheDocument();
+    expect(within(funding).getByText("Any funding")).toBeInTheDocument();
   });
 
   it("preserves selected filters when routing to the catalogue", () => {
