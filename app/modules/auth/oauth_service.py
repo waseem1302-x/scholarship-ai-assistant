@@ -121,7 +121,6 @@ class OAuthService:
         provider: str,
         provider_user_id: str,
         email: str,
-        full_name: str | None = None,
     ) -> IssuedTokens:
         """Authenticate existing social user or register new student account in 1 transaction."""
         norm_email = email.strip().lower()

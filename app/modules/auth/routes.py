@@ -135,7 +135,6 @@ def oauth_google(
         provider="google",
         provider_user_id=profile_data["provider_user_id"],
         email=profile_data["email"],
-        full_name=profile_data.get("name"),
     )
     _set_refresh_cookies(response, result.refresh_token, settings)
     return to_token_response(result, include_refresh_token=settings.env != "production")
@@ -159,7 +158,6 @@ def oauth_facebook(
         provider="facebook",
         provider_user_id=profile_data["provider_user_id"],
         email=profile_data["email"],
-        full_name=profile_data.get("name"),
     )
     _set_refresh_cookies(response, result.refresh_token, settings)
     return to_token_response(result, include_refresh_token=settings.env != "production")

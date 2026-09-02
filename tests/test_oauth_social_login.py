@@ -30,7 +30,6 @@ def test_google_social_registration_and_login(db_session) -> None:
         provider="google",
         provider_user_id=profile_data["provider_user_id"],
         email=profile_data["email"],
-        full_name=profile_data["name"],
     )
 
     assert tokens.access_token is not None
@@ -109,7 +108,6 @@ def test_facebook_social_registration_and_login(db_session) -> None:
         provider="facebook",
         provider_user_id=profile_data["provider_user_id"],
         email=profile_data["email"],
-        full_name=profile_data["name"],
     )
 
     assert tokens.access_token is not None
