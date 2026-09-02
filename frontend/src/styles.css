@@ -4252,6 +4252,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 /* ------------------------------------------------------------------ */
 /*  Sticky Header (Unified Header with Tier 1 Nav & Tier 2 Search)    */
 /* ------------------------------------------------------------------ */
+/* Retained temporarily for historical page compatibility; disabled in favor of premium-header.css. */
+@media (width < 0px) {
 .tns-header {
   position: sticky;
   top: 0;
@@ -4934,6 +4936,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   width: 380px;
   padding: 20px;
 }
+}
 
 /* ------------------------------------------------------------------ */
 /*  HERO SECTION (CLEAN DOCUMENT FLOW BELOW HEADER)                   */
@@ -5580,6 +5583,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     min-height: calc(100vh - 74px);
   }
 
+  /* Superseded by the non-overlapping responsive contract in premium-header.css. */
+  @media (width < 0px) {
   .tns-header {
     position: sticky;
   }
@@ -5808,6 +5813,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     font-size: 0.95rem;
     font-weight: 700;
     cursor: pointer;
+  }
   }
   .tns-mobile-bottom-bar {
     display: flex !important;

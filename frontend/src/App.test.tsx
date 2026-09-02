@@ -90,7 +90,7 @@ describe("The Next Scholar Topbar Navigation", () => {
       </BrowserRouter>,
     );
 
-    fireEvent.click(screen.getByText("Search destinations"));
+    fireEvent.click(screen.getByRole("button", { name: "Destination Anywhere" }));
     expect(screen.getByRole("dialog", { name: /popular scholarship destinations/i })).toBeInTheDocument();
 
     fireEvent.mouseDown(document.body);
