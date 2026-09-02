@@ -40,9 +40,24 @@
   min-height: 72px !important;
 }
 
-.tns-header::before,
+.tns-header::before {
+  display: none;
+}
+
 .tns-header--home::before {
-  display: none !important;
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: -1;
+  display: block;
+  width: 100%;
+  height: 176px;
+  border-bottom: 1px solid var(--tns-border);
+  background: var(--tns-surface);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+  pointer-events: none;
+  will-change: height;
+  transition: height 240ms var(--tns-ease), box-shadow 180ms var(--tns-ease);
 }
 
 .tns-header .page-width {
@@ -580,7 +595,12 @@ body .tns-header--home ~ .tns-route-stage {
 
 /* Compact home header */
 .tns-header--home.tns-header--search-compact:not(.tns-header--search-open) {
-  border-bottom-color: var(--tns-border);
+  border-bottom-color: transparent;
+  box-shadow: none;
+}
+
+.tns-header--home.tns-header--search-compact:not(.tns-header--search-open)::before {
+  height: 72px;
   box-shadow: var(--tns-shadow-header);
 }
 
@@ -681,6 +701,7 @@ body .tns-header--home ~ .tns-route-stage {
   }
 
   .tns-header:not(.tns-header--home) { min-height: 64px !important; }
+  .tns-header--home::before { display: none; }
   .tns-header .page-width { width: calc(100% - 32px); }
   body .tns-header--home ~ .tns-route-stage { padding-top: 0 !important; }
 
