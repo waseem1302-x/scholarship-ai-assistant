@@ -424,7 +424,7 @@ git commit -m "feat: power launch homepage from verified catalogue"
 - Produces: `audit_launch_catalogue(session: Session, *, minimum_records: int) -> LaunchCatalogueAudit`.
 - CLI exits non-zero when the catalogue has too few publishable records, stale official evidence, unresolved conflicts, missing Tier-0 evidence, or unsupported public summary claims.
 
-- [ ] **Step 1: Write failing audit tests**
+- [x] **Step 1: Write failing audit tests**
 
 ```python
 def test_launch_audit_blocks_stale_or_incomplete_records(db_session):
@@ -437,13 +437,13 @@ def test_launch_audit_blocks_stale_or_incomplete_records(db_session):
     assert result.blockers_by_code["incomplete_record"] == 1
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `.venv/Scripts/python -m pytest tests/test_launch_catalogue_audit.py -v`
 
 Expected: FAIL because the audit service and CLI do not exist.
 
-- [ ] **Step 3: Implement the deterministic audit**
+- [x] **Step 3: Implement the deterministic audit**
 
 Report:
 
@@ -463,7 +463,7 @@ the open cells explicitly. Do not mutate or auto-correct catalogue records from 
 
 Default the CLI threshold to 12 reviewed flagship scholarships. Allow `--minimum-records` to raise the threshold without changing code.
 
-- [ ] **Step 4: Document the launch command**
+- [x] **Step 4: Document the launch command**
 
 Add:
 
@@ -473,13 +473,13 @@ Add:
 
 The command must be run against staging immediately before release approval.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `.venv/Scripts/python -m pytest tests/test_launch_catalogue_audit.py tests/test_catalogue_ingestion.py tests/test_opportunities.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/modules/opportunities/launch_audit.py app/cli/audit_launch_catalogue.py tests/test_launch_catalogue_audit.py README.md
