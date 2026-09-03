@@ -30,7 +30,6 @@ interface HomepageJourneyCardBase {
   href: string;
   imageUrl: string;
   imagePosition?: string;
-  favoriteId?: string;
   sourceUrl?: string;
   sourceReviewedAt?: string;
 }
@@ -78,7 +77,6 @@ function opportunityCard(
     badge: item.badge,
     href: item.href,
     imageUrl: item.imageUrl,
-    favoriteId: item.opportunityId,
     country: item.country,
     degreeLevel: item.degreeLevel,
   };

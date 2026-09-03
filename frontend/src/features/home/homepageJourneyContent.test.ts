@@ -103,6 +103,7 @@ describe("homepage journey data", () => {
       "Save and build your application plan",
     ]);
     expect(sections.slice(0, 3).every((section) => section.cards[0].href.startsWith("/catalogue/"))).toBe(true);
+    expect(sections.slice(0, 3).flatMap((section) => section.cards).every((card) => !("favoriteId" in card))).toBe(true);
 
     const workflowHrefs = sections.slice(3).flatMap((section) => section.cards.map((card) => card.href));
     expect(workflowHrefs).toEqual([

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
@@ -12,7 +11,6 @@ const emptyOpportunityRows: HomepageOpportunityRows = { verified: [], open: [], 
 
 export function HomePage() {
   const { user, isRestoring } = useAuth();
-  const [savedFavorites, setSavedFavorites] = useState<Set<string>>(() => new Set());
   const {
     data: opportunityRows,
     error: catalogueError,
@@ -26,18 +24,6 @@ export function HomePage() {
     opportunityRows ?? emptyOpportunityRows,
     isCatalogueLoading,
   );
-
-  function toggleFavorite(id: string) {
-    setSavedFavorites((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
 
   if (isRestoring) {
     return (
@@ -120,10 +106,10 @@ export function HomePage() {
             </div>
           </div>
 
-          <div className="tns-hero-visual" aria-label="How your profile becomes a scholarship match">
+          <div className="tns-hero-visual" aria-label="How to start a scholarship search">
             <div className="tns-hero-visual-glow" aria-hidden="true" />
 
-            <aside className="tns-profile-preview" aria-label="Example student profile">
+            <aside className="tns-profile-preview" aria-label="Profile matching workflow">
               <div className="tns-profile-preview-head">
                 <span className="tns-profile-avatar" aria-hidden="true">
                   <svg viewBox="0 0 24 24">
@@ -131,13 +117,13 @@ export function HomePage() {
                     <path d="M5 20c.8-4.2 3.1-6.3 7-6.3s6.2 2.1 7 6.3" />
                   </svg>
                 </span>
-                <span><small>Your profile</small><strong>Ready to match</strong></span>
+                <span><small>Profile workflow</small><strong>Add your details</strong></span>
               </div>
-              <p>Saved once, ready for every opportunity.</p>
+              <p>A profile gives matching the context it needs.</p>
               <dl className="tns-profile-facts">
-                <div><dt>Education</dt><dd>Bachelor&apos;s degree</dd></div>
-                <div><dt>Field</dt><dd>Computer Science</dd></div>
-                <div><dt>Study goal</dt><dd>Master&apos;s abroad</dd></div>
+                <div><dt>Step 1</dt><dd>Add education</dd></div>
+                <div><dt>Step 2</dt><dd>Add study interests</dd></div>
+                <div><dt>Step 3</dt><dd>Review matches</dd></div>
               </dl>
             </aside>
 
@@ -154,29 +140,29 @@ export function HomePage() {
 
             <article className="tns-fit-preview">
               <div className="tns-fit-preview-media">
-                <img src={erasmusHeroImage} alt="Historic European university campus" />
-                <span className="tns-fit-strength"><span aria-hidden="true">✓</span> Strong match</span>
+                <img src={erasmusHeroImage} alt="Historic university campus" />
+                <span className="tns-fit-strength"><span aria-hidden="true">→</span> Start with verified data</span>
               </div>
               <div className="tns-fit-preview-body">
-                <span className="tns-fit-eyebrow">Recommended opportunity</span>
-                <h2>Erasmus Mundus Joint Master</h2>
+                <span className="tns-fit-eyebrow">Catalogue preview</span>
+                <h2>Explore verified scholarships</h2>
                 <div className="tns-fit-meta">
-                  <span><span className="tns-hero-flag tns-hero-flag--eu" aria-hidden="true">✦</span>Europe</span>
-                  <span className="tns-tag tns-tag--funded">Fully funded</span>
+                  <span><span className="tns-hero-flag tns-hero-flag--eu" aria-hidden="true">✦</span>Published opportunities</span>
+                  <span className="tns-tag tns-tag--funded">Official sources</span>
                 </div>
                 <div className="tns-fit-reasons">
                   <div className="tns-fit-reasons-head">
-                    <strong>Why it fits</strong>
-                    <span>3 criteria aligned</span>
+                    <strong>What you can do</strong>
+                    <span>Live catalogue</span>
                   </div>
                   <ul>
-                    <li><span aria-hidden="true">✓</span>Degree requirement met</li>
-                    <li><span aria-hidden="true">✓</span>Field aligned</li>
-                    <li><span aria-hidden="true">✓</span>Open to your nationality</li>
+                    <li><span aria-hidden="true">→</span>Review published criteria</li>
+                    <li><span aria-hidden="true">→</span>Compare destinations and study levels</li>
+                    <li><span aria-hidden="true">→</span>Open each scholarship record</li>
                   </ul>
                 </div>
                 <NavLink to="/catalogue" className="tns-fit-link">
-                  <span>View match details</span><span aria-hidden="true">→</span>
+                  <span>Explore the catalogue</span><span aria-hidden="true">→</span>
                 </NavLink>
               </div>
             </article>
@@ -200,8 +186,6 @@ export function HomePage() {
           <HomepageJourneySection
             key={section.id}
             section={section}
-            savedFavorites={savedFavorites}
-            onToggleFavorite={toggleFavorite}
             isLoading={isCatalogueLoading && section.isCatalogueRow}
           />
         ))}

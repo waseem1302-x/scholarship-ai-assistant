@@ -111,8 +111,8 @@ describe("HomePage - The Next Scholar", () => {
     vi.restoreAllMocks();
   });
 
-  it("presents profile-based scholarship matching as the primary hero journey", () => {
-    const { container } = render(
+  it("presents profile matching without unsupported recommendation or eligibility claims", () => {
+    render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
@@ -131,19 +131,24 @@ describe("HomePage - The Next Scholar", () => {
     expect(within(hero).getByText("Profile once")).toBeInTheDocument();
     expect(within(hero).getByText("Verified criteria")).toBeInTheDocument();
     expect(within(hero).getByText("Clear reasons")).toBeInTheDocument();
-    expect(within(hero).getByText("Your profile")).toBeInTheDocument();
-    expect(within(hero).getByText("Strong match")).toBeInTheDocument();
+    expect(within(hero).getByText("Profile workflow")).toBeInTheDocument();
     expect(within(hero).getByText("How it works")).toBeInTheDocument();
-    expect(within(hero).getByText("Why it fits")).toBeInTheDocument();
-    expect(within(hero).getByText("3 criteria aligned")).toBeInTheDocument();
-    expect(container.querySelector(".tns-match-bridge")).not.toHaveTextContent(/criteria aligned/i);
-    expect(container.querySelector(".tns-fit-reasons-head")).toHaveTextContent("3 criteria aligned");
-    expect(within(hero).getByText("Degree requirement met")).toBeInTheDocument();
-    expect(within(hero).getByText("Field aligned")).toBeInTheDocument();
-    expect(within(hero).getByText("Open to your nationality")).toBeInTheDocument();
-    expect(within(hero).getByRole("heading", { name: "Erasmus Mundus Joint Master" })).toBeInTheDocument();
-    expect(within(hero).queryByText("94% Match")).not.toBeInTheDocument();
-    expect(within(hero).queryByText("More aligned opportunities")).not.toBeInTheDocument();
+    expect(within(hero).getByText("Start with verified data")).toBeInTheDocument();
+    expect(within(hero).getByText("Catalogue preview")).toBeInTheDocument();
+    expect(within(hero).getByRole("heading", { name: "Explore verified scholarships" })).toBeInTheDocument();
+    expect(within(hero).getByText("Review published criteria")).toBeInTheDocument();
+    expect(within(hero).getByRole("link", { name: /explore the catalogue/i })).toHaveAttribute("href", "/catalogue");
+
+    [
+      "Recommended opportunity",
+      "Strong match",
+      "Fully funded",
+      "3 criteria aligned",
+      "Degree requirement met",
+      "Field aligned",
+      "Open to your nationality",
+      "Ready to match",
+    ].forEach((claim) => expect(within(hero).queryByText(claim)).not.toBeInTheDocument());
   });
 
   it("renders the five truthful V1 sections from catalogue data and enabled workflows", async () => {
@@ -175,11 +180,8 @@ describe("HomePage - The Next Scholar", () => {
     expect(new Set(cardHeadingIds).size).toBe(cardHeadingIds.length);
     expect(container.querySelectorAll('a[href^="/assistant"], a[href^="/document-lab"], a[href^="/community"]')).toHaveLength(0);
     expectJourneyToAvoidUnsupportedClaims(journey);
-    const favorite = within(journey).getAllByRole("button", { name: "Save Scholarship verified" })[0];
-    fireEvent.click(favorite);
-    within(journey)
-      .getAllByRole("button", { name: "Remove Scholarship verified from saved" })
-      .forEach((button) => expect(button).toHaveAttribute("aria-pressed", "true"));
+    expect(within(journey).queryByRole("button", { name: /^Save / })).not.toBeInTheDocument();
+    expect(within(journey).queryByRole("button", { name: /^Remove .* from saved$/ })).not.toBeInTheDocument();
   });
 
   it("keeps the same evidence-backed section titles for signed-in students", async () => {

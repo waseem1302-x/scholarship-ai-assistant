@@ -9,22 +9,14 @@ import "./homepage-journey.css";
 
 interface HomepageJourneySectionProps {
   section: HomepageJourneySectionContent;
-  savedFavorites: Set<string>;
-  onToggleFavorite: (id: string) => void;
   isLoading?: boolean;
 }
 
 interface HomepageJourneyCardViewProps {
   card: HomepageJourneyCard;
-  isSaved: boolean;
-  onToggleFavorite: (id: string) => void;
 }
 
-function HomepageJourneyCardView({
-  card,
-  isSaved,
-  onToggleFavorite,
-}: HomepageJourneyCardViewProps) {
+function HomepageJourneyCardView({ card }: HomepageJourneyCardViewProps) {
   const titleId = `${card.id}-title`;
 
   return (
@@ -32,7 +24,7 @@ function HomepageJourneyCardView({
       className={`tns-home-journey-card tns-home-journey-card--${card.variant}`}
       aria-labelledby={titleId}
     >
-      <div className={`tns-home-journey-card__media${card.favoriteId ? " tns-home-journey-card__media--has-favorite" : ""}`}>
+      <div className="tns-home-journey-card__media">
         <Link
           to={card.href}
           className="tns-home-journey-card__image-link"
@@ -48,19 +40,6 @@ function HomepageJourneyCardView({
         </Link>
         <span className="tns-home-journey-card__badge">{card.badge}</span>
 
-        {card.favoriteId ? (
-          <button
-            type="button"
-            className={`tns-home-journey-card__favorite${isSaved ? " is-saved" : ""}`}
-            aria-label={isSaved ? `Remove ${card.title} from saved` : `Save ${card.title}`}
-            aria-pressed={isSaved}
-            onClick={() => onToggleFavorite(card.favoriteId!)}
-          >
-            <svg viewBox="0 0 32 32" aria-hidden="true">
-              <path d="M16 28.7C8.8 23.8 1.7 17.8 1.7 10.6c0-1.9.7-3.7 2.1-5.1a7.1 7.1 0 0 1 10.1 0L16 7.6l2.1-2.1a7.1 7.1 0 0 1 10.1 0c1.4 1.4 2.1 3.2 2.1 5.1 0 7.2-7.1 13.2-14.3 18.1Z" />
-            </svg>
-          </button>
-        ) : null}
       </div>
 
       <div className="tns-home-journey-card__copy">
@@ -102,8 +81,6 @@ function HomepageJourneyCardView({
 
 export function HomepageJourneySection({
   section,
-  savedFavorites,
-  onToggleFavorite,
   isLoading = false,
 }: HomepageJourneySectionProps) {
   const titleId = `${section.id}-title`;
@@ -219,11 +196,7 @@ export function HomepageJourneySection({
           ))
           : section.cards.map((card) => (
           <li key={card.id} className="tns-home-journey-item">
-            <HomepageJourneyCardView
-              card={card}
-              isSaved={card.favoriteId ? savedFavorites.has(card.favoriteId) : false}
-              onToggleFavorite={onToggleFavorite}
-            />
+            <HomepageJourneyCardView card={card} />
           </li>
           ))}
       </ul>

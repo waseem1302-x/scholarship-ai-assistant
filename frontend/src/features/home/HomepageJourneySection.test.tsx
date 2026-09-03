@@ -24,7 +24,6 @@ const section: HomepageJourneySectionContent = {
       href: "/catalogue?country=Germany",
       imageUrl: "/daad.jpg",
       imagePosition: "center 35%",
-      favoriteId: "daad-epos",
       country: "Germany",
       degreeLevel: "Postgraduate",
     },
@@ -63,18 +62,12 @@ const section: HomepageJourneySectionContent = {
   ],
 };
 
-function renderSection(onToggleFavorite = vi.fn()) {
+function renderSection() {
   render(
     <BrowserRouter>
-      <HomepageJourneySection
-        section={section}
-        savedFavorites={new Set()}
-        onToggleFavorite={onToggleFavorite}
-      />
+      <HomepageJourneySection section={section} />
     </BrowserRouter>,
   );
-
-  return onToggleFavorite;
 }
 
 function pixelValue(value: string): number {
@@ -110,7 +103,7 @@ describe("HomepageJourneySection", () => {
   afterEach(cleanup);
 
   it("renders the section and each card variant with only its relevant controls", () => {
-    const onToggleFavorite = renderSection();
+    renderSection();
 
     const region = screen.getByRole("region", { name: section.title });
     expect(region).toBeInTheDocument();
@@ -152,11 +145,6 @@ describe("HomepageJourneySection", () => {
     expect(within(metadata).getByText("Germany")).toBeVisible();
     expect(within(metadata).getByText("Postgraduate")).toBeVisible();
 
-    const favorite = screen.getByRole("button", { name: "Save DAAD EPOS" });
-    expect(favorite).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(favorite);
-    expect(onToggleFavorite).toHaveBeenCalledWith("daad-epos");
-
     expect(screen.getByRole("link", { name: "Official criteria for Chevening" })).toHaveAttribute(
       "href",
       "https://www.chevening.org/scholarships/guidance/",
@@ -169,7 +157,7 @@ describe("HomepageJourneySection", () => {
       "rel",
       "noreferrer",
     );
-    expect(screen.queryAllByRole("button", { name: /save/i })).toHaveLength(1);
+    expect(screen.queryAllByRole("button", { name: /save/i })).toHaveLength(0);
   });
 
   it("exposes the approved journey styling hooks with a semantic intro header", () => {
@@ -249,7 +237,7 @@ describe("HomepageJourneySection", () => {
     expect(previous).toBeDisabled();
   });
 
-  it("allows two-line badges and reserves favorite space only when needed", () => {
+  it("allows two-line badges without reserving space for unavailable favorite controls", () => {
     renderSection();
 
     const opportunity = screen.getByRole("article", { name: "DAAD EPOS" });
@@ -259,10 +247,10 @@ describe("HomepageJourneySection", () => {
     const opportunityBadge = within(opportunity).getByText("Fully funded");
     const playbookBadge = within(playbook).getByText("Published criteria");
 
-    expect(opportunityMedia).toHaveClass("tns-home-journey-card__media--has-favorite");
+    expect(opportunityMedia).not.toHaveClass("tns-home-journey-card__media--has-favorite");
     expect(playbookMedia).not.toHaveClass("tns-home-journey-card__media--has-favorite");
     expect(getComputedStyle(opportunityBadge).whiteSpace).toBe("normal");
-    expect(getComputedStyle(opportunityBadge).maxWidth).toBe("calc(100% - 68px)");
+    expect(getComputedStyle(opportunityBadge).maxWidth).toBe("calc(100% - 24px)");
     expect(getComputedStyle(playbookBadge).maxWidth).toBe("calc(100% - 24px)");
     expect(getComputedStyle(playbookBadge).overflow).toBe("visible");
     expect(getComputedStyle(playbookBadge).getPropertyValue("-webkit-line-clamp")).toBe("");
@@ -292,11 +280,7 @@ describe("HomepageJourneySection", () => {
     const { container } = render(
       <BrowserRouter>
         <div className="tns-home-journey">
-          <HomepageJourneySection
-            section={section}
-            savedFavorites={new Set()}
-            onToggleFavorite={vi.fn()}
-          />
+          <HomepageJourneySection section={section} />
         </div>
         <footer className="tns-footer" />
       </BrowserRouter>,
