@@ -129,6 +129,26 @@ describe("HomepageJourneySection", () => {
     expect(screen.queryAllByRole("button", { name: /save/i })).toHaveLength(1);
   });
 
+  it("exposes the approved journey styling hooks with a semantic intro header", () => {
+    renderSection();
+
+    const region = screen.getByRole("region", { name: section.title });
+    const header = region.querySelector("header.tns-home-journey-header");
+    const track = within(region).getByRole("list", { name: `${section.title} cards` });
+
+    expect(region).toHaveClass("tns-home-journey-section");
+    expect(header).toBeInTheDocument();
+    expect(within(region).getByRole("heading", { name: section.title, level: 2 })).toHaveClass(
+      "tns-home-journey-title",
+    );
+    expect(screen.getByText(section.subtitle)).toHaveClass("tns-home-journey-subtitle");
+    expect(track).toHaveClass("tns-home-journey-track");
+    expect(region.querySelector(".tns-home-journey-card--preparation")).toBeInTheDocument();
+    expect(within(region).getByRole("heading", { name: "Scholarship CV", level: 3 })).toHaveClass(
+      "tns-home-journey-card__title",
+    );
+  });
+
   it("moves one visible page and updates navigation state", () => {
     renderSection();
 

@@ -5,6 +5,7 @@ import type {
   HomepageJourneyCard,
   HomepageJourneySectionContent,
 } from "./homepageJourneyContent";
+import "./homepage-journey.css";
 
 interface HomepageJourneySectionProps {
   section: HomepageJourneySectionContent;
@@ -27,13 +28,13 @@ function HomepageJourneyCardView({
 
   return (
     <article
-      className={`tns-homepage-journey-card tns-homepage-journey-card--${card.variant}`}
+      className={`tns-home-journey-card tns-home-journey-card--${card.variant}`}
       aria-labelledby={titleId}
     >
-      <div className="tns-homepage-journey-card__media">
+      <div className="tns-home-journey-card__media">
         <Link
           to={card.href}
-          className="tns-homepage-journey-card__image-link"
+          className="tns-home-journey-card__image-link"
           aria-label={`Open ${card.title}`}
         >
           <img
@@ -44,12 +45,12 @@ function HomepageJourneyCardView({
             style={{ objectPosition: card.imagePosition ?? "center" }}
           />
         </Link>
-        <span className="tns-homepage-journey-card__badge">{card.badge}</span>
+        <span className="tns-home-journey-card__badge">{card.badge}</span>
 
         {card.favoriteId ? (
           <button
             type="button"
-            className={`tns-homepage-journey-card__favorite${isSaved ? " is-saved" : ""}`}
+            className={`tns-home-journey-card__favorite${isSaved ? " is-saved" : ""}`}
             aria-label={isSaved ? `Remove ${card.title} from saved` : `Save ${card.title}`}
             aria-pressed={isSaved}
             onClick={() => onToggleFavorite(card.favoriteId!)}
@@ -61,15 +62,15 @@ function HomepageJourneyCardView({
         ) : null}
       </div>
 
-      <div className="tns-homepage-journey-card__copy">
-        <p className="tns-homepage-journey-card__eyebrow">{card.eyebrow}</p>
-        <h3 id={titleId}>
+      <div className="tns-home-journey-card__copy">
+        <p className="tns-home-journey-card__eyebrow">{card.eyebrow}</p>
+        <h3 id={titleId} className="tns-home-journey-card__title">
           <Link to={card.href}>{card.title}</Link>
         </h3>
-        <p className="tns-homepage-journey-card__description">{card.description}</p>
+        <p className="tns-home-journey-card__description">{card.description}</p>
 
         {card.sourceUrl ? (
-          <div className="tns-homepage-journey-card__source">
+          <div className="tns-home-journey-card__source">
             <a href={card.sourceUrl} target="_blank" rel="noreferrer">
               {`Official criteria for ${card.eyebrow}`}
             </a>
@@ -120,19 +121,21 @@ export function HomepageJourneySection({
   }
 
   return (
-    <section className="tns-homepage-journey" aria-labelledby={titleId}>
-      <div className="tns-homepage-journey__header">
-        <div className="tns-homepage-journey__heading">
-          <h2 id={titleId}>{section.title}</h2>
-          <p>{section.subtitle}</p>
+    <section className="tns-home-journey-section" aria-labelledby={titleId}>
+      <header className="tns-home-journey-header">
+        <div className="tns-home-journey-heading">
+          <h2 id={titleId} className="tns-home-journey-title">
+            {section.title}
+          </h2>
+          <p className="tns-home-journey-subtitle">{section.subtitle}</p>
         </div>
 
-        <div className="tns-homepage-journey__actions">
-          <NavLink to={section.actionHref} className="tns-homepage-journey__action-link">
+        <div className="tns-home-journey-actions">
+          <NavLink to={section.actionHref} className="tns-home-journey-action">
             {section.actionLabel}
           </NavLink>
           <div
-            className="tns-homepage-journey__navigation"
+            className="tns-home-journey-navigation"
             aria-label={`${section.title} carousel navigation`}
           >
             <button
@@ -159,16 +162,16 @@ export function HomepageJourneySection({
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
       <ul
         ref={trackRef}
         id={trackId}
-        className="tns-homepage-journey__track"
+        className="tns-home-journey-track"
         aria-label={`${section.title} cards`}
       >
         {section.cards.map((card) => (
-          <li key={card.id} className="tns-homepage-journey__item">
+          <li key={card.id} className="tns-home-journey-item">
             <HomepageJourneyCardView
               card={card}
               isSaved={card.favoriteId ? savedFavorites.has(card.favoriteId) : false}
