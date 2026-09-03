@@ -264,13 +264,15 @@ git commit -m "feat: add evidence-bound decision summaries"
 - Modify: `frontend/src/features/catalogue/OpportunityDetailPage.tsx`
 - Modify: `frontend/src/features/catalogue/OpportunityDetailPage.test.tsx`
 - Modify: `app/modules/opportunities/comparator.py`
+- Modify: `app/modules/opportunities/routes.py`
 - Modify: `tests/test_launch_mvp_modules.py`
+- Modify: `tests/test_opportunities.py`
 
 **Interfaces:**
 - Consumes: additive `projection` and deterministic summary from Tasks 1–3.
 - Produces: an honest scholarship detail UI with explicit unknown states and a comparator that reports only source-supported amounts.
 
-- [ ] **Step 1: Write failing frontend truth tests**
+- [x] **Step 1: Write failing frontend truth tests**
 
 ```tsx
 it("does not invent documents or funding when evidence is absent", async () => {
@@ -282,11 +284,11 @@ it("does not invent documents or funding when evidence is absent", async () => {
 });
 ```
 
-- [ ] **Step 2: Write failing comparator tests**
+- [x] **Step 2: Write failing comparator tests**
 
 Assert that a scholarship without explicit monetary components has `total_estimated_annual_value_usd=None`, no invented benefits, and cannot be selected as the highest-value scholarship.
 
-- [ ] **Step 3: Run the tests and verify RED**
+- [x] **Step 3: Run the tests and verify RED**
 
 Run: `cd frontend && pnpm exec vitest run src/features/catalogue/OpportunityDetailPage.test.tsx`
 
@@ -294,15 +296,15 @@ Run: `.venv/Scripts/python -m pytest tests/test_launch_mvp_modules.py -k funding
 
 Expected: FAIL on current fallback copy and heuristic values.
 
-- [ ] **Step 4: Render the new projection progressively**
+- [x] **Step 4: Render the new projection progressively**
 
 Show summary first, then funding, eligibility, routes, deadlines, documents, steps, known unknowns, and citations. Omit empty decorative cards. Render the literal state “Not confirmed in reviewed sources” when evidence is unavailable.
 
-- [ ] **Step 5: Remove comparator estimates**
+- [x] **Step 5: Remove comparator estimates**
 
 Delete the `$20,000`, `$12,000`, `$35,000`, and `$10,000` fallback estimates. Calculate normalized totals only from an explicit amount, currency, and supported frequency.
 
-- [ ] **Step 6: Run backend and frontend tests**
+- [x] **Step 6: Run backend and frontend tests**
 
 Run: `.venv/Scripts/python -m pytest tests/test_launch_mvp_modules.py tests/test_opportunities.py -v`
 
@@ -310,7 +312,7 @@ Run: `cd frontend && pnpm exec vitest run src/features/catalogue/OpportunityDeta
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add frontend/src/features/catalogue app/modules/opportunities/comparator.py tests/test_launch_mvp_modules.py

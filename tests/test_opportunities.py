@@ -653,6 +653,42 @@ def test_public_search_filters_verified_opportunities(
     ]
 
 
+def test_public_funding_comparison_excludes_draft_records_and_unknown_values(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    draft = create_opportunity(client, headers, name="Draft comparison scholarship")
+    published = create_opportunity(
+        client,
+        headers,
+        name="Published comparison scholarship",
+        source={
+            **opportunity_payload()["source"],
+            "url": "https://example.edu/published-comparison",
+            "title": "Published comparison source",
+        },
+    )
+    publish_opportunity(client, headers, published)
+
+    response = client.post(
+        "/api/v1/opportunities/compare",
+        json={"opportunity_ids": [draft["id"], published["id"]]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total_compared"] == 1
+    assert response.json()["scholarships"][0]["opportunity_id"] == published["id"]
+    assert response.json()["scholarships"][0]["total_estimated_annual_value_usd"] is None
+    assert response.json()["scholarships"][0]["benefits_list"] == []
+    assert response.json()["scholarships"][0]["funding_type"] == "UNKNOWN"
+    assert response.json()["fully_funded_count"] is None
+    assert not any(
+        "fully funded" in note.lower()
+        for note in response.json()["financial_comparison_notes"]
+    )
+    assert response.json()["highest_value_scholarship_id"] is None
+
+
 def test_public_search_returns_pagination_metadata(client: TestClient, db_session: Session) -> None:
     headers = admin_headers(client, db_session)
     first = create_opportunity(

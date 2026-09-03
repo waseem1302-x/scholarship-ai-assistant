@@ -35,10 +35,10 @@ from app.modules.opportunities.directory import (
     build_directory_card,
 )
 from app.modules.opportunities.evidence_models import (
-    FundingComponent,
     RequiredDocument,
     ScopedDeadline,
 )
+from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.graph_schemas import OpportunityGraphResponse
 from app.modules.opportunities.materialization_models import OpportunityEvent
 from app.modules.opportunities.models import (
@@ -50,6 +50,7 @@ from app.modules.opportunities.models import (
     OpportunityStatus,
     VerificationStatus,
 )
+from app.modules.opportunities.public_projection import build_public_projection
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
     AdminOpportunitySearchResponse,
@@ -62,6 +63,7 @@ from app.modules.opportunities.schemas import (
     OpportunityImportRequest,
     OpportunityImportResponse,
     OpportunitySearchResponse,
+    PublicFundingResponse,
     ReviewActionRequest,
     ReviewQueueResponse,
     SourceCheckRequest,
@@ -504,16 +506,17 @@ def compare_opportunities(
     payload: CompareOpportunitiesRequest,
     session: Annotated[Session, Depends(get_db)],
 ) -> ComparisonMatrixResponse:
-    data: list[tuple[Opportunity, list[FundingComponent]]] = []
+    data: list[tuple[Opportunity, list[PublicFundingResponse]]] = []
     for opp_id in payload.opportunity_ids:
         opp = session.scalar(select(Opportunity).where(Opportunity.id == opp_id))
-        if opp is not None:
-            components = list(
-                session.scalars(
-                    select(FundingComponent).where(FundingComponent.scholarship_id == opp_id)
-                )
-            )
-            data.append((opp, components))
+        if (
+            opp is None
+            or opp.status is not OpportunityStatus.ACTIVE
+            or EvidencePolicy.select_current_official_source(opp.sources) is None
+        ):
+            continue
+        projection = build_public_projection(session, opp)
+        data.append((opp, projection.funding))
 
     if not data:
         raise HTTPException(

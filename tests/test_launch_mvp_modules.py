@@ -236,7 +236,117 @@ def test_scholarship_funding_comparator() -> None:
     assert "GBP 1,400 / month" in chev_card.monthly_stipend_text
     assert chev_card.monthly_stipend_usd > 1500  # 1400 * 1.28 ~ 1792 USD
     assert chev_card.travel_airfare_covered is True
-    assert chev_card.total_estimated_annual_value_usd > 35_000
+    assert chev_card.total_estimated_annual_value_usd == 21_504
+    assert "Comprehensive Health & Accident Insurance" not in chev_card.benefits_list
+
+
+def test_funding_comparator_does_not_invent_missing_monetary_value_or_benefits() -> None:
+    unsupported = _sample_opportunity(name="Unpriced full scholarship")
+    priced = _sample_opportunity(name="Priced stipend scholarship")
+    unsupported_frequency = _sample_opportunity(name="Unsupported frequency scholarship")
+    priced_components = [
+        FundingComponent(
+            id=uuid.uuid4(),
+            scholarship_id=priced.id,
+            component_type="stipend",
+            coverage_status="full",
+            amount=Decimal("1000"),
+            currency="USD",
+            frequency="month",
+        )
+    ]
+
+    unsupported_frequency_components = [
+        FundingComponent(
+            id=uuid.uuid4(),
+            scholarship_id=unsupported_frequency.id,
+            component_type="stipend",
+            coverage_status="full",
+            amount=Decimal("5000"),
+            currency="USD",
+            frequency="term",
+        )
+    ]
+
+    result = build_funding_comparison(
+        [
+            (unsupported, []),
+            (priced, priced_components),
+            (unsupported_frequency, unsupported_frequency_components),
+        ]
+    )
+
+    unsupported_card = next(
+        card for card in result.scholarships if card.opportunity_id == str(unsupported.id)
+    )
+    assert unsupported_card.total_estimated_annual_value_usd is None
+    assert unsupported_card.benefits_list == []
+    assert unsupported_card.travel_airfare_covered is None
+    assert unsupported_card.health_insurance_covered is None
+    assert unsupported_card.housing_covered is None
+    assert unsupported_card.visa_allowance_covered is None
+    unsupported_frequency_card = next(
+        card for card in result.scholarships if card.opportunity_id == str(unsupported_frequency.id)
+    )
+    assert unsupported_frequency_card.total_estimated_annual_value_usd is None
+    assert result.highest_value_scholarship_id == str(priced.id)
+
+
+def test_funding_comparator_excludes_legacy_classification_costs_and_scoped_totals() -> None:
+    opportunity = _sample_opportunity(name="Evidence-bound scholarship")
+    components = [
+        FundingComponent(
+            id=uuid.uuid4(),
+            scholarship_id=opportunity.id,
+            component_type="stipend",
+            coverage_status="full",
+            amount=Decimal("1000"),
+            currency="USD",
+            frequency="month",
+        ),
+        FundingComponent(
+            id=uuid.uuid4(),
+            scholarship_id=opportunity.id,
+            component_type="application_fee",
+            coverage_status="confirmed",
+            amount=Decimal("100"),
+            currency="USD",
+            frequency="annual",
+            description="Application fee charged to applicants",
+        ),
+        FundingComponent(
+            id=uuid.uuid4(),
+            scholarship_id=opportunity.id,
+            component_type="travel",
+            coverage_status="not_covered",
+            amount=Decimal("900"),
+            currency="USD",
+            frequency="annual",
+            description="Travel is not covered",
+        ),
+        FundingComponent(
+            id=uuid.uuid4(),
+            scholarship_id=opportunity.id,
+            track_id=uuid.uuid4(),
+            component_type="stipend",
+            coverage_status="full",
+            amount=Decimal("5000"),
+            currency="USD",
+            frequency="annual",
+            description="Only available on one application route",
+        ),
+    ]
+
+    result = build_funding_comparison([(opportunity, components)])
+    card = result.scholarships[0]
+
+    assert card.total_estimated_annual_value_usd == 12_000
+    assert card.funding_type == "UNKNOWN"
+    assert result.fully_funded_count is None
+    assert not any("fully funded" in note.lower() for note in result.financial_comparison_notes)
+    assert "Application fee charged to applicants" not in card.benefits_list
+    assert "Travel is not covered" not in card.benefits_list
+    assert "Only available on one application route" not in card.benefits_list
 
 
 # ==============================================================================

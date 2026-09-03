@@ -1,10 +1,9 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
 import { useServerQuery } from "../../hooks/useServerQuery";
-import { createApplication, getMatches } from "../workspace/workspace";
-import type { OpportunityMatch } from "../workspace/types";
+import { createApplication } from "../workspace/workspace";
 import {
   formatDate,
   getCountryFlag,
@@ -13,19 +12,51 @@ import {
   isNotFound,
   readableValue,
 } from "./catalogue";
-import type { OpportunityDetail } from "./types";
+import type {
+  DecisionSummaryBlock,
+  OpportunityDetail,
+  PublicFactScope,
+  PublicScholarshipProjection,
+} from "./types";
+
+const UNKNOWN_LABEL = "Not confirmed in reviewed sources";
 
 function Value({ children }: { children: string | number | null | undefined }) {
-  return <span>{children === null || children === undefined || children === "" ? "Not stated" : children}</span>;
+  return <span>{children === null || children === undefined || children === "" ? UNKNOWN_LABEL : children}</span>;
 }
 
-function MatchAuditSection({
-  opportunity,
-  match,
-}: {
-  opportunity: OpportunityDetail;
-  match: OpportunityMatch | undefined;
-}) {
+function summaryStateLabel(block: DecisionSummaryBlock): string {
+  if (block.state === "unknown") return UNKNOWN_LABEL;
+  return readableValue(block.state);
+}
+
+function formatAmount(
+  amount: number | string | null,
+  currency: string | null,
+  frequency: string | null,
+): string | null {
+  if (amount === null || !currency) return null;
+  const suffix = frequency ? ` / ${readableValue(frequency)}` : "";
+  const displayAmount = typeof amount === "number" ? amount.toLocaleString() : amount;
+  return `${currency.toUpperCase()} ${displayAmount}${suffix}`;
+}
+
+function scopeLabel(scope: PublicFactScope, projection: PublicScholarshipProjection): string | null {
+  const labels: string[] = [];
+  if (scope.track_id) {
+    const track = projection.tracks.find((item) => item.id === scope.track_id);
+    labels.push(track?.name ?? UNKNOWN_LABEL);
+  }
+  const scholarshipProgrammeId = scope.scholarship_programme_id ?? scope.programme_id;
+  if (scholarshipProgrammeId) {
+    const programme = projection.programmes.find((item) => item.id === scholarshipProgrammeId);
+    labels.push(programme?.name ?? UNKNOWN_LABEL);
+  }
+  if (scope.institution_id) labels.push("Specific institution");
+  return labels.length ? labels.join(" · ") : null;
+}
+
+function MatchAuditSection() {
   const { user } = useAuth();
 
   if (!user) {
@@ -36,7 +67,7 @@ function MatchAuditSection({
           <div>
             <p className="match-guest-title">Sign in to check your profile match score</p>
             <p className="match-guest-subtitle">
-              We compare your GPA, nationality, and degree level against this scholarship's verified criteria.
+              Build your profile, then review your scholarship matches in one place.
             </p>
           </div>
         </div>
@@ -47,125 +78,20 @@ function MatchAuditSection({
     );
   }
 
-  const score = match ? (match.fit_score ?? match.match_score ?? null) : null;
-  const isHighFit = score !== null && score >= 80;
-  const isGoodFit = score !== null && score >= 60 && score < 80;
-  const hardFailure = match?.eligibility_status === "ineligible" || match?.eligibility_status === "likely_ineligible";
-
-  const matchClass = hardFailure
-    ? "match-partial-card"
-    : isHighFit
-      ? "match-high-card"
-      : isGoodFit
-        ? "match-good-card"
-        : "match-partial-card";
-
-  const degreeLevels = opportunity.degree_levels?.length ? opportunity.degree_levels : [opportunity.degree_level];
-
-  // Derive dynamic status from match evaluation
-  const isDegreeMatched = !match?.failed_criteria?.some((c) => c.toLowerCase().includes("degree"));
-  const isNationalityMatched = !match?.failed_criteria?.some((c) => c.toLowerCase().includes("nationality") || c.toLowerCase().includes("country"));
-  const isAcademicMatched = !match?.failed_criteria?.some((c) => c.toLowerCase().includes("academic") || c.toLowerCase().includes("gpa") || c.toLowerCase().includes("grade"));
-  const isLanguageMatched = !match?.failed_criteria?.some((c) => c.toLowerCase().includes("english") || c.toLowerCase().includes("language") || c.toLowerCase().includes("test"));
-
   return (
-    <section className={`detail-match-card ${matchClass}`} aria-label="Personal Eligibility Match Audit">
-      <div className="match-card-header">
-        <div className="match-card-title-group">
-          <div className="match-score-badge">
-            {score !== null ? `${score}%` : "—"}
-          </div>
-          <div>
-            <div className="match-headline-row">
-              <h2 className="match-card-heading">Your Profile Eligibility Match</h2>
-              <span className="match-status-pill">
-                <span className="pulse-dot"></span>
-                {hardFailure ? "Needs Review" : isHighFit ? "Strong Candidate Fit" : isGoodFit ? "Good Fit" : "Evaluation Available"}
-              </span>
-            </div>
-            <p className="match-card-subtext">
-              {match ? "Audited in real-time against your saved student credentials" : "Complete your profile to see full criteria alignment"}
-            </p>
-          </div>
-        </div>
-        <Link className="match-edit-link" to="/profile">
-          Edit Profile ➔
-        </Link>
-      </div>
-
-      <div className="match-checklist-grid">
-        <div className="match-check-item">
-          <div className="match-check-left">
-            <span className="match-check-icon">{isDegreeMatched ? "✓" : "⚠"}</span>
-            <div>
-              <div className="match-check-title-row">
-                <strong>Degree Level Eligibility</strong>
-                <span className="match-mini-tag">Targeting {degreeLevels.map(readableValue).join(", ")}</span>
-              </div>
-              <p className="match-check-desc">
-                Scholarship supports {degreeLevels.map(readableValue).join(", ")} degrees
-              </p>
-            </div>
-          </div>
-          <span className={isDegreeMatched ? "match-badge-eligible" : "match-badge-neutral"}>
-            {isDegreeMatched ? "Eligible" : "Check Degree"}
-          </span>
-        </div>
-
-        <div className="match-check-item">
-          <div className="match-check-left">
-            <span className="match-check-icon">{isNationalityMatched ? "✓" : "⚠"}</span>
-            <div>
-              <div className="match-check-title-row">
-                <strong>Nationality & Citizenship</strong>
-                <span className="match-mini-tag">{opportunity.country} Partner Award</span>
-              </div>
-              <p className="match-check-desc">
-                {opportunity.nationality_eligibility || `Eligible international citizens for ${opportunity.country} awards`}
-              </p>
-            </div>
-          </div>
-          <span className={isNationalityMatched ? "match-badge-eligible" : "match-badge-neutral"}>
-            {isNationalityMatched ? "Eligible" : "Check Citizenship"}
-          </span>
-        </div>
-
-        <div className="match-check-item">
-          <div className="match-check-left">
-            <span className="match-check-icon">{isAcademicMatched ? "✓" : "⚠"}</span>
-            <div>
-              <div className="match-check-title-row">
-                <strong>Academic Threshold</strong>
-                <span className="match-mini-tag">Academic Criterion</span>
-              </div>
-              <p className="match-check-desc">
-                {opportunity.minimum_academic_requirement || "Undergraduate 2:1 Honours equivalent or stated academic threshold"}
-              </p>
-            </div>
-          </div>
-          <span className={isAcademicMatched ? "match-badge-eligible" : "match-badge-neutral"}>
-            {isAcademicMatched ? "Satisfied" : "Check GPA"}
-          </span>
-        </div>
-
-        <div className="match-check-item">
-          <div className="match-check-left">
-            <span className="match-check-icon">{isLanguageMatched ? "✓" : "⚠"}</span>
-            <div>
-              <div className="match-check-title-row">
-                <strong>English Language Proficiency</strong>
-                <span className="match-mini-tag">Language Requirement</span>
-              </div>
-              <p className="match-check-desc">
-                {opportunity.english_language_requirement || "IELTS Academic 6.5+ or TOEFL iBT 90+ where required"}
-              </p>
-            </div>
-          </div>
-          <span className={isLanguageMatched ? "match-badge-eligible" : "match-badge-neutral"}>
-            {isLanguageMatched ? "Passed" : "Check Test"}
-          </span>
+    <section className="detail-match-banner match-guest-banner" aria-label="Open profile matches">
+      <div className="match-guest-content">
+        <div className="match-guest-icon">✨</div>
+        <div>
+          <p className="match-guest-title">Review this scholarship in your matches</p>
+          <p className="match-guest-subtitle">
+            Open your matches to compare your saved profile with available scholarship criteria.
+          </p>
         </div>
       </div>
+      <Link className="button button-quiet match-guest-btn" to="/matches">
+        Open your matches ➔
+      </Link>
     </section>
   );
 }
@@ -228,24 +154,12 @@ function SaveToTrackerButton({ opportunityId }: { opportunityId: string }) {
 
 export function OpportunityDetailPage() {
   const { opportunityId } = useParams();
-  const { user } = useAuth();
 
   const { data: opportunity, error, isLoading, reload } = useServerQuery<OpportunityDetail>(
     opportunityId ?? "missing-opportunity",
     (signal) => getOpportunity(opportunityId!, signal),
     Boolean(opportunityId),
   );
-
-  const { data: studentMatches } = useServerQuery<OpportunityMatch[]>(
-    "detail-student-matches",
-    (signal) => getMatches(signal),
-    user?.role === "student",
-  );
-
-  const match = useMemo(() => {
-    if (!Array.isArray(studentMatches) || !opportunityId) return undefined;
-    return studentMatches.find((m) => m.opportunity.id === opportunityId);
-  }, [studentMatches, opportunityId]);
 
   if (isLoading) {
     return (
@@ -274,14 +188,47 @@ export function OpportunityDetailPage() {
     );
   }
 
-  const urgency = getDeadlineUrgency(opportunity.application_deadline);
+  const projection = opportunity.projection;
+  const reviewedDeadline = projection.deadlines.find(
+    (deadline) => deadline.deadline_at || deadline.deadline_text || deadline.local_date,
+  );
+  const deadlineDate = reviewedDeadline?.deadline_at ?? reviewedDeadline?.local_date ?? null;
+  const urgency = deadlineDate ? getDeadlineUrgency(deadlineDate) : null;
   const countryFlag = getCountryFlag(opportunity.country);
-  const degrees = opportunity.degree_levels?.length ? opportunity.degree_levels : [opportunity.degree_level];
-  const stipend = opportunity.monthly_stipend_amount
-    ? `${opportunity.monthly_stipend_amount.toLocaleString()} ${opportunity.monthly_stipend_currency ?? ""}`.trim()
+  const degrees = Array.from(
+    new Set(projection.programmes.flatMap((programme) => programme.degree_levels)),
+  );
+  const officialAppUrl =
+    projection.tracks.find((track) => track.application_url)?.application_url ??
+    projection.steps.find((step) => step.application_url)?.application_url ??
+    projection.resources.find(
+      (resource) => resource.resource_type === "application_portal" && resource.url,
+    )?.url ??
+    null;
+  const applicationMethod = projection.tracks.find(
+    (track) => track.application_method,
+  )?.application_method;
+  const applicationFee = projection.funding.find((item) =>
+    item.component_type?.toLowerCase().includes("application_fee"),
+  );
+  const applicationFeeText = applicationFee
+    ? formatAmount(applicationFee.amount, applicationFee.currency, applicationFee.frequency) ??
+      applicationFee.description ??
+      applicationFee.original_text ??
+      (applicationFee.coverage_status ? readableValue(applicationFee.coverage_status) : null)
     : null;
-
-  const officialAppUrl = opportunity.application_url || opportunity.official_source_url || opportunity.source.url;
+  const cycleLabel = projection.cycle?.intake_year
+    ? `${projection.cycle.intake_year} Academic Cycle`
+    : projection.cycle?.label ?? UNKNOWN_LABEL;
+  const summary = projection.summary;
+  const summaryBlocks: Array<[string, DecisionSummaryBlock]> = summary
+    ? [
+        ["Overview", summary.overview],
+        ["Funding", summary.funding],
+        ["Eligibility", summary.eligibility],
+        ["Application route", summary.application_route],
+      ]
+    : [];
 
   return (
     <main className="detail-page page-width" aria-live="polite">
@@ -290,21 +237,23 @@ export function OpportunityDetailPage() {
       <div className="detail-top-nav">
         <Link className="back-link" to="/catalogue">← Back to scholarships</Link>
         <span className="detail-freshness-pill">
-          ✓ Officially Verified Government Record
+          ✓ Reviewed official source
         </span>
       </div>
 
       {/* Hero Header Card */}
       <section className="detail-hero-luxury" aria-label="Scholarship Overview">
         <div className="detail-hero-pills">
-          <span className="pill-verified">✓ Verified Award</span>
+          <span className="pill-verified">✓ Reviewed record</span>
           <span className="pill-country">{countryFlag} {opportunity.country}</span>
           {degrees.map((deg) => (
             <span key={deg} className="pill-degree">🎓 {readableValue(deg)}</span>
           ))}
-          <span className="pill-funding">💰 {opportunity.funding_display_label}</span>
-          <span className={`urgency-pill urgency-${urgency.tier}`}>
-            {urgency.icon} {urgency.label}
+          <span className="pill-funding">
+            💰 {summary?.funding.state === "confirmed" ? "Funding reviewed" : UNKNOWN_LABEL}
+          </span>
+          <span className={`urgency-pill urgency-${urgency?.tier ?? "unknown"}`}>
+            {urgency?.icon ?? "🗓️"} {urgency?.label ?? reviewedDeadline?.deadline_text ?? UNKNOWN_LABEL}
           </span>
         </div>
 
@@ -316,7 +265,6 @@ export function OpportunityDetailPage() {
           </p>
         </div>
 
-        {/* 3-Way Hero Action Conversion Bar */}
         <div className="detail-hero-action-bar">
           <SaveToTrackerButton opportunityId={opportunity.id} />
           {officialAppUrl ? (
@@ -329,20 +277,21 @@ export function OpportunityDetailPage() {
               <span>↗</span> Open official application portal
             </a>
           ) : null}
-          <Link
-            className="button hero-btn-ai"
-            to={`/assistant?opportunity=${opportunity.id}`}
-          >
-            <span>🤖</span> Ask AI Copilot about this
-          </Link>
         </div>
 
         <div className="detail-hero-footer-meta">
-          <span>Intake: <strong>{opportunity.intake_year ? `${opportunity.intake_year} Academic Cycle` : "Official Intake Cycle"}</strong></span>
+          <span>Intake: <strong>{cycleLabel}</strong></span>
           <span>•</span>
-          <span>Decision Tier: <strong className="tier-ready">{readableValue(opportunity.catalogue_decision_tier)}</strong></span>
-          <span>•</span>
-          <span>Last verified: <strong>{formatDate(opportunity.last_verified_at || opportunity.source.last_verified_at)}</strong></span>
+          <span>
+            Last verified:{" "}
+            <strong>
+              <Value>
+                {opportunity.last_verified_at || opportunity.source.last_verified_at
+                  ? formatDate(opportunity.last_verified_at || opportunity.source.last_verified_at)
+                  : null}
+              </Value>
+            </strong>
+          </span>
         </div>
       </section>
 
@@ -352,208 +301,236 @@ export function OpportunityDetailPage() {
         {/* Left Column: Dossier Details */}
         <div className="detail-main-column">
 
-          {/* AI Copilot Module */}
-          <section className="ai-copilot-module" aria-label="AI Scholarship Copilot">
-            <div className="ai-copilot-header">
-              <div className="ai-copilot-title-group">
-                <span className="ai-copilot-icon">🤖</span>
-                <div>
-                  <h2 className="ai-copilot-heading">AI Scholarship Copilot</h2>
-                  <p className="ai-copilot-subtext">Instant guidance powered by official verified evidence</p>
-                </div>
+          <section className="detail-card-section" aria-label="Reviewed decision summary">
+            <div className="section-header-row">
+              <div>
+                <h2 className="section-heading">Decision summary</h2>
+                <p className="section-subtext">Only claims linked to reviewed official evidence</p>
               </div>
-              <span className="ai-copilot-badge">Source-Linked AI</span>
             </div>
-            <p className="ai-copilot-prompt-intro">
-              Select a tailored prompt to start analyzing this scholarship with AI:
-            </p>
-            <div className="ai-prompt-chips-grid">
-              <Link className="ai-prompt-chip" to={`/assistant?opportunity=${opportunity.id}&prompt=Evaluate+my+eligibility+and+chances+for+this+scholarship`}>
-                <span>💬 "Evaluate my eligibility for {opportunity.name}"</span>
-                <span className="ai-chip-arrow">➔</span>
-              </Link>
-              <Link className="ai-prompt-chip" to={`/assistant?opportunity=${opportunity.id}&prompt=Help+me+draft+application+essays+for+this+scholarship`}>
-                <span>📝 "Draft my application essays & personal statement"</span>
-                <span className="ai-chip-arrow">➔</span>
-              </Link>
-              <Link className="ai-prompt-chip" to={`/assistant?opportunity=${opportunity.id}&prompt=What+are+the+eligible+courses+and+universities+for+this+scholarship`}>
-                <span>🏛️ "What courses & universities are eligible?"</span>
-                <span className="ai-chip-arrow">➔</span>
-              </Link>
-              <Link className="ai-prompt-chip" to={`/assistant?opportunity=${opportunity.id}&prompt=Help+me+prepare+for+the+interview+for+this+scholarship`}>
-                <span>🎯 "Prepare me for the scholarship interview"</span>
-                <span className="ai-chip-arrow">➔</span>
-              </Link>
-            </div>
+            {summaryBlocks.length ? (
+              <div className="funding-matrix-grid">
+                {summaryBlocks.map(([label, block], index) => (
+                  <article
+                    className={`funding-card-accent ${index % 2 ? "accent-blue" : "accent-teal"}`}
+                    key={label}
+                  >
+                    <div className="funding-card-top">
+                      <span className="funding-card-label">{label}</span>
+                      <span className="funding-status-pill">{summaryStateLabel(block)}</span>
+                    </div>
+                    <p className="funding-card-desc">
+                      {block.state === "unknown" ? UNKNOWN_LABEL : block.text}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p>{UNKNOWN_LABEL}</p>
+            )}
           </section>
 
-          {/* Personal Profile Match Checklist */}
-          <MatchAuditSection opportunity={opportunity} match={match} />
-
-          {/* Complete Financial Breakdown */}
           <section className="detail-card-section" aria-label="Financial Coverage Package">
             <div className="section-header-row">
               <div>
-                <h2 className="section-heading">💰 Complete Financial Breakdown</h2>
-                <p className="section-subtext">Itemized funding and allowance schedule</p>
+                <h2 className="section-heading">Funding</h2>
+                <p className="section-subtext">Components confirmed by reviewed source evidence</p>
               </div>
-              <span className="section-badge-green">{opportunity.funding_display_label}</span>
+              {summary ? (
+                <span className="section-badge-green">{summaryStateLabel(summary.funding)}</span>
+              ) : null}
             </div>
-
-            <div className="funding-matrix-grid">
-              <div className="funding-card-accent accent-teal">
-                <div className="funding-card-top">
-                  <span className="funding-card-label">Tuition Fee Coverage</span>
-                  <span className="funding-status-pill">{opportunity.tuition_coverage_status || "Covered"}</span>
-                </div>
-                <h3 className="funding-card-value"><Value>{opportunity.tuition_coverage}</Value></h3>
-                <p className="funding-card-desc">Direct payment for standard degree course tuition fees.</p>
+            {projection.funding.length ? (
+              <div className="funding-matrix-grid">
+                {projection.funding.map((item, index) => {
+                  const scope = scopeLabel(item.scope, projection);
+                  const amount = formatAmount(item.amount, item.currency, item.frequency);
+                  return (
+                    <article
+                      className={`funding-card-accent ${index % 2 ? "accent-blue" : "accent-teal"}`}
+                      key={item.id}
+                    >
+                      <div className="funding-card-top">
+                        <span className="funding-card-label">
+                          {item.component_type ? readableValue(item.component_type) : "Funding component"}
+                        </span>
+                        <span className="funding-status-pill">
+                          {item.coverage_status ? readableValue(item.coverage_status) : UNKNOWN_LABEL}
+                        </span>
+                      </div>
+                      {amount ? <h3 className="funding-card-value">{amount}</h3> : null}
+                      <p className="funding-card-desc">
+                        {item.description ?? item.original_text ?? item.qualifier ?? UNKNOWN_LABEL}
+                      </p>
+                      {scope ? <p className="section-subtext">Applies to: {scope}</p> : null}
+                    </article>
+                  );
+                })}
               </div>
-
-              <div className="funding-card-accent accent-blue">
-                <div className="funding-card-top">
-                  <span className="funding-card-label">Monthly Living Stipend</span>
-                  <span className="funding-status-pill">{opportunity.stipend_coverage_status || "Allowance"}</span>
-                </div>
-                <h3 className="funding-card-value"><Value>{stipend}</Value></h3>
-                <p className="funding-card-desc">Monthly tax-free living grant for accommodation and food.</p>
-              </div>
-
-              <div className="funding-card-accent accent-teal">
-                <div className="funding-card-top">
-                  <span className="funding-card-label">International Travel</span>
-                  <span className="funding-status-pill">{opportunity.travel_coverage_status || "Airfare"}</span>
-                </div>
-                <h3 className="funding-card-value"><Value>{opportunity.travel_allowance}</Value></h3>
-                <p className="funding-card-desc">Round-trip economy flights between home country and campus.</p>
-              </div>
-
-              <div className="funding-card-accent accent-blue">
-                <div className="funding-card-top">
-                  <span className="funding-card-label">Health & Medical</span>
-                  <span className="funding-status-pill">{opportunity.insurance_coverage_status || "Covered"}</span>
-                </div>
-                <h3 className="funding-card-value"><Value>{opportunity.health_insurance}</Value></h3>
-                <p className="funding-card-desc">Healthcare coverage and medical insurance surcharge included.</p>
-              </div>
-            </div>
-
-            {opportunity.funding_summary ? (
-              <div className="funding-summary-callout">
-                <span className="funding-callout-title">Funding Summary:</span>
-                <p>{opportunity.funding_summary}</p>
-              </div>
-            ) : null}
+            ) : (
+              <p>{UNKNOWN_LABEL}</p>
+            )}
           </section>
 
-          {/* Statutory Eligibility Criteria */}
           <section className="detail-card-section" aria-label="Eligibility Criteria">
             <div className="section-header-row">
               <div>
-                <h2 className="section-heading">📋 Mandatory Eligibility Matrix</h2>
-                <p className="section-subtext">Official criteria required for admission and funding</p>
+                <h2 className="section-heading">Eligibility</h2>
+                <p className="section-subtext">Reviewed rules with their original scope preserved</p>
               </div>
             </div>
-
-            <dl className="eligibility-dl">
-              <div className="eligibility-row">
-                <dt>Degree Level Scope</dt>
-                <dd>{degrees.map(readableValue).join(", ")}</dd>
-              </div>
-              <div className="eligibility-row">
-                <dt>Eligible Fields</dt>
-                <dd><Value>{opportunity.field_eligibility}</Value></dd>
-              </div>
-              <div className="eligibility-row">
-                <dt>Nationality / Citizenship</dt>
-                <dd><Value>{opportunity.nationality_eligibility}</Value></dd>
-              </div>
-              <div className="eligibility-row">
-                <dt>Minimum Academic Grade</dt>
-                <dd><Value>{opportunity.minimum_academic_requirement}</Value></dd>
-              </div>
-              <div className="eligibility-row">
-                <dt>English Language Test</dt>
-                <dd><Value>{opportunity.english_language_requirement}</Value></dd>
-              </div>
-              <div className="eligibility-row">
-                <dt>Standardized Tests</dt>
-                <dd><Value>{opportunity.standardized_test_requirement}</Value></dd>
-              </div>
-            </dl>
+            {projection.eligibility.length ? (
+              <dl className="eligibility-dl">
+                {projection.eligibility.map((rule) => {
+                  const scope = scopeLabel(rule.scope, projection);
+                  return (
+                    <div className="eligibility-row" key={rule.id}>
+                      <dt>{rule.rule_type ? readableValue(rule.rule_type) : "Eligibility rule"}</dt>
+                      <dd>
+                        {rule.original_text ?? rule.condition ?? UNKNOWN_LABEL}
+                        {scope ? <small> · Applies to: {scope}</small> : null}
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            ) : (
+              <p>{UNKNOWN_LABEL}</p>
+            )}
           </section>
 
-          {/* Required Application Documents */}
-          <section className="detail-card-section" aria-label="Required Application Documents">
-            <h2 className="section-heading">📁 Required Application Documents</h2>
-            <div className="documents-checklist-grid">
-              {opportunity.required_documents.length ? (
-                opportunity.required_documents.map((doc) => (
-                  <div key={doc} className="document-check-card">
-                    <span className="doc-check-icon">✓</span>
-                    <span className="doc-check-title">{doc}</span>
+          <section className="detail-card-section" aria-label="Application Routes">
+            <h2 className="section-heading">Application routes</h2>
+            {projection.tracks.length ? (
+              <dl className="eligibility-dl">
+                {projection.tracks.map((track) => (
+                  <div className="eligibility-row" key={track.id}>
+                    <dt>{track.name ?? UNKNOWN_LABEL}</dt>
+                    <dd>
+                      {track.application_method ?? UNKNOWN_LABEL}
+                      {track.application_url ? (
+                        <> · <a href={track.application_url} target="_blank" rel="noreferrer">Open route ↗</a></>
+                      ) : null}
+                    </dd>
                   </div>
-                ))
-              ) : (
-                <div className="document-check-card">
-                  <span className="doc-check-icon">✓</span>
-                  <span className="doc-check-title">Official academic transcripts & valid passport</span>
-                </div>
-              )}
-            </div>
+                ))}
+              </dl>
+            ) : (
+              <p>{UNKNOWN_LABEL}</p>
+            )}
           </section>
 
-          {/* Eligibility Warnings & Curator Notes */}
-          {opportunity.eligibility_warnings.length ? (
-            <section className="detail-warning-luxury" aria-label="Eligibility Warnings">
-              <h3 className="warning-heading">⚠️ Important Eligibility Checks</h3>
+          <section className="detail-card-section" aria-label="Reviewed Deadlines">
+            <h2 className="section-heading">Deadlines</h2>
+            {projection.deadlines.length ? (
+              <dl className="eligibility-dl">
+                {projection.deadlines.map((deadline) => {
+                  const scope = scopeLabel(deadline.scope, projection);
+                  return (
+                    <div className="eligibility-row" key={deadline.id}>
+                      <dt>{deadline.label ?? (deadline.deadline_type ? readableValue(deadline.deadline_type) : "Deadline")}</dt>
+                      <dd>
+                        {deadline.deadline_at || deadline.local_date
+                          ? formatDate(deadline.deadline_at ?? deadline.local_date)
+                          : deadline.deadline_text ?? UNKNOWN_LABEL}
+                        {scope ? <small> · Applies to: {scope}</small> : null}
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            ) : (
+              <p>{UNKNOWN_LABEL}</p>
+            )}
+          </section>
+
+          <section className="detail-card-section" aria-label="Required Application Documents">
+            <h2 className="section-heading">Required documents</h2>
+            {projection.documents.length ? (
+              <div className="documents-checklist-grid">
+                {projection.documents.map((document) => (
+                  <div key={document.id} className="document-check-card">
+                    <span className="doc-check-icon">
+                      {document.required === true ? "✓" : document.required === false ? "○" : "?"}
+                    </span>
+                    <span className="doc-check-title">
+                      {document.name ?? UNKNOWN_LABEL}
+                      {document.required === null ? ` · ${UNKNOWN_LABEL}` : document.required ? " · Required" : " · Optional"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>{UNKNOWN_LABEL}</p>
+            )}
+          </section>
+
+          <section className="detail-card-section" aria-label="Application Steps">
+            <h2 className="section-heading">Application steps</h2>
+            {projection.steps.length ? (
+              <ol className="warning-list">
+                {projection.steps.map((step) => (
+                  <li key={step.id}>
+                    <strong>{step.title ?? UNKNOWN_LABEL}</strong>
+                    {step.description || step.original_text || step.outcome ? (
+                      <> — {step.description ?? step.original_text ?? step.outcome}</>
+                    ) : null}
+                    {scopeLabel(step.scope, projection) ? (
+                      <small> · Applies to: {scopeLabel(step.scope, projection)}</small>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p>{UNKNOWN_LABEL}</p>
+            )}
+          </section>
+
+          {projection.known_unknowns.length ? (
+            <section className="detail-warning-luxury" aria-label="Information not yet confirmed">
+              <h3 className="warning-heading">Information not yet confirmed</h3>
               <ul className="warning-list">
-                {opportunity.eligibility_warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
+                {projection.known_unknowns.map((dimension) => (
+                  <li key={dimension}>{readableValue(dimension)}</li>
                 ))}
               </ul>
             </section>
           ) : null}
 
-          {opportunity.notes ? (
-            <section className="detail-curator-note" aria-label="Curator Note">
-              <h3 className="curator-note-heading">📌 Curator Note</h3>
-              <p>{opportunity.notes}</p>
-            </section>
-          ) : null}
-
-          {/* Official Source Evidence Vault */}
-          <section className="evidence-vault-navy" aria-label="Official Source Evidence Vault">
+          <section className="evidence-vault-navy" aria-label="Reviewed source citations">
             <div className="evidence-vault-top">
               <div className="evidence-vault-brand">
                 <span className="vault-lock-icon">🔒</span>
-                <span className="vault-label">OFFICIAL SOURCE EVIDENCE VAULT</span>
+                <span className="vault-label">REVIEWED SOURCE CITATIONS</span>
               </div>
-              <span className="vault-domain-tag">{opportunity.source.title}</span>
             </div>
-
-            <blockquote className="evidence-quote">
-              "{opportunity.source.relevant_excerpt}"
-            </blockquote>
-
-            <div className="evidence-vault-footer">
-              <span>Officially verified {formatDate(opportunity.source.last_verified_at)} · Source confidence: {readableValue(opportunity.data_confidence)}</span>
-              <a
-                className="evidence-source-btn"
-                href={opportunity.source.url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open official source ↗
-              </a>
-            </div>
+            {projection.evidence.length ? (
+              projection.evidence.map((evidence) => (
+                <article key={evidence.id}>
+                  <blockquote className="evidence-quote">“{evidence.excerpt}”</blockquote>
+                  <div className="evidence-vault-footer">
+                    <span>
+                      {evidence.source_title} · Reviewed{" "}
+                      {evidence.last_verified_at ? formatDate(evidence.last_verified_at) : UNKNOWN_LABEL}
+                    </span>
+                    <a className="evidence-source-btn" href={evidence.source_url} target="_blank" rel="noreferrer">
+                      Open cited source ↗
+                    </a>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <p>{UNKNOWN_LABEL}</p>
+            )}
           </section>
+
+          <MatchAuditSection />
 
           {/* End-of-Dossier Finale Card */}
           <section className="dossier-finale-card">
             <div className="dossier-finale-text">
               <h3>Ready to apply for {opportunity.name}?</h3>
-              <p>Save this to your student workspace to auto-generate personalized task milestones, essay drafts, and deadline alerts.</p>
+              <p>Save this to your workspace to track application tasks and reviewed deadlines.</p>
             </div>
             <div className="dossier-finale-actions">
               <SaveToTrackerButton opportunityId={opportunity.id} />
@@ -574,14 +551,18 @@ export function OpportunityDetailPage() {
             <div className="sidebar-deadline-box">
               <span className="sidebar-eyebrow">Application Window</span>
               <div className="sidebar-urgency-row">
-                <span className="sidebar-urgency-title">{urgency.icon} {urgency.label}</span>
-                <span className="sidebar-status-tag">Verified</span>
+                <span className="sidebar-urgency-title">
+                  {urgency?.icon ?? "🗓️"} {urgency?.label ?? reviewedDeadline?.deadline_text ?? UNKNOWN_LABEL}
+                </span>
+                <span className="sidebar-status-tag">
+                  {reviewedDeadline ? "Reviewed" : UNKNOWN_LABEL}
+                </span>
               </div>
               <p className="sidebar-date-text">
-                Deadline: <strong>{formatDate(opportunity.application_deadline)}</strong>
+                Deadline: <strong>{deadlineDate ? formatDate(deadlineDate) : reviewedDeadline?.deadline_text ?? UNKNOWN_LABEL}</strong>
               </p>
               <p className="sidebar-date-text">
-                Intake: <strong>{opportunity.intake_year ? `${opportunity.intake_year} Academic Cycle` : "Standard Cycle"}</strong>
+                Intake: <strong>{cycleLabel}</strong>
               </p>
             </div>
 
@@ -599,12 +580,6 @@ export function OpportunityDetailPage() {
                   <span>↗</span> Open official portal
                 </a>
               ) : null}
-              <Link
-                className="button hero-btn-ai sidebar-ai-btn"
-                to={`/assistant?opportunity=${opportunity.id}`}
-              >
-                <span>🤖</span> Talk with AI Copilot
-              </Link>
             </div>
 
             <hr className="sidebar-divider" />
@@ -612,15 +587,11 @@ export function OpportunityDetailPage() {
             <div className="sidebar-meta-list">
               <div className="sidebar-meta-row">
                 <span>Application Fee:</span>
-                <strong className="text-teal">{opportunity.application_fee_info || "Free ($0)"}</strong>
+                <strong className="text-teal"><Value>{applicationFeeText}</Value></strong>
               </div>
               <div className="sidebar-meta-row">
                 <span>Method:</span>
-                <strong>{opportunity.application_method || "Online Portal"}</strong>
-              </div>
-              <div className="sidebar-meta-row">
-                <span>Confidence:</span>
-                <strong className="tier-ready">{readableValue(opportunity.data_confidence)}</strong>
+                <strong><Value>{applicationMethod}</Value></strong>
               </div>
             </div>
 
