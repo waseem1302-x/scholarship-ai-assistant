@@ -75,6 +75,40 @@ function renderSection(onToggleFavorite = vi.fn()) {
   return onToggleFavorite;
 }
 
+function pixelValue(value: string): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) throw new Error(`Expected a pixel value, received ${value}`);
+  return parsed;
+}
+
+function effectiveCollapsedGap(
+  sectionMarginBottom: string,
+  footerMarginTop: string,
+  trackMarginBottom: string,
+): number {
+  return Math.max(pixelValue(sectionMarginBottom), pixelValue(footerMarginTop))
+    + Math.min(0, pixelValue(trackMarginBottom));
+}
+
+function readCssDeclaration(mediaText: string, selector: string, property: string): string {
+  for (const styleSheet of Array.from(document.styleSheets)) {
+    for (const rule of Array.from(styleSheet.cssRules)) {
+      const mediaRule = rule as CSSMediaRule;
+      if (mediaRule.media?.mediaText !== mediaText) continue;
+
+      for (const nestedRule of Array.from(mediaRule.cssRules)) {
+        const styleRule = nestedRule as CSSStyleRule;
+        if (styleRule.selectorText === selector) {
+          const value = styleRule.style.getPropertyValue(property);
+          if (value) return value;
+        }
+      }
+    }
+  }
+
+  throw new Error(`Missing ${property} for ${selector} in ${mediaText}`);
+}
+
 describe("HomepageJourneySection", () => {
   afterEach(cleanup);
 
@@ -198,7 +232,7 @@ describe("HomepageJourneySection", () => {
     expect(previous).toBeDisabled();
   });
 
-  it("offsets the legacy footer margin to preserve the journey's final spacing", () => {
+  it("preserves 64px desktop/tablet and 48px mobile footer gaps after margin collapse", () => {
     const { container } = render(
       <BrowserRouter>
         <div className="tns-home-journey">
@@ -214,8 +248,21 @@ describe("HomepageJourneySection", () => {
 
     const finalSection = container.querySelector<HTMLElement>(".tns-home-journey-section");
     const footer = container.querySelector<HTMLElement>(".tns-home-journey + .tns-footer");
+    const track = container.querySelector<HTMLElement>(".tns-home-journey-track");
 
-    expect(getComputedStyle(finalSection!).marginBottom).toBe("64px");
-    expect(getComputedStyle(footer!).marginTop).toBe("72px");
+    expect(
+      effectiveCollapsedGap(
+        getComputedStyle(finalSection!).marginBottom,
+        getComputedStyle(footer!).marginTop,
+        getComputedStyle(track!).marginBottom,
+      ),
+    ).toBe(64);
+    expect(
+      effectiveCollapsedGap(
+        readCssDeclaration("(max-width: 743px)", ".tns-home-journey-section:last-child", "margin-bottom"),
+        readCssDeclaration("(max-width: 743px)", ".tns-home-journey + .tns-footer", "margin-top"),
+        getComputedStyle(track!).marginBottom,
+      ),
+    ).toBe(48);
   });
 });

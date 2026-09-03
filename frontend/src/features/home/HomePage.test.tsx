@@ -32,6 +32,32 @@ function ScholarshipSearchHarness() {
   );
 }
 
+const unsupportedJourneyClaimPatterns = [
+  /\b\d+(?:\.\d+)?\s*%/i,
+  /\b(?:winner(?:s)?|awardee(?:s)?|selected[-\s]+applicants?)\b/i,
+  /\b(?:deadline|applications?\s+close[sd]?|due)(?:\s+(?:is|on))?\s*:?\s*(?:soon|today|tomorrow|\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}|\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b/i,
+  /\b(?:your\s+(?:profile|application|documents?|tasks?|steps?)\s+(?:is|are)\s+(?:complete|completed|incomplete|in progress|started|submitted|saved)|you(?:'ve| have)\s+(?:saved|completed|started|submitted)\s+\d+|\d+\s*(?:of|\/)\s*\d+\s*(?:applications?|tasks?|steps?)?\s*(?:complete|completed|done))\b/i,
+];
+
+function expectJourneyToAvoidUnsupportedClaims(journey: HTMLElement) {
+  const renderedText = journey.textContent ?? "";
+
+  unsupportedJourneyClaimPatterns.forEach((pattern) => {
+    expect(renderedText).not.toMatch(pattern);
+  });
+
+  if (journey.querySelector(".tns-home-journey-card")) {
+    const deadlineCues = Array.from(
+      journey.querySelectorAll<HTMLElement>(".tns-home-journey-card__eyebrow"),
+    ).filter((cue) => /deadline/i.test(cue.textContent ?? ""));
+
+    expect(deadlineCues).toHaveLength(8);
+    deadlineCues.forEach((cue) => {
+      expect(cue).toHaveTextContent(/^Check official deadline$/);
+    });
+  }
+}
+
 describe("HomePage - The Next Scholar", () => {
   beforeEach(() => {
     authState.user = null;
@@ -85,22 +111,32 @@ describe("HomePage - The Next Scholar", () => {
       {
         title: "Funded paths to your next chapter",
         subtitle: "Start with credible opportunities for international students—not another endless directory.",
+        actionLabel: "Explore scholarships",
+        actionHref: "/catalogue",
       },
       {
         title: "Scholarships with a realistic path",
         subtitle: "Compare funding, degree level, deadline, and eligibility before investing weeks in an application.",
+        actionLabel: "Check your eligibility",
+        actionHref: "/profile",
       },
       {
         title: "Scholarship winning playbooks",
         subtitle: "Understand what major scholarships evaluate—and how to prepare evidence before you apply.",
+        actionLabel: "Explore playbooks",
+        actionHref: "/assistant",
       },
       {
         title: "Build what selectors score",
         subtitle: "Strengthen the essays, evidence, documents, and interview answers behind a serious application.",
+        actionLabel: "Start preparing",
+        actionHref: "/assistant",
       },
       {
         title: "Start from where you are",
         subtitle: "Choose your current stage and go directly to the tool that moves your application forward.",
+        actionLabel: "Build your plan",
+        actionHref: "/profile",
       },
     ];
     const journey = container.querySelector<HTMLElement>(".tns-home-journey");
@@ -114,8 +150,12 @@ describe("HomePage - The Next Scholar", () => {
 
     sections.forEach((section, index) => {
       const expected = expectedSections[index];
+      const action = section.querySelector<HTMLAnchorElement>(".tns-home-journey-action");
+
       expect(within(section).getByRole("heading", { name: expected.title })).toBeInTheDocument();
       expect(within(section).getByText(expected.subtitle)).toBeInTheDocument();
+      expect(action?.textContent).toBe(expected.actionLabel);
+      expect(action).toHaveAttribute("href", expected.actionHref);
       expect(within(section).getAllByRole("article")).toHaveLength(8);
     });
 
@@ -125,7 +165,7 @@ describe("HomePage - The Next Scholar", () => {
     const officialSource = within(playbooks).getAllByRole("link", { name: /official criteria/i })[0];
 
     expect(officialSource).toHaveAttribute("href", expect.stringMatching(/^https:\/\//));
-    expect(journey).not.toHaveTextContent(/\d+% match/i);
+    expectJourneyToAvoidUnsupportedClaims(journey);
     expect(screen.queryByText("AI POWERED")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "How it works" })).not.toBeInTheDocument();
     expect(screen.queryByText("Browse by destination")).not.toBeInTheDocument();
@@ -154,22 +194,32 @@ describe("HomePage - The Next Scholar", () => {
       {
         title: "Continue exploring funded opportunities",
         subtitle: "Open an opportunity, inspect its criteria, and decide whether it belongs in your plan.",
+        actionLabel: "View your matches",
+        actionHref: "/matches",
       },
       {
         title: "Turn your profile into better decisions",
         subtitle: "Use explainable matching to separate confirmed alignment from missing or uncertain information.",
+        actionLabel: "Inspect your matches",
+        actionHref: "/matches",
       },
       {
         title: "Prepare for the scholarships you are targeting",
         subtitle: "Turn selection criteria into focused questions, evidence, and application tasks.",
+        actionLabel: "Open AI coach",
+        actionHref: "/assistant",
       },
       {
         title: "Strengthen your application evidence",
         subtitle: "Continue with the highest-impact part of your application instead of guessing what to do next.",
+        actionLabel: "Open document lab",
+        actionHref: "/document-lab",
       },
       {
         title: "Your next best move",
         subtitle: "Resume your profile, matches, documents, or applications from one clear starting point.",
+        actionLabel: "Open workspace",
+        actionHref: "/dashboard",
       },
     ];
     const journey = container.querySelector<HTMLElement>(".tns-home-journey");
@@ -183,10 +233,29 @@ describe("HomePage - The Next Scholar", () => {
 
     sections.forEach((section, index) => {
       const expected = expectedSections[index];
+      const action = section.querySelector<HTMLAnchorElement>(".tns-home-journey-action");
+
       expect(within(section).getByRole("heading", { name: expected.title })).toBeInTheDocument();
       expect(within(section).getByText(expected.subtitle)).toBeInTheDocument();
+      expect(action?.textContent).toBe(expected.actionLabel);
+      expect(action).toHaveAttribute("href", expected.actionHref);
       expect(within(section).getAllByRole("article")).toHaveLength(8);
     });
+
+    expectJourneyToAvoidUnsupportedClaims(journey);
+  });
+
+  it.each([
+    ["match percentage", "92% match"],
+    ["winner claim", "Recent scholarship winner"],
+    ["selected-applicant claim", "Selected applicant profile"],
+    ["live deadline", "Deadline: 14 October 2026"],
+    ["unsupported progress", "Your application is in progress"],
+  ])("rejects a rendered %s", (_claimType, claim) => {
+    const journey = document.createElement("div");
+    journey.textContent = claim;
+
+    expect(() => expectJourneyToAvoidUnsupportedClaims(journey)).toThrow();
   });
 
   it("exposes the desktop scholarship search as a search landmark", () => {
