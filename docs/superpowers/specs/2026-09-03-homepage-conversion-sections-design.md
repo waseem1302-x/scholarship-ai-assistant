@@ -99,6 +99,8 @@ An incomplete-profile member receives activation copy such as “Complete your p
 - DAAD EPOS: professional experience and development impact
 - Commonwealth: development impact and study-plan coherence
 - Fulbright: academic purpose and cross-cultural contribution
+- Australia Awards: development contribution and return-home impact
+- Gates Cambridge: academic excellence, leadership, and improving lives
 
 **Card content:** editorial programme/destination image, “Based on published criteria” badge, programme name, one selector-facing outcome, an official criteria source URL, a reviewed date, and a direct assistant link with a programme-specific starter prompt. A playbook is omitted unless its official source is recorded. Wording must say “prepare,” “evaluate,” or “published criteria”; it must not promise selection or claim access to private selection rubrics.
 
@@ -198,7 +200,7 @@ Avoid marketing adjectives such as “amazing,” “exclusive,” “best,” a
 
 - Use repository-local images only; do not hotlink third-party files.
 - Create distinct, premium editorial destination or preparation imagery rather than repeating the same photograph.
-- Limit the initial image set to 12 optimized assets: six destination/campus scenes and six preparation/workflow scenes. An image may reappear in another section only with a different semantic crop and never twice in the same row.
+- Limit the initial image set to 16 optimized assets: eight destination/campus scenes and eight preparation/workflow scenes. An image may reappear in another section only with a different semantic crop and never twice in the same row.
 - Export card imagery at `1200 × 1140px`, WebP or progressive JPEG, with a target maximum of `180KB` per asset.
 - Destination images may suggest region and aspiration but must not pretend to depict a specific university or official scholarship campus.
 - Preparation cards use document, writing, interview, and planning imagery so the page does not become a travel-photo gallery.
