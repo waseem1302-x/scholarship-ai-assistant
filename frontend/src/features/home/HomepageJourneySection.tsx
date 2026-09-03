@@ -99,7 +99,8 @@ export function HomepageJourneySection({
 
     const updateNavigation = () => {
       const maximumScroll = Math.max(0, track.scrollWidth - track.clientWidth);
-      setCanScrollPrevious(track.scrollLeft > 1);
+      const startingOffset = Number.parseFloat(getComputedStyle(track).paddingInlineStart) || 0;
+      setCanScrollPrevious(track.scrollLeft > startingOffset + 1);
       setCanScrollNext(track.scrollLeft < maximumScroll - 1);
     };
 

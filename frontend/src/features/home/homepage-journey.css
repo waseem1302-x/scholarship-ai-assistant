@@ -12,6 +12,10 @@
   margin-bottom: 64px;
 }
 
+.tns-home-journey + .tns-footer {
+  margin-top: 72px;
+}
+
 .tns-home-journey-header {
   display: flex;
   align-items: flex-end;
@@ -390,6 +394,10 @@
 
   .tns-home-journey-section:last-child {
     margin-bottom: 48px;
+  }
+
+  .tns-home-journey + .tns-footer {
+    margin-top: 56px;
   }
 
   .tns-home-journey-header {

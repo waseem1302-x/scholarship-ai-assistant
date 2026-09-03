@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import "../../styles.css";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -177,5 +178,44 @@ describe("HomepageJourneySection", () => {
     expect(scrollBy).toHaveBeenCalledWith({ left: 600, behavior: "smooth" });
     expect(previous).toBeEnabled();
     expect(next).toBeDisabled();
+  });
+
+  it("keeps previous disabled at the track's snapped start inset", () => {
+    renderSection();
+
+    const region = screen.getByRole("region", { name: section.title });
+    const track = within(region).getByRole("list", { name: `${section.title} cards` });
+    const previous = within(region).getByRole("button", { name: "Previous" });
+
+    track.style.paddingInlineStart = "4px";
+    Object.defineProperties(track, {
+      clientWidth: { configurable: true, value: 600 },
+      scrollWidth: { configurable: true, value: 1200 },
+      scrollLeft: { configurable: true, writable: true, value: 4 },
+    });
+    fireEvent.scroll(track);
+
+    expect(previous).toBeDisabled();
+  });
+
+  it("offsets the legacy footer margin to preserve the journey's final spacing", () => {
+    const { container } = render(
+      <BrowserRouter>
+        <div className="tns-home-journey">
+          <HomepageJourneySection
+            section={section}
+            savedFavorites={new Set()}
+            onToggleFavorite={vi.fn()}
+          />
+        </div>
+        <footer className="tns-footer" />
+      </BrowserRouter>,
+    );
+
+    const finalSection = container.querySelector<HTMLElement>(".tns-home-journey-section");
+    const footer = container.querySelector<HTMLElement>(".tns-home-journey + .tns-footer");
+
+    expect(getComputedStyle(finalSection!).marginBottom).toBe("64px");
+    expect(getComputedStyle(footer!).marginTop).toBe("72px");
   });
 });
