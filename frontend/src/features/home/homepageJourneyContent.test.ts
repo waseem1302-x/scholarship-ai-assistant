@@ -21,7 +21,7 @@ describe("homepage journey content", () => {
   it("does not invent personalized claims for visitors", () => {
     const serialized = JSON.stringify(getHomepageJourneySections(false));
     expect(serialized).not.toMatch(/\d+% match|winner story|selected applicant/i);
-    expect(serialized).toContain("Check official deadline");
+    expect(serialized).not.toContain("Check official deadline");
   });
 
   it("keeps every playbook attached to an official HTTPS source", () => {

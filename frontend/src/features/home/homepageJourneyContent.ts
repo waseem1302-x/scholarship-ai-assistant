@@ -85,7 +85,7 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
   {
     id: "daad-epos",
     variant: "opportunity",
-    eyebrow: "Check official deadline",
+    eyebrow: "Official scholarship",
     title: "DAAD EPOS",
     description: "Postgraduate routes for development-focused professionals.",
     badge: "Fully funded",
@@ -98,7 +98,7 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
   {
     id: "fulbright-foreign-student",
     variant: "opportunity",
-    eyebrow: "Check official deadline",
+    eyebrow: "Official scholarship",
     title: "Fulbright Foreign Student Program",
     description: "Academic study and cross-cultural exchange in the United States.",
     badge: "Graduate route",
@@ -111,7 +111,7 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
   {
     id: "chevening-scholarships",
     variant: "opportunity",
-    eyebrow: "Check official deadline",
+    eyebrow: "Official scholarship",
     title: "Chevening Scholarships",
     description: "A one-year UK master's route centred on leadership potential.",
     badge: "Fully funded",
@@ -124,7 +124,7 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
   {
     id: "vanier-canada-graduate",
     variant: "opportunity",
-    eyebrow: "Check official deadline",
+    eyebrow: "Official scholarship",
     title: "Vanier Canada Graduate Scholarships",
     description: "A Canadian route for high-impact doctoral research.",
     badge: "Doctoral funding",
@@ -137,7 +137,7 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
   {
     id: "australia-awards",
     variant: "opportunity",
-    eyebrow: "Check official deadline",
+    eyebrow: "Official scholarship",
     title: "Australia Awards",
     description: "Study and development opportunities for eligible partner countries.",
     badge: "Government funded",
@@ -150,7 +150,7 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
   {
     id: "erasmus-mundus-joint-masters",
     variant: "opportunity",
-    eyebrow: "Check official deadline",
+    eyebrow: "Official scholarship",
     title: "Erasmus Mundus Joint Masters",
     description: "Study across participating European higher-education institutions.",
     badge: "Joint master's",
@@ -163,7 +163,7 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
   {
     id: "mext-research",
     variant: "opportunity",
-    eyebrow: "Check official deadline",
+    eyebrow: "Official scholarship",
     title: "MEXT Research Scholarship",
     description: "A Japanese government route for graduate research study.",
     badge: "Government funded",
@@ -176,7 +176,7 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
   {
     id: "commonwealth-masters",
     variant: "opportunity",
-    eyebrow: "Check official deadline",
+    eyebrow: "Official scholarship",
     title: "Commonwealth Master's Scholarships",
     description: "Master's funding connected to sustainable development impact.",
     badge: "Development focused",
@@ -557,31 +557,31 @@ type SectionHeader = Omit<HomepageJourneySectionContent, "id" | "cards">;
 const visitorHeaders: Readonly<Record<string, Readonly<SectionHeader>>> = {
   "funded-paths": {
     title: "Funded paths to your next chapter",
-    subtitle: "Start with credible opportunities for international students—not another endless directory.",
+    subtitle: "Explore credible scholarships worth a closer look.",
     actionLabel: "Explore scholarships",
     actionHref: "/catalogue",
   },
   "realistic-paths": {
     title: "Scholarships with a realistic path",
-    subtitle: "Compare funding, degree level, deadline, and eligibility before investing weeks in an application.",
+    subtitle: "Compare routes by funding, degree, and profile fit.",
     actionLabel: "Check your eligibility",
     actionHref: "/profile",
   },
   "winning-playbooks": {
     title: "Scholarship winning playbooks",
-    subtitle: "Understand what major scholarships evaluate—and how to prepare evidence before you apply.",
+    subtitle: "See what major scholarships assess before you apply.",
     actionLabel: "Explore playbooks",
     actionHref: "/assistant",
   },
   "build-evidence": {
     title: "Build what selectors score",
-    subtitle: "Strengthen the essays, evidence, documents, and interview answers behind a serious application.",
+    subtitle: "Build stronger essays, evidence, documents, and interviews.",
     actionLabel: "Start preparing",
     actionHref: "/assistant",
   },
   "next-move": {
     title: "Start from where you are",
-    subtitle: "Choose your current stage and go directly to the tool that moves your application forward.",
+    subtitle: "Go directly to the tool for your next step.",
     actionLabel: "Build your plan",
     actionHref: "/profile",
   },
@@ -590,31 +590,31 @@ const visitorHeaders: Readonly<Record<string, Readonly<SectionHeader>>> = {
 const memberHeaders: Readonly<Record<string, Readonly<SectionHeader>>> = {
   "funded-paths": {
     title: "Continue exploring funded opportunities",
-    subtitle: "Open an opportunity, inspect its criteria, and decide whether it belongs in your plan.",
+    subtitle: "Return to credible scholarships worth a closer look.",
     actionLabel: "View your matches",
     actionHref: "/matches",
   },
   "realistic-paths": {
     title: "Turn your profile into better decisions",
-    subtitle: "Use explainable matching to separate confirmed alignment from missing or uncertain information.",
+    subtitle: "Use your profile to compare realistic routes.",
     actionLabel: "Inspect your matches",
     actionHref: "/matches",
   },
   "winning-playbooks": {
     title: "Prepare for the scholarships you are targeting",
-    subtitle: "Turn selection criteria into focused questions, evidence, and application tasks.",
+    subtitle: "Prepare around the criteria your scholarships assess.",
     actionLabel: "Open AI coach",
     actionHref: "/assistant",
   },
   "build-evidence": {
     title: "Strengthen your application evidence",
-    subtitle: "Continue with the highest-impact part of your application instead of guessing what to do next.",
+    subtitle: "Improve the evidence behind your applications.",
     actionLabel: "Open document lab",
     actionHref: "/document-lab",
   },
   "next-move": {
     title: "Your next best move",
-    subtitle: "Resume your profile, matches, documents, or applications from one clear starting point.",
+    subtitle: "Continue from the tool that moves you forward.",
     actionLabel: "Open workspace",
     actionHref: "/dashboard",
   },

@@ -1,3 +1,8 @@
+.tns-home-journey {
+  display: flow-root;
+  background: #ffffff;
+}
+
 .tns-home-journey-section {
   width: min(1440px, 100%);
   margin: 48px auto 0;
@@ -9,7 +14,7 @@
 }
 
 .tns-home-journey-section:last-child {
-  margin-bottom: 64px;
+  margin-bottom: 0;
 }
 
 .tns-home-journey + .tns-footer {
@@ -63,6 +68,17 @@
   font-weight: 600;
   line-height: 18px;
   text-decoration: none;
+}
+
+.tns-home-journey-action svg {
+  width: 14px;
+  height: 14px;
+  margin-left: 3px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .tns-home-journey-action:hover {
@@ -258,22 +274,19 @@
 .tns-home-journey-card__copy {
   display: grid;
   min-width: 0;
-  gap: 2px;
-  margin-top: 10px;
+  gap: 4px;
+  margin-top: 9px;
   padding-inline: 4px;
 }
 
-.tns-home-journey-card__eyebrow,
-.tns-home-journey-card__description {
+.tns-home-journey-card__support {
+  min-height: 15px;
   margin: 0;
-}
-
-.tns-home-journey-card__eyebrow {
   overflow: hidden;
-  color: #525252;
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 14px;
+  color: #6a6a6a;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -307,6 +320,7 @@
 
 .tns-home-journey-card__title {
   display: -webkit-box;
+  min-height: 36px;
   overflow: hidden;
   margin: 0;
   color: #222222;
@@ -328,24 +342,8 @@
   text-underline-offset: 2px;
 }
 
-.tns-home-journey-card__description {
-  display: -webkit-box;
-  overflow: hidden;
-  color: #6a6a6a;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 17px;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
 .tns-home-journey-card__source {
-  display: grid;
-  gap: 1px;
-  margin-top: 4px;
-  color: #6a6a6a;
-  font-size: 11px;
-  line-height: 15px;
+  display: block;
 }
 
 .tns-home-journey-card__source a {
@@ -355,12 +353,6 @@
   border-radius: 3px;
   color: #444444;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tns-home-journey-card__source span {
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -421,11 +413,15 @@
 
 @media (max-width: 743px) {
   .tns-home-journey-section {
-    margin-top: 32px;
+    margin-top: 40px;
+  }
+
+  .tns-home-journey-section:first-child {
+    margin-top: 48px;
   }
 
   .tns-home-journey-section:last-child {
-    margin-bottom: 48px;
+    margin-bottom: 0;
   }
 
   .tns-home-journey + .tns-footer {
@@ -433,8 +429,13 @@
   }
 
   .tns-home-journey-header {
-    display: grid;
-    gap: 10px;
+    align-items: flex-start;
+    gap: 12px;
+    padding-inline: 20px;
+  }
+
+  .tns-home-journey-heading {
+    flex: 1 1 auto;
   }
 
   .tns-home-journey-title {
@@ -443,7 +444,24 @@
   }
 
   .tns-home-journey-actions {
-    justify-content: flex-start;
+    flex: 0 0 auto;
+  }
+
+  .tns-home-journey-action {
+    display: grid;
+    width: 32px;
+    min-height: 32px;
+    place-items: center;
+    border-radius: 50%;
+    background: #f2f2f2;
+  }
+
+  .tns-home-journey-action-label {
+    display: none;
+  }
+
+  .tns-home-journey-action svg {
+    margin-left: 0;
   }
 
   .tns-home-journey-navigation {
@@ -451,10 +469,11 @@
   }
 
   .tns-home-journey-track {
-    grid-auto-columns: calc(50% - 6px);
+    grid-auto-columns: clamp(156px, 42vw, 164px);
     margin-top: 14px;
     margin-inline: 0;
-    padding-inline: 24px;
+    padding-inline: 20px;
+    scroll-padding-inline: 20px;
   }
 
   .tns-home-journey-card__media {

@@ -83,13 +83,8 @@ function pixelValue(value: string): number {
   return parsed;
 }
 
-function effectiveCollapsedGap(
-  sectionMarginBottom: string,
-  footerMarginTop: string,
-  trackMarginBottom: string,
-): number {
-  return Math.max(pixelValue(sectionMarginBottom), pixelValue(footerMarginTop))
-    + Math.min(0, pixelValue(trackMarginBottom));
+function containedFooterGap(footerMarginTop: string, trackMarginBottom: string): number {
+  return pixelValue(footerMarginTop) + Math.min(0, pixelValue(trackMarginBottom));
 }
 
 function readCssDeclaration(mediaText: string, selector: string, property: string): string {
@@ -120,21 +115,27 @@ describe("HomepageJourneySection", () => {
     const region = screen.getByRole("region", { name: section.title });
     expect(region).toBeInTheDocument();
     expect(screen.getByText(section.subtitle)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: section.actionLabel })).toHaveAttribute(
+    const sectionAction = screen.getByRole("link", { name: section.actionLabel });
+    expect(sectionAction).toHaveAttribute(
       "href",
       section.actionHref,
     );
+    expect(sectionAction.querySelector("svg")).toBeInTheDocument();
 
     for (const card of section.cards) {
       const article = within(region).getByRole("article", { name: card.title });
       expect(within(article).getByRole("heading", { name: card.title, level: 3 })).toBeInTheDocument();
-      expect(within(article).getByText(card.description)).toBeInTheDocument();
+      expect(within(article).queryByText(card.description)).not.toBeInTheDocument();
       expect(within(article).getByText(card.badge)).toBeInTheDocument();
       expect(within(article).getByRole("link", { name: `Open ${card.title}` })).toHaveAttribute(
         "href",
         card.href,
       );
+      expect(article.querySelectorAll(".tns-home-journey-card__support")).toHaveLength(1);
     }
+
+    expect(within(region).queryByText("Check official deadline")).not.toBeInTheDocument();
+    expect(within(region).queryByText("Reviewed 2026-09-03")).not.toBeInTheDocument();
 
     const images = region.querySelectorAll("img");
     expect(images).toHaveLength(4);
@@ -267,7 +268,27 @@ describe("HomepageJourneySection", () => {
     expect(getComputedStyle(playbookBadge).getPropertyValue("-webkit-line-clamp")).toBe("");
   });
 
-  it("preserves 64px desktop/tablet and 48px mobile footer gaps after margin collapse", () => {
+  it("keeps the mobile carousel inset and its compact card contract", () => {
+    renderSection();
+
+    expect(
+      readCssDeclaration("(max-width: 743px)", ".tns-home-journey-header", "padding-inline"),
+    ).toBe("20px");
+    expect(
+      readCssDeclaration("(max-width: 743px)", ".tns-home-journey-track", "padding-inline"),
+    ).toBe("20px");
+    expect(
+      readCssDeclaration("(max-width: 743px)", ".tns-home-journey-track", "scroll-padding-inline"),
+    ).toBe("20px");
+    expect(
+      readCssDeclaration("(max-width: 743px)", ".tns-home-journey-track", "grid-auto-columns"),
+    ).toBe("clamp(156px, 42vw, 164px)");
+    expect(
+      readCssDeclaration("(max-width: 743px)", ".tns-home-journey-action-label", "display"),
+    ).toBe("none");
+  });
+
+  it("preserves 64px desktop/tablet and 48px mobile footer gaps inside the white wrapper", () => {
     const { container } = render(
       <BrowserRouter>
         <div className="tns-home-journey">
@@ -285,16 +306,18 @@ describe("HomepageJourneySection", () => {
     const footer = container.querySelector<HTMLElement>(".tns-home-journey + .tns-footer");
     const track = container.querySelector<HTMLElement>(".tns-home-journey-track");
 
+    expect(getComputedStyle(finalSection!).marginBottom).toBe("0px");
     expect(
-      effectiveCollapsedGap(
-        getComputedStyle(finalSection!).marginBottom,
+      containedFooterGap(
         getComputedStyle(footer!).marginTop,
         getComputedStyle(track!).marginBottom,
       ),
     ).toBe(64);
     expect(
-      effectiveCollapsedGap(
-        readCssDeclaration("(max-width: 743px)", ".tns-home-journey-section:last-child", "margin-bottom"),
+      readCssDeclaration("(max-width: 743px)", ".tns-home-journey-section:last-child", "margin-bottom"),
+    ).toBe("0px");
+    expect(
+      containedFooterGap(
         readCssDeclaration("(max-width: 743px)", ".tns-home-journey + .tns-footer", "margin-top"),
         getComputedStyle(track!).marginBottom,
       ),

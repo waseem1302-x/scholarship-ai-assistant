@@ -63,13 +63,12 @@ function HomepageJourneyCardView({
       </div>
 
       <div className="tns-home-journey-card__copy">
-        <p className="tns-home-journey-card__eyebrow">{card.eyebrow}</p>
         <h3 id={titleId} className="tns-home-journey-card__title">
           <Link to={card.href}>{card.title}</Link>
         </h3>
         {card.variant === "opportunity" ? (
           <dl
-            className="tns-home-journey-card__metadata"
+            className="tns-home-journey-card__metadata tns-home-journey-card__support"
             aria-label={`${card.title} opportunity details`}
           >
             <div>
@@ -81,17 +80,20 @@ function HomepageJourneyCardView({
               <dd>{card.degreeLevel}</dd>
             </div>
           </dl>
-        ) : null}
-        <p className="tns-home-journey-card__description">{card.description}</p>
-
-        {card.sourceUrl ? (
-          <div className="tns-home-journey-card__source">
-            <a href={card.sourceUrl} target="_blank" rel="noreferrer">
-              {`Official criteria for ${card.eyebrow}`}
+        ) : card.sourceUrl ? (
+          <div className="tns-home-journey-card__source tns-home-journey-card__support">
+            <a
+              href={card.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`Official criteria for ${card.eyebrow}`}
+            >
+              Official criteria
             </a>
-            {card.sourceReviewedAt ? <span>Reviewed {card.sourceReviewedAt}</span> : null}
           </div>
-        ) : null}
+        ) : (
+          <p className="tns-home-journey-card__support">{card.eyebrow}</p>
+        )}
       </div>
     </article>
   );
@@ -147,8 +149,15 @@ export function HomepageJourneySection({
         </div>
 
         <div className="tns-home-journey-actions">
-          <NavLink to={section.actionHref} className="tns-home-journey-action">
-            {section.actionLabel}
+          <NavLink
+            to={section.actionHref}
+            className="tns-home-journey-action"
+            aria-label={section.actionLabel}
+          >
+            <span className="tns-home-journey-action-label">{section.actionLabel}</span>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="m6 3 5 5-5 5" />
+            </svg>
           </NavLink>
           <div
             className="tns-home-journey-navigation"
