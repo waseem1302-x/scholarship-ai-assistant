@@ -466,9 +466,18 @@ docker compose --profile monitoring --profile reminders up -d
 
 Do not treat the seed set as live production data. Before release, re-check each
 official source and resolve any review or data-quality issues before publishing
-the record again. Then schedule the existing source monitor instead of relying
-on ad-hoc manual runs. For a single-host Docker deployment, enable the optional
-monitoring profile:
+the record again. Run the deterministic, read-only catalogue gate against
+staging immediately before release approval:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli.audit_launch_catalogue --minimum-records 12
+```
+
+The command emits machine-readable JSON and exits non-zero when the reviewed
+flagship catalogue does not meet the evidence, freshness, conflict, coverage,
+or minimum-record threshold. Then schedule the existing source monitor instead
+of relying on ad-hoc manual runs. For a single-host Docker deployment, enable
+the optional monitoring profile:
 
 ```bash
 docker compose --profile monitoring up -d source-monitor
