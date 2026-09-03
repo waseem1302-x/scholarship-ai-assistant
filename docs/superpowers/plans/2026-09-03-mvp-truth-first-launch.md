@@ -336,7 +336,7 @@ git commit -m "fix: keep public scholarship claims evidence-bound"
 - Produces: `loadHomepageOpportunityRows(signal?: AbortSignal) -> Promise<HomepageOpportunityRows>`.
 - Produces five V1 sections: verified opportunities, open/upcoming opportunities, destination/study paths, profile matching, and application planning.
 
-- [ ] **Step 1: Write failing homepage data tests**
+- [x] **Step 1: Write failing homepage data tests**
 
 ```ts
 it("builds scholarship rows from public catalogue responses", async () => {
@@ -351,13 +351,13 @@ it("builds scholarship rows from public catalogue responses", async () => {
 });
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `cd frontend && pnpm exec vitest run src/features/home/HomePage.test.tsx src/features/home/homepageJourneyContent.test.ts`
 
 Expected: FAIL because homepage opportunity loading does not exist.
 
-- [ ] **Step 3: Add the V1 homepage loader**
+- [x] **Step 3: Add the V1 homepage loader**
 
 Use existing public calls:
 
@@ -379,7 +379,7 @@ await Promise.all([
 
 Map returned records to direct `/catalogue/{id}` links. Use existing local destination artwork by country; imagery remains decorative and never becomes evidence.
 
-- [ ] **Step 4: Replace unavailable capability promises**
+- [x] **Step 4: Replace unavailable capability promises**
 
 Use these five rows:
 
@@ -391,11 +391,11 @@ Use these five rows:
 
 Rows 1–3 use catalogue data. Rows 4–5 use truthful workflow cards for `/profile`, `/matches`, `/catalogue`, `/applications`, and `/dashboard`. Remove homepage links to `/assistant`, `/document-lab`, and `/community` for V1.
 
-- [ ] **Step 5: Add loading, empty, and API-failure behavior**
+- [x] **Step 5: Add loading, empty, and API-failure behavior**
 
 Render skeletons while loading. If a dynamic row is empty, omit that row rather than showing fictional scholarships. If the API fails, retain the workflow rows and show one non-blocking catalogue availability message.
 
-- [ ] **Step 6: Run frontend tests and build**
+- [x] **Step 6: Run frontend tests and build**
 
 Run: `cd frontend && pnpm test -- --run`
 
@@ -403,7 +403,7 @@ Run: `cd frontend && pnpm build`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add frontend/src/features/home
