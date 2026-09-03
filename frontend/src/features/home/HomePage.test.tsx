@@ -1,10 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ScholarshipSearch } from "../../components/ScholarshipSearch";
+import { apiClient } from "../../api/client";
+import type { OpportunitySearchResponse, OpportunitySummary } from "../catalogue/types";
 import { initialSearch, type ActivePopover, type HomeSearchState } from "../catalogue/searchOptions";
 
 const authState = vi.hoisted(() => ({
@@ -17,6 +19,53 @@ vi.mock("../../auth/AuthProvider", () => ({
 }));
 
 import { HomePage } from "./HomePage";
+
+function opportunity(id: string, overrides: Partial<OpportunitySummary> = {}): OpportunitySummary {
+  return {
+    id,
+    name: `Scholarship ${id}`,
+    provider_name: `Provider ${id}`,
+    university_name: null,
+    country: "Germany",
+    degree_level: "masters",
+    degree_levels: ["masters"],
+    application_deadline: null,
+    application_opening_date: null,
+    application_timezone: "UTC",
+    effective_cycle_id: null,
+    funding_type: "partial",
+    funding_classification: "partial",
+    funding_summary: "Published funding details are available in the catalogue.",
+    verification_status: "officially_verified",
+    last_verified_at: "2026-09-01T00:00:00Z",
+    official_source_url: `https://example.edu/${id}`,
+    application_window_state: "upcoming",
+    source_is_fresh: true,
+    verification_freshness: "recent",
+    funding_display_label: "Partial funding",
+    catalogue_decision_tier: "decision_ready",
+    structured_eligibility_complete: true,
+    ...overrides,
+  };
+}
+
+function response(items: OpportunitySummary[]): OpportunitySearchResponse {
+  return {
+    items,
+    pagination: {
+      total: items.length,
+      limit: 10,
+      offset: 0,
+      count: items.length,
+      has_next: false,
+      has_previous: false,
+    },
+  };
+}
+
+const populatedResponse = response([
+  opportunity("verified", { application_window_state: "open" }),
+]);
 
 function ScholarshipSearchHarness() {
   const [search, setSearch] = useState<HomeSearchState>(initialSearch);
@@ -54,9 +103,13 @@ describe("HomePage - The Next Scholar", () => {
   beforeEach(() => {
     authState.user = null;
     authState.isRestoring = false;
+    vi.spyOn(apiClient, "request").mockResolvedValue(populatedResponse);
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
 
   it("presents profile-based scholarship matching as the primary hero journey", () => {
     const { container } = render(
@@ -74,7 +127,7 @@ describe("HomePage - The Next Scholar", () => {
     ).toBeInTheDocument();
     expect(within(hero).getByRole("link", { name: /find my matches/i })).toHaveAttribute("href", "/profile");
     expect(within(hero).getByRole("link", { name: /find my matches/i })).toHaveClass("tns-hero-cta--primary");
-    expect(within(hero).getByRole("link", { name: /explore scholarships/i })).toHaveAttribute("href", "/scholarships");
+    expect(within(hero).getByRole("link", { name: /explore scholarships/i })).toHaveAttribute("href", "/catalogue");
     expect(within(hero).getByText("Profile once")).toBeInTheDocument();
     expect(within(hero).getByText("Verified criteria")).toBeInTheDocument();
     expect(within(hero).getByText("Clear reasons")).toBeInTheDocument();
@@ -93,91 +146,43 @@ describe("HomePage - The Next Scholar", () => {
     expect(within(hero).queryByText("More aligned opportunities")).not.toBeInTheDocument();
   });
 
-  it("renders the five-stage scholarship journey for visitors", () => {
+  it("renders the five truthful V1 sections from catalogue data and enabled workflows", async () => {
     const { container } = render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
     );
 
-    const expectedSections = [
-      {
-        title: "Funded paths to your next chapter",
-        subtitle: "Explore credible scholarships worth a closer look.",
-        actionLabel: "Explore scholarships",
-        actionHref: "/catalogue",
-      },
-      {
-        title: "Scholarships with a realistic path",
-        subtitle: "Compare routes by funding, degree, and profile fit.",
-        actionLabel: "Check your eligibility",
-        actionHref: "/profile",
-      },
-      {
-        title: "Scholarship winning playbooks",
-        subtitle: "See what major scholarships assess before you apply.",
-        actionLabel: "Explore playbooks",
-        actionHref: "/assistant",
-      },
-      {
-        title: "Build what selectors score",
-        subtitle: "Build stronger essays, evidence, documents, and interviews.",
-        actionLabel: "Start preparing",
-        actionHref: "/assistant",
-      },
-      {
-        title: "Start from where you are",
-        subtitle: "Go directly to the tool for your next step.",
-        actionLabel: "Build your plan",
-        actionHref: "/profile",
-      },
-    ];
+    await screen.findByRole("region", { name: "Verified scholarships worth exploring" });
     const journey = container.querySelector<HTMLElement>(".tns-home-journey");
-
     expect(journey).not.toBeNull();
     if (!journey) throw new Error("Expected the scholarship journey");
 
     const sections = within(journey).getAllByRole("region");
-
     expect(getComputedStyle(journey).backgroundColor).toBe("rgb(255, 255, 255)");
-
-    expect(sections).toHaveLength(expectedSections.length);
-
-    sections.forEach((section, index) => {
-      const expected = expectedSections[index];
-      const action = section.querySelector<HTMLAnchorElement>(".tns-home-journey-action");
-
-      expect(within(section).getByRole("heading", { name: expected.title })).toBeInTheDocument();
-      expect(within(section).getByText(expected.subtitle)).toBeInTheDocument();
-      expect(action?.textContent).toBe(expected.actionLabel);
-      expect(action).toHaveAttribute("href", expected.actionHref);
-      expect(within(section).getAllByRole("article")).toHaveLength(8);
-    });
-
-    const playbooks = within(journey).getByRole("region", {
-      name: "Scholarship winning playbooks",
-    });
-    const officialSource = within(playbooks).getAllByRole("link", { name: /official criteria/i })[0];
-
-    expect(officialSource).toHaveAttribute("href", expect.stringMatching(/^https:\/\//));
-    expectJourneyToAvoidUnsupportedClaims(journey);
-    expect(screen.queryByText("AI POWERED")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "How it works" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Browse by destination")).not.toBeInTheDocument();
-
-    const favorites = within(journey).getAllByRole("button", { name: /^Save / });
-    expect(favorites).toHaveLength(8);
-    favorites.forEach((favorite) => expect(favorite).toHaveAttribute("aria-pressed", "false"));
-
-    const favorite = within(journey).getByRole("button", { name: "Save DAAD EPOS" });
-    fireEvent.click(favorite);
-    expect(within(journey).getByRole("button", { name: "Remove DAAD EPOS from saved" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
+    expect(sections.map((section) => within(section).getByRole("heading", { level: 2 }).textContent)).toEqual([
+      "Verified scholarships worth exploring",
+      "Applications open now",
+      "Explore funded study paths",
+      "Check which opportunities fit you",
+      "Save and build your application plan",
+    ]);
+    expect(within(sections[0]).getByRole("link", { name: "Open Scholarship verified" })).toHaveAttribute(
+      "href",
+      "/catalogue/verified",
     );
+    const cardHeadingIds = Array.from(journey.querySelectorAll("article h3"), (heading) => heading.id);
+    expect(new Set(cardHeadingIds).size).toBe(cardHeadingIds.length);
+    expect(container.querySelectorAll('a[href^="/assistant"], a[href^="/document-lab"], a[href^="/community"]')).toHaveLength(0);
+    expectJourneyToAvoidUnsupportedClaims(journey);
+    const favorite = within(journey).getAllByRole("button", { name: "Save Scholarship verified" })[0];
+    fireEvent.click(favorite);
+    within(journey)
+      .getAllByRole("button", { name: "Remove Scholarship verified from saved" })
+      .forEach((button) => expect(button).toHaveAttribute("aria-pressed", "true"));
   });
 
-  it("renders the five-stage scholarship journey for signed-in students", () => {
+  it("keeps the same evidence-backed section titles for signed-in students", async () => {
     authState.user = {
       email: "student@thenextscholar.com",
       role: "student",
@@ -189,62 +194,21 @@ describe("HomePage - The Next Scholar", () => {
       </BrowserRouter>,
     );
 
-    const expectedSections = [
-      {
-        title: "Continue exploring funded opportunities",
-        subtitle: "Return to credible scholarships worth a closer look.",
-        actionLabel: "View your matches",
-        actionHref: "/matches",
-      },
-      {
-        title: "Turn your profile into better decisions",
-        subtitle: "Use your profile to compare realistic routes.",
-        actionLabel: "Inspect your matches",
-        actionHref: "/matches",
-      },
-      {
-        title: "Prepare for the scholarships you are targeting",
-        subtitle: "Prepare around the criteria your scholarships assess.",
-        actionLabel: "Open AI coach",
-        actionHref: "/assistant",
-      },
-      {
-        title: "Strengthen your application evidence",
-        subtitle: "Improve the evidence behind your applications.",
-        actionLabel: "Open document lab",
-        actionHref: "/document-lab",
-      },
-      {
-        title: "Your next best move",
-        subtitle: "Continue from the tool that moves you forward.",
-        actionLabel: "Open workspace",
-        actionHref: "/dashboard",
-      },
-    ];
+    await screen.findByRole("region", { name: "Verified scholarships worth exploring" });
     const journey = container.querySelector<HTMLElement>(".tns-home-journey");
-
     expect(journey).not.toBeNull();
     if (!journey) throw new Error("Expected the scholarship journey");
 
     const sections = within(journey).getAllByRole("region");
-
-    expect(sections).toHaveLength(expectedSections.length);
-
-    sections.forEach((section, index) => {
-      const expected = expectedSections[index];
-      const action = section.querySelector<HTMLAnchorElement>(".tns-home-journey-action");
-
-      expect(within(section).getByRole("heading", { name: expected.title })).toBeInTheDocument();
-      expect(within(section).getByText(expected.subtitle)).toBeInTheDocument();
-      expect(action?.textContent).toBe(expected.actionLabel);
-      expect(action).toHaveAttribute("href", expected.actionHref);
-      expect(within(section).getAllByRole("article")).toHaveLength(8);
-    });
-
+    expect(sections.map((section) => within(section).getByRole("heading", { level: 2 }).textContent)).toEqual([
+      "Verified scholarships worth exploring",
+      "Applications open now",
+      "Explore funded study paths",
+      "Check which opportunities fit you",
+      "Save and build your application plan",
+    ]);
     expectJourneyToAvoidUnsupportedClaims(journey);
-    const favorites = within(journey).getAllByRole("button", { name: /^Save / });
-    expect(favorites).toHaveLength(8);
-    favorites.forEach((favorite) => expect(favorite).toHaveAttribute("aria-pressed", "false"));
+    expect(container.querySelectorAll('a[href^="/assistant"], a[href^="/document-lab"], a[href^="/community"]')).toHaveLength(0);
   });
 
   it("shows neutral copy while auth restores and then renders the resolved member journey", () => {
@@ -256,8 +220,7 @@ describe("HomePage - The Next Scholar", () => {
     );
 
     expect(screen.getByText("Restoring your scholarship journey...")).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Funded paths to your next chapter" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Continue exploring funded opportunities" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Verified scholarships worth exploring" })).not.toBeInTheDocument();
 
     authState.isRestoring = false;
     authState.user = { email: "student@thenextscholar.com", role: "student" };
@@ -268,8 +231,56 @@ describe("HomePage - The Next Scholar", () => {
     );
 
     expect(screen.queryByText("Restoring your scholarship journey...")).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Continue exploring funded opportunities" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Funded paths to your next chapter" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Verified scholarships worth exploring" })).toBeInTheDocument();
+  });
+
+  it("renders catalogue skeletons while the three public rows load", () => {
+    vi.mocked(apiClient.request).mockImplementation(() => new Promise(() => undefined));
+
+    const { container } = render(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    expect(container.querySelectorAll(".tns-home-journey-card--skeleton")).toHaveLength(9);
+    expect(screen.getAllByLabelText("Loading scholarship opportunities")).toHaveLength(3);
+    expect(screen.getByRole("region", { name: "Check which opportunities fit you" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Save and build your application plan" })).toBeInTheDocument();
+  });
+
+  it("omits empty catalogue rows but keeps both workflow rows", async () => {
+    vi.mocked(apiClient.request).mockResolvedValue(response([]));
+
+    render(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    await waitFor(() => expect(screen.queryAllByLabelText("Loading scholarship opportunities")).toHaveLength(0));
+    expect(screen.queryByRole("region", { name: "Verified scholarships worth exploring" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Applications open now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Explore funded study paths" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Check which opportunities fit you" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Save and build your application plan" })).toBeInTheDocument();
+  });
+
+  it("shows one non-blocking availability message when catalogue loading fails", async () => {
+    vi.mocked(apiClient.request).mockRejectedValue(new Error("offline"));
+
+    render(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    expect(await screen.findByRole("status", { name: "Catalogue availability" })).toHaveTextContent(
+      "Scholarship catalogue is temporarily unavailable",
+    );
+    expect(screen.getAllByRole("status", { name: "Catalogue availability" })).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Check which opportunities fit you" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Save and build your application plan" })).toBeInTheDocument();
   });
 
   it.each([

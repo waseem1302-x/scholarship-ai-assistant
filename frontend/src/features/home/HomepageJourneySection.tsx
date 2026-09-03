@@ -11,6 +11,7 @@ interface HomepageJourneySectionProps {
   section: HomepageJourneySectionContent;
   savedFavorites: Set<string>;
   onToggleFavorite: (id: string) => void;
+  isLoading?: boolean;
 }
 
 interface HomepageJourneyCardViewProps {
@@ -103,6 +104,7 @@ export function HomepageJourneySection({
   section,
   savedFavorites,
   onToggleFavorite,
+  isLoading = false,
 }: HomepageJourneySectionProps) {
   const titleId = `${section.id}-title`;
   const trackId = `${section.id}-track`;
@@ -139,7 +141,11 @@ export function HomepageJourneySection({
   }
 
   return (
-    <section className="tns-home-journey-section" aria-labelledby={titleId}>
+    <section
+      className="tns-home-journey-section"
+      aria-labelledby={titleId}
+      aria-busy={isLoading}
+    >
       <header className="tns-home-journey-header">
         <div className="tns-home-journey-heading">
           <h2 id={titleId} className="tns-home-journey-title">
@@ -194,9 +200,24 @@ export function HomepageJourneySection({
         ref={trackRef}
         id={trackId}
         className="tns-home-journey-track"
-        aria-label={`${section.title} cards`}
+        aria-label={isLoading ? "Loading scholarship opportunities" : `${section.title} cards`}
       >
-        {section.cards.map((card) => (
+        {isLoading
+          ? Array.from({ length: 3 }, (_, index) => (
+            <li key={`${section.id}-skeleton-${index}`} className="tns-home-journey-item">
+              <article
+                className="tns-home-journey-card tns-home-journey-card--skeleton"
+                aria-hidden="true"
+              >
+                <div className="tns-home-journey-card__media scholarship-skeleton-block" />
+                <div className="tns-home-journey-card__copy">
+                  <div className="scholarship-skeleton-line" style={{ width: "85%", height: 20 }} />
+                  <div className="scholarship-skeleton-line" style={{ width: "55%", height: 16 }} />
+                </div>
+              </article>
+            </li>
+          ))
+          : section.cards.map((card) => (
           <li key={card.id} className="tns-home-journey-item">
             <HomepageJourneyCardView
               card={card}
@@ -204,7 +225,7 @@ export function HomepageJourneySection({
               onToggleFavorite={onToggleFavorite}
             />
           </li>
-        ))}
+          ))}
       </ul>
     </section>
   );

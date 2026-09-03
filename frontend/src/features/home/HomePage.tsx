@@ -2,15 +2,30 @@ import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
+import { useServerQuery } from "../../hooks/useServerQuery";
+import { loadHomepageOpportunityRows, type HomepageOpportunityRows } from "./homepageJourney";
 import { getHomepageJourneySections } from "./homepageJourneyContent";
 import { HomepageJourneySection } from "./HomepageJourneySection";
 
 const erasmusHeroImage = new URL("../../assets/hero/erasmus-campus-highres.jpg", import.meta.url).href;
+const emptyOpportunityRows: HomepageOpportunityRows = { verified: [], open: [], funded: [] };
 
 export function HomePage() {
   const { user, isRestoring } = useAuth();
   const [savedFavorites, setSavedFavorites] = useState<Set<string>>(() => new Set());
-  const journeySections = getHomepageJourneySections(Boolean(user));
+  const {
+    data: opportunityRows,
+    error: catalogueError,
+    isLoading: isCatalogueLoading,
+  } = useServerQuery(
+    "homepage-opportunity-rows",
+    loadHomepageOpportunityRows,
+    !isRestoring,
+  );
+  const journeySections = getHomepageJourneySections(
+    opportunityRows ?? emptyOpportunityRows,
+    isCatalogueLoading,
+  );
 
   function toggleFavorite(id: string) {
     setSavedFavorites((prev) => {
@@ -93,7 +108,7 @@ export function HomePage() {
                 <span>Find My Matches</span>
                 <span aria-hidden="true">→</span>
               </NavLink>
-              <NavLink to="/scholarships" className="tns-hero-cta tns-hero-cta--secondary">
+              <NavLink to="/catalogue" className="tns-hero-cta tns-hero-cta--secondary">
                 <span>Explore Scholarships</span>
                 <span aria-hidden="true">→</span>
               </NavLink>
@@ -160,7 +175,7 @@ export function HomePage() {
                     <li><span aria-hidden="true">✓</span>Open to your nationality</li>
                   </ul>
                 </div>
-                <NavLink to="/scholarships" className="tns-fit-link">
+                <NavLink to="/catalogue" className="tns-fit-link">
                   <span>View match details</span><span aria-hidden="true">→</span>
                 </NavLink>
               </div>
@@ -171,12 +186,23 @@ export function HomePage() {
       </section>
 
       <div className="tns-home-journey" aria-label="Your scholarship journey">
+        {catalogueError ? (
+          <p
+            className="catalogue-message"
+            role="status"
+            aria-label="Catalogue availability"
+          >
+            Scholarship catalogue is temporarily unavailable. You can still use the profile and
+            application planning tools below.
+          </p>
+        ) : null}
         {journeySections.map((section) => (
           <HomepageJourneySection
             key={section.id}
             section={section}
             savedFavorites={savedFavorites}
             onToggleFavorite={toggleFavorite}
+            isLoading={isCatalogueLoading && section.isCatalogueRow}
           />
         ))}
       </div>
@@ -228,8 +254,8 @@ export function HomePage() {
               <h4 className="tns-footer-heading">For Students</h4>
               <ul className="tns-footer-list">
                 <li><NavLink to="/#how-it-works">How it Works</NavLink></li>
-                <li><NavLink to="/assistant">Application Tips</NavLink></li>
-                <li><NavLink to="/matches">Success Stories</NavLink></li>
+                <li><NavLink to="/profile">Profile Checklist</NavLink></li>
+                <li><NavLink to="/matches">Review Matches</NavLink></li>
                 <li><NavLink to="/applications">Scholarship Tracker</NavLink></li>
               </ul>
             </div>
