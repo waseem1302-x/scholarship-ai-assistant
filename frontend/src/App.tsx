@@ -32,10 +32,10 @@ function safeAuthReturnTo(search: string): string {
   try {
     const base = new URL("https://thenextscholar.local");
     const destination = new URL(candidate, base);
-    const isAuthRoute = destination.pathname === "/auth"
-      || destination.pathname === "/login"
-      || destination.pathname === "/register"
-      || destination.pathname.startsWith("/auth/");
+    const normalizedPathname = destination.pathname.toLowerCase().replace(/\/+$/, "") || "/";
+    const isAuthRoute = ["/auth", "/login", "/register"].some(
+      (route) => normalizedPathname === route || normalizedPathname.startsWith(`${route}/`),
+    );
 
     if (destination.origin !== base.origin || isAuthRoute) return defaultAuthReturnTo;
     return `${destination.pathname}${destination.search}${destination.hash}`;

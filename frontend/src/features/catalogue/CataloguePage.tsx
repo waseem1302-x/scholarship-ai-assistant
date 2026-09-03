@@ -579,22 +579,6 @@ export function CataloguePage() {
   const items = useMemo(() => {
     let list = [...(results?.items ?? [])];
 
-    // Refine homepage and catalogue keyword routes against user-visible opportunity data.
-    if (filters.q) {
-      const q = filters.q.trim().toLowerCase();
-      list = list.filter((item) => {
-        const searchableText = [
-          item.name,
-          item.provider_name,
-          item.university_name,
-          item.funding_summary,
-          item.country,
-          readableValue(item.degree_level),
-        ].filter(Boolean).join(" ").toLowerCase();
-        return searchableText.includes(q);
-      });
-    }
-
     // Provider type filter
     if (selectedProviderTypes.length > 0) {
       list = list.filter((item) => {
@@ -656,10 +640,10 @@ export function CataloguePage() {
     }
 
     return list;
-  }, [results?.items, filters.q, selectedProviderTypes, selectedEligibilities, selectedDeadlineRanges, sortBy]);
+  }, [results?.items, selectedProviderTypes, selectedEligibilities, selectedDeadlineRanges, sortBy]);
 
   // Clean and accurate display count
-  const displayCount = results ? (selectedProviderTypes.length > 0 || selectedEligibilities.length > 0 || selectedDeadlineRanges.length > 0 || filters.q ? items.length : totalCount) : 0;
+  const displayCount = results ? (selectedProviderTypes.length > 0 || selectedEligibilities.length > 0 || selectedDeadlineRanges.length > 0 ? items.length : totalCount) : 0;
 
   return (
     <main className="scholarship-page-wrapper">

@@ -23,6 +23,9 @@ vi.mock("./features/catalogue/OpportunityDetailPage", () => ({
 vi.mock("./features/assistant/AssistantPage", () => ({
   AssistantPage: () => <main>Assistant workspace</main>,
 }));
+vi.mock("./features/document-lab/DocumentLabPage", () => ({
+  DocumentLabPage: () => <main>Document lab workspace</main>,
+}));
 vi.mock("./features/workspace/CommandCentrePage", () => ({
   CommandCentrePage: ({ initialLifecycle }: { initialLifecycle?: string }) => (
     <main>{initialLifecycle === "saved" ? "Saved scholarships view" : "Applications view"}</main>
@@ -120,5 +123,30 @@ describe("MVP navigation routes", () => {
 
     await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
     expect(window.location.hostname).toBe("localhost");
+  });
+
+  it.each([
+    "/auth/",
+    "/AUTH",
+    "/AuTh///",
+    "/login/",
+    "/LOGIN",
+    "/register/",
+    "/REGISTER",
+    "/AUTH/Password-Reset/",
+  ])("rejects the normalized auth-loop return destination %s", async (returnTo) => {
+    renderRoute(`/auth?returnTo=${encodeURIComponent(returnTo)}`, student);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
+  });
+
+  it("preserves a valid internal return query and hash", async () => {
+    const returnTo = "/document-lab?kind=cv&source=homepage#upload";
+    renderRoute(`/auth?returnTo=${encodeURIComponent(returnTo)}`, student);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/document-lab"));
+    expect(window.location.search).toBe("?kind=cv&source=homepage");
+    expect(window.location.hash).toBe("#upload");
+    expect(await screen.findByText("Document lab workspace")).toBeInTheDocument();
   });
 });

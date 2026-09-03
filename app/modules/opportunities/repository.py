@@ -812,6 +812,7 @@ class OpportunityRepository:
     def list_public_opportunities(
         self,
         *,
+        q: str | None = None,
         country: str | None = None,
         degree_level: DegreeLevel | None = None,
         funding_type: FundingType | None = None,
@@ -830,6 +831,7 @@ class OpportunityRepository:
         offset: int = 0,
     ) -> list[Opportunity]:
         statement = self._public_opportunities_statement(
+            q=q,
             country=country,
             degree_level=degree_level,
             funding_type=funding_type,
@@ -855,6 +857,7 @@ class OpportunityRepository:
     def count_public_opportunities(
         self,
         *,
+        q: str | None = None,
         country: str | None = None,
         degree_level: DegreeLevel | None = None,
         funding_type: FundingType | None = None,
@@ -871,6 +874,7 @@ class OpportunityRepository:
         application_window_state: ApplicationWindowState | None = None,
     ) -> int:
         statement = self._public_opportunities_statement(
+            q=q,
             country=country,
             degree_level=degree_level,
             funding_type=funding_type,
@@ -891,6 +895,7 @@ class OpportunityRepository:
     def _public_opportunities_statement(
         self,
         *,
+        q: str | None = None,
         country: str | None = None,
         degree_level: DegreeLevel | None = None,
         funding_type: FundingType | None = None,
@@ -935,6 +940,19 @@ class OpportunityRepository:
                 selectinload(Opportunity.eligibility_rules),
             )
         )
+        if q is not None:
+            statement = statement.where(
+                or_(
+                    self._contains_case_insensitive(Opportunity.name, q),
+                    self._contains_case_insensitive(Opportunity.country, q),
+                    self._contains_case_insensitive(Opportunity.field_eligibility, q),
+                    self._contains_case_insensitive(Opportunity.nationality_eligibility, q),
+                    self._contains_case_insensitive(Opportunity.funding_policy, q),
+                    self._contains_case_insensitive(Opportunity.notes, q),
+                    Opportunity.provider.has(self._contains_case_insensitive(Provider.name, q)),
+                    Opportunity.university.has(self._contains_case_insensitive(University.name, q)),
+                )
+            )
         if country is not None:
             statement = statement.where(func.lower(Opportunity.country) == country.lower())
         if degree_level is not None:

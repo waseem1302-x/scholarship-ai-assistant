@@ -805,7 +805,7 @@ class OpportunityService:
         )
 
     def list_public_opportunities(
-        self, *, limit: int, offset: int, **filters: object
+        self, *, limit: int, offset: int, q: str | None = None, **filters: object
     ) -> OpportunitySearchResponse:
         open_now = bool(filters.pop("open_now", False))
         application_window_state = filters.pop("application_window_state", None)
@@ -825,6 +825,7 @@ class OpportunityService:
             )
 
         opportunities = self.repository.list_public_opportunities(
+            q=q,
             **filters,
             open_now=open_now,
             application_window_state=application_window_state,
@@ -832,6 +833,7 @@ class OpportunityService:
             offset=offset,
         )
         total = self.repository.count_public_opportunities(
+            q=q,
             **filters,
             open_now=open_now,
             application_window_state=application_window_state,

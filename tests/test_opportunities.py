@@ -537,6 +537,84 @@ def test_public_search_returns_pagination_metadata(client: TestClient, db_sessio
     }
 
 
+def test_public_keyword_search_filters_before_pagination_and_count(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    opportunities = []
+    for index in range(10):
+        opportunities.append(
+            create_opportunity(
+                client,
+                headers,
+                name=f"A{index:02d} General Scholarship",
+                provider_name="Independent Foundation",
+                source={
+                    **opportunity_payload()["source"],
+                    "url": f"https://example.edu/general-{index}",
+                    "title": f"General scholarship source {index}",
+                },
+            )
+        )
+    opportunities.extend(
+        [
+            create_opportunity(
+                client,
+                headers,
+                name="Y Government Leadership Scholarship",
+                provider_name="Public Service Foundation",
+                source={
+                    **opportunity_payload()["source"],
+                    "url": "https://example.edu/government-leadership",
+                    "title": "Government leadership source",
+                },
+            ),
+            create_opportunity(
+                client,
+                headers,
+                name="Z Public Service Scholarship",
+                provider_name="Government Research Council",
+                source={
+                    **opportunity_payload()["source"],
+                    "url": "https://example.edu/public-service",
+                    "title": "Public service source",
+                },
+            ),
+        ]
+    )
+    for opportunity in opportunities:
+        publish_opportunity(client, headers, opportunity)
+
+    unfiltered = client.get("/api/v1/opportunities?limit=10")
+    first_page = client.get("/api/v1/opportunities?q=government&limit=1")
+    second_page = client.get("/api/v1/opportunities?q=government&limit=1&offset=1")
+
+    assert unfiltered.status_code == 200
+    assert all("Government" not in item["name"] for item in response_items(unfiltered))
+    assert [item["name"] for item in response_items(first_page)] == [
+        "Y Government Leadership Scholarship"
+    ]
+    assert response_pagination(first_page) == {
+        "total": 2,
+        "limit": 1,
+        "offset": 0,
+        "count": 1,
+        "has_next": True,
+        "has_previous": False,
+    }
+    assert [item["name"] for item in response_items(second_page)] == [
+        "Z Public Service Scholarship"
+    ]
+    assert response_pagination(second_page) == {
+        "total": 2,
+        "limit": 1,
+        "offset": 1,
+        "count": 1,
+        "has_next": False,
+        "has_previous": True,
+    }
+
+
 def test_public_search_supports_advanced_structured_filters(
     client: TestClient, db_session: Session
 ) -> None:

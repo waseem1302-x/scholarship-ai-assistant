@@ -318,6 +318,7 @@ def update_verification(
 )
 def search_opportunities(
     service: Annotated[OpportunityService, Depends(get_opportunity_service)],
+    q: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     country: Annotated[str | None, Query(min_length=2, max_length=100)] = None,
     degree_level: DegreeLevel | None = None,
     funding_type: FundingType | None = None,
@@ -336,6 +337,7 @@ def search_opportunities(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> OpportunitySearchResponse:
     return service.list_public_opportunities(
+        q=q,
         country=country,
         degree_level=degree_level,
         funding_type=funding_type,

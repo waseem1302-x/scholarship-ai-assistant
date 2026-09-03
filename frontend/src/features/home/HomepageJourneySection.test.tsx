@@ -263,6 +263,8 @@ describe("HomepageJourneySection", () => {
     expect(getComputedStyle(opportunityBadge).whiteSpace).toBe("normal");
     expect(getComputedStyle(opportunityBadge).maxWidth).toBe("calc(100% - 68px)");
     expect(getComputedStyle(playbookBadge).maxWidth).toBe("calc(100% - 24px)");
+    expect(getComputedStyle(playbookBadge).overflow).toBe("visible");
+    expect(getComputedStyle(playbookBadge).getPropertyValue("-webkit-line-clamp")).toBe("");
   });
 
   it("preserves 64px desktop/tablet and 48px mobile footer gaps after margin collapse", () => {

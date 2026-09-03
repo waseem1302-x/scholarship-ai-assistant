@@ -198,9 +198,9 @@
   z-index: 1;
   top: 12px;
   left: 12px;
-  display: -webkit-box;
+  display: block;
   max-width: calc(100% - 24px);
-  overflow: hidden;
+  overflow: visible;
   padding: 6px 10px;
   border-radius: 14px;
   background: rgb(255 255 255 / 84%);
@@ -210,9 +210,8 @@
   font-weight: 650;
   line-height: 14px;
   white-space: normal;
+  overflow-wrap: anywhere;
   backdrop-filter: blur(8px);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .tns-home-journey-card__media--has-favorite .tns-home-journey-card__badge {

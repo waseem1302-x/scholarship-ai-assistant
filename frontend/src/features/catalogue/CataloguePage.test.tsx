@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpportunitySearchResponse, OpportunitySummary } from "./types";
 
 const queryState = vi.hoisted(() => ({
-  results: null as OpportunitySearchResponse | null,
+  resultsByQuery: {} as Record<string, OpportunitySearchResponse>,
 }));
 
 vi.mock("../../auth/AuthProvider", () => ({
@@ -14,12 +14,15 @@ vi.mock("../../auth/AuthProvider", () => ({
 }));
 
 vi.mock("../../hooks/useServerQuery", () => ({
-  useServerQuery: (_key: string, _loader: unknown, enabled = true) => ({
-    data: enabled ? queryState.results : undefined,
-    error: null,
-    isLoading: false,
-    reload: vi.fn(),
-  }),
+  useServerQuery: (key: string, _loader: unknown, enabled = true) => {
+    const q = new URLSearchParams(key).get("q") ?? "";
+    return {
+      data: enabled ? queryState.resultsByQuery[q] : undefined,
+      error: null,
+      isLoading: false,
+      reload: vi.fn(),
+    };
+  },
 }));
 
 import { CataloguePage } from "./CataloguePage";
@@ -77,17 +80,25 @@ const catalogueItems = [
   opportunity("decoy", "Independent Research Award", "Example Foundation", "Research support."),
 ];
 
-function renderCatalogue(q: string) {
-  queryState.results = {
-    items: catalogueItems,
+function response(items: OpportunitySummary[], total = items.length): OpportunitySearchResponse {
+  return {
+    items,
     pagination: {
-      total: catalogueItems.length,
+      total,
       limit: 10,
       offset: 0,
-      count: catalogueItems.length,
-      has_next: false,
+      count: items.length,
+      has_next: total > items.length,
       has_previous: false,
     },
+  };
+}
+
+function renderCatalogue(q: string) {
+  queryState.resultsByQuery = {
+    development: response([catalogueItems[0]]),
+    government: response([catalogueItems[1]]),
+    "joint masters": response([catalogueItems[2]]),
   };
   window.history.pushState({}, "", `/catalogue?q=${encodeURIComponent(q)}`);
   return render(
@@ -99,7 +110,7 @@ function renderCatalogue(q: string) {
 
 afterEach(() => {
   cleanup();
-  queryState.results = null;
+  queryState.resultsByQuery = {};
   window.history.pushState({}, "", "/");
 });
 
@@ -127,5 +138,25 @@ describe("CataloguePage homepage keyword routes", () => {
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("q")).toBe("government"));
     expect(screen.getByRole("heading", { name: "Australia Awards" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Development Leadership Scholarship" })).not.toBeInTheDocument();
+  });
+
+  it("uses the server-filtered page and total without filtering only the current page again", () => {
+    const backendMatch = opportunity(
+      "backend-match",
+      "Public Service Scholarship",
+      "Leadership Council",
+      "Fully funded graduate study.",
+    );
+    queryState.resultsByQuery = { government: response([backendMatch], 12) };
+    window.history.pushState({}, "", "/catalogue?q=government");
+
+    render(
+      <BrowserRouter>
+        <CataloguePage />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Public Service Scholarship" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "12 scholarships found" })).toBeInTheDocument();
   });
 });
