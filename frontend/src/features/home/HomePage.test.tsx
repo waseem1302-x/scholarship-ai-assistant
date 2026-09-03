@@ -74,60 +74,119 @@ describe("HomePage - The Next Scholar", () => {
     expect(within(hero).queryByText("More aligned opportunities")).not.toBeInTheDocument();
   });
 
-  it("replaces the former below-hero panels with five configurable scholarship carousels", () => {
+  it("renders the five-stage scholarship journey for visitors", () => {
     const { container } = render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
     );
 
-    const sectionNames = [
-      "Recommended for You",
-      "Based on Your Profile",
-      "High Match Scholarships",
-      "Recently Added Scholarships",
-      "Deadline Approaching",
+    const expectedSections = [
+      {
+        title: "Funded paths to your next chapter",
+        subtitle: "Start with credible opportunities for international students—not another endless directory.",
+      },
+      {
+        title: "Scholarships with a realistic path",
+        subtitle: "Compare funding, degree level, deadline, and eligibility before investing weeks in an application.",
+      },
+      {
+        title: "Scholarship winning playbooks",
+        subtitle: "Understand what major scholarships evaluate—and how to prepare evidence before you apply.",
+      },
+      {
+        title: "Build what selectors score",
+        subtitle: "Strengthen the essays, evidence, documents, and interview answers behind a serious application.",
+      },
+      {
+        title: "Start from where you are",
+        subtitle: "Choose your current stage and go directly to the tool that moves your application forward.",
+      },
     ];
-    const sections = container.querySelectorAll<HTMLElement>(".tns-opportunity-carousel");
+    const journey = container.querySelector<HTMLElement>(".tns-home-journey");
 
-    expect(sections).toHaveLength(sectionNames.length);
+    expect(journey).not.toBeNull();
+    if (!journey) throw new Error("Expected the scholarship journey");
+
+    const sections = within(journey).getAllByRole("region");
+
+    expect(sections).toHaveLength(expectedSections.length);
 
     sections.forEach((section, index) => {
-      const name = sectionNames[index];
-      expect(within(section).getByRole("heading", { name })).toBeInTheDocument();
-      expect(section.querySelectorAll("article")).toHaveLength(8);
-      expect(section.querySelector(".tns-opportunity-carousel__see-all")).toHaveAttribute(
-        "href",
-        "/catalogue",
-      );
-      expect(section.querySelector(".tns-opportunity-carousel__see-all")).toHaveAttribute(
-        "aria-label",
-        `See all ${name}`,
-      );
+      const expected = expectedSections[index];
+      expect(within(section).getByRole("heading", { name: expected.title })).toBeInTheDocument();
+      expect(within(section).getByText(expected.subtitle)).toBeInTheDocument();
+      expect(within(section).getAllByRole("article")).toHaveLength(8);
     });
 
-    expect(screen.getAllByText("Check eligibility")).toHaveLength(25);
-    expect(screen.queryByText("90% match")).not.toBeInTheDocument();
+    const playbooks = within(journey).getByRole("region", {
+      name: "Scholarship winning playbooks",
+    });
+    const officialSource = within(playbooks).getAllByRole("link", { name: /official criteria/i })[0];
+
+    expect(officialSource).toHaveAttribute("href", expect.stringMatching(/^https:\/\//));
+    expect(journey).not.toHaveTextContent(/\d+% match/i);
     expect(screen.queryByText("AI POWERED")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "How it works" })).not.toBeInTheDocument();
     expect(screen.queryByText("Browse by destination")).not.toBeInTheDocument();
+
+    const favorite = within(journey).getByRole("button", { name: "Remove DAAD EPOS from saved" });
+    fireEvent.click(favorite);
+    expect(within(journey).getByRole("button", { name: "Save DAAD EPOS" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
-  it("shows personalized match badges after login", () => {
+  it("renders the five-stage scholarship journey for signed-in students", () => {
     authState.user = {
       email: "student@thenextscholar.com",
       role: "student",
     };
 
-    render(
+    const { container } = render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
     );
 
-    expect(screen.getAllByText("Full match")).toHaveLength(5);
-    expect(screen.getAllByText("90% match")).toHaveLength(10);
-    expect(screen.queryByText("Check eligibility")).not.toBeInTheDocument();
+    const expectedSections = [
+      {
+        title: "Continue exploring funded opportunities",
+        subtitle: "Open an opportunity, inspect its criteria, and decide whether it belongs in your plan.",
+      },
+      {
+        title: "Turn your profile into better decisions",
+        subtitle: "Use explainable matching to separate confirmed alignment from missing or uncertain information.",
+      },
+      {
+        title: "Prepare for the scholarships you are targeting",
+        subtitle: "Turn selection criteria into focused questions, evidence, and application tasks.",
+      },
+      {
+        title: "Strengthen your application evidence",
+        subtitle: "Continue with the highest-impact part of your application instead of guessing what to do next.",
+      },
+      {
+        title: "Your next best move",
+        subtitle: "Resume your profile, matches, documents, or applications from one clear starting point.",
+      },
+    ];
+    const journey = container.querySelector<HTMLElement>(".tns-home-journey");
+
+    expect(journey).not.toBeNull();
+    if (!journey) throw new Error("Expected the scholarship journey");
+
+    const sections = within(journey).getAllByRole("region");
+
+    expect(sections).toHaveLength(expectedSections.length);
+
+    sections.forEach((section, index) => {
+      const expected = expectedSections[index];
+      expect(within(section).getByRole("heading", { name: expected.title })).toBeInTheDocument();
+      expect(within(section).getByText(expected.subtitle)).toBeInTheDocument();
+      expect(within(section).getAllByRole("article")).toHaveLength(8);
+    });
   });
 
   it("exposes the desktop scholarship search as a search landmark", () => {

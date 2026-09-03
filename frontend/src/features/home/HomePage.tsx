@@ -2,134 +2,15 @@ import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
-import { ScholarshipCarousel, type ScholarshipCarouselItem } from "./ScholarshipCarousel";
+import { getHomepageJourneySections } from "./homepageJourneyContent";
+import { HomepageJourneySection } from "./HomepageJourneySection";
 
 const erasmusHeroImage = new URL("../../assets/hero/erasmus-campus-highres.jpg", import.meta.url).href;
-/* ------------------------------------------------------------------ */
-/*  Featured Scholarships Data                                        */
-/* ------------------------------------------------------------------ */
-
-const featuredScholarshipsData: ScholarshipCarouselItem[] = [
-  {
-    id: "daad-epos",
-    name: "DAAD Development-Related Postgraduate Courses",
-    country: "Germany",
-    flag: "🇩🇪",
-    degreeLevel: "Master's, PhD",
-    deadline: "31 Oct 2026",
-    badge: "Full match",
-    guestBadge: "Check eligibility",
-    href: "/catalogue?country=Germany",
-    imageUrl: erasmusHeroImage,
-    imagePosition: "18% center",
-  },
-  {
-    id: "fulbright-foreign",
-    name: "Fulbright Foreign Student Program",
-    country: "United States",
-    flag: "🇺🇸",
-    degreeLevel: "Master's, PhD",
-    deadline: "15 Oct 2026",
-    badge: "90% match",
-    guestBadge: "Check eligibility",
-    href: "/catalogue?country=United%20States",
-    imageUrl: erasmusHeroImage,
-    imagePosition: "32% center",
-  },
-  {
-    id: "chevening-uk",
-    name: "Chevening Scholarships 2025/26",
-    country: "United Kingdom",
-    flag: "🇬🇧",
-    degreeLevel: "Master's",
-    deadline: "06 Nov 2026",
-    badge: "90% match",
-    guestBadge: "Check eligibility",
-    href: "/catalogue?country=United%20Kingdom",
-    imageUrl: erasmusHeroImage,
-    imagePosition: "45% center",
-  },
-  {
-    id: "vanier-canada",
-    name: "Vanier Canada Graduate Scholarships",
-    country: "Canada",
-    flag: "🇨🇦",
-    degreeLevel: "PhD",
-    deadline: "05 Nov 2026",
-    badge: "88% match",
-    guestBadge: "Check eligibility",
-    href: "/catalogue?country=Canada",
-    imageUrl: erasmusHeroImage,
-    imagePosition: "58% center",
-  },
-  {
-    id: "australia-awards",
-    name: "Australia Awards Scholarships",
-    country: "Australia",
-    flag: "🇦🇺",
-    degreeLevel: "Master's, PhD",
-    deadline: "30 Apr 2027",
-    badge: "86% match",
-    guestBadge: "Check eligibility",
-    href: "/catalogue?country=Australia",
-    imageUrl: erasmusHeroImage,
-    imagePosition: "72% center",
-  },
-  {
-    id: "erasmus-mundus",
-    name: "Erasmus Mundus Joint Masters",
-    country: "Europe",
-    flag: "🇪🇺",
-    degreeLevel: "Master's",
-    deadline: "12 Jan 2027",
-    badge: "Fully funded",
-    href: "/catalogue?funding_type=full",
-    imageUrl: erasmusHeroImage,
-    imagePosition: "82% center",
-  },
-  {
-    id: "mext-japan",
-    name: "MEXT Research Scholarship",
-    country: "Japan",
-    flag: "🇯🇵",
-    degreeLevel: "Master's, PhD",
-    deadline: "20 May 2027",
-    badge: "Verified",
-    href: "/catalogue?country=Japan",
-    imageUrl: erasmusHeroImage,
-    imagePosition: "66% center",
-  },
-  {
-    id: "commonwealth-masters",
-    name: "Commonwealth Master's Scholarships",
-    country: "United Kingdom",
-    flag: "🇬🇧",
-    degreeLevel: "Master's",
-    deadline: "14 Oct 2026",
-    badge: "Fully funded",
-    href: "/catalogue?country=United%20Kingdom",
-    imageUrl: erasmusHeroImage,
-    imagePosition: "8% center",
-  },
-];
-
-const scholarshipCarouselSections = [
-  { id: "recommended", title: "Recommended for You" },
-  { id: "profile", title: "Based on Your Profile" },
-  { id: "high-match", title: "High Match Scholarships" },
-  { id: "recent", title: "Recently Added Scholarships" },
-  { id: "deadline", title: "Deadline Approaching" },
-] as const;
 
 export function HomePage() {
   const { user } = useAuth();
   const [savedFavorites, setSavedFavorites] = useState<Set<string>>(new Set(["daad-epos"]));
-  const carouselItems = user
-    ? featuredScholarshipsData
-    : featuredScholarshipsData.map((item) => ({
-        ...item,
-        badge: item.guestBadge ?? item.badge,
-      }));
+  const journeySections = getHomepageJourneySections(Boolean(user));
 
   function toggleFavorite(id: string) {
     setSavedFavorites((prev) => {
@@ -281,13 +162,11 @@ export function HomePage() {
         </div>
       </section>
 
-      <div className="tns-opportunity-carousels" aria-label="Scholarship collections">
-        {scholarshipCarouselSections.map((section) => (
-          <ScholarshipCarousel
+      <div className="tns-home-journey" aria-label="Your scholarship journey">
+        {journeySections.map((section) => (
+          <HomepageJourneySection
             key={section.id}
-            id={section.id}
-            title={section.title}
-            items={carouselItems}
+            section={section}
             savedFavorites={savedFavorites}
             onToggleFavorite={toggleFavorite}
           />
