@@ -74,37 +74,46 @@ describe("HomePage - The Next Scholar", () => {
     expect(within(hero).queryByText("More aligned opportunities")).not.toBeInTheDocument();
   });
 
-  it("renders the AI-powered matching banner with circular gauges", () => {
-    render(
+  it("replaces the former below-hero panels with five configurable scholarship carousels", () => {
+    const { container } = render(
       <BrowserRouter>
         <HomePage />
       </BrowserRouter>,
     );
 
-    expect(screen.getByText("AI POWERED")).toBeInTheDocument();
-    expect(screen.getByText(/Not sure which scholarships you qualify for\?/i)).toBeInTheDocument();
-    expect(screen.getByText("87%")).toBeInTheDocument();
-    expect(screen.getByText("94%")).toBeInTheDocument();
-    expect(screen.getByText("72%")).toBeInTheDocument();
+    const sectionNames = [
+      "Recommended for You",
+      "Based on Your Profile",
+      "High Match Scholarships",
+      "Recently Added Scholarships",
+      "Deadline Approaching",
+    ];
+    const sections = container.querySelectorAll<HTMLElement>(".tns-opportunity-carousel");
+
+    expect(sections).toHaveLength(sectionNames.length);
+
+    sections.forEach((section, index) => {
+      const name = sectionNames[index];
+      expect(within(section).getByRole("heading", { name })).toBeInTheDocument();
+      expect(section.querySelectorAll("article")).toHaveLength(8);
+      expect(section.querySelector(".tns-opportunity-carousel__see-all")).toHaveAttribute(
+        "href",
+        "/catalogue",
+      );
+      expect(section.querySelector(".tns-opportunity-carousel__see-all")).toHaveAttribute(
+        "aria-label",
+        `See all ${name}`,
+      );
+    });
+
+    expect(screen.getAllByText("Check eligibility")).toHaveLength(25);
+    expect(screen.queryByText("90% match")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI POWERED")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "How it works" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Browse by destination")).not.toBeInTheDocument();
   });
 
-  it("renders featured scholarships without personalized match scores before login", () => {
-    render(
-      <BrowserRouter>
-        <HomePage />
-      </BrowserRouter>,
-    );
-
-    expect(screen.getByText("Featured scholarships")).toBeInTheDocument();
-    expect(screen.getByText("DAAD Development-Related Postgraduate Courses")).toBeInTheDocument();
-    expect(screen.getByText("Fulbright Foreign Student Program")).toBeInTheDocument();
-    expect(screen.getByText("Chevening Scholarships 2025/26")).toBeInTheDocument();
-    expect(screen.queryByText("Full Match")).not.toBeInTheDocument();
-    expect(screen.queryByText("90% Match")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Check eligibility")).toHaveLength(5);
-  });
-
-  it("renders personalized featured match scores after login", () => {
+  it("shows personalized match badges after login", () => {
     authState.user = {
       email: "student@thenextscholar.com",
       role: "student",
@@ -116,56 +125,9 @@ describe("HomePage - The Next Scholar", () => {
       </BrowserRouter>,
     );
 
-    expect(screen.getByText("Full Match")).toBeInTheDocument();
-    expect(screen.getAllByText("90% Match")).toHaveLength(2);
-  });
-
-  it("renders destination cards with landmark silhouettes", () => {
-    render(
-      <BrowserRouter>
-        <HomePage />
-      </BrowserRouter>,
-    );
-
-    const destinationSection = screen.getByText("Browse by destination").closest("section");
-
-    expect(destinationSection).toBeInTheDocument();
-    expect(within(destinationSection as HTMLElement).getByText("Germany")).toBeInTheDocument();
-    expect(within(destinationSection as HTMLElement).getByText("UK")).toBeInTheDocument();
-    expect(within(destinationSection as HTMLElement).getByText("US")).toBeInTheDocument();
-    expect(within(destinationSection as HTMLElement).getByText("Canada")).toBeInTheDocument();
-    expect(within(destinationSection as HTMLElement).getByText("Australia")).toBeInTheDocument();
-  });
-
-  it("renders How It Works 4-step workflow", () => {
-    render(
-      <BrowserRouter>
-        <HomePage />
-      </BrowserRouter>,
-    );
-
-    expect(screen.getByRole("heading", { name: "How it works" })).toBeInTheDocument();
-    expect(screen.getByText("Discover")).toBeInTheDocument();
-    expect(screen.getByText("Save")).toBeInTheDocument();
-    expect(screen.getByText("Track")).toBeInTheDocument();
-    expect(screen.getByText("Prepare")).toBeInTheDocument();
-    expect(document.querySelector(".tns-step-number-badge")).not.toBeInTheDocument();
-  });
-
-  it("renders Trust bar metrics", () => {
-    const { container } = render(
-      <BrowserRouter>
-        <HomePage />
-      </BrowserRouter>,
-    );
-
-    const trustBar = container.querySelector(".tns-trust-bar-section");
-
-    expect(trustBar).toBeInTheDocument();
-    expect(within(trustBar as HTMLElement).getByText("500+")).toBeInTheDocument();
-    expect(within(trustBar as HTMLElement).getByText("120+")).toBeInTheDocument();
-    expect(within(trustBar as HTMLElement).getByText("Bachelor • Master • PhD")).toBeInTheDocument();
-    expect(within(trustBar as HTMLElement).getByText("Fully Funded")).toBeInTheDocument();
+    expect(screen.getAllByText("Full match")).toHaveLength(5);
+    expect(screen.getAllByText("90% match")).toHaveLength(10);
+    expect(screen.queryByText("Check eligibility")).not.toBeInTheDocument();
   });
 
   it("exposes the desktop scholarship search as a search landmark", () => {
