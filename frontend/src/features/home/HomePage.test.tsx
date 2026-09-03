@@ -9,10 +9,11 @@ import { initialSearch, type ActivePopover, type HomeSearchState } from "../cata
 
 const authState = vi.hoisted(() => ({
   user: null as { email: string; role: string } | null,
+  isRestoring: false,
 }));
 
 vi.mock("../../auth/AuthProvider", () => ({
-  useAuth: () => ({ user: authState.user, isRestoring: false }),
+  useAuth: () => ({ user: authState.user, isRestoring: authState.isRestoring }),
 }));
 
 import { HomePage } from "./HomePage";
@@ -61,6 +62,7 @@ function expectJourneyToAvoidUnsupportedClaims(journey: HTMLElement) {
 describe("HomePage - The Next Scholar", () => {
   beforeEach(() => {
     authState.user = null;
+    authState.isRestoring = false;
   });
 
   afterEach(cleanup);
@@ -170,11 +172,15 @@ describe("HomePage - The Next Scholar", () => {
     expect(screen.queryByRole("heading", { name: "How it works" })).not.toBeInTheDocument();
     expect(screen.queryByText("Browse by destination")).not.toBeInTheDocument();
 
-    const favorite = within(journey).getByRole("button", { name: "Remove DAAD EPOS from saved" });
+    const favorites = within(journey).getAllByRole("button", { name: /^Save / });
+    expect(favorites).toHaveLength(8);
+    favorites.forEach((favorite) => expect(favorite).toHaveAttribute("aria-pressed", "false"));
+
+    const favorite = within(journey).getByRole("button", { name: "Save DAAD EPOS" });
     fireEvent.click(favorite);
-    expect(within(journey).getByRole("button", { name: "Save DAAD EPOS" })).toHaveAttribute(
+    expect(within(journey).getByRole("button", { name: "Remove DAAD EPOS from saved" })).toHaveAttribute(
       "aria-pressed",
-      "false",
+      "true",
     );
   });
 
@@ -243,6 +249,34 @@ describe("HomePage - The Next Scholar", () => {
     });
 
     expectJourneyToAvoidUnsupportedClaims(journey);
+    const favorites = within(journey).getAllByRole("button", { name: /^Save / });
+    expect(favorites).toHaveLength(8);
+    favorites.forEach((favorite) => expect(favorite).toHaveAttribute("aria-pressed", "false"));
+  });
+
+  it("shows neutral copy while auth restores and then renders the resolved member journey", () => {
+    authState.isRestoring = true;
+    const { rerender } = render(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    expect(screen.getByText("Restoring your scholarship journey...")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Funded paths to your next chapter" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Continue exploring funded opportunities" })).not.toBeInTheDocument();
+
+    authState.isRestoring = false;
+    authState.user = { email: "student@thenextscholar.com", role: "student" };
+    rerender(
+      <BrowserRouter>
+        <HomePage />
+      </BrowserRouter>,
+    );
+
+    expect(screen.queryByText("Restoring your scholarship journey...")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Continue exploring funded opportunities" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Funded paths to your next chapter" })).not.toBeInTheDocument();
   });
 
   it.each([

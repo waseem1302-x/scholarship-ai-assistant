@@ -20,6 +20,9 @@ vi.mock("./features/catalogue/CataloguePage", () => ({
 vi.mock("./features/catalogue/OpportunityDetailPage", () => ({
   OpportunityDetailPage: () => <main>Scholarship detail</main>,
 }));
+vi.mock("./features/assistant/AssistantPage", () => ({
+  AssistantPage: () => <main>Assistant workspace</main>,
+}));
 vi.mock("./features/workspace/CommandCentrePage", () => ({
   CommandCentrePage: ({ initialLifecycle }: { initialLifecycle?: string }) => (
     <main>{initialLifecycle === "saved" ? "Saved scholarships view" : "Applications view"}</main>
@@ -27,6 +30,11 @@ vi.mock("./features/workspace/CommandCentrePage", () => ({
 }));
 
 import { App } from "./App";
+
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  value: vi.fn(),
+});
 
 const student = {
   id: "student-1",
@@ -75,5 +83,42 @@ describe("MVP navigation routes", () => {
       expect(window.location.pathname).toBe("/");
       expect(window.location.hash).toBe("#how-it-works");
     });
+  });
+
+  it("returns a visitor to the scoped assistant prompt after authentication", async () => {
+    const prompt = "Help me prepare my leadership evidence & examples";
+    const view = renderRoute(`/assistant?prompt=${encodeURIComponent(prompt)}`);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/auth"));
+    expect(new URLSearchParams(window.location.search).get("returnTo")).toBe(
+      `/assistant?prompt=${encodeURIComponent(prompt)}`,
+    );
+
+    auth.useAuth.mockReturnValue({ user: student, isRestoring: false, sessionError: null, signOut: vi.fn() });
+    view.rerender(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/assistant"));
+    expect(new URLSearchParams(window.location.search).get("prompt")).toBe(prompt);
+    expect(await screen.findByText("Assistant workspace")).toBeInTheDocument();
+  });
+
+  it.each(["/profile?step=evidence", "/document-lab?kind=cv"])(
+    "preserves the protected internal destination %s at authentication",
+    async (destination) => {
+      renderRoute(destination);
+
+      await waitFor(() => expect(window.location.pathname).toBe("/auth"));
+      expect(new URLSearchParams(window.location.search).get("returnTo")).toBe(destination);
+    },
+  );
+
+  it.each([
+    "https://attacker.example/steal",
+    "//attacker.example/steal",
+  ])("rejects an external auth return destination %s", async (returnTo) => {
+    renderRoute(`/auth?returnTo=${encodeURIComponent(returnTo)}`, student);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/dashboard"));
+    expect(window.location.hostname).toBe("localhost");
   });
 });

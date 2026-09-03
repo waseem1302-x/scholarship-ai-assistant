@@ -8,8 +8,8 @@ import { HomepageJourneySection } from "./HomepageJourneySection";
 const erasmusHeroImage = new URL("../../assets/hero/erasmus-campus-highres.jpg", import.meta.url).href;
 
 export function HomePage() {
-  const { user } = useAuth();
-  const [savedFavorites, setSavedFavorites] = useState<Set<string>>(new Set(["daad-epos"]));
+  const { user, isRestoring } = useAuth();
+  const [savedFavorites, setSavedFavorites] = useState<Set<string>>(() => new Set());
   const journeySections = getHomepageJourneySections(Boolean(user));
 
   function toggleFavorite(id: string) {
@@ -22,6 +22,14 @@ export function HomePage() {
       }
       return next;
     });
+  }
+
+  if (isRestoring) {
+    return (
+      <main className="page-width loading-page" aria-live="polite">
+        Restoring your scholarship journey...
+      </main>
+    );
   }
 
   return (

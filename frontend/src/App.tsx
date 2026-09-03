@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
@@ -22,6 +22,41 @@ const ApplicationDetailPage = lazy(() => import("./features/workspace/Applicatio
 const AssistantPage = lazy(() => import("./features/assistant/AssistantPage").then((m) => ({ default: m.AssistantPage })));
 const DocumentLabPage = lazy(() => import("./features/document-lab/DocumentLabPage").then((m) => ({ default: m.DocumentLabPage })));
 const CommunityPage = lazy(() => import("./features/community/CommunityPage").then((m) => ({ default: m.CommunityPage })));
+
+const defaultAuthReturnTo = "/dashboard";
+
+function safeAuthReturnTo(search: string): string {
+  const candidate = new URLSearchParams(search).get("returnTo");
+  if (!candidate?.startsWith("/")) return defaultAuthReturnTo;
+
+  try {
+    const base = new URL("https://thenextscholar.local");
+    const destination = new URL(candidate, base);
+    const isAuthRoute = destination.pathname === "/auth"
+      || destination.pathname === "/login"
+      || destination.pathname === "/register"
+      || destination.pathname.startsWith("/auth/");
+
+    if (destination.origin !== base.origin || isAuthRoute) return defaultAuthReturnTo;
+    return `${destination.pathname}${destination.search}${destination.hash}`;
+  } catch {
+    return defaultAuthReturnTo;
+  }
+}
+
+function ProtectedRoute({ children }: { children: ReactNode }) {
+  const { user, isRestoring } = useAuth();
+  const location = useLocation();
+
+  if (isRestoring) {
+    return <main className="page-width loading-page" aria-live="polite">Restoring your secure session...</main>;
+  }
+  if (!user) {
+    const returnTo = `${location.pathname}${location.search}${location.hash}`;
+    return <Navigate replace to={`/auth?${new URLSearchParams({ returnTo })}`} />;
+  }
+  return children;
+}
 
 export function Topbar() {
   const { user, isRestoring, signOut } = useAuth();
@@ -379,8 +414,9 @@ export function Topbar() {
 
 function AuthPage() {
   const { user, isRestoring } = useAuth();
+  const location = useLocation();
   if (!isRestoring && user) {
-    return <Navigate replace to="/dashboard" />;
+    return <Navigate replace to={safeAuthReturnTo(location.search)} />;
   }
   return (
     <main className="auth-layout page-width">
@@ -516,14 +552,14 @@ function AppRoutes() {
             <Route path="/catalogue" element={<CataloguePage />} />
             <Route path="/catalogue/:opportunityId" element={<OpportunityDetailPage />} />
             <Route path="/how-it-works" element={<Navigate replace to="/#how-it-works" />} />
-            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
             <Route path="/matches" element={<MatchesRoute />} />
             <Route path="/tracker" element={<Navigate replace to="/applications" />} />
             <Route path="/applications" element={<CommandCentrePage />} />
             <Route path="/saved" element={<CommandCentrePage initialLifecycle="saved" />} />
             <Route path="/applications/:applicationId" element={<ApplicationDetailPage />} />
-            <Route path="/assistant" element={<AssistantPage />} />
-            <Route path="/document-lab" element={<DocumentLabPage />} />
+            <Route path="/assistant" element={<ProtectedRoute><AssistantPage /></ProtectedRoute>} />
+            <Route path="/document-lab" element={<ProtectedRoute><DocumentLabPage /></ProtectedRoute>} />
             <Route path="/community" element={<CommunityPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/admin/security" element={<AdminSecurityPage />} />

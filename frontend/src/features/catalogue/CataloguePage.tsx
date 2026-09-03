@@ -452,7 +452,7 @@ export function CataloguePage() {
 
   // Local state for top search bar
   const [searchInput, setSearchInput] = useState({
-    field: filters.field,
+    q: filters.q,
     country: filters.country,
     degree_level: filters.degree_level,
     funding_type: filters.funding_type,
@@ -460,7 +460,7 @@ export function CataloguePage() {
 
   useEffect(() => {
     setSearchInput({
-      field: filters.field,
+      q: filters.q,
       country: filters.country,
       degree_level: filters.degree_level,
       funding_type: filters.funding_type,
@@ -544,9 +544,9 @@ export function CataloguePage() {
     updateSearch(
       {
         ...filters,
+        q: searchInput.q.trim(),
         country: searchInput.country.trim(),
         degree_level: searchInput.degree_level,
-        field: searchInput.field.trim(),
         funding_type: searchInput.funding_type,
       },
       0
@@ -579,15 +579,19 @@ export function CataloguePage() {
   const items = useMemo(() => {
     let list = [...(results?.items ?? [])];
 
-    // Client-side text keyword search refinement if user typed a keyword that matches name/provider
-    if (filters.field) {
-      const q = filters.field.toLowerCase();
+    // Refine homepage and catalogue keyword routes against user-visible opportunity data.
+    if (filters.q) {
+      const q = filters.q.trim().toLowerCase();
       list = list.filter((item) => {
-        const name = (item.name || "").toLowerCase();
-        const provider = (item.provider_name || "").toLowerCase();
-        const uni = (item.university_name || "").toLowerCase();
-        const summary = (item.funding_summary || "").toLowerCase();
-        return name.includes(q) || provider.includes(q) || uni.includes(q) || summary.includes(q);
+        const searchableText = [
+          item.name,
+          item.provider_name,
+          item.university_name,
+          item.funding_summary,
+          item.country,
+          readableValue(item.degree_level),
+        ].filter(Boolean).join(" ").toLowerCase();
+        return searchableText.includes(q);
       });
     }
 
@@ -652,10 +656,10 @@ export function CataloguePage() {
     }
 
     return list;
-  }, [results?.items, filters.field, selectedProviderTypes, selectedEligibilities, selectedDeadlineRanges, sortBy]);
+  }, [results?.items, filters.q, selectedProviderTypes, selectedEligibilities, selectedDeadlineRanges, sortBy]);
 
   // Clean and accurate display count
-  const displayCount = results ? (selectedProviderTypes.length > 0 || selectedEligibilities.length > 0 || selectedDeadlineRanges.length > 0 || filters.field ? items.length : totalCount) : 0;
+  const displayCount = results ? (selectedProviderTypes.length > 0 || selectedEligibilities.length > 0 || selectedDeadlineRanges.length > 0 || filters.q ? items.length : totalCount) : 0;
 
   return (
     <main className="scholarship-page-wrapper">
@@ -703,8 +707,8 @@ export function CataloguePage() {
               <input
                 type="text"
                 placeholder="Search scholarships, universities or keywords..."
-                value={searchInput.field}
-                onChange={(e) => setSearchInput((s) => ({ ...s, field: e.target.value }))}
+                value={searchInput.q}
+                onChange={(e) => setSearchInput((s) => ({ ...s, q: e.target.value }))}
                 className="scholarship-search-bar__input"
                 aria-label="Search query"
               />

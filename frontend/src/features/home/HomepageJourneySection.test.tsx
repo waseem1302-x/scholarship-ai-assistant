@@ -25,6 +25,8 @@ const section: HomepageJourneySectionContent = {
       imageUrl: "/daad.jpg",
       imagePosition: "center 35%",
       favoriteId: "daad-epos",
+      country: "Germany",
+      degreeLevel: "Postgraduate",
     },
     {
       id: "chevening-playbook",
@@ -144,6 +146,11 @@ describe("HomepageJourneySection", () => {
     expect(images[0]).toHaveAttribute("src", "/daad.jpg");
     expect(images[0]).toHaveStyle({ objectPosition: "center 35%" });
 
+    const opportunity = within(region).getByRole("article", { name: "DAAD EPOS" });
+    const metadata = within(opportunity).getByLabelText("DAAD EPOS opportunity details");
+    expect(within(metadata).getByText("Germany")).toBeVisible();
+    expect(within(metadata).getByText("Postgraduate")).toBeVisible();
+
     const favorite = screen.getByRole("button", { name: "Save DAAD EPOS" });
     expect(favorite).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(favorite);
@@ -189,8 +196,15 @@ describe("HomepageJourneySection", () => {
 
     const region = screen.getByRole("region", { name: section.title });
     const track = within(region).getByRole("list", { name: `${section.title} cards` });
-    const previous = within(region).getByRole("button", { name: "Previous" });
-    const next = within(region).getByRole("button", { name: "Next" });
+    const navigation = within(region).getByRole("group", {
+      name: `${section.title} carousel navigation`,
+    });
+    const previous = within(navigation).getByRole("button", {
+      name: `Previous cards in ${section.title}`,
+    });
+    const next = within(navigation).getByRole("button", {
+      name: `Next cards in ${section.title}`,
+    });
     const scrollBy = vi.fn(({ left }: ScrollToOptions) => {
       track.scrollLeft += left ?? 0;
       fireEvent.scroll(track);
@@ -219,7 +233,9 @@ describe("HomepageJourneySection", () => {
 
     const region = screen.getByRole("region", { name: section.title });
     const track = within(region).getByRole("list", { name: `${section.title} cards` });
-    const previous = within(region).getByRole("button", { name: "Previous" });
+    const previous = within(region).getByRole("button", {
+      name: `Previous cards in ${section.title}`,
+    });
 
     track.style.paddingInlineStart = "4px";
     Object.defineProperties(track, {
@@ -230,6 +246,23 @@ describe("HomepageJourneySection", () => {
     fireEvent.scroll(track);
 
     expect(previous).toBeDisabled();
+  });
+
+  it("allows two-line badges and reserves favorite space only when needed", () => {
+    renderSection();
+
+    const opportunity = screen.getByRole("article", { name: "DAAD EPOS" });
+    const playbook = screen.getByRole("article", { name: "Chevening leadership evidence" });
+    const opportunityMedia = opportunity.querySelector(".tns-home-journey-card__media");
+    const playbookMedia = playbook.querySelector(".tns-home-journey-card__media");
+    const opportunityBadge = within(opportunity).getByText("Fully funded");
+    const playbookBadge = within(playbook).getByText("Published criteria");
+
+    expect(opportunityMedia).toHaveClass("tns-home-journey-card__media--has-favorite");
+    expect(playbookMedia).not.toHaveClass("tns-home-journey-card__media--has-favorite");
+    expect(getComputedStyle(opportunityBadge).whiteSpace).toBe("normal");
+    expect(getComputedStyle(opportunityBadge).maxWidth).toBe("calc(100% - 68px)");
+    expect(getComputedStyle(playbookBadge).maxWidth).toBe("calc(100% - 24px)");
   });
 
   it("preserves 64px desktop/tablet and 48px mobile footer gaps after margin collapse", () => {

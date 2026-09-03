@@ -22,6 +22,7 @@ describe("catalogue query contract", () => {
   it("keeps open-now enabled and includes only selected structured filters", () => {
     const params = catalogueSearch(
       {
+        q: "",
         availability: "open",
         country: "Malaysia",
         degree_level: "masters",
@@ -50,6 +51,7 @@ describe("catalogue query contract", () => {
 
   it("normalizes invalid URL values to all verified by default", () => {
     expect(filtersFromSearch(new URLSearchParams("country=UK&limit=100&degree_level=unsupported"))).toEqual({
+      q: "",
       availability: "all",
       country: "UK",
       degree_level: "",
@@ -59,6 +61,16 @@ describe("catalogue query contract", () => {
       limit: "10",
     });
   });
+
+  it.each(["development", "government", "joint masters"])(
+    "round-trips the homepage keyword query %s through the catalogue contract",
+    (q) => {
+      const filters = filtersFromSearch(new URLSearchParams(`q=${encodeURIComponent(q)}`));
+
+      expect(filters.q).toBe(q);
+      expect(catalogueSearch(filters).get("q")).toBe(q);
+    },
+  );
 
   it("presents unknown and close deadlines without declaring an opportunity open", () => {
     expect(deadlineLabel(null)).toBe("Deadline varies");

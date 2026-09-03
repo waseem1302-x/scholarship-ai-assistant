@@ -14,6 +14,7 @@ export function filtersFromSearch(search: URLSearchParams): CatalogueFilters {
   const degreeLevel = search.get("degree_level");
   const fundingType = search.get("funding_type");
   return {
+    q: search.get("q") ?? defaultCatalogueFilters.q,
     availability:
       availability === "open" || availability === "upcoming" || availability === "all"
         ? availability

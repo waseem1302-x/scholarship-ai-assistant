@@ -30,6 +30,29 @@ describe("homepage journey content", () => {
     expect(playbooks.every((card) => card.sourceReviewedAt === "2026-09-03")).toBe(true);
   });
 
+  it("defines country and degree metadata for all eight funded opportunities", () => {
+    const opportunities = getHomepageJourneySections(false)[0].cards;
+
+    expect(opportunities.map((card) => {
+      if (card.variant !== "opportunity") throw new Error(`${card.title} must be an opportunity card`);
+      return { title: card.title, country: card.country, degreeLevel: card.degreeLevel };
+    })).toEqual([
+      { title: "DAAD EPOS", country: "Germany", degreeLevel: "Postgraduate" },
+      { title: "Fulbright Foreign Student Program", country: "United States", degreeLevel: "Graduate" },
+      { title: "Chevening Scholarships", country: "United Kingdom", degreeLevel: "Master's" },
+      { title: "Vanier Canada Graduate Scholarships", country: "Canada", degreeLevel: "Doctoral" },
+      { title: "Australia Awards", country: "Partner countries", degreeLevel: "Multiple levels" },
+      { title: "Erasmus Mundus Joint Masters", country: "Multiple European countries", degreeLevel: "Master's" },
+      { title: "MEXT Research Scholarship", country: "Japan", degreeLevel: "Graduate research" },
+      { title: "Commonwealth Master's Scholarships", country: "United Kingdom", degreeLevel: "Master's" },
+    ]);
+
+    const allOpportunityCards = getHomepageJourneySections(false)
+      .flatMap((section) => section.cards)
+      .filter((card) => card.variant === "opportunity");
+    expect(allOpportunityCards.every((card) => card.country.length > 0 && card.degreeLevel.length > 0)).toBe(true);
+  });
+
   it("uses the current official Cambridge source for Gates Cambridge criteria", () => {
     const playbooks = getHomepageJourneySections(false)[2].cards;
     const gatesCambridge = playbooks.find((card) => card.id === "gates-cambridge-playbook");

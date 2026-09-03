@@ -31,7 +31,7 @@ function HomepageJourneyCardView({
       className={`tns-home-journey-card tns-home-journey-card--${card.variant}`}
       aria-labelledby={titleId}
     >
-      <div className="tns-home-journey-card__media">
+      <div className={`tns-home-journey-card__media${card.favoriteId ? " tns-home-journey-card__media--has-favorite" : ""}`}>
         <Link
           to={card.href}
           className="tns-home-journey-card__image-link"
@@ -67,6 +67,21 @@ function HomepageJourneyCardView({
         <h3 id={titleId} className="tns-home-journey-card__title">
           <Link to={card.href}>{card.title}</Link>
         </h3>
+        {card.variant === "opportunity" ? (
+          <dl
+            className="tns-home-journey-card__metadata"
+            aria-label={`${card.title} opportunity details`}
+          >
+            <div>
+              <dt className="sr-only">Country</dt>
+              <dd>{card.country}</dd>
+            </div>
+            <div>
+              <dt className="sr-only">Degree level</dt>
+              <dd>{card.degreeLevel}</dd>
+            </div>
+          </dl>
+        ) : null}
         <p className="tns-home-journey-card__description">{card.description}</p>
 
         {card.sourceUrl ? (
@@ -137,11 +152,12 @@ export function HomepageJourneySection({
           </NavLink>
           <div
             className="tns-home-journey-navigation"
+            role="group"
             aria-label={`${section.title} carousel navigation`}
           >
             <button
               type="button"
-              aria-label="Previous"
+              aria-label={`Previous cards in ${section.title}`}
               aria-controls={trackId}
               disabled={!canScrollPrevious}
               onClick={() => scrollPage(-1)}
@@ -152,7 +168,7 @@ export function HomepageJourneySection({
             </button>
             <button
               type="button"
-              aria-label="Next"
+              aria-label={`Next cards in ${section.title}`}
               aria-controls={trackId}
               disabled={!canScrollNext}
               onClick={() => scrollPage(1)}

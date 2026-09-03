@@ -24,9 +24,8 @@ export type HomepageJourneyCardVariant =
   | "preparation"
   | "next-action";
 
-export interface HomepageJourneyCard {
+interface HomepageJourneyCardBase {
   id: string;
-  variant: HomepageJourneyCardVariant;
   eyebrow: string;
   title: string;
   description: string;
@@ -38,6 +37,22 @@ export interface HomepageJourneyCard {
   sourceUrl?: string;
   sourceReviewedAt?: string;
 }
+
+export interface HomepageJourneyOpportunityCard extends HomepageJourneyCardBase {
+  variant: "opportunity";
+  country: string;
+  degreeLevel: string;
+}
+
+interface HomepageJourneySupportingCard extends HomepageJourneyCardBase {
+  variant: Exclude<HomepageJourneyCardVariant, "opportunity">;
+  country?: never;
+  degreeLevel?: never;
+}
+
+export type HomepageJourneyCard =
+  | HomepageJourneyOpportunityCard
+  | HomepageJourneySupportingCard;
 
 export interface HomepageJourneySectionContent {
   id: string;
@@ -77,6 +92,8 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     href: "/catalogue?country=Germany",
     imageUrl: pathGermany,
     favoriteId: "daad-epos",
+    country: "Germany",
+    degreeLevel: "Postgraduate",
   },
   {
     id: "fulbright-foreign-student",
@@ -88,6 +105,8 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     href: "/catalogue?country=United%20States",
     imageUrl: pathUs,
     favoriteId: "fulbright-foreign-student",
+    country: "United States",
+    degreeLevel: "Graduate",
   },
   {
     id: "chevening-scholarships",
@@ -99,6 +118,8 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     href: "/catalogue?country=United%20Kingdom",
     imageUrl: pathUk,
     favoriteId: "chevening-scholarships",
+    country: "United Kingdom",
+    degreeLevel: "Master's",
   },
   {
     id: "vanier-canada-graduate",
@@ -110,6 +131,8 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     href: "/catalogue?country=Canada",
     imageUrl: pathCanada,
     favoriteId: "vanier-canada-graduate",
+    country: "Canada",
+    degreeLevel: "Doctoral",
   },
   {
     id: "australia-awards",
@@ -121,6 +144,8 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     href: "/catalogue?country=Australia",
     imageUrl: pathAustralia,
     favoriteId: "australia-awards",
+    country: "Partner countries",
+    degreeLevel: "Multiple levels",
   },
   {
     id: "erasmus-mundus-joint-masters",
@@ -132,6 +157,8 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     href: "/catalogue?funding_type=full",
     imageUrl: pathEurope,
     favoriteId: "erasmus-mundus-joint-masters",
+    country: "Multiple European countries",
+    degreeLevel: "Master's",
   },
   {
     id: "mext-research",
@@ -143,6 +170,8 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     href: "/catalogue?country=Japan",
     imageUrl: pathJapan,
     favoriteId: "mext-research",
+    country: "Japan",
+    degreeLevel: "Graduate research",
   },
   {
     id: "commonwealth-masters",
@@ -154,6 +183,8 @@ const fundedPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     href: "/catalogue?country=United%20Kingdom",
     imageUrl: pathGlobal,
     favoriteId: "commonwealth-masters",
+    country: "United Kingdom",
+    degreeLevel: "Master's",
   },
 ];
 
@@ -167,6 +198,8 @@ const realisticPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     badge: "Compare funding",
     href: "/catalogue?degree_level=masters&funding_type=full",
     imageUrl: pathGlobal,
+    country: "Multiple countries",
+    degreeLevel: "Master's",
   },
   {
     id: "research-degree-funding",
@@ -177,6 +210,8 @@ const realisticPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     badge: "Doctoral route",
     href: "/catalogue?degree_level=phd",
     imageUrl: pathCanada,
+    country: "Multiple countries",
+    degreeLevel: "Doctoral",
   },
   {
     id: "development-professional",
@@ -187,6 +222,8 @@ const realisticPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     badge: "Experience route",
     href: "/catalogue?q=development",
     imageUrl: pathGermany,
+    country: "Multiple countries",
+    degreeLevel: "Postgraduate",
   },
   {
     id: "government-funded",
@@ -197,6 +234,8 @@ const realisticPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     badge: "Public funding",
     href: "/catalogue?q=government",
     imageUrl: pathAustralia,
+    country: "Multiple countries",
+    degreeLevel: "Multiple levels",
   },
   {
     id: "european-joint-degrees",
@@ -207,6 +246,8 @@ const realisticPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     badge: "Multi-country",
     href: "/catalogue?q=joint%20masters",
     imageUrl: pathEurope,
+    country: "Multiple European countries",
+    degreeLevel: "Master's",
   },
   {
     id: "study-routes-germany",
@@ -217,6 +258,8 @@ const realisticPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     badge: "Germany",
     href: "/catalogue?country=Germany",
     imageUrl: pathUk,
+    country: "Germany",
+    degreeLevel: "Multiple levels",
   },
   {
     id: "study-routes-canada",
@@ -227,6 +270,8 @@ const realisticPathCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     badge: "Canada",
     href: "/catalogue?country=Canada",
     imageUrl: pathUs,
+    country: "Canada",
+    degreeLevel: "Graduate",
   },
   {
     id: "compare-profile",

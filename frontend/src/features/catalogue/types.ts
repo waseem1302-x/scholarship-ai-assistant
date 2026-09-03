@@ -82,6 +82,7 @@ export interface OpportunitySearchResponse {
 }
 
 export interface CatalogueFilters {
+  q: string;
   availability: CatalogueAvailability;
   country: string;
   degree_level: DegreeLevel | "";
@@ -92,6 +93,7 @@ export interface CatalogueFilters {
 }
 
 export const defaultCatalogueFilters: CatalogueFilters = {
+  q: "",
   availability: "all",
   country: "",
   degree_level: "",
