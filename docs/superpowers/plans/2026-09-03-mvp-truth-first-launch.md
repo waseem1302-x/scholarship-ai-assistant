@@ -213,7 +213,7 @@ git commit -m "feat: expose reviewed scholarship graph publicly"
 - Produces: `build_decision_summary(opportunity, projection) -> ScholarshipDecisionSummaryResponse`.
 - Each summary block contains `text`, `evidence_ids`, and `state` where state is `confirmed`, `unknown`, `not_applicable`, `stale`, or `conflicting`.
 
-- [ ] **Step 1: Write failing summary tests**
+- [x] **Step 1: Write failing summary tests**
 
 ```python
 def test_summary_uses_only_confirmed_values(reviewed_projection):
@@ -232,23 +232,23 @@ def test_missing_funding_is_explicitly_unknown(projection_without_funding):
     assert summary.funding.text == "Funding coverage is not confirmed in the reviewed sources."
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `.venv/Scripts/python -m pytest tests/test_opportunity_public_projection.py -k summary -v`
 
 Expected: FAIL because the deterministic summary builder does not exist.
 
-- [ ] **Step 3: Implement deterministic templates**
+- [x] **Step 3: Implement deterministic templates**
 
 Generate only four compact blocks: overview, funding, eligibility, and application route. Each sentence must be composed from reviewed projection values. Missing data produces an explicit unknown sentence rather than a guess. Do not call Azure or any other model.
 
-- [ ] **Step 4: Run projection tests**
+- [x] **Step 4: Run projection tests**
 
 Run: `.venv/Scripts/python -m pytest tests/test_opportunity_public_projection.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/modules/opportunities/public_projection.py app/modules/opportunities/schemas.py tests/test_opportunity_public_projection.py

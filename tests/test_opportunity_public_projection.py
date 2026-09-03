@@ -32,7 +32,10 @@ from app.modules.opportunities.models import (
     SourceType,
     VerificationStatus,
 )
-from app.modules.opportunities.public_projection import build_public_projection
+from app.modules.opportunities.public_projection import (
+    build_decision_summary,
+    build_public_projection,
+)
 
 
 def _source_snapshot(
@@ -278,6 +281,7 @@ def _reviewed_graph_fixture(db_session: Session) -> tuple[Opportunity, Source]:
         ("programme", programme, "name", "Data Science"),
         ("eligibility", eligibility, "original_text", "Citizens of Pakistan may apply"),
         ("deadline", deadline, "deadline_at", "Applications close 1 June 2027"),
+        ("funding", funding, "component_type", "Full tuition coverage"),
         ("funding", funding, "coverage_status", "Full tuition coverage"),
         ("step", step, "title", "Submit online"),
         ("event", event, "label", "Interview window"),
@@ -424,3 +428,167 @@ def test_projection_requires_passed_explicit_field_evidence(db_session: Session)
     projection = build_public_projection(db_session, opportunity)
 
     assert [item.code for item in projection.tracks] == ["embassy"]
+
+
+def test_decision_summary_uses_only_confirmed_projection_values(
+    db_session: Session,
+) -> None:
+    opportunity, _ = _reviewed_graph_fixture(db_session)
+    projection = build_public_projection(db_session, opportunity)
+
+    summary = build_decision_summary(opportunity, projection)
+
+    assert projection.summary == summary
+    assert summary.overview.state == "confirmed"
+    assert summary.overview.evidence_ids
+    assert "2027" in summary.overview.text
+    assert "guaranteed" not in summary.overview.text.casefold()
+    assert summary.funding.state == "confirmed"
+    assert "tuition" in summary.funding.text.casefold()
+    assert summary.eligibility.state == "confirmed"
+    assert "pakistan" in summary.eligibility.text.casefold()
+    assert "data science programme" in summary.eligibility.text.casefold()
+    assert summary.application_route.state == "confirmed"
+    assert "embassy route" in summary.application_route.text.casefold()
+    projection_evidence_ids = {item.id for item in projection.evidence}
+    for block in (
+        summary.overview,
+        summary.funding,
+        summary.eligibility,
+        summary.application_route,
+    ):
+        assert set(block.evidence_ids) <= projection_evidence_ids
+
+
+def test_decision_summary_marks_missing_funding_as_unknown(db_session: Session) -> None:
+    opportunity, _ = _reviewed_graph_fixture(db_session)
+    projection = build_public_projection(db_session, opportunity).model_copy(update={"funding": []})
+
+    summary = build_decision_summary(opportunity, projection)
+
+    assert summary.funding.state == "unknown"
+    assert summary.funding.evidence_ids == []
+    assert summary.funding.text == ("Funding coverage is not confirmed in the reviewed sources.")
+
+
+def test_decision_summary_preserves_explicit_not_applicable_state(
+    db_session: Session,
+) -> None:
+    opportunity, _ = _reviewed_graph_fixture(db_session)
+    projection = build_public_projection(db_session, opportunity)
+    not_applicable_funding = projection.funding[0].model_copy(
+        update={"coverage_status": "not_applicable"}
+    )
+    projection = projection.model_copy(update={"funding": [not_applicable_funding]})
+
+    summary = build_decision_summary(opportunity, projection)
+
+    assert summary.funding.state == "not_applicable"
+    assert set(summary.funding.evidence_ids) == set(not_applicable_funding.evidence_ids)
+    assert "explicitly marked as not applicable" in summary.funding.text
+
+
+def test_decision_summary_marks_conflicting_sources_without_repeating_claims(
+    db_session: Session,
+) -> None:
+    opportunity, _ = _reviewed_graph_fixture(db_session)
+    db_session.add(
+        Source(
+            opportunity_id=opportunity.id,
+            url="https://official.example/summary-conflict",
+            canonical_url="https://official.example/summary-conflict",
+            normalized_url="https://official.example/summary-conflict",
+            domain="official.example",
+            source_type=SourceType.OFFICIAL,
+            title="Conflicting summary source",
+            relevant_excerpt="A conflicting official statement.",
+            verification_status=VerificationStatus.CONFLICTING_INFORMATION,
+            is_active=True,
+        )
+    )
+    db_session.commit()
+    projection = build_public_projection(db_session, opportunity)
+
+    summary = build_decision_summary(opportunity, projection)
+
+    assert {
+        block.state
+        for block in (
+            summary.overview,
+            summary.funding,
+            summary.eligibility,
+            summary.application_route,
+        )
+    } == {"conflicting"}
+    assert all(
+        not block.evidence_ids
+        for block in (
+            summary.overview,
+            summary.funding,
+            summary.eligibility,
+            summary.application_route,
+        )
+    )
+
+
+def test_decision_summary_marks_confirmed_but_old_facts_as_stale(
+    db_session: Session,
+) -> None:
+    opportunity, reviewed_source = _reviewed_graph_fixture(db_session)
+    reviewed_source.last_verified_at = datetime(2020, 1, 1, tzinfo=UTC)
+    db_session.commit()
+
+    projection = build_public_projection(db_session, opportunity)
+    summary = build_decision_summary(opportunity, projection)
+
+    assert {
+        block.state
+        for block in (
+            summary.overview,
+            summary.funding,
+            summary.eligibility,
+            summary.application_route,
+        )
+    } == {"stale"}
+    assert all(
+        block.evidence_ids
+        for block in (
+            summary.overview,
+            summary.funding,
+            summary.eligibility,
+            summary.application_route,
+        )
+    )
+
+
+def test_decision_summary_marks_expired_projection_as_stale(db_session: Session) -> None:
+    opportunity, _ = _reviewed_graph_fixture(db_session)
+    db_session.add(
+        Source(
+            opportunity_id=opportunity.id,
+            url="https://official.example/expired-summary",
+            canonical_url="https://official.example/expired-summary",
+            normalized_url="https://official.example/expired-summary",
+            domain="official.example",
+            source_type=SourceType.OFFICIAL,
+            title="Expired official source",
+            relevant_excerpt="This official notice has expired.",
+            verification_status=VerificationStatus.EXPIRED,
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    projection = build_public_projection(db_session, opportunity)
+
+    assert projection.evidence == []
+    assert projection.summary is not None
+    assert {
+        block.state
+        for block in (
+            projection.summary.overview,
+            projection.summary.funding,
+            projection.summary.eligibility,
+            projection.summary.application_route,
+        )
+    } == {"stale"}

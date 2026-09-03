@@ -620,6 +620,27 @@ class PublicResourceResponse(PublicScopedFactResponse):
     display_order: int = 0
 
 
+class DecisionSummaryState(StrEnum):
+    CONFIRMED = "confirmed"
+    UNKNOWN = "unknown"
+    NOT_APPLICABLE = "not_applicable"
+    STALE = "stale"
+    CONFLICTING = "conflicting"
+
+
+class DecisionSummaryBlockResponse(BaseModel):
+    text: str
+    evidence_ids: list[uuid.UUID] = Field(default_factory=list)
+    state: DecisionSummaryState
+
+
+class ScholarshipDecisionSummaryResponse(BaseModel):
+    overview: DecisionSummaryBlockResponse
+    funding: DecisionSummaryBlockResponse
+    eligibility: DecisionSummaryBlockResponse
+    application_route: DecisionSummaryBlockResponse
+
+
 class PublicScholarshipProjectionResponse(BaseModel):
     cycle: PublicCycleResponse | None = None
     tracks: list[PublicTrackResponse] = Field(default_factory=list)
@@ -633,6 +654,7 @@ class PublicScholarshipProjectionResponse(BaseModel):
     resources: list[PublicResourceResponse] = Field(default_factory=list)
     evidence: list[PublicEvidenceReferenceResponse] = Field(default_factory=list)
     known_unknowns: list[str] = Field(default_factory=list)
+    summary: ScholarshipDecisionSummaryResponse | None = None
 
 
 class OpportunityDetailResponse(OpportunitySummaryResponse):

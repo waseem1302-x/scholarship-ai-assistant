@@ -22,15 +22,23 @@ from app.modules.opportunities.evidence_models import (
 )
 from app.modules.opportunities.evidence_policy import EvidencePolicy
 from app.modules.opportunities.graph_models import ApplicationTrack
-from app.modules.opportunities.lifecycle import effective_application_window
+from app.modules.opportunities.lifecycle import SOURCE_FRESHNESS_DAYS, effective_application_window
 from app.modules.opportunities.materialization_models import (
     OpportunityEvent,
     OpportunityResource,
     ScholarshipEligibilityRule,
     ScholarshipProgramme,
 )
-from app.modules.opportunities.models import Opportunity, OpportunityCycle, Source
+from app.modules.opportunities.models import (
+    Opportunity,
+    OpportunityCycle,
+    Source,
+    SourceType,
+    VerificationStatus,
+)
 from app.modules.opportunities.schemas import (
+    DecisionSummaryBlockResponse,
+    DecisionSummaryState,
     PublicApplicationStepResponse,
     PublicCycleResponse,
     PublicDeadlineResponse,
@@ -44,6 +52,7 @@ from app.modules.opportunities.schemas import (
     PublicResourceResponse,
     PublicScholarshipProjectionResponse,
     PublicTrackResponse,
+    ScholarshipDecisionSummaryResponse,
 )
 
 _PUBLIC_DIMENSIONS = (
@@ -97,7 +106,7 @@ def build_public_projection(
     )
     official_source = EvidencePolicy.select_current_official_source(sources)
     if official_source is None:
-        return _empty_projection()
+        return _empty_projection(opportunity)
 
     cycles = list(
         session.scalars(
@@ -106,7 +115,7 @@ def build_public_projection(
     )
     cycle = _select_effective_cycle(opportunity, official_source, cycles)
     if cycle is None:
-        return _empty_projection()
+        return _empty_projection(opportunity)
 
     records = _load_current_records(session, opportunity.id, cycle.id)
     records["cycle"] = [cycle]
@@ -164,7 +173,7 @@ def build_public_projection(
         "events": events,
         "resources": resources,
     }
-    return PublicScholarshipProjectionResponse(
+    projection = PublicScholarshipProjectionResponse(
         cycle=public_cycle,
         tracks=tracks,
         programmes=programmes,
@@ -178,6 +187,351 @@ def build_public_projection(
         evidence=public_evidence,
         known_unknowns=[name for name in _PUBLIC_DIMENSIONS if not dimensions[name]],
     )
+    projection.summary = build_decision_summary(opportunity, projection)
+    return projection
+
+
+def build_decision_summary(
+    opportunity: Opportunity,
+    projection: PublicScholarshipProjectionResponse,
+) -> ScholarshipDecisionSummaryResponse:
+    """Compose a compact decision summary from reviewed projection values only."""
+
+    official_sources = [
+        source for source in opportunity.sources if source.source_type is SourceType.OFFICIAL
+    ]
+    if any(
+        source.verification_status is VerificationStatus.CONFLICTING_INFORMATION
+        for source in official_sources
+    ):
+        return _uniform_decision_summary(
+            state=DecisionSummaryState.CONFLICTING,
+            text=(
+                "Official sources contain conflicting information; resolve the conflict before "
+                "relying on this scholarship summary."
+            ),
+        )
+
+    overview = _overview_summary(projection)
+    funding = _funding_summary(projection)
+    eligibility = _eligibility_summary(projection)
+    application_route = _application_route_summary(projection)
+    summary = ScholarshipDecisionSummaryResponse(
+        overview=overview,
+        funding=funding,
+        eligibility=eligibility,
+        application_route=application_route,
+    )
+
+    current_source = EvidencePolicy.select_current_official_source(
+        official_sources,
+        reject_conflicts=False,
+    )
+    has_expired_source = any(
+        source.verification_status in {VerificationStatus.EXPIRED, VerificationStatus.ARCHIVED}
+        for source in official_sources
+    )
+    source_is_stale = current_source is not None and not EvidencePolicy.source_is_fresh(
+        current_source,
+        freshness_days=SOURCE_FRESHNESS_DAYS,
+    )
+    if has_expired_source and not projection.evidence:
+        return _uniform_decision_summary(
+            state=DecisionSummaryState.STALE,
+            text=(
+                "The reviewed official information is expired or archived; current details are "
+                "not confirmed."
+            ),
+        )
+    if not source_is_stale and not has_expired_source:
+        return summary
+
+    return ScholarshipDecisionSummaryResponse(
+        overview=_mark_stale(summary.overview),
+        funding=_mark_stale(summary.funding),
+        eligibility=_mark_stale(summary.eligibility),
+        application_route=_mark_stale(summary.application_route),
+    )
+
+
+def _overview_summary(
+    projection: PublicScholarshipProjectionResponse,
+) -> DecisionSummaryBlockResponse:
+    cycle = projection.cycle
+    programme_names = [item.name for item in projection.programmes if item.name]
+    parts: list[str] = []
+    evidence_records: list[Any] = []
+    if cycle is not None:
+        if cycle.intake_year is not None:
+            parts.append(f"the {cycle.intake_year} cycle")
+            evidence_records.append(cycle)
+        elif cycle.label:
+            parts.append(f"the {cycle.label} cycle")
+            evidence_records.append(cycle)
+        elif cycle.status:
+            parts.append(f"a cycle marked {cycle.status.replace('_', ' ')}")
+            evidence_records.append(cycle)
+    if programme_names:
+        label = _join_labels(programme_names[:2])
+        suffix = "an eligible programme" if len(programme_names) == 1 else "eligible programmes"
+        parts.append(f"{label} as {suffix}")
+        evidence_records.extend(
+            item for item in projection.programmes if item.name in programme_names[:2]
+        )
+    if not parts:
+        return _unknown_block("A current overview is not confirmed in the reviewed sources.")
+    return _confirmed_block(
+        f"Reviewed sources confirm {_join_labels(parts)}.",
+        evidence_records,
+    )
+
+
+def _funding_summary(
+    projection: PublicScholarshipProjectionResponse,
+) -> DecisionSummaryBlockResponse:
+    if not projection.funding:
+        return _unknown_block("Funding coverage is not confirmed in the reviewed sources.")
+    if all(_is_not_applicable(item.coverage_status) for item in projection.funding):
+        return DecisionSummaryBlockResponse(
+            text="Funding is explicitly marked as not applicable in the reviewed sources.",
+            evidence_ids=_fact_evidence_ids(projection.funding),
+            state=DecisionSummaryState.NOT_APPLICABLE,
+        )
+
+    phrases: list[str] = []
+    used: list[PublicFundingResponse] = []
+    for item in projection.funding:
+        phrase = _funding_phrase(item, projection)
+        if phrase:
+            phrases.append(phrase)
+            used.append(item)
+        if len(phrases) == 3:
+            break
+    if not phrases:
+        return _unknown_block("Funding coverage is not confirmed in the reviewed sources.")
+    return _confirmed_block(
+        f"Reviewed sources confirm {_join_labels(phrases)}.",
+        used,
+    )
+
+
+def _eligibility_summary(
+    projection: PublicScholarshipProjectionResponse,
+) -> DecisionSummaryBlockResponse:
+    if not projection.eligibility:
+        return _unknown_block("Eligibility requirements are not confirmed in the reviewed sources.")
+    if all(_is_not_applicable(item.original_text) for item in projection.eligibility):
+        return DecisionSummaryBlockResponse(
+            text=(
+                "Eligibility requirements are explicitly marked as not applicable in the "
+                "reviewed sources."
+            ),
+            evidence_ids=_fact_evidence_ids(projection.eligibility),
+            state=DecisionSummaryState.NOT_APPLICABLE,
+        )
+
+    statements = [
+        f"{item.original_text.strip().rstrip('.')}{_scope_suffix(item, projection)}"
+        for item in projection.eligibility
+        if item.original_text and item.original_text.strip()
+    ]
+    if statements:
+        used = [
+            item
+            for item in projection.eligibility
+            if item.original_text and item.original_text.strip()
+        ][:2]
+        return _confirmed_block(
+            f"Reviewed sources confirm: {_join_labels(statements[:2])}.",
+            used,
+        )
+
+    rule_types = [
+        item.rule_type.replace("_", " ") for item in projection.eligibility if item.rule_type
+    ]
+    if rule_types:
+        used = [item for item in projection.eligibility if item.rule_type][:3]
+        return _confirmed_block(
+            f"Reviewed sources confirm requirements for {_join_labels(rule_types[:3])}.",
+            used,
+        )
+    return _unknown_block("Eligibility requirements are not confirmed in the reviewed sources.")
+
+
+def _application_route_summary(
+    projection: PublicScholarshipProjectionResponse,
+) -> DecisionSummaryBlockResponse:
+    routes = [item for item in projection.tracks if item.name or item.application_method]
+    if routes and all(
+        _is_not_applicable(item.status) or _is_not_applicable(item.application_method)
+        for item in routes
+    ):
+        return DecisionSummaryBlockResponse(
+            text=(
+                "An application route is explicitly marked as not applicable in the reviewed "
+                "sources."
+            ),
+            evidence_ids=_fact_evidence_ids(routes),
+            state=DecisionSummaryState.NOT_APPLICABLE,
+        )
+    route_labels = [item.name or item.application_method for item in routes]
+    if route_labels:
+        noun = "an application route" if len(route_labels) == 1 else "application routes"
+        return _confirmed_block(
+            f"Reviewed sources identify {_join_labels(route_labels[:3])} as {noun}.",
+            routes[:3],
+        )
+
+    steps = [item for item in projection.steps if item.title]
+    if steps:
+        return _confirmed_block(
+            (
+                f"Reviewed sources identify {steps[0].title} as an application step"
+                f"{_scope_suffix(steps[0], projection)}."
+            ),
+            steps[:1],
+        )
+    portals = [
+        item
+        for item in projection.resources
+        if item.title and item.resource_type == "application_portal"
+    ]
+    if portals:
+        return _confirmed_block(
+            f"Reviewed sources identify {portals[0].title} as the application portal.",
+            portals[:1],
+        )
+    return _unknown_block("The application route is not confirmed in the reviewed sources.")
+
+
+def _funding_phrase(
+    item: PublicFundingResponse,
+    projection: PublicScholarshipProjectionResponse,
+) -> str | None:
+    suffix = _scope_suffix(item, projection)
+    if item.description:
+        return f"{item.description.strip().rstrip('.')}{suffix}"
+    if item.original_text:
+        return f"{item.original_text.strip().rstrip('.')}{suffix}"
+    component = item.component_type.replace("_", " ") if item.component_type else None
+    coverage = item.coverage_status.replace("_", " ") if item.coverage_status else None
+    amount_text = None
+    if item.amount is not None and item.currency:
+        amount = f"{item.amount:,.2f}".rstrip("0").rstrip(".")
+        frequency = f" per {item.frequency.replace('_', ' ')}" if item.frequency else ""
+        amount_text = f"{item.currency.upper()} {amount}{frequency}"
+    if component and coverage in {"not covered", "none"}:
+        return f"{component} is not covered{suffix}"
+    if component and coverage:
+        amount_qualifier = f" of {amount_text}" if amount_text else ""
+        return f"{coverage} {component} coverage{amount_qualifier}{suffix}"
+    if component:
+        amount_qualifier = f" of {amount_text}" if amount_text else ""
+        return f"a {component} funding component{amount_qualifier}{suffix}"
+    if amount_text:
+        return f"{amount_text}{suffix}"
+    return None
+
+
+def _scope_suffix(record: Any, projection: PublicScholarshipProjectionResponse) -> str:
+    scope = record.scope
+    labels: list[str] = []
+    if scope.track_id is not None:
+        track = next((item for item in projection.tracks if item.id == scope.track_id), None)
+        track_label = (track.name or track.code) if track else "specified"
+        suffix = "" if track_label.casefold().endswith("route") else " route"
+        labels.append(f"the {track_label}{suffix}")
+    if scope.scholarship_programme_id is not None:
+        programme = next(
+            (item for item in projection.programmes if item.id == scope.scholarship_programme_id),
+            None,
+        )
+        labels.append(
+            f"the {(programme.name or programme.programme_key) if programme else 'specified'} "
+            "programme"
+        )
+    if scope.institution_id is not None:
+        labels.append("the specified institution")
+    if scope.programme_id is not None:
+        programme = next(
+            (item for item in projection.programmes if item.id == scope.programme_id),
+            None,
+        )
+        labels.append(
+            f"the {(programme.name or programme.programme_key) if programme else 'specified'} "
+            f"{'programme' if programme else 'academic programme'}"
+        )
+    return f" for {_join_labels(labels)}" if labels else ""
+
+
+def _confirmed_block(
+    text: str,
+    records: Iterable[Any],
+) -> DecisionSummaryBlockResponse:
+    return DecisionSummaryBlockResponse(
+        text=text,
+        evidence_ids=_fact_evidence_ids(records),
+        state=DecisionSummaryState.CONFIRMED,
+    )
+
+
+def _unknown_block(text: str) -> DecisionSummaryBlockResponse:
+    return DecisionSummaryBlockResponse(
+        text=text,
+        evidence_ids=[],
+        state=DecisionSummaryState.UNKNOWN,
+    )
+
+
+def _uniform_decision_summary(
+    *,
+    state: DecisionSummaryState,
+    text: str,
+) -> ScholarshipDecisionSummaryResponse:
+    def block() -> DecisionSummaryBlockResponse:
+        return DecisionSummaryBlockResponse(text=text, evidence_ids=[], state=state)
+
+    return ScholarshipDecisionSummaryResponse(
+        overview=block(),
+        funding=block(),
+        eligibility=block(),
+        application_route=block(),
+    )
+
+
+def _mark_stale(block: DecisionSummaryBlockResponse) -> DecisionSummaryBlockResponse:
+    if block.state not in {
+        DecisionSummaryState.CONFIRMED,
+        DecisionSummaryState.NOT_APPLICABLE,
+    }:
+        return block
+    return block.model_copy(
+        update={
+            "text": f"The reviewed source may be outdated. {block.text}",
+            "state": DecisionSummaryState.STALE,
+        }
+    )
+
+
+def _fact_evidence_ids(records: Iterable[Any]) -> list[uuid.UUID]:
+    return sorted(
+        {evidence_id for record in records for evidence_id in record.evidence_ids},
+        key=str,
+    )
+
+
+def _join_labels(values: list[str]) -> str:
+    if len(values) <= 1:
+        return "".join(values)
+    if len(values) == 2:
+        return f"{values[0]} and {values[1]}"
+    return f"{', '.join(values[:-1])}, and {values[-1]}"
+
+
+def _is_not_applicable(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().casefold().replace("_", " ") in {"not applicable", "n/a"}
 
 
 PublicScopedFactResponseType = (
@@ -194,8 +548,10 @@ PublicScopedFactResponseType = (
 )
 
 
-def _empty_projection() -> PublicScholarshipProjectionResponse:
-    return PublicScholarshipProjectionResponse(known_unknowns=list(_PUBLIC_DIMENSIONS))
+def _empty_projection(opportunity: Opportunity) -> PublicScholarshipProjectionResponse:
+    projection = PublicScholarshipProjectionResponse(known_unknowns=list(_PUBLIC_DIMENSIONS))
+    projection.summary = build_decision_summary(opportunity, projection)
+    return projection
 
 
 def _select_effective_cycle(
@@ -587,4 +943,4 @@ def _evidence_response(row: _EvidenceRow) -> PublicEvidenceReferenceResponse:
     )
 
 
-__all__ = ["build_public_projection"]
+__all__ = ["build_decision_summary", "build_public_projection"]
