@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -612,6 +613,92 @@ def test_public_keyword_search_filters_before_pagination_and_count(
         "count": 1,
         "has_next": False,
         "has_previous": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("query", "target_overrides"),
+    [
+        (
+            "masters",
+            {
+                "degree_level": "masters",
+                "funding_type": "partial",
+                "funding_policy": None,
+                "tuition_coverage_status": "unknown",
+                "stipend_coverage_status": "unknown",
+                "accommodation_coverage_status": "unknown",
+                "travel_coverage_status": "unknown",
+                "insurance_coverage_status": "unknown",
+                "fees_coverage_status": "unknown",
+            },
+        ),
+        ("fully funded", {"degree_level": "phd"}),
+    ],
+)
+def test_public_keyword_search_matches_derived_summary_fields_before_pagination(
+    client: TestClient,
+    db_session: Session,
+    query: str,
+    target_overrides: dict[str, object],
+) -> None:
+    headers = admin_headers(client, db_session)
+    partial_funding = {
+        "funding_type": "partial",
+        "funding_policy": None,
+        "tuition_coverage_status": "unknown",
+        "stipend_coverage_status": "unknown",
+        "accommodation_coverage_status": "unknown",
+        "travel_coverage_status": "unknown",
+        "insurance_coverage_status": "unknown",
+        "fees_coverage_status": "unknown",
+    }
+    opportunities = [
+        create_opportunity(
+            client,
+            headers,
+            name=f"A{index:02d} General Award",
+            provider_name="Independent Council",
+            country="Canada",
+            degree_level="phd",
+            **partial_funding,
+            source={
+                **opportunity_payload()["source"],
+                "url": f"https://example.edu/summary-decoy-{index}",
+                "title": f"General award source {index}",
+            },
+        )
+        for index in range(10)
+    ]
+    target = create_opportunity(
+        client,
+        headers,
+        name="Z Academic Award",
+        provider_name="Learning Council",
+        country="Canada",
+        **target_overrides,
+        source={
+            **opportunity_payload()["source"],
+            "url": f"https://example.edu/summary-{query.replace(' ', '-')}",
+            "title": "Academic award source",
+        },
+    )
+    for opportunity in [*opportunities, target]:
+        publish_opportunity(client, headers, opportunity)
+
+    unfiltered = client.get("/api/v1/opportunities?limit=10")
+    filtered = client.get("/api/v1/opportunities", params={"q": query, "limit": 1})
+
+    assert unfiltered.status_code == 200
+    assert target["id"] not in {item["id"] for item in response_items(unfiltered)}
+    assert [item["id"] for item in response_items(filtered)] == [target["id"]]
+    assert response_pagination(filtered) == {
+        "total": 1,
+        "limit": 1,
+        "offset": 0,
+        "count": 1,
+        "has_next": False,
+        "has_previous": False,
     }
 
 

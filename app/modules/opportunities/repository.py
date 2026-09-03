@@ -948,6 +948,39 @@ class OpportunityRepository:
                     self._contains_case_insensitive(Opportunity.field_eligibility, q),
                     self._contains_case_insensitive(Opportunity.nationality_eligibility, q),
                     self._contains_case_insensitive(Opportunity.funding_policy, q),
+                    self._contains_case_insensitive(
+                        func.replace(cast(Opportunity.degree_level, String), "_", " "), q
+                    ),
+                    self._contains_case_insensitive(
+                        func.replace(cast(Opportunity.funding_type, String), "_", " "), q
+                    ),
+                    self._contains_case_insensitive(
+                        func.replace(cast(Opportunity.funding_classification, String), "_", " "),
+                        q,
+                    ),
+                    self._contains_case_insensitive(Opportunity.tuition_coverage, q),
+                    self._contains_case_insensitive(
+                        cast(Opportunity.monthly_stipend_amount, String), q
+                    ),
+                    self._contains_case_insensitive(Opportunity.monthly_stipend_currency, q),
+                    self._contains_case_insensitive(Opportunity.accommodation_coverage, q),
+                    self._contains_case_insensitive(Opportunity.travel_allowance, q),
+                    and_(
+                        Opportunity.tuition_coverage.is_not(None),
+                        self._contains_case_insensitive(literal("tuition"), q),
+                    ),
+                    and_(
+                        Opportunity.monthly_stipend_amount.is_not(None),
+                        self._contains_case_insensitive(literal("stipend"), q),
+                    ),
+                    and_(
+                        Opportunity.accommodation_coverage.is_not(None),
+                        self._contains_case_insensitive(literal("accommodation mentioned"), q),
+                    ),
+                    and_(
+                        Opportunity.travel_allowance.is_not(None),
+                        self._contains_case_insensitive(literal("travel mentioned"), q),
+                    ),
                     self._contains_case_insensitive(Opportunity.notes, q),
                     Opportunity.provider.has(self._contains_case_insensitive(Provider.name, q)),
                     Opportunity.university.has(self._contains_case_insensitive(University.name, q)),
