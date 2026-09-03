@@ -69,7 +69,7 @@ test passes, and the exact local startup/migration commands are recorded for lat
 - Produces: `build_public_projection(session: Session, opportunity: Opportunity) -> PublicScholarshipProjectionResponse`.
 - Produces additive `projection` on `OpportunityDetailResponse`; legacy fields remain unchanged during V1.
 
-- [ ] **Step 1: Write failing projection tests**
+- [x] **Step 1: Write failing projection tests**
 
 Create fixtures containing one global fact, one route-scoped fact, one programme-scoped fact, one unknown dimension, and one unverified source. Assert that the projection exposes reviewed facts with scope and evidence while excluding unverified evidence.
 
@@ -87,13 +87,13 @@ def test_public_projection_preserves_scope_and_excludes_unverified_claims(
     assert "documents" in projection.known_unknowns
 ```
 
-- [ ] **Step 2: Run the new tests and verify RED**
+- [x] **Step 2: Run the new tests and verify RED**
 
 Run: `.venv/Scripts/python -m pytest tests/test_opportunity_public_projection.py -v`
 
 Expected: FAIL because the public projection types and builder do not exist.
 
-- [ ] **Step 3: Add strictly typed public graph response models**
+- [x] **Step 3: Add strictly typed public graph response models**
 
 Add models for:
 
@@ -128,17 +128,17 @@ class PublicScholarshipProjectionResponse(BaseModel):
     known_unknowns: list[str] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Implement the projection builder**
+- [x] **Step 4: Implement the projection builder**
 
 Select the effective current cycle, load graph children, retain their explicit scope IDs, and admit evidence only when the linked source is officially verified and not disqualified by `EvidencePolicy`. Populate `known_unknowns` from missing core dimensions; do not invent placeholder values.
 
-- [ ] **Step 5: Run projection and existing opportunity tests**
+- [x] **Step 5: Run projection and existing opportunity tests**
 
 Run: `.venv/Scripts/python -m pytest tests/test_opportunity_public_projection.py tests/test_opportunities.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/modules/opportunities/schemas.py app/modules/opportunities/public_projection.py tests/test_opportunity_public_projection.py

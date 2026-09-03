@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
@@ -457,6 +457,182 @@ class OpportunitySummaryResponse(BaseModel):
 class OpportunitySearchResponse(BaseModel):
     items: list[OpportunitySummaryResponse]
     pagination: PaginationMeta
+
+
+class PublicFactScopeResponse(BaseModel):
+    cycle_id: uuid.UUID | None = None
+    track_id: uuid.UUID | None = None
+    institution_id: uuid.UUID | None = None
+    programme_id: uuid.UUID | None = None
+    scholarship_programme_id: uuid.UUID | None = None
+
+
+class PublicEvidenceReferenceResponse(BaseModel):
+    id: uuid.UUID
+    entity_type: str
+    entity_id: uuid.UUID
+    field_path: str
+    source_snapshot_id: uuid.UUID
+    source_title: str
+    source_url: HttpUrl
+    content_hash: str
+    excerpt: str
+    excerpt_start: int
+    excerpt_end: int
+    last_verified_at: datetime | None
+    verification_status: VerificationStatus
+
+
+class PublicScopedFactResponse(BaseModel):
+    id: uuid.UUID
+    scope: PublicFactScopeResponse
+    evidence_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class PublicCycleResponse(PublicScopedFactResponse):
+    label: str | None = None
+    intake_year: int | None = None
+    application_opening_date: datetime | None = None
+    application_deadline: datetime | None = None
+    status: str | None = None
+    timezone: str | None = None
+    is_rolling: bool | None = None
+
+
+class PublicTrackResponse(PublicScopedFactResponse):
+    code: str
+    parent_track_id: uuid.UUID | None = None
+    name: str | None = None
+    track_type: str | None = None
+    application_method: str | None = None
+    application_url: HttpUrl | None = None
+    status: str | None = None
+    display_order: int = 0
+
+
+class PublicProgrammeResponse(PublicScopedFactResponse):
+    programme_key: str
+    name: str | None = None
+    programme_type: str | None = None
+    degree_levels: list[str] = Field(default_factory=list)
+    fields_of_study: list[str] = Field(default_factory=list)
+    duration: str | None = None
+    description: str | None = None
+    application_route_keys: list[str] = Field(default_factory=list)
+    display_order: int = 0
+
+
+class PublicEligibilityResponse(PublicScopedFactResponse):
+    rule_key: str
+    rule_type: str | None = None
+    operator: str | None = None
+    value: dict[str, Any] | None = None
+    unit: str | None = None
+    required: bool | None = None
+    condition: str | None = None
+    is_exclusion: bool | None = None
+    critical: bool | None = None
+    original_text: str | None = None
+    notes: str | None = None
+    display_order: int = 0
+
+
+class PublicDeadlineResponse(PublicScopedFactResponse):
+    deadline_type: str | None = None
+    deadline_at: datetime | None = None
+    deadline_text: str | None = None
+    local_date: date | None = None
+    precision: str | None = None
+    timezone: str | None = None
+    varies_by: str | None = None
+    label: str | None = None
+    notes: str | None = None
+
+
+class PublicFundingResponse(PublicScopedFactResponse):
+    component_type: str | None = None
+    coverage_status: str | None = None
+    amount: Decimal | None = None
+    currency: str | None = None
+    frequency: str | None = None
+    unit: str | None = None
+    qualifier: str | None = None
+    original_text: str | None = None
+    description: str | None = None
+
+
+class PublicDocumentResponse(PublicScopedFactResponse):
+    document_key: str
+    name: str | None = None
+    required: bool | None = None
+    condition: str | None = None
+    submission_stage: str | None = None
+    original_count: int | None = None
+    copy_count: int | None = None
+    translation_requirement: str | None = None
+    certification_requirement: str | None = None
+    form_year: int | None = None
+    notes: str | None = None
+    display_order: int = 0
+
+
+class PublicApplicationStepResponse(PublicScopedFactResponse):
+    step_code: str
+    title: str | None = None
+    stage_type: str | None = None
+    required: bool | None = None
+    actor_type: str | None = None
+    actor_name: str | None = None
+    outcome: str | None = None
+    original_text: str | None = None
+    description: str | None = None
+    application_url: HttpUrl | None = None
+    display_order: int = 0
+
+
+class PublicEventResponse(PublicScopedFactResponse):
+    event_key: str
+    event_type: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    date_text: str | None = None
+    precision: str | None = None
+    timezone: str | None = None
+    label: str | None = None
+    notes: str | None = None
+    display_order: int = 0
+
+
+class PublicResourceResponse(PublicScopedFactResponse):
+    resource_key: str
+    title: str | None = None
+    resource_type: str | None = None
+    url: HttpUrl | None = None
+    contact_type: str | None = None
+    organization: str | None = None
+    contact_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    original_text: str | None = None
+    required: bool | None = None
+    notes: str | None = None
+    display_order: int = 0
+
+
+class PublicScholarshipProjectionResponse(BaseModel):
+    cycle: PublicCycleResponse | None = None
+    tracks: list[PublicTrackResponse] = Field(default_factory=list)
+    programmes: list[PublicProgrammeResponse] = Field(default_factory=list)
+    eligibility: list[PublicEligibilityResponse] = Field(default_factory=list)
+    deadlines: list[PublicDeadlineResponse] = Field(default_factory=list)
+    funding: list[PublicFundingResponse] = Field(default_factory=list)
+    documents: list[PublicDocumentResponse] = Field(default_factory=list)
+    steps: list[PublicApplicationStepResponse] = Field(default_factory=list)
+    events: list[PublicEventResponse] = Field(default_factory=list)
+    resources: list[PublicResourceResponse] = Field(default_factory=list)
+    evidence: list[PublicEvidenceReferenceResponse] = Field(default_factory=list)
+    known_unknowns: list[str] = Field(default_factory=list)
 
 
 class OpportunityDetailResponse(OpportunitySummaryResponse):
