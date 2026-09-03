@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 from app.modules.auth.models import User, UserRole
@@ -81,6 +81,7 @@ def create_launch_fixture(
     link_coverage_evidence: bool = True,
     mismatch_coverage_link: bool = False,
     mismatch_evidence_source: bool = False,
+    add_unlinked_public_funding: bool = False,
 ) -> tuple[Opportunity, CatalogueCandidate]:
     suffix = uuid.uuid4().hex
     now = datetime.now(UTC)
@@ -156,6 +157,17 @@ def create_launch_fixture(
         cycle_id=cycle.id,
         component_type="tuition",
         coverage_status="full",
+    )
+    unlinked_funding = (
+        FundingComponent(
+            id=uuid.uuid4(),
+            scholarship_id=opportunity.id,
+            cycle_id=cycle.id,
+            component_type="stipend",
+            coverage_status="full",
+        )
+        if add_unlinked_public_funding
+        else None
     )
     deadline = ScopedDeadline(
         id=uuid.uuid4(),
@@ -246,7 +258,10 @@ def create_launch_fixture(
         )
         db_session.add(evidence_source)
         db_session.flush()
-    db_session.add_all([track, eligibility, funding, deadline])
+    db_session.add_all(
+        [track, eligibility, funding, deadline]
+        + ([unlinked_funding] if unlinked_funding is not None else [])
+    )
     db_session.flush()
     evidence_text = (
         f"{opportunity.name}. {provider.name}. 2027 intake. Direct application route. "
@@ -372,6 +387,25 @@ def create_launch_fixture(
                     )
                 )
 
+    if unlinked_funding is not None:
+        excerpt = "Full tuition"
+        start = evidence_text.index(excerpt)
+        db_session.add(
+            FieldEvidence(
+                id=uuid.uuid4(),
+                entity_type="funding",
+                entity_id=unlinked_funding.id,
+                field_path="component_type",
+                source_snapshot_id=snapshot.id,
+                excerpt=excerpt,
+                excerpt_start=start,
+                excerpt_end=start + len(excerpt),
+                support_type=EvidenceSupportType.EXPLICIT,
+                validator_status=EvidenceValidatorStatus.PASSED,
+                trust_domain=EvidenceTrustDomain.OFFICIAL_FACTUAL.value,
+            )
+        )
+
     cells = [
         CatalogueCoverageCell(
             candidate_id=candidate.id,
@@ -475,6 +509,35 @@ def test_launch_audit_accepts_real_evidence_backed_public_summary(
     )
     assert "unsupported_public_summary_claim" not in result.blockers_by_code
     assert result.ready is True
+
+
+def test_launch_audit_rejects_real_public_summary_evidence_not_linked_to_review(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import audit_launch_catalogue
+
+    opportunity, candidate = create_launch_fixture(
+        db_session,
+        add_unlinked_public_funding=True,
+    )
+
+    projection = build_public_projection(db_session, opportunity)
+    result = audit_launch_catalogue(db_session, minimum_records=1)
+    linked_evidence_ids = set(
+        db_session.scalars(
+            select(CatalogueMaterializedClaimLink.field_evidence_id).where(
+                CatalogueMaterializedClaimLink.candidate_id == candidate.id
+            )
+        )
+    )
+
+    assert projection.summary is not None
+    assert projection.summary.funding.state is DecisionSummaryState.CONFIRMED
+    assert set(projection.summary.funding.evidence_ids) - linked_evidence_ids
+    assert result.ready is False
+    assert result.opportunity_ids_by_blocker["unsupported_public_summary_claim"] == [
+        opportunity.id
+    ]
 
 
 @pytest.mark.parametrize(

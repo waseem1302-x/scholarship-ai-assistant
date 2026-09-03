@@ -6,6 +6,7 @@ import hashlib
 import re
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
@@ -80,6 +81,19 @@ _SUMMARY_STATES_REQUIRING_EVIDENCE = {
     DecisionSummaryState.CONFIRMED,
     DecisionSummaryState.NOT_APPLICABLE,
 }
+_SUMMARY_OBJECTIVES = {
+    "overview": {
+        ClaimObjective.IDENTITY,
+        ClaimObjective.PROGRAMMES,
+        ClaimObjective.PROGRAMME_DETAILS,
+    },
+    "funding": {ClaimObjective.FUNDING},
+    "eligibility": {
+        ClaimObjective.ELIGIBILITY,
+        ClaimObjective.ELIGIBILITY_CONTEXT,
+    },
+    "application_route": {ClaimObjective.ROUTES},
+}
 _SCOPE_FIELD_TYPES = {
     "scholarship_family_key": ScopeNodeType.SCHOLARSHIP_FAMILY,
     "cycle_key": ScopeNodeType.CYCLE,
@@ -119,6 +133,13 @@ _SCHOLARSHIP_OWNED_EVIDENCE_MODELS = {
     "opportunity_resource": OpportunityResource,
     "institution_participation": InstitutionParticipation,
 }
+
+
+@dataclass(frozen=True)
+class _VerifiedCoverageEvidence:
+    fields_by_cell: dict[uuid.UUID, set[str]]
+    evidence_ids_by_cell: dict[uuid.UUID, set[uuid.UUID]]
+    evidence_ids_by_objective: dict[ClaimObjective, set[uuid.UUID]]
 
 
 class OpenCoverageCell(BaseModel):
@@ -381,7 +402,7 @@ def _record_blockers(
     ):
         blockers.add("stale_official_source")
 
-    evidence_fields_by_cell = _verified_coverage_fields(
+    verified_coverage = _verified_coverage_fields(
         session,
         opportunity=opportunity,
         candidate=candidate,
@@ -394,10 +415,10 @@ def _record_blockers(
     identity_fields = {
         field_path
         for cell in identity_cells
-        for field_path in evidence_fields_by_cell.get(cell.id, set())
+        for field_path in verified_coverage.fields_by_cell.get(cell.id, set())
     }
     identity_evidence_is_complete = bool(identity_cells) and all(
-        cell.id in evidence_fields_by_cell for cell in identity_cells
+        cell.id in verified_coverage.fields_by_cell for cell in identity_cells
     )
     provider_is_identified = bool(opportunity.provider and opportunity.provider.name.strip())
     tier_zero_complete = (
@@ -413,7 +434,8 @@ def _record_blockers(
 
     critical_cells = [cell for cell in cells if cell.objective in _CRITICAL_OBJECTIVES]
     if not tier_zero_complete or any(
-        cell.state in _TERMINAL_COVERAGE_STATES and cell.id not in evidence_fields_by_cell
+        cell.state in _TERMINAL_COVERAGE_STATES
+        and cell.id not in verified_coverage.fields_by_cell
         for cell in critical_cells
     ):
         blockers.add("missing_evidence")
@@ -430,7 +452,10 @@ def _record_blockers(
         blockers.add("incomplete_record")
 
     projection = build_public_projection(session, opportunity)
-    if not _summary_is_supported(projection):
+    if not _summary_is_supported(
+        projection,
+        verified_coverage.evidence_ids_by_objective,
+    ):
         blockers.add("unsupported_public_summary_claim")
     return blockers
 
@@ -443,7 +468,7 @@ def _verified_coverage_fields(
     review: CatalogueCandidateReview,
     cells: list[CatalogueCoverageCell],
     sources: list[Source],
-) -> dict[uuid.UUID, set[str]]:
+) -> _VerifiedCoverageEvidence:
     claim_ids = {
         claim_id
         for cell in cells
@@ -451,7 +476,7 @@ def _verified_coverage_fields(
         for claim_id in cell.supporting_claim_ids
     }
     if not claim_ids or not review.proposal_hash:
-        return {}
+        return _VerifiedCoverageEvidence({}, {}, {})
     rows = session.execute(
         select(CatalogueMaterializedClaimLink, FieldEvidence, SourceSnapshot, Source)
         .join(FieldEvidence, FieldEvidence.id == CatalogueMaterializedClaimLink.field_evidence_id)
@@ -488,7 +513,9 @@ def _verified_coverage_fields(
             select(CatalogueScopeNode).where(CatalogueScopeNode.candidate_id == candidate.id)
         )
     }
-    valid: dict[uuid.UUID, set[str]] = {}
+    fields_by_cell: dict[uuid.UUID, set[str]] = {}
+    evidence_ids_by_cell: dict[uuid.UUID, set[uuid.UUID]] = {}
+    evidence_ids_by_objective: dict[ClaimObjective, set[uuid.UUID]] = defaultdict(set)
     for cell in cells:
         if cell.state not in _TERMINAL_COVERAGE_STATES or not cell.supporting_claim_ids:
             continue
@@ -496,6 +523,7 @@ def _verified_coverage_fields(
         if node is None:
             continue
         fields: set[str] = set()
+        field_evidence_ids: set[uuid.UUID] = set()
         derived_evidence_ids: set[str] = set()
         all_claims_valid = True
         for claim_id in set(cell.supporting_claim_ids):
@@ -519,10 +547,17 @@ def _verified_coverage_fields(
                 all_claims_valid = False
                 break
             fields.add(link.field_path)
+            field_evidence_ids.add(evidence.id)
             derived_evidence_ids.add(derived_id)
         if all_claims_valid and derived_evidence_ids == set(cell.supporting_evidence_ids):
-            valid[cell.id] = fields
-    return valid
+            fields_by_cell[cell.id] = fields
+            evidence_ids_by_cell[cell.id] = field_evidence_ids
+            evidence_ids_by_objective[cell.objective].update(field_evidence_ids)
+    return _VerifiedCoverageEvidence(
+        fields_by_cell=fields_by_cell,
+        evidence_ids_by_cell=evidence_ids_by_cell,
+        evidence_ids_by_objective=dict(evidence_ids_by_objective),
+    )
 
 
 def _coverage_evidence_row_is_valid(
@@ -656,20 +691,28 @@ def _objective_is_not_applicable(
     )
 
 
-def _summary_is_supported(projection: object) -> bool:
+def _summary_is_supported(
+    projection: object,
+    evidence_ids_by_objective: dict[ClaimObjective, set[uuid.UUID]],
+) -> bool:
     summary = getattr(projection, "summary", None)
     if summary is None:
         return False
     projection_evidence_ids = {item.id for item in projection.evidence}
-    for block in (
-        summary.overview,
-        summary.funding,
-        summary.eligibility,
-        summary.application_route,
-    ):
+    for block_name, objectives in _SUMMARY_OBJECTIVES.items():
+        block = getattr(summary, block_name)
         evidence_ids = set(block.evidence_ids)
         if block.state in _SUMMARY_STATES_REQUIRING_EVIDENCE:
-            if not evidence_ids or not evidence_ids.issubset(projection_evidence_ids):
+            reviewed_evidence_ids = {
+                evidence_id
+                for objective in objectives
+                for evidence_id in evidence_ids_by_objective.get(objective, set())
+            }
+            if (
+                not evidence_ids
+                or not evidence_ids.issubset(projection_evidence_ids)
+                or not evidence_ids.issubset(reviewed_evidence_ids)
+            ):
                 return False
         elif block.state is DecisionSummaryState.UNKNOWN and evidence_ids:
             return False
