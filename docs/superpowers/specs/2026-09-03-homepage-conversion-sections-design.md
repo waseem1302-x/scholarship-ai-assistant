@@ -55,12 +55,12 @@ An incomplete-profile member receives activation copy such as “Complete your p
 
 **Psychological purpose:** visual self-projection and immediate relevance. The imagery attracts attention, but every card represents a concrete scholarship route rather than a generic destination fantasy.
 
-**Visitor title:** Funded paths to your next chapter  
-**Visitor subtitle:** Start with credible opportunities for international students—not another endless directory.  
+**Visitor title:** Funded paths to your next chapter<br>
+**Visitor subtitle:** Start with credible opportunities for international students—not another endless directory.<br>
 **Visitor header action:** Explore scholarships
 
-**Signed-in title:** Continue exploring funded opportunities  
-**Signed-in subtitle:** Open an opportunity, inspect its criteria, and decide whether it belongs in your plan.  
+**Signed-in title:** Continue exploring funded opportunities<br>
+**Signed-in subtitle:** Open an opportunity, inspect its criteria, and decide whether it belongs in your plan.<br>
 **Signed-in header action:** View your matches
 
 **Card content:** destination image, truthful funding or verification badge, scholarship name, country, degree level, verified deadline or “Check official deadline,” and save control. No guest match percentage. Cards link to relevant catalogue results until stable opportunity-detail fixture IDs exist.
@@ -69,12 +69,12 @@ An incomplete-profile member receives activation copy such as “Complete your p
 
 **Psychological purpose:** reduce learned helplessness and eligibility anxiety. The row emphasizes opportunities with clear, actionable routes rather than implying that every student qualifies.
 
-**Visitor title:** Scholarships with a realistic path  
-**Visitor subtitle:** Compare funding, degree level, deadline, and eligibility before investing weeks in an application.  
+**Visitor title:** Scholarships with a realistic path<br>
+**Visitor subtitle:** Compare funding, degree level, deadline, and eligibility before investing weeks in an application.<br>
 **Visitor header action:** Check your eligibility
 
-**Signed-in title:** Turn your profile into better decisions  
-**Signed-in subtitle:** Use explainable matching to separate confirmed alignment from missing or uncertain information.  
+**Signed-in title:** Turn your profile into better decisions<br>
+**Signed-in subtitle:** Use explainable matching to separate confirmed alignment from missing or uncertain information.<br>
 **Signed-in header action:** Inspect your matches
 
 **Card content:** scholarship image, objective badge such as “Fully funded,” “Verified,” or “Research route,” then a compact eligibility cue such as target degree or published experience requirement. The final card is a profile activation card rather than another scholarship.
@@ -83,12 +83,12 @@ An incomplete-profile member receives activation copy such as “Complete your p
 
 **Psychological purpose:** replace vague hope with clarity and control. These are not winner stories. Each card turns published selection criteria into a practical preparation route.
 
-**Visitor title:** Scholarship winning playbooks  
-**Visitor subtitle:** Understand what major scholarships evaluate—and how to prepare evidence before you apply.  
+**Visitor title:** Scholarship winning playbooks<br>
+**Visitor subtitle:** Understand what major scholarships evaluate—and how to prepare evidence before you apply.<br>
 **Visitor header action:** Explore playbooks
 
-**Signed-in title:** Prepare for the scholarships you are targeting  
-**Signed-in subtitle:** Turn selection criteria into focused questions, evidence, and application tasks.  
+**Signed-in title:** Prepare for the scholarships you are targeting<br>
+**Signed-in subtitle:** Turn selection criteria into focused questions, evidence, and application tasks.<br>
 **Signed-in header action:** Open AI coach
 
 **Initial playbooks:**
@@ -108,12 +108,12 @@ An incomplete-profile member receives activation copy such as “Complete your p
 
 **Psychological purpose:** convert educational interest into productive tool use. The section makes the invisible work of a strong application tangible.
 
-**Visitor title:** Build what selectors score  
-**Visitor subtitle:** Strengthen the essays, evidence, documents, and interview answers behind a serious application.  
+**Visitor title:** Build what selectors score<br>
+**Visitor subtitle:** Strengthen the essays, evidence, documents, and interview answers behind a serious application.<br>
 **Visitor header action:** Start preparing
 
-**Signed-in title:** Strengthen your application evidence  
-**Signed-in subtitle:** Continue with the highest-impact part of your application instead of guessing what to do next.  
+**Signed-in title:** Strengthen your application evidence<br>
+**Signed-in subtitle:** Continue with the highest-impact part of your application instead of guessing what to do next.<br>
 **Signed-in header action:** Open document lab
 
 **Initial cards:** motivation letter strategy, leadership evidence, scholarship CV, recommender brief, research proposal, interview practice, document checklist, and application narrative.
@@ -124,12 +124,12 @@ An incomplete-profile member receives activation copy such as “Complete your p
 
 **Psychological purpose:** remove decision paralysis and create an implementation intention. This is the bridge from the homepage into activation and retention.
 
-**Visitor title:** Start from where you are  
-**Visitor subtitle:** Choose your current stage and go directly to the tool that moves your application forward.  
+**Visitor title:** Start from where you are<br>
+**Visitor subtitle:** Choose your current stage and go directly to the tool that moves your application forward.<br>
 **Visitor header action:** Build your plan
 
-**Signed-in title:** Your next best move  
-**Signed-in subtitle:** Resume your profile, matches, documents, or applications from one clear starting point.  
+**Signed-in title:** Your next best move<br>
+**Signed-in subtitle:** Resume your profile, matches, documents, or applications from one clear starting point.<br>
 **Signed-in header action:** Open workspace
 
 **Initial cards:** find scholarships, build profile, inspect matches, save opportunities, prepare documents, practise with the assistant, track applications, and review deadlines.
