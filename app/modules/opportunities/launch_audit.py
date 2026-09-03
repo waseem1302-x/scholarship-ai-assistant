@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -16,9 +18,36 @@ from app.modules.catalogue_ingestion.review_models import (
     CatalogueCandidateReview,
     CatalogueProposalState,
 )
-from app.modules.catalogue_ingestion.topology_models import CatalogueCoverageCell
+from app.modules.catalogue_ingestion.topology_models import (
+    CatalogueCoverageCell,
+    CatalogueScopeNode,
+    ScopeNodeType,
+)
+from app.modules.catalogue_ingestion.trust_domains import OFFICIAL_FACTUAL_DOMAINS
+from app.modules.opportunities.evidence_models import (
+    ApplicationStep,
+    EvidenceSupportType,
+    EvidenceValidatorStatus,
+    FieldEvidence,
+    FundingComponent,
+    RequiredDocument,
+    ScopedDeadline,
+    SourceSnapshot,
+)
 from app.modules.opportunities.evidence_policy import EvidencePolicy
+from app.modules.opportunities.graph_models import (
+    ApplicationTrack,
+    Institution,
+    InstitutionParticipation,
+)
 from app.modules.opportunities.lifecycle import SOURCE_FRESHNESS_DAYS
+from app.modules.opportunities.materialization_models import (
+    CatalogueMaterializedClaimLink,
+    OpportunityEvent,
+    OpportunityResource,
+    ScholarshipEligibilityRule,
+    ScholarshipProgramme,
+)
 from app.modules.opportunities.models import (
     IndependenceStatus,
     Opportunity,
@@ -50,6 +79,45 @@ _MATERIALIZED_REVIEW_STATES = {
 _SUMMARY_STATES_REQUIRING_EVIDENCE = {
     DecisionSummaryState.CONFIRMED,
     DecisionSummaryState.NOT_APPLICABLE,
+}
+_SCOPE_FIELD_TYPES = {
+    "scholarship_family_key": ScopeNodeType.SCHOLARSHIP_FAMILY,
+    "cycle_key": ScopeNodeType.CYCLE,
+    "country_key": ScopeNodeType.COUNTRY,
+    "institution_key": ScopeNodeType.INSTITUTION,
+    "track_key": ScopeNodeType.ROUTE,
+    "programme_key": ScopeNodeType.PROGRAMME,
+    "degree_level_key": ScopeNodeType.DEGREE_LEVEL,
+    "subject_key": ScopeNodeType.SUBJECT,
+    "award_variant_key": ScopeNodeType.AWARD_VARIANT,
+    "application_channel_key": ScopeNodeType.APPLICATION_CHANNEL,
+}
+_ENTITY_NODE_TYPES = {
+    "cycle": ScopeNodeType.CYCLE,
+    "programme": ScopeNodeType.PROGRAMME,
+    "track": ScopeNodeType.ROUTE,
+    "institution": ScopeNodeType.INSTITUTION,
+}
+_SCHOLARSHIP_OWNED_EVIDENCE_MODELS = {
+    "track": ApplicationTrack,
+    "application_track": ApplicationTrack,
+    "programme": ScholarshipProgramme,
+    "scholarship_programme": ScholarshipProgramme,
+    "eligibility": ScholarshipEligibilityRule,
+    "scholarship_eligibility_rule": ScholarshipEligibilityRule,
+    "deadline": ScopedDeadline,
+    "scoped_deadline": ScopedDeadline,
+    "funding": FundingComponent,
+    "funding_component": FundingComponent,
+    "document": RequiredDocument,
+    "required_document": RequiredDocument,
+    "step": ApplicationStep,
+    "application_step": ApplicationStep,
+    "event": OpportunityEvent,
+    "opportunity_event": OpportunityEvent,
+    "resource": OpportunityResource,
+    "opportunity_resource": OpportunityResource,
+    "institution_participation": InstitutionParticipation,
 }
 
 
@@ -99,7 +167,7 @@ def audit_launch_catalogue(
         publishable_with_gaps: list[PublishableWithGapsRecord] = []
         publishable_ids: list[uuid.UUID] = []
 
-        for opportunity, candidate in reviewed_records:
+        for opportunity, candidate, review in reviewed_records:
             cells = list(
                 session.scalars(
                     select(CatalogueCoverageCell)
@@ -130,6 +198,7 @@ def audit_launch_catalogue(
             record_blockers = _record_blockers(
                 opportunity,
                 candidate,
+                review,
                 cells=cells,
                 sources=sources,
                 cycles=cycles,
@@ -142,7 +211,12 @@ def audit_launch_catalogue(
             critical_is_terminal = all(
                 _objective_is_terminal(cells, objective) for objective in _CRITICAL_OBJECTIVES
             )
-            if not critical_is_terminal:
+            has_impermissible_gap = any(
+                cell.state not in _TERMINAL_COVERAGE_STATES
+                and cell.state is not ScopedCoverageState.UNKNOWN
+                for cell in cells
+            )
+            if not critical_is_terminal or has_impermissible_gap:
                 continue
             publishable_ids.append(opportunity.id)
             if open_cells:
@@ -194,7 +268,7 @@ def audit_launch_catalogue(
 
 def _active_reviewed_records(
     session: Session,
-) -> list[tuple[Opportunity, CatalogueCandidate]]:
+) -> list[tuple[Opportunity, CatalogueCandidate, CatalogueCandidateReview]]:
     rows = session.execute(
         select(Opportunity, CatalogueCandidate, CatalogueCandidateReview)
         .join(CatalogueCandidate, CatalogueCandidate.opportunity_id == Opportunity.id)
@@ -230,17 +304,13 @@ def _active_reviewed_records(
         )
         if rank > current_rank:
             selected[opportunity.id] = (opportunity, candidate, review)
-    return [
-        (opportunity, candidate)
-        for opportunity, candidate, _review in sorted(
-            selected.values(), key=lambda item: str(item[0].id)
-        )
-    ]
+    return sorted(selected.values(), key=lambda item: str(item[0].id))
 
 
 def _record_blockers(
     opportunity: Opportunity,
     candidate: CatalogueCandidate,
+    review: CatalogueCandidateReview,
     *,
     cells: list[CatalogueCoverageCell],
     sources: list[Source],
@@ -311,10 +381,29 @@ def _record_blockers(
     ):
         blockers.add("stale_official_source")
 
+    evidence_fields_by_cell = _verified_coverage_fields(
+        session,
+        opportunity=opportunity,
+        candidate=candidate,
+        review=review,
+        cells=cells,
+        sources=official_sources,
+    )
+    identity_cells = [cell for cell in cells if cell.objective is ClaimObjective.IDENTITY]
     identity_is_terminal = _objective_is_terminal(cells, ClaimObjective.IDENTITY)
+    identity_fields = {
+        field_path
+        for cell in identity_cells
+        for field_path in evidence_fields_by_cell.get(cell.id, set())
+    }
+    identity_evidence_is_complete = bool(identity_cells) and all(
+        cell.id in evidence_fields_by_cell for cell in identity_cells
+    )
     provider_is_identified = bool(opportunity.provider and opportunity.provider.name.strip())
     tier_zero_complete = (
         identity_is_terminal
+        and identity_evidence_is_complete
+        and {"name", "provider_name"}.issubset(identity_fields)
         and provider_is_identified
         and opportunity.independence_status is IndependenceStatus.CONFIRMED_INDEPENDENT
         and current_source is not None
@@ -324,18 +413,227 @@ def _record_blockers(
 
     critical_cells = [cell for cell in cells if cell.objective in _CRITICAL_OBJECTIVES]
     if not tier_zero_complete or any(
-        cell.state in _TERMINAL_COVERAGE_STATES and not cell.supporting_evidence_ids
+        cell.state in _TERMINAL_COVERAGE_STATES and cell.id not in evidence_fields_by_cell
         for cell in critical_cells
     ):
         blockers.add("missing_evidence")
 
-    if not all(_objective_is_terminal(cells, objective) for objective in _CRITICAL_OBJECTIVES):
+    has_impermissible_gap = any(
+        cell.state not in _TERMINAL_COVERAGE_STATES
+        and cell.state is not ScopedCoverageState.UNKNOWN
+        for cell in cells
+    )
+    if (
+        not all(_objective_is_terminal(cells, objective) for objective in _CRITICAL_OBJECTIVES)
+        or has_impermissible_gap
+    ):
         blockers.add("incomplete_record")
 
     projection = build_public_projection(session, opportunity)
     if not _summary_is_supported(projection):
         blockers.add("unsupported_public_summary_claim")
     return blockers
+
+
+def _verified_coverage_fields(
+    session: Session,
+    *,
+    opportunity: Opportunity,
+    candidate: CatalogueCandidate,
+    review: CatalogueCandidateReview,
+    cells: list[CatalogueCoverageCell],
+    sources: list[Source],
+) -> dict[uuid.UUID, set[str]]:
+    claim_ids = {
+        claim_id
+        for cell in cells
+        if cell.state in _TERMINAL_COVERAGE_STATES
+        for claim_id in cell.supporting_claim_ids
+    }
+    if not claim_ids or not review.proposal_hash:
+        return {}
+    rows = session.execute(
+        select(CatalogueMaterializedClaimLink, FieldEvidence, SourceSnapshot, Source)
+        .join(FieldEvidence, FieldEvidence.id == CatalogueMaterializedClaimLink.field_evidence_id)
+        .join(SourceSnapshot, SourceSnapshot.id == FieldEvidence.source_snapshot_id)
+        .join(Source, Source.id == SourceSnapshot.source_id)
+        .where(
+            CatalogueMaterializedClaimLink.candidate_id == candidate.id,
+            CatalogueMaterializedClaimLink.review_id == review.id,
+            CatalogueMaterializedClaimLink.proposal_hash == review.proposal_hash,
+            CatalogueMaterializedClaimLink.claim_id.in_(claim_ids),
+        )
+    ).all()
+    fresh_source_ids = {
+        source.id
+        for source in sources
+        if EvidencePolicy.source_can_publish(source)
+        and EvidencePolicy.source_is_fresh(
+            source,
+            freshness_days=SOURCE_FRESHNESS_DAYS,
+        )
+    }
+    if EvidencePolicy.has_disqualifying_official_source(sources):
+        fresh_source_ids.clear()
+    rows_by_claim: dict[
+        str,
+        list[tuple[CatalogueMaterializedClaimLink, FieldEvidence, SourceSnapshot, Source]],
+    ] = defaultdict(list)
+    for link, evidence, snapshot, source in rows:
+        rows_by_claim[link.claim_id].append((link, evidence, snapshot, source))
+
+    nodes = {
+        node.id: node
+        for node in session.scalars(
+            select(CatalogueScopeNode).where(CatalogueScopeNode.candidate_id == candidate.id)
+        )
+    }
+    valid: dict[uuid.UUID, set[str]] = {}
+    for cell in cells:
+        if cell.state not in _TERMINAL_COVERAGE_STATES or not cell.supporting_claim_ids:
+            continue
+        node = nodes.get(cell.scope_node_id)
+        if node is None:
+            continue
+        fields: set[str] = set()
+        derived_evidence_ids: set[str] = set()
+        all_claims_valid = True
+        for claim_id in set(cell.supporting_claim_ids):
+            candidates = [
+                row
+                for row in rows_by_claim.get(claim_id, [])
+                if _coverage_evidence_row_is_valid(
+                    session,
+                    opportunity=opportunity,
+                    node=node,
+                    fresh_source_ids=fresh_source_ids,
+                    row=row,
+                )
+            ]
+            if len(candidates) != 1:
+                all_claims_valid = False
+                break
+            link, evidence, _snapshot, _source = candidates[0]
+            derived_id = _coverage_evidence_id(link, evidence)
+            if derived_id is None:
+                all_claims_valid = False
+                break
+            fields.add(link.field_path)
+            derived_evidence_ids.add(derived_id)
+        if all_claims_valid and derived_evidence_ids == set(cell.supporting_evidence_ids):
+            valid[cell.id] = fields
+    return valid
+
+
+def _coverage_evidence_row_is_valid(
+    session: Session,
+    *,
+    opportunity: Opportunity,
+    node: CatalogueScopeNode,
+    fresh_source_ids: set[uuid.UUID],
+    row: tuple[CatalogueMaterializedClaimLink, FieldEvidence, SourceSnapshot, Source],
+) -> bool:
+    link, evidence, snapshot, source = row
+    if (
+        evidence.entity_type != link.entity_type
+        or evidence.entity_id != link.entity_id
+        or evidence.field_path != link.field_path
+        or evidence.support_type is not EvidenceSupportType.EXPLICIT
+        or evidence.validator_status is not EvidenceValidatorStatus.PASSED
+        or source.id not in fresh_source_ids
+        or source.opportunity_id != opportunity.id
+    ):
+        return False
+    provenance = link.provenance_json or {}
+    if (
+        provenance.get("source_snapshot_id") != str(snapshot.id)
+        or provenance.get("content_hash") != snapshot.content_hash
+        or provenance.get("source_url") != source.url
+    ):
+        return False
+    trust_domain = link.trust_domain or evidence.trust_domain
+    trusted_domain = trust_domain in {domain.value for domain in OFFICIAL_FACTUAL_DOMAINS}
+    if not trusted_domain and provenance.get("trust_tier") not in {1, 2, 3}:
+        return False
+    return _entity_belongs_to_opportunity(
+        session,
+        entity_type=link.entity_type,
+        entity_id=link.entity_id,
+        opportunity_id=opportunity.id,
+    ) and _claim_matches_scope(link, node)
+
+
+def _entity_belongs_to_opportunity(
+    session: Session,
+    *,
+    entity_type: str,
+    entity_id: uuid.UUID,
+    opportunity_id: uuid.UUID,
+) -> bool:
+    if entity_type in {"scholarship", "opportunity"}:
+        return entity_id == opportunity_id
+    if entity_type in {"cycle", "opportunity_cycle"}:
+        cycle = session.get(OpportunityCycle, entity_id)
+        return cycle is not None and cycle.opportunity_id == opportunity_id
+    if entity_type == "institution":
+        institution = session.get(Institution, entity_id)
+        if institution is None:
+            return False
+        participation = session.scalar(
+            select(InstitutionParticipation.id).where(
+                InstitutionParticipation.scholarship_id == opportunity_id,
+                InstitutionParticipation.institution_id == entity_id,
+            )
+        )
+        return participation is not None
+    model = _SCHOLARSHIP_OWNED_EVIDENCE_MODELS.get(entity_type)
+    if model is None:
+        return False
+    entity = session.get(model, entity_id)
+    return entity is not None and entity.scholarship_id == opportunity_id
+
+
+def _claim_matches_scope(link: CatalogueMaterializedClaimLink, node: CatalogueScopeNode) -> bool:
+    if node.node_type is ScopeNodeType.SCHOLARSHIP_FAMILY:
+        return True
+    provenance = link.provenance_json or {}
+    claim_entity_type = str(provenance.get("claim_entity_type") or link.entity_type)
+    claim_entity_key = provenance.get("claim_entity_key")
+    mapped_type = _ENTITY_NODE_TYPES.get(claim_entity_type)
+    if (
+        mapped_type is node.node_type
+        and isinstance(claim_entity_key, str)
+        and _canonical_key(claim_entity_key) == node.canonical_key
+    ):
+        return True
+    scope = provenance.get("scope")
+    if not isinstance(scope, dict):
+        return False
+    return any(
+        node_type is node.node_type
+        and isinstance(scope.get(field_name), str)
+        and _canonical_key(scope[field_name]) == node.canonical_key
+        for field_name, node_type in _SCOPE_FIELD_TYPES.items()
+    )
+
+
+def _coverage_evidence_id(
+    link: CatalogueMaterializedClaimLink,
+    evidence: FieldEvidence,
+) -> str | None:
+    provenance = link.provenance_json or {}
+    artifact_id = provenance.get("artifact_id")
+    content_hash = provenance.get("content_hash")
+    if not isinstance(artifact_id, str) or not isinstance(content_hash, str):
+        return None
+    return hashlib.sha256(
+        f"{artifact_id}:{content_hash}:{evidence.excerpt_start}:{evidence.excerpt_end}".encode()
+    ).hexdigest()
+
+
+def _canonical_key(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+    return normalized[:255] or hashlib.sha256(value.encode()).hexdigest()[:32]
 
 
 def _objective_is_terminal(
