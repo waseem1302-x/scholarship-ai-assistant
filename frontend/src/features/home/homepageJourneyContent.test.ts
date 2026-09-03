@@ -29,4 +29,13 @@ describe("homepage journey content", () => {
     expect(playbooks.every((card) => card.sourceUrl?.startsWith("https://"))).toBe(true);
     expect(playbooks.every((card) => card.sourceReviewedAt === "2026-09-03")).toBe(true);
   });
+
+  it("uses the current official Cambridge source for Gates Cambridge criteria", () => {
+    const playbooks = getHomepageJourneySections(false)[2].cards;
+    const gatesCambridge = playbooks.find((card) => card.id === "gates-cambridge-playbook");
+
+    expect(gatesCambridge?.sourceUrl).toBe(
+      "https://www.student-funding.cam.ac.uk/fund/gates-cambridge-scholarship-2025",
+    );
+  });
 });

@@ -336,7 +336,7 @@ const playbookCards: ReadonlyArray<Readonly<HomepageJourneyCard>> = [
     badge: "Published criteria",
     href: playbookHref("Gates Cambridge"),
     imageUrl: pathCanada,
-    sourceUrl: "https://www.gatescambridge.org/apply/how-we-select/",
+    sourceUrl: "https://www.student-funding.cam.ac.uk/fund/gates-cambridge-scholarship-2025",
     sourceReviewedAt,
   },
 ];
