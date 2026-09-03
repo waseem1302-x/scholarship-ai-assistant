@@ -5,13 +5,13 @@ All images are stored locally and were cropped, resized, and color-graded for th
 | Local file | Source title | Author | License | Source |
 | --- | --- | --- | --- | --- |
 | `path-europe.webp` | A view with cloudy sky and biking woman over the city canal Nieuwe Keizersgracht in Amsterdam | Fons Heijnsbroek | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [Wikimedia Commons](https://commons.wikimedia.org/w/index.php?curid=180645132) |
-| `path-germany.webp` | Berlin Germany | Travel Coffee Book | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [StockSnap](https://stocksnap.io/photo/berlin-germany-8A981F99AC) |
+| `path-germany.webp` | Schillermonument Konzerthaussteps | Dave Meier | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [StockSnap](https://stocksnap.io/photo/schillermonument-konzerthaussteps-803CD628BB) |
 | `path-uk.webp` | London England | Rob Bye | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [StockSnap](https://stocksnap.io/photo/london-england-Q5F4Y33RNK) |
-| `path-us.webp` | Central Park during Autumn, NYC | Ed Yourdon | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) | [Wikimedia Commons](https://commons.wikimedia.org/w/index.php?curid=9785644) |
-| `path-canada.webp` | View of Mimico Waterfront Park and buildings, Toronto 2026 | Chicken4War | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | [Wikimedia Commons](https://commons.wikimedia.org/w/index.php?curid=187444277) |
-| `path-australia.webp` | Wentworth park, Sydney (40469228475) | Michel Rathwell | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | [Wikimedia Commons](https://commons.wikimedia.org/w/index.php?curid=68646382) |
+| `path-us.webp` | Sheep Meadow, Central Park during Autumn, NYC | Ed Yourdon | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) | [Wikimedia Commons](https://commons.wikimedia.org/w/index.php?curid=9785701) |
+| `path-canada.webp` | Toronto cyclist and skyline September 2010 | Henrik Moltke | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | [Wikimedia Commons](https://commons.wikimedia.org/w/index.php?curid=11515286) |
+| `path-australia.webp` | 2019-04 Blue Mountains National Park 03 | 0x010C | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | [Wikimedia Commons](https://commons.wikimedia.org/w/index.php?curid=79460460) |
 | `path-japan.webp` | Road Path | Freddie Marriage | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [StockSnap](https://stocksnap.io/photo/road-path-H966MN75RM) |
-| `path-global.webp` | Diverse Workplace | Direct Media | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [StockSnap](https://stocksnap.io/photo/diverse-workplace-UJ1P4WLT4N) |
+| `path-global.webp` | Group students table studying. View | Creator not specified by source (rawpixel.com) | [Public Domain Mark 1.0](https://creativecommons.org/publicdomain/mark/1.0/) | [rawpixel](https://www.rawpixel.com/image/8809342/photo-image-paper-women-public-domain) |
 | `prepare-essay.webp` | Writing Desk | Burst | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [StockSnap](https://stocksnap.io/photo/writing-desk-E8VATIYGAF) |
 | `prepare-leadership.webp` | Team Meeting | Startup Stock Photos | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [StockSnap](https://stocksnap.io/photo/team-meeting-JBW2PXDOL6) |
 | `prepare-cv.webp` | Writing Paper | Helloquence | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | [StockSnap](https://stocksnap.io/photo/writing-paper-KU273L0WTW) |
