@@ -636,6 +636,9 @@ class PublicScholarshipProjectionResponse(BaseModel):
 
 
 class OpportunityDetailResponse(OpportunitySummaryResponse):
+    projection: PublicScholarshipProjectionResponse = Field(
+        default_factory=PublicScholarshipProjectionResponse
+    )
     field_eligibility: str | None
     nationality_eligibility: str | None
     intake_year: int | None

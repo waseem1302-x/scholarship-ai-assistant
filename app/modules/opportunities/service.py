@@ -52,6 +52,7 @@ from app.modules.opportunities.models import (
     VerificationRecord,
     VerificationStatus,
 )
+from app.modules.opportunities.public_projection import build_public_projection
 from app.modules.opportunities.repository import OpportunityRepository
 from app.modules.opportunities.schemas import (
     AdminOpportunityResponse,
@@ -864,7 +865,8 @@ class OpportunityService:
         if official_source is None:
             raise AppError("opportunity_not_found", "Opportunity was not found", 404)
         return OpportunityDetailResponse(
-            **self._response_base(opportunity, official_source, require_verified=True)
+            **self._response_base(opportunity, official_source, require_verified=True),
+            projection=build_public_projection(self.session, opportunity),
         )
 
     def to_summary_response(self, opportunity: Opportunity) -> OpportunitySummaryResponse:

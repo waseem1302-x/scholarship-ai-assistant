@@ -9,7 +9,20 @@ from sqlalchemy.orm import Session
 from app.cli.create_admin import upsert_admin
 from app.core.security import hash_password
 from app.modules.auth.models import AuditLog, User, UserRole
-from app.modules.opportunities.models import SourceExcerpt, VerificationRecord
+from app.modules.catalogue_ingestion.evidence import EvidenceStore
+from app.modules.opportunities.evidence_models import (
+    EvidenceSupportType,
+    EvidenceValidatorStatus,
+    FundingComponent,
+    RequiredDocument,
+    SourceSnapshot,
+)
+from app.modules.opportunities.models import (
+    Opportunity,
+    Source,
+    SourceExcerpt,
+    VerificationRecord,
+)
 from app.modules.opportunities.schemas import OpportunityImportRequest
 from app.modules.opportunities.service import OpportunityService
 
@@ -130,6 +143,29 @@ def response_items(response) -> list[dict]:
 
 def response_pagination(response) -> dict:
     return response.json()["pagination"]
+
+
+def add_reviewed_evidence(
+    db_session: Session,
+    *,
+    entity_type: str,
+    entity_id: uuid.UUID,
+    field_path: str,
+    snapshot: SourceSnapshot,
+    excerpt: str,
+) -> None:
+    start = snapshot.normalized_text.index(excerpt)
+    EvidenceStore(db_session).add_field_evidence(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        field_path=field_path,
+        source_snapshot_id=snapshot.id,
+        excerpt=excerpt,
+        excerpt_start=start,
+        excerpt_end=start + len(excerpt),
+        support_type=EvidenceSupportType.EXPLICIT,
+        validator_status=EvidenceValidatorStatus.PASSED,
+    )
 
 
 def test_student_cannot_create_opportunity(client: TestClient, db_session: Session) -> None:
@@ -294,6 +330,143 @@ def test_source_verification_does_not_publish_record_without_review_action(
         response_items(public_after_publish)[0]["official_source_url"]
         == created["official_source_url"]
     )
+
+
+def test_public_detail_exposes_only_reviewed_projection_facts(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = create_opportunity(
+        client,
+        headers,
+        application_cycles=[
+            {
+                "label": "2027 intake",
+                "intake_year": 2027,
+                "application_opening_date": "2027-01-01T00:00:00Z",
+                "application_deadline": "2027-05-30T23:59:59Z",
+                "timezone": "UTC",
+            }
+        ],
+    )
+    published = publish_opportunity(client, headers, created)
+    opportunity = db_session.get(Opportunity, uuid.UUID(published["id"]))
+    source = db_session.get(Source, uuid.UUID(published["sources"][0]["id"]))
+    assert opportunity is not None
+    assert opportunity.cycles
+    assert source is not None
+    cycle_id = opportunity.cycles[0].id
+
+    evidence_text = "Full tuition coverage. Passport is required."
+    snapshot = SourceSnapshot(
+        source_id=source.id,
+        http_status=200,
+        content_hash=uuid.uuid4().hex * 2,
+        normalized_text=evidence_text,
+        extraction_method="http_text",
+        language_code="en",
+        byte_count=len(evidence_text.encode()),
+        character_count=len(evidence_text),
+        fetch_metadata={},
+    )
+    funding = FundingComponent(
+        scholarship_id=opportunity.id,
+        cycle_id=cycle_id,
+        component_type="tuition",
+        coverage_status="full",
+        description="Unsupported internal description",
+    )
+    document = RequiredDocument(
+        scholarship_id=opportunity.id,
+        cycle_id=cycle_id,
+        document_key="passport",
+        name="Passport",
+        required=True,
+    )
+    db_session.add_all([snapshot, funding, document])
+    db_session.flush()
+    for entity_type, entity_id, field_path, excerpt in [
+        ("funding", funding.id, "component_type", "Full tuition coverage"),
+        ("funding", funding.id, "coverage_status", "Full tuition coverage"),
+        ("document", document.id, "name", "Passport is required"),
+        ("document", document.id, "required", "Passport is required"),
+    ]:
+        add_reviewed_evidence(
+            db_session,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            field_path=field_path,
+            snapshot=snapshot,
+            excerpt=excerpt,
+        )
+    db_session.commit()
+
+    response = client.get(f"/api/v1/opportunities/{created['id']}")
+
+    assert response.status_code == 200
+    projection = response.json()["projection"]
+    assert projection["funding"] == [
+        {
+            "id": str(funding.id),
+            "scope": {
+                "cycle_id": str(cycle_id),
+                "track_id": None,
+                "institution_id": None,
+                "programme_id": None,
+                "scholarship_programme_id": None,
+            },
+            "evidence_ids": projection["funding"][0]["evidence_ids"],
+            "component_type": "tuition",
+            "coverage_status": "full",
+            "amount": None,
+            "currency": None,
+            "frequency": None,
+            "unit": None,
+            "qualifier": None,
+            "original_text": None,
+            "description": None,
+        }
+    ]
+    assert projection["documents"][0]["name"] == "Passport"
+    assert projection["documents"][0]["required"] is True
+    assert len(projection["evidence"]) == 4
+    assert {item["verification_status"] for item in projection["evidence"]} == {
+        "officially_verified"
+    }
+    assert "funding" not in projection["known_unknowns"]
+    assert "documents" not in projection["known_unknowns"]
+
+
+def test_public_detail_does_not_expose_reviewed_graph_for_draft_record(
+    client: TestClient, db_session: Session
+) -> None:
+    headers = admin_headers(client, db_session)
+    created = create_opportunity(client, headers)
+    verified = client.patch(
+        f"/api/v1/admin/opportunities/{created['id']}/verification",
+        json={
+            "verification_status": "officially_verified",
+            "notes": "Official source verified, but record is not approved for publication.",
+        },
+        headers=headers,
+    )
+    assert verified.status_code == 200
+    opportunity = db_session.get(Opportunity, uuid.UUID(created["id"]))
+    assert opportunity is not None
+    db_session.add(
+        FundingComponent(
+            scholarship_id=opportunity.id,
+            cycle_id=opportunity.current_cycle_id,
+            component_type="tuition",
+            coverage_status="full",
+        )
+    )
+    db_session.commit()
+
+    response = client.get(f"/api/v1/opportunities/{created['id']}")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "opportunity_not_found"
 
 
 def test_admin_create_cannot_publish_record_without_review_action(

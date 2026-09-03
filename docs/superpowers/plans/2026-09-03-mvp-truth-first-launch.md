@@ -158,7 +158,7 @@ git commit -m "feat: add reviewed public scholarship projection"
 - Consumes: `build_public_projection(session, opportunity)` from Task 1.
 - Produces: `GET /api/v1/opportunities/{opportunity_id}` with an additive `projection` object.
 
-- [ ] **Step 1: Write failing API tests**
+- [x] **Step 1: Write failing API tests**
 
 ```python
 def test_public_detail_returns_reviewed_graph_projection(client, reviewed_graph_opportunity):
@@ -176,23 +176,23 @@ def test_public_detail_does_not_expose_draft_graph(client, draft_graph_opportuni
     assert response.status_code == 404
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `.venv/Scripts/python -m pytest tests/test_opportunities.py -k "public_detail and projection" -v`
 
 Expected: FAIL because the detail service does not attach a graph projection.
 
-- [ ] **Step 3: Attach the projection in `to_detail_response`**
+- [x] **Step 3: Attach the projection in `to_detail_response`**
 
 Call the projection builder only after the existing active-status and official-source gates pass. Do not expose the administrator graph route or reuse its weaker response contract.
 
-- [ ] **Step 4: Verify backward compatibility**
+- [x] **Step 4: Verify backward compatibility**
 
 Run: `.venv/Scripts/python -m pytest tests/test_opportunities.py tests/test_matching.py tests/test_applications.py -v`
 
 Expected: PASS with existing flat fields unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/modules/opportunities/service.py app/modules/opportunities/routes.py tests/test_opportunities.py
