@@ -506,6 +506,7 @@ def enabled_settings(**overrides) -> Settings:
         "catalogue_ai_provider": "azure_openai",
         "catalogue_ai_endpoint": "https://example.openai.azure.com",
         "catalogue_ai_model": "structured-output-deployment",
+        "catalogue_bounded_crawling_enabled": False,
         "catalogue_ai_max_retries": 2,
         "catalogue_ai_input_cost_per_million": Decimal("1"),
         "catalogue_ai_output_cost_per_million": Decimal("2"),

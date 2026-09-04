@@ -114,14 +114,26 @@ def run_candidate(db_session, tmp_path, *, crawling: bool, max_pages: int = 3):
     return candidate, sources, fetcher
 
 
-def test_bounded_crawling_flag_defaults_off() -> None:
+def test_bounded_crawling_defaults_to_ten_pages() -> None:
     configured = Settings(
         env="test",
         database_url="sqlite+pysqlite:///:memory:",
         jwt_secret="test-secret-that-is-at-least-32-characters-long",
     )
 
-    assert configured.catalogue_bounded_crawling_enabled is False
+    assert configured.catalogue_bounded_crawling_enabled is True
+    assert configured.catalogue_ai_max_pages_per_candidate == 10
+
+
+def test_bounded_crawling_accepts_twenty_five_page_ceiling() -> None:
+    configured = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="test-secret-that-is-at-least-32-characters-long",
+        catalogue_ai_max_pages_per_candidate=25,
+    )
+
+    assert configured.catalogue_ai_max_pages_per_candidate == 25
 
 
 def test_ingestion_keeps_single_page_behavior_when_bounded_crawling_is_disabled(
@@ -159,6 +171,19 @@ def test_ingestion_persists_bounded_same_domain_child_sources_when_enabled(
     assert all(source.is_official for source in sources)
     assert all(source.content_hash for source in sources)
     assert candidate.status == CandidateStatus.NEEDS_REVIEW
+    assert candidate.failure_code == "candidate_only_complete"
+
+
+def test_ingestion_accepts_twenty_five_page_runtime_budget(db_session, tmp_path) -> None:
+    candidate, sources, fetcher = run_candidate(
+        db_session,
+        tmp_path,
+        crawling=True,
+        max_pages=25,
+    )
+
+    assert fetcher.calls == [ROOT, DEADLINE, FUNDING]
+    assert len(sources) == 3
     assert candidate.failure_code == "candidate_only_complete"
 
 

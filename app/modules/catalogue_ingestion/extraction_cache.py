@@ -98,6 +98,7 @@ class CatalogueExtractionCache:
         provider: str,
         model: str,
         capability_identity: str,
+        evidence_spans: Sequence[tuple[str, int, int]] | None = None,
     ) -> ExtractionCacheIdentity:
         if not source.is_official or source.trust_tier is None:
             raise ValueError("only verified official evidence may enter the extraction cache")
@@ -113,7 +114,10 @@ class CatalogueExtractionCache:
         return ExtractionCacheIdentity(
             normalized_content_hash=artifact.content_hash,
             authority_context_hash=self._authority_context_hash(source, artifact),
-            evidence_block_set_hash=_evidence_block_set_hash(blocks),
+            evidence_block_set_hash=_evidence_block_set_hash(
+                blocks,
+                evidence_spans=evidence_spans,
+            ),
             scope_fingerprint=_scope_fingerprint(routes),
             objective_bundle=objective_bundle,
             objective_bundle_hash=_stable_hash(list(objective_bundle)),
@@ -338,7 +342,30 @@ class CatalogueExtractionCache:
         return _stable_hash(payload)
 
 
-def _evidence_block_set_hash(blocks: Sequence[CatalogueEvidenceBlock]) -> str:
+def _evidence_block_set_hash(
+    blocks: Sequence[CatalogueEvidenceBlock],
+    *,
+    evidence_spans: Sequence[tuple[str, int, int]] | None = None,
+) -> str:
+    if evidence_spans is not None:
+        block_by_key = {block.block_key: block for block in blocks}
+        identities = []
+        for block_key, start_offset, end_offset in evidence_spans:
+            block = block_by_key.get(block_key)
+            if block is None:
+                raise ValueError("cache evidence span references an unknown block")
+            if not (block.start_offset <= start_offset < end_offset <= block.end_offset):
+                raise ValueError("cache evidence span falls outside its persisted block")
+            identities.append(
+                (
+                    block.source_content_hash,
+                    start_offset,
+                    end_offset,
+                    block.block_hash,
+                    block.builder_version,
+                )
+            )
+        return _stable_hash(sorted(identities))
     identities = sorted(
         (
             block.source_content_hash,

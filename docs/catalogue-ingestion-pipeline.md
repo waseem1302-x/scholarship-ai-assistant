@@ -52,7 +52,8 @@ must cite an excerpt present in the fetched normalized source. Inferred model kn
 Seed-supplied URLs are implemented as discovery leads. When
 `APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED=true`, an already-classified official root may be explored by
 the bounded crawler and successfully fetched child pages are staged as candidate sources for later
-evidence/classification work. The flag defaults to false. Child source texts are not concatenated
+evidence/classification work. The flag defaults to true with a 10-page accepted-artifact budget and
+may be configured up to 25 pages. Child source texts are not concatenated
 into the root extraction input: the current extraction contract still processes the selected root
 source only so field-level evidence cannot be misattributed across pages.
 
@@ -98,7 +99,7 @@ When `catalogueSeedStorageAccountName` is supplied, the same identity receives S
 Reader only on that existing account. No public container or storage account is created.
 
 The bounded crawler has an explicit Azure deployment parameter,
-`catalogueBoundedCrawlingEnabled`, which defaults to `false` and maps to
+`catalogueBoundedCrawlingEnabled`, which defaults to `true` and maps to
 `APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED`. Enabling it does not enable web discovery, browser fetching,
 Document Intelligence, AI ingestion, or publication. Use it only for reviewed acquisition runs that
 already have a verified official root URL.

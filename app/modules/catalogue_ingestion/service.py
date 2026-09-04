@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.models import AuditLog, User
+from app.modules.catalogue_ingestion.acquisition_runtime import crawl_budget_for_run
 from app.modules.catalogue_ingestion.claim_provider import (
     CatalogueClaimProvider,
     _normalize_claim_output,
@@ -35,7 +36,6 @@ from app.modules.catalogue_ingestion.claim_schemas import (
 )
 from app.modules.catalogue_ingestion.crawler import (
     BoundedOfficialSiteCrawler,
-    CrawlBudget,
     CrawlResult,
 )
 from app.modules.catalogue_ingestion.discovery_promotion import (
@@ -527,20 +527,9 @@ class CatalogueIngestionService:
         try:
             self._heartbeat_candidate(run, candidate, run_lease_token)
             if self.settings.catalogue_bounded_crawling_enabled:
-                per_page_bytes = self.settings.catalogue_source_max_bytes_per_page
                 crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
                     source.url,
-                    budget=CrawlBudget(
-                        max_pages=run.max_pages_per_candidate,
-                        max_depth=2,
-                        max_total_bytes=min(
-                            per_page_bytes * run.max_pages_per_candidate,
-                            20_000_000,
-                        ),
-                        per_host_interval_seconds=float(
-                            self.settings.source_monitor_per_host_interval_seconds
-                        ),
-                    ),
+                    budget=crawl_budget_for_run(run, self.settings),
                     heartbeat=lambda: self._heartbeat_candidate(run, candidate, run_lease_token),
                 )
                 if not crawl_result.pages:
@@ -841,20 +830,9 @@ class CatalogueIngestionService:
                 return
             try:
                 self._heartbeat_candidate(run, candidate, run_lease_token)
-                per_page_bytes = self.settings.catalogue_source_max_bytes_per_page
                 crawl_result = BoundedOfficialSiteCrawler(fetcher=self.fetcher).crawl(
                     source.url,
-                    budget=CrawlBudget(
-                        max_pages=run.max_pages_per_candidate,
-                        max_depth=2,
-                        max_total_bytes=min(
-                            per_page_bytes * run.max_pages_per_candidate,
-                            20_000_000,
-                        ),
-                        per_host_interval_seconds=float(
-                            self.settings.source_monitor_per_host_interval_seconds
-                        ),
-                    ),
+                    budget=crawl_budget_for_run(run, self.settings),
                     heartbeat=lambda: self._heartbeat_candidate(run, candidate, run_lease_token),
                 )
                 if not crawl_result.pages:

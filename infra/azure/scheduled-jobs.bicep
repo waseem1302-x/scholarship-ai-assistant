@@ -36,8 +36,13 @@ param catalogueAiModel string = 'unconfigured'
 @description('Fail-closed catalogue extraction feature gate. Enable only after gold evaluation.')
 param catalogueAiIngestionEnabled bool = false
 
-@description('Fail-closed bounded official-site crawling gate. Enable only for reviewed acquisition runs.')
-param catalogueBoundedCrawlingEnabled bool = false
+@description('Bounded official-site crawling gate for reviewed acquisition runs.')
+param catalogueBoundedCrawlingEnabled bool = true
+
+@description('Maximum accepted official-source artifacts per catalogue candidate.')
+@minValue(1)
+@maxValue(25)
+param catalogueAiMaxPagesPerCandidate int = 10
 
 @description('Reviewed input-token price per million; required to enable catalogue AI.')
 param catalogueAiInputCostPerMillion string = '0'
@@ -420,6 +425,10 @@ resource catalogueIngestionJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'APP_CATALOGUE_AI_MAX_CANDIDATES_PER_RUN'
               value: '500'
+            }
+            {
+              name: 'APP_CATALOGUE_AI_MAX_PAGES_PER_CANDIDATE'
+              value: string(catalogueAiMaxPagesPerCandidate)
             }
             {
               name: 'APP_CATALOGUE_AI_MAX_CALLS_PER_RUN'

@@ -23,9 +23,10 @@ from app.modules.catalogue_ingestion.models import (
 )
 from app.modules.catalogue_ingestion.topology_models import CatalogueCoverageCell
 
-EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v1"
+EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v2"
 _DEFAULT_PROMPT_RESERVE_CHARS = 8_000
 _DEFAULT_MAX_EVIDENCE_CHARS = 48_000
+_MIN_RECOVERY_SPAN_CHARS = 1_500
 
 _COMPATIBLE_OBJECTIVE_GROUPS: tuple[tuple[ClaimObjective, ...], ...] = (
     (
@@ -246,17 +247,25 @@ def split_extraction_job(
     input_cost_per_million: Decimal,
     output_cost_per_million: Decimal,
 ) -> tuple[ExtractionJobPlan, ...]:
-    """Deterministically split one truncated job on existing evidence-block boundaries."""
+    """Deterministically split a truncated job without losing evidence coverage."""
 
-    blocks = tuple(blocks_by_id[item.block_id] for item in job.evidence)
-    if len(blocks) <= 1:
-        return ()
-    midpoint = len(blocks) // 2
-    parts = (blocks[:midpoint], blocks[midpoint:])
+    if len(job.evidence) > 1:
+        midpoint = len(job.evidence) // 2
+        parts = (job.evidence[:midpoint], job.evidence[midpoint:])
+    else:
+        evidence = job.evidence[0]
+        block = blocks_by_id[evidence.block_id]
+        split_offset = _recovery_split_offset(block, evidence)
+        if split_offset is None:
+            return ()
+        parts = (
+            (_slice_evidence_ref(evidence, end_offset=split_offset),),
+            (_slice_evidence_ref(evidence, start_offset=split_offset),),
+        )
     children: list[ExtractionJobPlan] = []
     objective_set = set(job.objectives)
     for part in parts:
-        part_ids = {block.id for block in part}
+        part_ids = {item.block_id for item in part}
         part_routes = [
             route
             for route in routes
@@ -272,13 +281,15 @@ def split_extraction_job(
         if not objectives:
             continue
         children.append(
-            _build_job(
+            _build_job_from_evidence(
                 part,
                 part_routes,
+                blocks_by_id=blocks_by_id,
                 objectives=objectives,
                 run_max_output_tokens=run_max_output_tokens,
                 input_cost_per_million=input_cost_per_million,
                 output_cost_per_million=output_cost_per_million,
+                output_token_floor=run_max_output_tokens,
             )
         )
     return tuple(children)
@@ -316,9 +327,6 @@ def _build_job(
     input_cost_per_million: Decimal,
     output_cost_per_million: Decimal,
 ) -> ExtractionJobPlan:
-    first = blocks[0]
-    if any(block.source_artifact_id != first.source_artifact_id for block in blocks):
-        raise ValueError("one extraction job cannot cross source artifacts")
     evidence = tuple(
         ExtractionEvidenceRef(
             block_id=block.id,
@@ -331,7 +339,37 @@ def _build_job(
         )
         for block in blocks
     )
-    evidence_text = "\n\n".join(_render_block(block) for block in blocks)
+    return _build_job_from_evidence(
+        evidence,
+        routes,
+        blocks_by_id={block.id: block for block in blocks},
+        objectives=objectives,
+        run_max_output_tokens=run_max_output_tokens,
+        input_cost_per_million=input_cost_per_million,
+        output_cost_per_million=output_cost_per_million,
+    )
+
+
+def _build_job_from_evidence(
+    evidence: tuple[ExtractionEvidenceRef, ...],
+    routes: list[CatalogueEvidenceRoute],
+    *,
+    blocks_by_id: Mapping[uuid.UUID, CatalogueEvidenceBlock],
+    objectives: tuple[ClaimObjective, ...],
+    run_max_output_tokens: int,
+    input_cost_per_million: Decimal,
+    output_cost_per_million: Decimal,
+    output_token_floor: int = 0,
+) -> ExtractionJobPlan:
+    if not evidence:
+        raise ValueError("one extraction job requires evidence")
+    blocks = tuple(blocks_by_id[item.block_id] for item in evidence)
+    first = blocks[0]
+    if any(block.source_artifact_id != first.source_artifact_id for block in blocks):
+        raise ValueError("one extraction job cannot cross source artifacts")
+    evidence_text = "\n\n".join(
+        _render_evidence_span(block, item) for block, item in zip(blocks, evidence, strict=True)
+    )
     scopes = tuple(
         sorted(
             {
@@ -354,7 +392,11 @@ def _build_job(
     entity_estimate = max(1, len(scopes), len(blocks))
     max_output_tokens = min(
         run_max_output_tokens,
-        max(600, 500 + len(objectives) * 450 + min(entity_estimate, 24) * 120),
+        max(
+            output_token_floor,
+            600,
+            500 + len(objectives) * 450 + min(entity_estimate, 24) * 120,
+        ),
     )
     estimated_input_tokens = max(1, (len(evidence_text) + _DEFAULT_PROMPT_RESERVE_CHARS) // 4)
     estimated_cost_upper = (
@@ -379,18 +421,88 @@ def _build_job(
 
 
 def _render_block(block: CatalogueEvidenceBlock) -> str:
+    evidence = ExtractionEvidenceRef(
+        block_id=block.id,
+        block_key=block.block_key,
+        block_index=block.block_index,
+        block_hash=block.block_hash,
+        start_offset=block.start_offset,
+        end_offset=block.end_offset,
+        heading=block.heading,
+    )
+    return _render_evidence_span(block, evidence)
+
+
+def _render_evidence_span(
+    block: CatalogueEvidenceBlock,
+    evidence: ExtractionEvidenceRef,
+) -> str:
+    local_start = evidence.start_offset - block.start_offset
+    local_end = evidence.end_offset - block.start_offset
+    if local_start < 0 or local_end > len(block.block_text) or local_start >= local_end:
+        raise ValueError("evidence span falls outside its persisted block")
     metadata = {
-        "block_key": block.block_key,
-        "end_offset": block.end_offset,
-        "heading": block.heading,
+        "block_key": evidence.block_key,
+        "end_offset": evidence.end_offset,
+        "heading": evidence.heading,
         "language_hints": block.language_hints,
         "section_key": block.section_key,
         "source_role": block.source_role,
-        "start_offset": block.start_offset,
+        "start_offset": evidence.start_offset,
         "topology_hints": block.topology_hints,
     }
     header = json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return f"<EVIDENCE_BLOCK {header}>\n{block.block_text}\n</EVIDENCE_BLOCK>"
+    return (
+        f"<EVIDENCE_BLOCK {header}>\n"
+        f"{block.block_text[local_start:local_end]}\n"
+        "</EVIDENCE_BLOCK>"
+    )
+
+
+def _recovery_split_offset(
+    block: CatalogueEvidenceBlock,
+    evidence: ExtractionEvidenceRef,
+) -> int | None:
+    span_length = evidence.end_offset - evidence.start_offset
+    if span_length < _MIN_RECOVERY_SPAN_CHARS * 2:
+        return None
+    local_start = evidence.start_offset - block.start_offset
+    local_end = evidence.end_offset - block.start_offset
+    if local_start < 0 or local_end > len(block.block_text) or local_start >= local_end:
+        raise ValueError("evidence span falls outside its persisted block")
+
+    midpoint = local_start + span_length // 2
+    minimum = local_start + _MIN_RECOVERY_SPAN_CHARS
+    maximum = local_end - _MIN_RECOVERY_SPAN_CHARS
+    candidates: list[int] = []
+    for separator in ("\n\n", "\n", ". ", " "):
+        position = block.block_text.find(separator, minimum, maximum)
+        while position >= 0:
+            candidates.append(position + len(separator))
+            position = block.block_text.find(separator, position + 1, maximum)
+        if candidates:
+            break
+    local_split = (
+        min(candidates, key=lambda value: abs(value - midpoint)) if candidates else midpoint
+    )
+    return block.start_offset + local_split
+
+
+def _slice_evidence_ref(
+    evidence: ExtractionEvidenceRef,
+    *,
+    start_offset: int | None = None,
+    end_offset: int | None = None,
+) -> ExtractionEvidenceRef:
+    return ExtractionEvidenceRef(
+        block_id=evidence.block_id,
+        block_key=evidence.block_key,
+        block_index=evidence.block_index,
+        block_hash=evidence.block_hash,
+        start_offset=evidence.start_offset if start_offset is None else start_offset,
+        end_offset=evidence.end_offset if end_offset is None else end_offset,
+        heading=evidence.heading,
+    )
 
 
 def _job_key(

@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     catalogue_ai_max_retry_delay_seconds: int = Field(default=60, ge=1, le=300)
     catalogue_ai_max_response_bytes: int = Field(default=1_000_000, ge=10_000, le=5_000_000)
     catalogue_ai_max_candidates_per_run: int = Field(default=500, ge=1, le=5_000)
-    catalogue_ai_max_pages_per_candidate: int = Field(default=3, ge=1, le=10)
+    catalogue_ai_max_pages_per_candidate: int = Field(default=10, ge=1, le=25)
     catalogue_source_max_bytes_per_page: int = Field(default=5_000_000, ge=100_000, le=20_000_000)
     catalogue_ai_max_calls_per_run: int = Field(default=500, ge=0, le=5_000)
     catalogue_ai_max_input_characters: int = Field(default=80_000, ge=1_000, le=500_000)
@@ -121,7 +121,7 @@ class Settings(BaseSettings):
         default=Decimal("0"), ge=0, le=10_000
     )
     catalogue_discovery_max_tool_calls_per_provider_request: int = Field(default=1, ge=0, le=5)
-    catalogue_bounded_crawling_enabled: bool = False
+    catalogue_bounded_crawling_enabled: bool = True
     catalogue_browser_fetching_enabled: bool = False
     catalogue_document_intelligence_enabled: bool = False
     catalogue_docling_enabled: bool = True

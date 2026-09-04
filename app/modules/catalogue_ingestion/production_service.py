@@ -248,6 +248,13 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             job_blocks = [blocks_by_id[item.block_id] for item in job.evidence]
             job_routes = self._job_routes(job, all_routes)
             prompt_hash = bundle_claim_prompt_hash(job.objectives)
+            evidence_spans = [
+                (item.block_key, item.start_offset, item.end_offset) for item in job.evidence
+            ]
+            uses_partial_evidence = any(
+                item.start_offset != block.start_offset or item.end_offset != block.end_offset
+                for item, block in zip(job.evidence, job_blocks, strict=True)
+            )
             identity = self.extraction_cache.build_identity(
                 source=source,
                 artifact=artifact,
@@ -263,6 +270,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                 provider=self.bundle_claim_extractor.name,
                 model=self.bundle_claim_extractor.model,
                 capability_identity=self.bundle_claim_extractor.capability_identity,
+                evidence_spans=evidence_spans if uses_partial_evidence else None,
             )
             cached = self.extraction_cache.lookup(
                 identity,
@@ -608,18 +616,26 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         job: ExtractionJobPlan,
         blocks: list[CatalogueEvidenceBlock],
     ) -> ExpandedClaimBundle:
+        block_by_id = {block.id: block for block in blocks}
+        evidence_spans: dict[str, EvidenceBlockSpan] = {}
+        for item in job.evidence:
+            block = block_by_id.get(item.block_id)
+            if block is None:
+                raise ExtractionSchemaError("Planned evidence block is unavailable")
+            local_start = item.start_offset - block.start_offset
+            local_end = item.end_offset - block.start_offset
+            if local_start < 0 or local_end > len(block.block_text) or local_start >= local_end:
+                raise ExtractionSchemaError("Planned evidence span is outside its persisted block")
+            evidence_spans[item.block_key] = EvidenceBlockSpan(
+                block_key=item.block_key,
+                start_offset=item.start_offset,
+                end_offset=item.end_offset,
+                block_text=block.block_text[local_start:local_end],
+            )
         expanded = expand_claim_bundle(
             raw_output,
             requested_objectives=job.objectives,
-            blocks_by_key={
-                block.block_key: EvidenceBlockSpan(
-                    block_key=block.block_key,
-                    start_offset=block.start_offset,
-                    end_offset=block.end_offset,
-                    block_text=block.block_text,
-                )
-                for block in blocks
-            },
+            blocks_by_key=evidence_spans,
             allowed_entity_types=OBJECTIVE_ENTITY_TYPES,
             allowed_field_paths=OBJECTIVE_FIELD_PATHS,
         )
