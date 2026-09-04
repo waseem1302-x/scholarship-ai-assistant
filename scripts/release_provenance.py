@@ -32,6 +32,7 @@ SMOKE_SUCCESS = {
     "authenticated_contract": True,
     "tenant_read_update_delete_attacks_blocked": True,
 }
+JOURNEY_TESTCASE_NAME = "test_truth_first_mvp_launch_journey[chromium]"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -75,10 +76,14 @@ def _load_manifest(path: Path) -> list[dict[str, str]]:
 def _junit_counts(path: Path) -> dict[str, int]:
     root = ElementTree.parse(path).getroot()
     suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
-    return {
+    counts = {
         key: sum(int(suite.attrib.get(key, "0")) for suite in suites)
         for key in ("tests", "failures", "errors", "skipped")
     }
+    testcases = list(root.iter("testcase"))
+    if len(testcases) != 1 or testcases[0].attrib.get("name") != JOURNEY_TESTCASE_NAME:
+        raise ValueError("Chromium journey JUnit does not contain the named testcase")
+    return counts
 
 
 def _url_belongs_to_root(source_url: str, root_url: str) -> bool:
@@ -107,6 +112,9 @@ def _validate_png(path: Path) -> None:
     offset = 8
     chunk_types: list[bytes] = []
     idat = bytearray()
+    dimensions: tuple[int, int] | None = None
+    bits_per_pixel = 0
+    interlace_method = 0
     while offset < len(data):
         if len(data) - offset < 12:
             raise ValueError("Chromium screenshot PNG has an incomplete chunk")
@@ -125,9 +133,33 @@ def _validate_png(path: Path) -> None:
         if chunk_type == b"IHDR":
             if chunk_types or length != 13:
                 raise ValueError("Chromium screenshot PNG has an invalid IHDR")
-            width, height = struct.unpack(">II", chunk_data[:8])
-            if width < 1 or height < 1:
-                raise ValueError("Chromium screenshot PNG dimensions must be positive")
+            width, height, bit_depth, color_type, compression, filter_method, interlace = (
+                struct.unpack(">IIBBBBB", chunk_data)
+            )
+            valid_depths = {
+                0: {1, 2, 4, 8, 16},
+                2: {8, 16},
+                3: {1, 2, 4, 8},
+                4: {8, 16},
+                6: {8, 16},
+            }
+            channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+            if (
+                width < 1
+                or height < 1
+                or width > 32768
+                or height > 32768
+                or width * height > 100_000_000
+                or color_type not in valid_depths
+                or bit_depth not in valid_depths[color_type]
+                or compression != 0
+                or filter_method != 0
+                or interlace not in {0, 1}
+            ):
+                raise ValueError("Chromium screenshot PNG has invalid IHDR values")
+            dimensions = (width, height)
+            bits_per_pixel = bit_depth * channels[color_type]
+            interlace_method = interlace
         elif chunk_type == b"IDAT":
             idat.extend(chunk_data)
         elif chunk_type == b"IEND":
@@ -138,11 +170,43 @@ def _validate_png(path: Path) -> None:
     if not chunk_types or chunk_types[-1] != b"IEND" or b"IDAT" not in chunk_types:
         raise ValueError("Chromium screenshot PNG is missing IDAT or IEND")
     try:
-        decoded = zlib.decompress(bytes(idat))
+        decompressor = zlib.decompressobj()
+        decoded = decompressor.decompress(bytes(idat)) + decompressor.flush()
     except zlib.error as exc:
         raise ValueError("Chromium screenshot PNG IDAT data is not decodable") from exc
-    if not decoded:
-        raise ValueError("Chromium screenshot PNG IDAT data is empty")
+    if not decompressor.eof or decompressor.unused_data or dimensions is None:
+        raise ValueError("Chromium screenshot PNG IDAT stream is incomplete")
+
+    width, height = dimensions
+    if interlace_method == 0:
+        passes = [(width, height)]
+    else:
+        passes = []
+        for x_start, y_start, x_step, y_step in (
+            (0, 0, 8, 8),
+            (4, 0, 8, 8),
+            (0, 4, 4, 8),
+            (2, 0, 4, 4),
+            (0, 2, 2, 4),
+            (1, 0, 2, 2),
+            (0, 1, 1, 2),
+        ):
+            pass_width = 0 if width <= x_start else (width - x_start + x_step - 1) // x_step
+            pass_height = (
+                0 if height <= y_start else (height - y_start + y_step - 1) // y_step
+            )
+            if pass_width and pass_height:
+                passes.append((pass_width, pass_height))
+
+    cursor = 0
+    for pass_width, pass_height in passes:
+        row_bytes = (pass_width * bits_per_pixel + 7) // 8
+        for _ in range(pass_height):
+            if cursor >= len(decoded) or decoded[cursor] > 4:
+                raise ValueError("Chromium screenshot PNG has an invalid scanline filter")
+            cursor += 1 + row_bytes
+    if cursor != len(decoded):
+        raise ValueError("Chromium screenshot PNG scanline length is inconsistent with IHDR")
 
 
 def _validate_evidence(root: Path, manifest_path: Path) -> None:

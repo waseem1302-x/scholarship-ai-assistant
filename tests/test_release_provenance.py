@@ -1,6 +1,8 @@
 import base64
 import hashlib
 import json
+import struct
+import zlib
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,26 @@ SMOKE_SUCCESS = {
     "authenticated_contract": True,
     "tenant_read_update_delete_attacks_blocked": True,
 }
+
+
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(data))
+        + chunk_type
+        + data
+        + struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+    )
+
+
+def _one_pixel_rgba_png(*, compression_method: int = 0, scanline: bytes | None = None) -> bytes:
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, compression_method, 0, 0)
+    raw_scanline = b"\x00\x00\x00\x00\xff" if scanline is None else scanline
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", zlib.compress(raw_scanline))
+        + _png_chunk(b"IEND", b"")
+    )
 
 
 def _write_evidence(root: Path) -> dict[str, Path]:
@@ -56,7 +78,10 @@ def _write_evidence(root: Path) -> dict[str, Path]:
     )
     paths["candidate_smoke"].write_text(json.dumps(SMOKE_SUCCESS), encoding="utf-8")
     paths["chromium_junit"].write_text(
-        '<testsuite tests="1" failures="0" errors="0" skipped="0"/>',
+        '<testsuite tests="1" failures="0" errors="0" skipped="0">'
+        '<testcase classname="tests.test_browser_e2e" '
+        'name="test_truth_first_mvp_launch_journey[chromium]"/>'
+        "</testsuite>",
         encoding="utf-8",
     )
     paths["chromium_screenshot"].write_bytes(VALID_TINY_PNG)
@@ -265,6 +290,54 @@ def test_release_receipt_rejects_structurally_invalid_png(
     paths["chromium_screenshot"].write_bytes(invalid_png)
 
     with pytest.raises(ValueError, match="PNG"):
+        create_receipt(
+            root=root,
+            repository="owner/repository",
+            commit_sha="a" * 40,
+            image_reference="registry.example/app@sha256:" + "b" * 64,
+            run_id=123,
+            run_attempt=2,
+            manifest_path=LAUNCH_MANIFEST,
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_png",
+    [
+        _one_pixel_rgba_png(compression_method=1),
+        _one_pixel_rgba_png(scanline=b"\x00"),
+    ],
+)
+def test_release_receipt_rejects_invalid_png_methods_or_scanline_length(
+    tmp_path: Path, invalid_png: bytes
+) -> None:
+    root = tmp_path / "release-provenance"
+    paths = _write_evidence(root)
+    paths["chromium_screenshot"].write_bytes(invalid_png)
+
+    with pytest.raises(ValueError, match="PNG"):
+        create_receipt(
+            root=root,
+            repository="owner/repository",
+            commit_sha="a" * 40,
+            image_reference="registry.example/app@sha256:" + "b" * 64,
+            run_id=123,
+            run_attempt=2,
+            manifest_path=LAUNCH_MANIFEST,
+        )
+
+
+def test_release_receipt_rejects_junit_without_named_journey_testcase(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-provenance"
+    paths = _write_evidence(root)
+    paths["chromium_junit"].write_text(
+        '<testsuite tests="1" failures="0" errors="0" skipped="0"/>',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Chromium journey"):
         create_receipt(
             root=root,
             repository="owner/repository",
