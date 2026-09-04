@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.modules.catalogue_ingestion.acquisition_models import CatalogueAcquisitionSnapshot
 from app.modules.catalogue_ingestion.claim_bundle_provider import (
     CatalogueBundleClaimProvider,
     bundle_claim_prompt_hash,
@@ -59,6 +60,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
     CatalogueJobState,
+    CatalogueResumableJob,
     CatalogueSourceArtifact,
     ExtractionAttemptStatus,
     IngestionMode,
@@ -622,6 +624,61 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         )
         return sources
 
+    def _completeness_blockers(
+        self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+        terminal_failures: list[str],
+    ) -> list[str]:
+        blockers = list(terminal_failures)
+        if not self.settings.catalogue_completeness_mode_enabled:
+            return list(dict.fromkeys(blockers))
+
+        snapshot = self.session.scalar(
+            select(CatalogueAcquisitionSnapshot)
+            .where(
+                CatalogueAcquisitionSnapshot.run_id == run.id,
+                CatalogueAcquisitionSnapshot.candidate_id == candidate.id,
+            )
+            .order_by(
+                CatalogueAcquisitionSnapshot.created_at.desc(),
+                CatalogueAcquisitionSnapshot.id.desc(),
+            )
+        )
+        if snapshot is None:
+            blockers.append("acquisition_snapshot_missing")
+        else:
+            result = snapshot.result_json or {}
+            if result.get("budget_exhausted"):
+                reasons = result.get("budget_reasons") or ["unknown"]
+                blockers.extend(f"acquisition_budget:{reason}" for reason in reasons)
+            for escalation in result.get("escalations") or []:
+                if isinstance(escalation, dict) and escalation.get("capability_enabled") is False:
+                    kind = escalation.get("kind") or "unknown"
+                    reason = escalation.get("reason") or "required"
+                    blockers.append(f"acquisition_escalation:{kind}:{reason}")
+
+        jobs = list(
+            self.session.scalars(
+                select(CatalogueResumableJob).where(
+                    CatalogueResumableJob.candidate_id == candidate.id
+                )
+            )
+        )
+        for job in jobs:
+            if job.state is CatalogueJobState.FAILED:
+                blockers.append(
+                    f"extraction_job_failed:{job.job_key}:"
+                    f"{job.error_code or 'unspecified'}"
+                )
+            elif job.state is CatalogueJobState.CANCELLED:
+                blockers.append(f"extraction_job_cancelled:{job.job_key}")
+            elif job.state is not CatalogueJobState.SUCCEEDED:
+                blockers.append(
+                    f"extraction_job_non_terminal:{job.job_key}:{job.state.value}"
+                )
+        return list(dict.fromkeys(blockers))
+
     def _job_routes(
         self,
         job: ExtractionJobPlan,
@@ -748,6 +805,11 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         terminal_failures: list[str],
     ) -> None:
         self._heartbeat_candidate(run, candidate, run_lease_token)
+        completeness_blockers = self._completeness_blockers(
+            run,
+            candidate,
+            terminal_failures,
+        )
         extracted: list[tuple[CatalogueSourceArtifact, int, list[Any]]] = []
         unknown_objectives: set[str] = set()
         warnings: set[str] = set()
@@ -779,7 +841,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                 extracted.append((group.artifact, effective_trust_tier, merged.claims))
 
         if not extracted:
-            candidate.validation_errors = list(dict.fromkeys(terminal_failures))
+            candidate.validation_errors = completeness_blockers
             self._manual_review(run, candidate, "insufficient_routed_evidence", run_lease_token)
             return
 
@@ -802,7 +864,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         candidate.proposed_payload = resolution.model_dump(mode="json")
         candidate.validation_errors = list(
             dict.fromkeys(
-                resolution.rejected + resolution.completeness_errors + terminal_failures
+                resolution.rejected + resolution.completeness_errors + completeness_blockers
             )
         )
         candidate.conflicts = sorted(set(candidate.conflicts + resolution.conflicts))

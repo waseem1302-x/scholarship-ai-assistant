@@ -25,6 +25,11 @@ record intent at a point in time; they do not override that current-state docume
 configuration. The React frontend is one client of the versioned backend API and is served at `/`.
 The fail-closed, manual [AI-assisted catalogue ingestion pipeline](docs/catalogue-ingestion-pipeline.md)
 stages official-source proposals for the existing human review workflow; it never publishes directly.
+Its opt-in completeness mode follows the relevant authorized official-source frontier until it is
+exhausted, while retaining URL, authority, byte, and evidence-span validation. A run is complete
+only when acquisition has no budget or disabled-escalation blocker, extraction jobs are terminal,
+and scoped claim validation succeeds. Emergency ceilings remain 1,000 fetch attempts, 500 model
+calls, and USD 5 per scholarship; reaching one is reported as incomplete rather than successful.
 
 Implemented so far:
 

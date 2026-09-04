@@ -5,6 +5,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from app.core.config import Settings
+from app.modules.catalogue_ingestion.acquisition_models import CatalogueAcquisitionSnapshot
 from app.modules.catalogue_ingestion.acquisition_runtime import crawl_budget_for_run
 from app.modules.catalogue_ingestion.hardened_service import HardenedCatalogueIngestionService
 from app.modules.catalogue_ingestion.models import (
@@ -12,9 +13,12 @@ from app.modules.catalogue_ingestion.models import (
     CandidateStatus,
     CatalogueCandidate,
     CatalogueCandidateSource,
+    CatalogueJobState,
+    CatalogueResumableJob,
     CatalogueSourceArtifact,
     IngestionMode,
 )
+from app.modules.catalogue_ingestion.production_service import ProductionCatalogueIngestionService
 from app.modules.catalogue_ingestion.service import CatalogueIngestionService
 from app.modules.opportunities.source_monitor import FetchedLink, FetchedSource, SourceFetchError
 
@@ -257,6 +261,116 @@ def test_hardened_resume_reuses_persisted_artifact_without_recrawling(
     service._process_direct_candidate(run, candidate, "lease-token")
 
     assert claim_calls == ["claims"]
+
+
+def test_completeness_blockers_include_acquisition_and_terminal_failures(
+    db_session,
+) -> None:
+    configured = settings(crawling=True, completeness=True)
+    base_service = CatalogueIngestionService(db_session, configured, fetcher=MappingFetcher())
+    response = base_service.create_run_from_url(
+        ROOT,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    run = base_service.repository.get_run(response.id)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == response.id)
+    )
+    assert run is not None
+    assert candidate is not None
+    db_session.add_all(
+        (
+            CatalogueAcquisitionSnapshot(
+                run_id=run.id,
+                candidate_id=candidate.id,
+                result_json={
+                    "budget_exhausted": True,
+                    "budget_reasons": ["fetch_attempts"],
+                    "escalations": [
+                        {
+                            "kind": "browser_render",
+                            "reason": "static_javascript_shell",
+                            "capability_enabled": False,
+                        }
+                    ],
+                },
+            ),
+            CatalogueResumableJob(
+                run_id=run.id,
+                candidate_id=candidate.id,
+                job_key="failed-extraction",
+                stage="claim_bundle_extraction",
+                state=CatalogueJobState.FAILED,
+                checkpoint={"outcome": "validation_failed"},
+                error_code="bundle_validation_failed",
+                error_detail="invalid_evidence_span:deadline",
+                attempt_count=1,
+            ),
+        )
+    )
+    db_session.commit()
+    service = object.__new__(ProductionCatalogueIngestionService)
+    service.session = db_session
+    service.settings = configured
+
+    blockers = service._completeness_blockers(
+        run,
+        candidate,
+        ["bundle_validation_failed:invalid_evidence_span:deadline"],
+    )
+
+    assert "acquisition_budget:fetch_attempts" in blockers
+    assert (
+        "acquisition_escalation:browser_render:static_javascript_shell" in blockers
+    )
+    assert any(item.startswith("extraction_job_failed:failed-extraction") for item in blockers)
+
+
+def test_completeness_blockers_are_empty_after_clean_frontier_and_terminal_jobs(
+    db_session,
+) -> None:
+    configured = settings(crawling=True, completeness=True)
+    base_service = CatalogueIngestionService(db_session, configured, fetcher=MappingFetcher())
+    response = base_service.create_run_from_url(
+        ROOT,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    run = base_service.repository.get_run(response.id)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == response.id)
+    )
+    assert run is not None
+    assert candidate is not None
+    db_session.add_all(
+        (
+            CatalogueAcquisitionSnapshot(
+                run_id=run.id,
+                candidate_id=candidate.id,
+                result_json={
+                    "budget_exhausted": False,
+                    "budget_reasons": [],
+                    "escalations": [],
+                },
+            ),
+            CatalogueResumableJob(
+                run_id=run.id,
+                candidate_id=candidate.id,
+                job_key="successful-extraction",
+                stage="claim_bundle_extraction",
+                state=CatalogueJobState.SUCCEEDED,
+                checkpoint={"outcome": "cached"},
+                attempt_count=1,
+            ),
+        )
+    )
+    db_session.commit()
+    service = object.__new__(ProductionCatalogueIngestionService)
+    service.session = db_session
+    service.settings = configured
+
+    assert service._completeness_blockers(run, candidate, []) == []
 
 
 def test_ingestion_keeps_single_page_behavior_when_bounded_crawling_is_disabled(

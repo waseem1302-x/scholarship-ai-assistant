@@ -774,6 +774,7 @@ def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
         enabled_settings(
             catalogue_bounded_crawling_enabled=False,
             catalogue_ai_max_calls_per_run=100,
+            catalogue_completeness_mode_enabled=True,
         ),
         fetcher=FakeFetcher(long_evidence),
         claim_extractor=FakeClaimProvider(claim_output()),
@@ -787,6 +788,9 @@ def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
 
     service.process_run(run.id, worker_id="validation-recovery")
 
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
     jobs = list(
         db_session.scalars(
             select(CatalogueResumableJob).where(
@@ -808,6 +812,9 @@ def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
     assert events
     assert events[-1].detail_json["output_json"] == invalid_output.model_dump(mode="json")
     assert "unknown_evidence_block:outside" in events[-1].detail_json["validation_warnings"]
+    assert candidate is not None
+    assert candidate.status is not CandidateStatus.READY_FOR_REVIEW
+    assert "acquisition_snapshot_missing" in candidate.validation_errors
 
 
 def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_session) -> None:
