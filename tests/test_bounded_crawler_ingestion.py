@@ -1,9 +1,11 @@
 import hashlib
 import json
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.core.config import Settings
+from app.modules.catalogue_ingestion.acquisition_runtime import crawl_budget_for_run
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
     CandidateStatus,
@@ -20,13 +22,19 @@ DEADLINE = "https://scholarships.gov.uk/example/deadline"
 EXTERNAL = "https://third-party.example/example"
 
 
-def settings(*, crawling: bool, max_pages: int = 3) -> Settings:
+def settings(
+    *,
+    crawling: bool,
+    max_pages: int = 3,
+    completeness: bool = False,
+) -> Settings:
     return Settings(
         env="test",
         database_url="sqlite+pysqlite:///:memory:",
         jwt_secret="test-secret-that-is-at-least-32-characters-long",
         catalogue_bounded_crawling_enabled=crawling,
         catalogue_ai_max_pages_per_candidate=max_pages,
+        catalogue_completeness_mode_enabled=completeness,
         source_monitor_per_host_interval_seconds=0,
     )
 
@@ -134,6 +142,51 @@ def test_bounded_crawling_accepts_twenty_five_page_ceiling() -> None:
     )
 
     assert configured.catalogue_ai_max_pages_per_candidate == 25
+
+
+def test_completeness_mode_persists_paid_failsafes_and_exhausts_frontier(
+    db_session,
+    tmp_path,
+) -> None:
+    configured = settings(crawling=True, completeness=True)
+    service = CatalogueIngestionService(db_session, configured, fetcher=MappingFetcher())
+
+    response = service.create_run_from_source(
+        str(seed_file(tmp_path)),
+        mode=IngestionMode.CANDIDATE_ONLY,
+        dry_run=True,
+    )
+    run = service.repository.get_run(response.id)
+    assert run is not None
+
+    budget = crawl_budget_for_run(run, configured)
+
+    assert run.max_model_calls == 500
+    assert run.max_estimated_cost == Decimal("5")
+    assert budget.max_fetch_attempts == 1_000
+    assert budget.max_accepted_artifacts is None
+    assert budget.max_wall_seconds is None
+    assert budget.max_depth == 3
+    assert budget.max_links_per_page == 500
+
+
+def test_completeness_mode_accepts_direct_source_bundle_beyond_page_budget(
+    db_session,
+) -> None:
+    configured = settings(crawling=True, max_pages=10, completeness=True)
+    service = CatalogueIngestionService(db_session, configured, fetcher=MappingFetcher())
+    supporting_urls = [f"https://scholarships.gov.uk/example/source-{index}" for index in range(11)]
+
+    response = service.create_run_from_url(
+        ROOT,
+        supporting_urls=supporting_urls,
+        mode=IngestionMode.CANDIDATE_ONLY,
+        dry_run=True,
+    )
+
+    run = service.repository.get_run(response.id)
+    assert run is not None
+    assert run.max_pages_per_candidate == 10
 
 
 def test_ingestion_keeps_single_page_behavior_when_bounded_crawling_is_disabled(

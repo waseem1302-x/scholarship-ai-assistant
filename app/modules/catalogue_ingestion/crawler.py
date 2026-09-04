@@ -31,7 +31,7 @@ from app.modules.opportunities.source_monitor import (
 )
 
 _MAX_ROOT_PAGES = 10
-_MAX_FETCH_ATTEMPTS = 100
+_MAX_FETCH_ATTEMPTS = 10_000
 _MAX_ACCEPTED_ARTIFACTS = 25
 _DEFAULT_TOTAL_BYTES = 20 * 1024 * 1024
 _DEFAULT_WALL_SECONDS = 120.0
@@ -310,11 +310,11 @@ class CrawlBudget:
     """
 
     max_fetch_attempts: int = 12
-    max_accepted_artifacts: int = _MAX_ROOT_PAGES
+    max_accepted_artifacts: int | None = _MAX_ROOT_PAGES
     max_depth: int = 2
     max_total_bytes: int = _DEFAULT_TOTAL_BYTES
     max_host_requests: int = 10
-    max_wall_seconds: float = _DEFAULT_WALL_SECONDS
+    max_wall_seconds: float | None = _DEFAULT_WALL_SECONDS
     max_browser_renders: int = 0
     max_document_conversions: int = 4
     max_links_per_page: int = 100
@@ -328,11 +328,13 @@ class CrawlBudget:
             object.__setattr__(
                 self,
                 "max_accepted_artifacts",
-                min(self.max_accepted_artifacts, self.max_pages),
+                min(self.max_accepted_artifacts or self.max_pages, self.max_pages),
             )
         if not 1 <= self.max_fetch_attempts <= _MAX_FETCH_ATTEMPTS:
             raise ValueError(f"max_fetch_attempts must be between 1 and {_MAX_FETCH_ATTEMPTS}")
-        if not 1 <= self.max_accepted_artifacts <= _MAX_ACCEPTED_ARTIFACTS:
+        if self.max_accepted_artifacts is not None and not (
+            1 <= self.max_accepted_artifacts <= _MAX_ACCEPTED_ARTIFACTS
+        ):
             raise ValueError(
                 f"max_accepted_artifacts must be between 1 and {_MAX_ACCEPTED_ARTIFACTS}"
             )
@@ -342,7 +344,7 @@ class CrawlBudget:
             raise ValueError("max_total_bytes must be positive")
         if self.max_host_requests < 1:
             raise ValueError("max_host_requests must be positive")
-        if self.max_wall_seconds <= 0:
+        if self.max_wall_seconds is not None and self.max_wall_seconds <= 0:
             raise ValueError("max_wall_seconds must be positive")
         if self.max_browser_renders < 0:
             raise ValueError("max_browser_renders cannot be negative")
@@ -833,13 +835,16 @@ class BoundedOfficialSiteCrawler:
         def fetch_page(item: _QueuedLink) -> bool:
             nonlocal total_bytes, fetch_attempts, accepted_artifacts, document_conversions
             pulse()
-            if elapsed() >= limits.max_wall_seconds:
+            if limits.max_wall_seconds is not None and elapsed() >= limits.max_wall_seconds:
                 mark_budget("wall_time")
                 return False
             if fetch_attempts >= limits.max_fetch_attempts:
                 mark_budget("fetch_attempts")
                 return False
-            if accepted_artifacts >= limits.max_accepted_artifacts:
+            if (
+                limits.max_accepted_artifacts is not None
+                and accepted_artifacts >= limits.max_accepted_artifacts
+            ):
                 mark_budget("accepted_artifacts")
                 return False
             if item.depth > limits.max_depth:
@@ -873,7 +878,10 @@ class BoundedOfficialSiteCrawler:
             if previous_request is not None and limits.per_host_interval_seconds > 0:
                 wait = limits.per_host_interval_seconds - (self.clock() - previous_request)
                 if wait > 0:
-                    if elapsed() + wait >= limits.max_wall_seconds:
+                    if (
+                        limits.max_wall_seconds is not None
+                        and elapsed() + wait >= limits.max_wall_seconds
+                    ):
                         mark_budget("wall_time")
                         return False
                     pulse()
@@ -1022,7 +1030,11 @@ class BoundedOfficialSiteCrawler:
             accepted_artifacts += 1
             if item.depth < limits.max_depth:
                 enqueue_links(fetched.links, depth=item.depth + 1)
-            if accepted_artifacts >= limits.max_accepted_artifacts and queue:
+            if (
+                limits.max_accepted_artifacts is not None
+                and accepted_artifacts >= limits.max_accepted_artifacts
+                and queue
+            ):
                 mark_budget("accepted_artifacts")
                 return False
             if total_bytes >= limits.max_total_bytes and queue:
@@ -1047,9 +1059,12 @@ class BoundedOfficialSiteCrawler:
         if queue and not budget_exhausted:
             if fetch_attempts >= limits.max_fetch_attempts:
                 mark_budget("fetch_attempts")
-            elif accepted_artifacts >= limits.max_accepted_artifacts:
+            elif (
+                limits.max_accepted_artifacts is not None
+                and accepted_artifacts >= limits.max_accepted_artifacts
+            ):
                 mark_budget("accepted_artifacts")
-            elif elapsed() >= limits.max_wall_seconds:
+            elif limits.max_wall_seconds is not None and elapsed() >= limits.max_wall_seconds:
                 mark_budget("wall_time")
         pulse()
 

@@ -39,6 +39,14 @@ param catalogueAiIngestionEnabled bool = false
 @description('Bounded official-site crawling gate for reviewed acquisition runs.')
 param catalogueBoundedCrawlingEnabled bool = true
 
+@description('Opt-in evidence-complete catalogue ingestion mode.')
+param catalogueCompletenessModeEnabled bool = false
+
+@description('Emergency fetch-attempt ceiling for one completeness run.')
+@minValue(1)
+@maxValue(10000)
+param catalogueCompletenessMaxFetchAttempts int = 1000
+
 @description('Maximum accepted official-source artifacts per catalogue candidate.')
 @minValue(1)
 @maxValue(25)
@@ -417,6 +425,22 @@ resource catalogueIngestionJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED'
               value: string(catalogueBoundedCrawlingEnabled)
+            }
+            {
+              name: 'APP_CATALOGUE_COMPLETENESS_MODE_ENABLED'
+              value: string(catalogueCompletenessModeEnabled)
+            }
+            {
+              name: 'APP_CATALOGUE_COMPLETENESS_MAX_FETCH_ATTEMPTS'
+              value: string(catalogueCompletenessMaxFetchAttempts)
+            }
+            {
+              name: 'APP_CATALOGUE_COMPLETENESS_MAX_MODEL_CALLS'
+              value: '500'
+            }
+            {
+              name: 'APP_CATALOGUE_COMPLETENESS_MAX_ESTIMATED_COST_PER_RUN'
+              value: '5.00'
             }
             {
               name: 'APP_CATALOGUE_DOCUMENT_INTELLIGENCE_ENABLED'

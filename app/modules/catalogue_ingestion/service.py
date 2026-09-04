@@ -168,6 +168,7 @@ class CatalogueIngestionService:
     ) -> IngestionRunResponse:
         loaded = SeedSourceLoader().load(source)
         seeds = self.parser.parse(loaded)
+        completeness = self.settings.catalogue_completeness_mode_enabled
         maximum = min(
             max_candidates or self.settings.catalogue_ai_max_candidates_per_run,
             self.settings.catalogue_ai_max_candidates_per_run,
@@ -181,10 +182,18 @@ class CatalogueIngestionService:
             dry_run=dry_run,
             max_candidates=maximum,
             max_pages_per_candidate=self.settings.catalogue_ai_max_pages_per_candidate,
-            max_model_calls=self.settings.catalogue_ai_max_calls_per_run,
+            max_model_calls=(
+                self.settings.catalogue_completeness_max_model_calls
+                if completeness
+                else self.settings.catalogue_ai_max_calls_per_run
+            ),
             max_input_characters=self.settings.catalogue_ai_max_input_characters,
             max_output_tokens=self.settings.catalogue_ai_max_output_tokens,
-            max_estimated_cost=self.settings.catalogue_ai_max_estimated_cost_per_run,
+            max_estimated_cost=(
+                self.settings.catalogue_completeness_max_estimated_cost_per_run
+                if completeness
+                else self.settings.catalogue_ai_max_estimated_cost_per_run
+            ),
             configuration_revision=CATALOGUE_CONFIGURATION_REVISION,
             configuration_fingerprint=catalogue_configuration_fingerprint(self.settings),
         )
@@ -208,6 +217,7 @@ class CatalogueIngestionService:
         university: str | None = None,
         country: str | None = None,
     ) -> IngestionRunResponse:
+        completeness = self.settings.catalogue_completeness_mode_enabled
         canonical_urls: list[str] = []
         hosts: list[str] = []
         for raw_url in [url, *(supporting_urls or [])]:
@@ -226,7 +236,10 @@ class CatalogueIngestionService:
                 )
             canonical_urls.append(canonical_url)
             hosts.append(normalized.normalized.host)
-        if len(canonical_urls) > self.settings.catalogue_ai_max_pages_per_candidate:
+        if (
+            not completeness
+            and len(canonical_urls) > self.settings.catalogue_ai_max_pages_per_candidate
+        ):
             raise AppError(
                 "direct_source_budget_exceeded",
                 "The direct source bundle exceeds the configured page budget",
@@ -246,10 +259,18 @@ class CatalogueIngestionService:
             dry_run=dry_run,
             max_candidates=1,
             max_pages_per_candidate=self.settings.catalogue_ai_max_pages_per_candidate,
-            max_model_calls=self.settings.catalogue_ai_max_calls_per_run,
+            max_model_calls=(
+                self.settings.catalogue_completeness_max_model_calls
+                if completeness
+                else self.settings.catalogue_ai_max_calls_per_run
+            ),
             max_input_characters=self.settings.catalogue_ai_max_input_characters,
             max_output_tokens=self.settings.catalogue_ai_max_output_tokens,
-            max_estimated_cost=self.settings.catalogue_ai_max_estimated_cost_per_run,
+            max_estimated_cost=(
+                self.settings.catalogue_completeness_max_estimated_cost_per_run
+                if completeness
+                else self.settings.catalogue_ai_max_estimated_cost_per_run
+            ),
             configuration_revision=CATALOGUE_CONFIGURATION_REVISION,
             configuration_fingerprint=catalogue_configuration_fingerprint(self.settings),
         )

@@ -137,6 +137,7 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
         "safety": {
             "ai_ingestion_enabled": settings.catalogue_ai_ingestion_enabled,
             "bounded_crawling_enabled": settings.catalogue_bounded_crawling_enabled,
+            "completeness_mode_enabled": settings.catalogue_completeness_mode_enabled,
             "browser_fetching_enabled": settings.catalogue_browser_fetching_enabled,
             "document_intelligence_enabled": settings.catalogue_document_intelligence_enabled,
             "reviewed_official_domain_fingerprint": reviewed_domain_fingerprint,
@@ -148,6 +149,13 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
             "max_input_characters": settings.catalogue_ai_max_input_characters,
             "max_output_tokens": settings.catalogue_ai_max_output_tokens,
             "max_estimated_cost_per_run": str(settings.catalogue_ai_max_estimated_cost_per_run),
+            "completeness_max_fetch_attempts": (
+                settings.catalogue_completeness_max_fetch_attempts
+            ),
+            "completeness_max_model_calls": settings.catalogue_completeness_max_model_calls,
+            "completeness_max_estimated_cost_per_run": str(
+                settings.catalogue_completeness_max_estimated_cost_per_run
+            ),
             "source_max_bytes_per_page": settings.catalogue_source_max_bytes_per_page,
             "source_monitor_per_host_interval_seconds": str(
                 settings.source_monitor_per_host_interval_seconds

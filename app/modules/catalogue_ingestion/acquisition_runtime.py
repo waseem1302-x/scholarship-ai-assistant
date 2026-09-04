@@ -28,6 +28,21 @@ def crawl_budget_for_run(run: CatalogueIngestionRun, settings: Settings) -> Craw
     are independently bounded.
     """
 
+    if settings.catalogue_completeness_mode_enabled:
+        attempts = settings.catalogue_completeness_max_fetch_attempts
+        return CrawlBudget(
+            max_fetch_attempts=attempts,
+            max_accepted_artifacts=None,
+            max_depth=3,
+            max_total_bytes=20_000_000,
+            max_host_requests=attempts,
+            max_wall_seconds=None,
+            max_browser_renders=1 if settings.catalogue_browser_fetching_enabled else 0,
+            max_document_conversions=attempts,
+            max_links_per_page=500,
+            per_host_interval_seconds=float(settings.source_monitor_per_host_interval_seconds),
+        )
+
     accepted = max(1, min(run.max_pages_per_candidate, 25))
     attempts = max(accepted, min(accepted * 3, 100))
     per_page_bytes = settings.catalogue_source_max_bytes_per_page

@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     catalogue_ai_max_estimated_cost_per_run: Decimal = Field(
         default=Decimal("50.00"), ge=0, le=10_000
     )
+    catalogue_completeness_mode_enabled: bool = False
+    catalogue_completeness_max_fetch_attempts: int = Field(default=1_000, ge=1, le=10_000)
+    catalogue_completeness_max_model_calls: int = Field(default=500, ge=1, le=5_000)
+    catalogue_completeness_max_estimated_cost_per_run: Decimal = Field(
+        default=Decimal("5.00"), ge=0, le=10_000
+    )
     catalogue_ai_input_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_ai_output_cost_per_million: Decimal = Field(default=Decimal("0"), ge=0)
     catalogue_web_discovery_enabled: bool = False
