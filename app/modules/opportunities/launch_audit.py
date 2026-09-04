@@ -359,9 +359,7 @@ def _match_manifest(
     *,
     audit_now: datetime,
 ) -> tuple[list[LaunchManifestMatch], list[str], list[str]]:
-    matches: list[LaunchManifestMatch] = []
-    missing: list[str] = []
-    ambiguous: list[str] = []
+    candidates_by_entry: list[tuple[LaunchManifestEntry, list[LaunchManifestMatch]]] = []
     for entry in entries:
         candidates: list[LaunchManifestMatch] = []
         for opportunity, sources in publishable_records:
@@ -392,12 +390,26 @@ def _match_manifest(
                         source_url=matching_sources[0],
                     )
                 )
+        candidates_by_entry.append((entry, candidates))
+
+    single_opportunity_counts: dict[uuid.UUID, int] = defaultdict(int)
+    for _, candidates in candidates_by_entry:
         if len(candidates) == 1:
-            matches.append(candidates[0])
-        elif candidates:
+            single_opportunity_counts[candidates[0].opportunity_id] += 1
+
+    matches: list[LaunchManifestMatch] = []
+    missing: list[str] = []
+    ambiguous: list[str] = []
+    for entry, candidates in candidates_by_entry:
+        if not candidates:
+            missing.append(entry.canonical_name)
+        elif (
+            len(candidates) != 1
+            or single_opportunity_counts[candidates[0].opportunity_id] != 1
+        ):
             ambiguous.append(entry.canonical_name)
         else:
-            missing.append(entry.canonical_name)
+            matches.append(candidates[0])
     return matches, missing, ambiguous
 
 

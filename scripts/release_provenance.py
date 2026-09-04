@@ -6,7 +6,9 @@ import argparse
 import hashlib
 import json
 import re
+import struct
 import uuid
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,15 @@ EVIDENCE_PATHS = {
     "chromium_junit": "truth-first-chromium.xml",
     "chromium_screenshot": "chromium/truth-first-application-plan.png",
 }
+SMOKE_SUCCESS = {
+    "status": "staging_smoke_passed",
+    "database_ready": True,
+    "redis_exercised_by_login_limit": True,
+    "catalogue_contract": True,
+    "anonymous_private_route_blocked": True,
+    "authenticated_contract": True,
+    "tenant_read_update_delete_attacks_blocked": True,
+}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -32,6 +43,33 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load_manifest(path: Path) -> list[dict[str, str]]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, list):
+        raise ValueError("repository launch manifest must contain a JSON array")
+    entries: list[dict[str, str]] = []
+    names: set[str] = set()
+    roots: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"canonical_name", "official_root_url"}:
+            raise ValueError("repository launch manifest entry is malformed")
+        name = item.get("canonical_name")
+        root_url = item.get("official_root_url")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(root_url, str)
+            or urlsplit(root_url).scheme != "https"
+            or name.casefold() in names
+            or root_url in roots
+        ):
+            raise ValueError("repository launch manifest entries must be unique HTTPS roots")
+        names.add(name.casefold())
+        roots.add(root_url)
+        entries.append({"canonical_name": name, "official_root_url": root_url})
+    return entries
 
 
 def _junit_counts(path: Path) -> dict[str, int]:
@@ -62,14 +100,60 @@ def _url_belongs_to_root(source_url: str, root_url: str) -> bool:
     )
 
 
-def _validate_evidence(root: Path) -> None:
+def _validate_png(path: Path) -> None:
+    data = path.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("Chromium screenshot evidence is not a PNG file")
+    offset = 8
+    chunk_types: list[bytes] = []
+    idat = bytearray()
+    while offset < len(data):
+        if len(data) - offset < 12:
+            raise ValueError("Chromium screenshot PNG has an incomplete chunk")
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        chunk_end = offset + 12 + length
+        if chunk_end > len(data):
+            raise ValueError("Chromium screenshot PNG has an incomplete chunk")
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_data = data[offset + 8 : offset + 8 + length]
+        expected_crc = struct.unpack(">I", data[offset + 8 + length : chunk_end])[0]
+        actual_crc = zlib.crc32(chunk_type + chunk_data) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            raise ValueError("Chromium screenshot PNG has an invalid chunk CRC")
+        if not chunk_types and (chunk_type != b"IHDR" or length != 13):
+            raise ValueError("Chromium screenshot PNG must start with IHDR")
+        if chunk_type == b"IHDR":
+            if chunk_types or length != 13:
+                raise ValueError("Chromium screenshot PNG has an invalid IHDR")
+            width, height = struct.unpack(">II", chunk_data[:8])
+            if width < 1 or height < 1:
+                raise ValueError("Chromium screenshot PNG dimensions must be positive")
+        elif chunk_type == b"IDAT":
+            idat.extend(chunk_data)
+        elif chunk_type == b"IEND":
+            if length != 0 or chunk_end != len(data):
+                raise ValueError("Chromium screenshot PNG has an invalid IEND")
+        chunk_types.append(chunk_type)
+        offset = chunk_end
+    if not chunk_types or chunk_types[-1] != b"IEND" or b"IDAT" not in chunk_types:
+        raise ValueError("Chromium screenshot PNG is missing IDAT or IEND")
+    try:
+        decoded = zlib.decompress(bytes(idat))
+    except zlib.error as exc:
+        raise ValueError("Chromium screenshot PNG IDAT data is not decodable") from exc
+    if not decoded:
+        raise ValueError("Chromium screenshot PNG IDAT data is empty")
+
+
+def _validate_evidence(root: Path, manifest_path: Path) -> None:
+    manifest = _load_manifest(manifest_path)
     audit = _load_json(root / EVIDENCE_PATHS["catalogue_audit"])
     required = audit.get("manifest_required_count")
     manifest_matches = audit.get("manifest_matches")
     if (
         audit.get("ready") is not True
         or not isinstance(required, int)
-        or required < 12
+        or required != len(manifest)
         or not isinstance(audit.get("minimum_records"), int)
         or audit["minimum_records"] < 12
         or not isinstance(audit.get("publishable_count"), int)
@@ -82,6 +166,8 @@ def _validate_evidence(root: Path) -> None:
     if not isinstance(manifest_matches, list) or len(manifest_matches) != required:
         raise ValueError("catalogue manifest match evidence count is inconsistent")
     names: set[str] = set()
+    opportunity_ids: set[uuid.UUID] = set()
+    observed_entries: list[dict[str, str]] = []
     for match in manifest_matches:
         if not isinstance(match, dict):
             raise ValueError("catalogue manifest match evidence is malformed")
@@ -89,7 +175,7 @@ def _validate_evidence(root: Path) -> None:
         root_url = match.get("official_root_url")
         source_url = match.get("source_url")
         try:
-            uuid.UUID(str(match.get("opportunity_id")))
+            opportunity_id = uuid.UUID(str(match.get("opportunity_id")))
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 "catalogue manifest match evidence has an invalid opportunity"
@@ -104,9 +190,17 @@ def _validate_evidence(root: Path) -> None:
         ):
             raise ValueError("catalogue manifest match evidence is incomplete or inconsistent")
         names.add(name.casefold())
+        if opportunity_id in opportunity_ids:
+            raise ValueError("catalogue manifest match evidence reuses an opportunity ID")
+        opportunity_ids.add(opportunity_id)
+        observed_entries.append(
+            {"canonical_name": name, "official_root_url": root_url}
+        )
+    if observed_entries != manifest:
+        raise ValueError("catalogue audit does not match the repository launch manifest")
 
     smoke = _load_json(root / EVIDENCE_PATHS["candidate_smoke"])
-    if smoke.get("status") != "staging_smoke_passed":
+    if smoke != SMOKE_SUCCESS:
         raise ValueError("candidate smoke evidence is invalid")
 
     counts = _junit_counts(root / EVIDENCE_PATHS["chromium_junit"])
@@ -116,8 +210,7 @@ def _validate_evidence(root: Path) -> None:
     screenshot = root / EVIDENCE_PATHS["chromium_screenshot"]
     if not screenshot.is_file() or screenshot.stat().st_size == 0:
         raise ValueError("Chromium success screenshot is missing or empty")
-    if not screenshot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
-        raise ValueError("Chromium screenshot evidence is not a PNG file")
+    _validate_png(screenshot)
 
 
 def create_receipt(
@@ -128,8 +221,9 @@ def create_receipt(
     image_reference: str,
     run_id: int,
     run_attempt: int,
+    manifest_path: Path,
 ) -> dict[str, Any]:
-    _validate_evidence(root)
+    _validate_evidence(root, manifest_path)
     if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
         raise ValueError("commit SHA must be immutable")
     if not re.search(r"@sha256:[0-9a-f]{64}$", image_reference):
@@ -147,6 +241,7 @@ def create_receipt(
         "staging_run_id": run_id,
         "run_attempt": run_attempt,
         "environment": "staging",
+        "launch_manifest_sha256": _sha256(manifest_path),
         "evidence": evidence,
         "created_at": datetime.now(UTC).isoformat(),
     }
@@ -160,6 +255,7 @@ def validate_receipt(
     expected_repository: str,
     expected_run_id: int,
     expected_head_sha: str,
+    manifest_path: Path,
 ) -> None:
     if workflow_run.get("path") != WORKFLOW_PATH:
         raise ValueError("workflow path mismatch")
@@ -189,6 +285,8 @@ def validate_receipt(
         raise ValueError("receipt run attempt mismatch")
     if receipt.get("commit_sha") != expected_head_sha:
         raise ValueError("receipt commit mismatch")
+    if receipt.get("launch_manifest_sha256") != _sha256(manifest_path):
+        raise ValueError("receipt launch manifest mismatch")
     if not re.search(r"@sha256:[0-9a-f]{64}$", str(receipt.get("image_reference", ""))):
         raise ValueError("receipt image reference is mutable")
 
@@ -201,7 +299,7 @@ def validate_receipt(
             raise ValueError(f"{key} evidence path mismatch")
         if item.get("sha256") != _sha256(root / relative_path):
             raise ValueError(f"{key} evidence digest mismatch")
-    _validate_evidence(root)
+    _validate_evidence(root, manifest_path)
 
 
 def capture_audit(
@@ -259,6 +357,7 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--image-reference", required=True)
     create.add_argument("--run-id", type=int, required=True)
     create.add_argument("--run-attempt", type=int, required=True)
+    create.add_argument("--manifest", type=Path, required=True)
 
     validate = commands.add_parser("validate")
     validate.add_argument("--root", type=Path, required=True)
@@ -266,6 +365,7 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("--expected-repository", required=True)
     validate.add_argument("--expected-run-id", type=int, required=True)
     validate.add_argument("--expected-head-sha", required=True)
+    validate.add_argument("--manifest", type=Path, required=True)
     validate.add_argument("--github-output", type=Path)
     return result
 
@@ -289,6 +389,7 @@ def main(argv: list[str] | None = None) -> None:
             image_reference=args.image_reference,
             run_id=args.run_id,
             run_attempt=args.run_attempt,
+            manifest_path=args.manifest,
         )
         (args.root / "release-provenance.json").write_text(
             json.dumps(receipt, sort_keys=True, indent=2) + "\n", encoding="utf-8"
@@ -304,6 +405,7 @@ def main(argv: list[str] | None = None) -> None:
         expected_repository=args.expected_repository,
         expected_run_id=args.expected_run_id,
         expected_head_sha=args.expected_head_sha,
+        manifest_path=args.manifest,
     )
     if args.github_output is not None:
         with args.github_output.open("a", encoding="utf-8") as output:

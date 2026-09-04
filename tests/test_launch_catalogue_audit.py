@@ -1109,6 +1109,75 @@ def test_launch_audit_accepts_manifest_root_descendant_and_rejects_wrong_source(
     assert rejected.missing_manifest_entries == ["Chevening"]
 
 
+def test_launch_audit_rejects_one_opportunity_reused_for_multiple_manifest_entries(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import (
+        LaunchManifestEntry,
+        audit_launch_catalogue,
+    )
+
+    opportunity, _ = create_launch_fixture(
+        db_session,
+        opportunity_name="DAAD EPOS Fulbright Foreign Student Program",
+        source_url=(
+            "https://www2.daad.de/deutschland/stipendium/datenbank/en/"
+            "21148-scholarship-database?detail=50076777"
+        ),
+    )
+    original_source = db_session.scalar(
+        select(Source).where(Source.opportunity_id == opportunity.id)
+    )
+    assert original_source is not None
+    db_session.add(
+        Source(
+            id=uuid.uuid4(),
+            opportunity_id=opportunity.id,
+            url="https://foreign.fulbrightonline.org/about/foreign-student-program",
+            normalized_url="https://foreign.fulbrightonline.org/about/foreign-student-program",
+            source_type=SourceType.OFFICIAL,
+            title="Official Fulbright programme",
+            relevant_excerpt="Official scholarship facts.",
+            verification_status=VerificationStatus.OFFICIALLY_VERIFIED,
+            last_verified_at=original_source.last_verified_at,
+            verified_by_user_id=original_source.verified_by_user_id,
+            officiality_status=original_source.officiality_status,
+            source_owner_type=original_source.source_owner_type,
+            source_owner_id=original_source.source_owner_id,
+        )
+    )
+    db_session.commit()
+
+    result = audit_launch_catalogue(
+        db_session,
+        minimum_records=1,
+        manifest_entries=[
+            LaunchManifestEntry(
+                canonical_name="DAAD EPOS",
+                official_root_url=(
+                    "https://www2.daad.de/deutschland/stipendium/datenbank/en/"
+                    "21148-scholarship-database?detail=50076777"
+                ),
+            ),
+            LaunchManifestEntry(
+                canonical_name="Fulbright Foreign Student Program",
+                official_root_url=(
+                    "https://foreign.fulbrightonline.org/about/foreign-student-program"
+                ),
+            ),
+        ],
+    )
+
+    assert result.ready is False
+    assert result.manifest_matches == []
+    assert result.manifest_matched_count == 0
+    assert result.ambiguous_manifest_entries == [
+        "DAAD EPOS",
+        "Fulbright Foreign Student Program",
+    ]
+    assert result.blockers_by_code["ambiguous_manifest_scholarship"] == 2
+
+
 def test_launch_catalogue_cli_loads_manifest_and_reports_manifest_matches(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,

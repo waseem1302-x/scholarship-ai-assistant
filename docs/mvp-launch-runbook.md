@@ -105,9 +105,11 @@ Repeat until all 12 canonical scholarships are public and evidence-backed.
 
 1. Configure the protected `azure-staging` environment with `E2E_STAGING_EMAIL`,
    `E2E_STAGING_PASSWORD`, both existing smoke users, and the Azure deployment variables. The E2E
-   account must be a dedicated verified student with an existing baseline profile. The journey
-   restores that profile, deletes only its newly created match evaluation, and clears its synthetic
-   saved/application records.
+   account must be a dedicated verified student with an existing baseline profile and no existing
+   DAAD EPOS application. The source-controlled journey sets target degree to `bachelors` and
+   requires DAAD EPOS to return the exact `not_eligible` / `ineligible` branch with the degree
+   mismatch explanation. It restores the baseline profile and deletes only the match evaluation
+   and application created by that run; it never deletes pre-existing saved or application data.
 2. Dispatch **Azure staged application deployment** with `environment=staging` and
    `deployment_confirmation=DEPLOY_STAGING`.
 3. The workflow applies the expand migration, deploys the zero-traffic candidate, and runs, in
@@ -126,7 +128,8 @@ Repeat until all 12 canonical scholarships are public and evidence-backed.
    `release-provenance` artifact. Record its workflow run URL and SHA-256 digest in the release
    ticket. It must contain:
    - `release-provenance.json` with schema version 3, immutable repository/workflow/commit/image,
-     run ID and run attempt, plus SHA-256 hashes for each required evidence file;
+     run ID and run attempt, the launch-manifest SHA-256, plus SHA-256 hashes for each required
+     evidence file;
    - `catalogue-audit.json` (machine-readable audit result);
    - `candidate-smoke.json` (product and tenant-isolation result);
    - `truth-first-chromium.xml`, the success screenshot, and any retained failure trace.

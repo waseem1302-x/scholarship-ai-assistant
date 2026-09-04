@@ -89,6 +89,7 @@ jobs:
             --expected-repository "$EXPECTED_REPOSITORY" \
             --expected-run-id "$EXPECTED_RUN_ID" \
             --expected-head-sha "$EXPECTED_HEAD_SHA" \
+            --manifest data/launch-scholarships.json \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Sign in to Azure with GitHub OIDC
@@ -316,7 +317,8 @@ jobs:
             --commit-sha "$GITHUB_SHA" \
             --image-reference "$IMAGE_REFERENCE" \
             --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT"
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --manifest data/launch-scholarships.json
 
       - name: Deploy scheduled jobs only after candidate smoke
         env:

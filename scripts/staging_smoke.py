@@ -118,6 +118,7 @@ def run(base_url: str) -> dict[str, object]:
         "database_ready": True,
         "redis_exercised_by_login_limit": True,
         "catalogue_contract": True,
+        "anonymous_private_route_blocked": True,
         "authenticated_contract": True,
         "tenant_read_update_delete_attacks_blocked": True,
     }
