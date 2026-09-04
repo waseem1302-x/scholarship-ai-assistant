@@ -53,6 +53,15 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      - name: Prepare staging evidence directory
+        if: inputs.environment == 'staging'
+        run: |
+          set -euo pipefail
+          mkdir -p release-provenance
+          printf '{"commit_sha":"%s","run_attempt":%s,"staging_run_id":%s}\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" "$GITHUB_RUN_ID" \
+            > release-provenance/workflow-context.json
+
       - name: Download immutable staging provenance for beta
         if: inputs.environment == 'beta'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -66,32 +75,21 @@ jobs:
         if: inputs.environment == 'beta'
         id: provenance
         env:
+          GH_TOKEN: ${{ github.token }}
           EXPECTED_REPOSITORY: ${{ github.repository }}
           EXPECTED_RUN_ID: ${{ inputs.staging_run_id }}
+          EXPECTED_HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json, os
-          from pathlib import Path
-          path = Path('release-provenance/release-provenance.json')
-          record = json.loads(path.read_text(encoding='utf-8'))
-          required = {
-              'repository', 'commit_sha', 'image_reference', 'staging_run_id', 'environment',
-              'candidate_smoke', 'candidate_smoke_evidence', 'catalogue_audit',
-              'truth_first_chromium'
-          }
-          if required - record.keys(): raise SystemExit('Staging provenance is incomplete')
-          if record['repository'] != os.environ['EXPECTED_REPOSITORY']: raise SystemExit('Repository mismatch')
-          if str(record['staging_run_id']) != os.environ['EXPECTED_RUN_ID']: raise SystemExit('Run mismatch')
-          if record['environment'] != 'staging' or record['candidate_smoke'] != 'passed': raise SystemExit('Smoke gate absent')
-          if record['candidate_smoke_evidence'].get('status') != 'staging_smoke_passed': raise SystemExit('Candidate smoke evidence absent')
-          if record['catalogue_audit'].get('ready') is not True: raise SystemExit('Catalogue audit gate absent')
-          if record['truth_first_chromium'].get('status') != 'passed': raise SystemExit('Chromium gate absent')
-          if '@sha256:' not in record['image_reference'] or len(record['commit_sha']) != 40: raise SystemExit('Provenance is mutable')
-          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
-              output.write(f"source_reference={record['image_reference']}\n")
-              output.write(f"staging_sha={record['commit_sha']}\n")
-          PY
+          gh api "/repos/$EXPECTED_REPOSITORY/actions/runs/$EXPECTED_RUN_ID" \
+            > release-provenance/workflow-run.json
+          python scripts/release_provenance.py validate \
+            --root release-provenance \
+            --workflow-run release-provenance/workflow-run.json \
+            --expected-repository "$EXPECTED_REPOSITORY" \
+            --expected-run-id "$EXPECTED_RUN_ID" \
+            --expected-head-sha "$EXPECTED_HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Sign in to Azure with GitHub OIDC
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
@@ -216,49 +214,43 @@ jobs:
           echo 'Candidate revision did not expose its isolated FQDN.'; exit 1
 
       - name: Run read-only launch catalogue audit
-        if: inputs.environment == 'staging'
         env:
           RESOURCE_GROUP: ${{ inputs.resource_group }}
           RESOURCE_PREFIX: ${{ inputs.resource_prefix }}
-          CANDIDATE_REVISION: ${{ steps.revisions.outputs.candidate }}
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-          mkdir -p release-provenance
-          app_name="${RESOURCE_PREFIX}-api"
-          set +e
-          az containerapp exec --name "$app_name" --resource-group "$RESOURCE_GROUP" --revision "$CANDIDATE_REVISION" \
-            --command "python -m app.cli.audit_launch_catalogue --minimum-records 12" \
-            > release-provenance/catalogue-audit.raw 2>&1
-          audit_status=$?
-          set -e
-          AUDIT_STATUS="$audit_status" python - <<'PY'
-          import json, os, re
-          from pathlib import Path
-          raw_path = Path('release-provenance/catalogue-audit.raw')
-          ansi = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
-          audit = None
-          for line in reversed(raw_path.read_text(encoding='utf-8').splitlines()):
-              cleaned = ansi.sub('', line).strip()
-              start, end = cleaned.find('{'), cleaned.rfind('}')
-              if start < 0 or end <= start:
-                  continue
-              try:
-                  candidate = json.loads(cleaned[start:end + 1])
-              except json.JSONDecodeError:
-                  continue
-              if isinstance(candidate, dict) and 'ready' in candidate:
-                  audit = candidate
-                  break
-          if audit is None:
-              raise SystemExit('Catalogue audit did not emit machine-readable JSON')
-          Path('release-provenance/catalogue-audit.json').write_text(
-              json.dumps(audit, sort_keys=True, indent=2) + '\n', encoding='utf-8'
-          )
-          if os.environ['AUDIT_STATUS'] != '0':
-              raise SystemExit('Catalogue audit command failed')
-          if audit['ready'] is not True:
-              raise SystemExit('Catalogue audit is not ready')
-          PY
+          if [ "$ENVIRONMENT" = staging ]; then
+            audit_dir=release-provenance
+          else
+            audit_dir=beta-release-evidence
+          fi
+          mkdir -p "$audit_dir"
+          az deployment group create --resource-group "$RESOURCE_GROUP" \
+            --template-file infra/azure/migration-job.bicep \
+            --parameters resourcePrefix="$RESOURCE_PREFIX" imageReference="$IMAGE_REFERENCE" \
+            jobCommand='["python","-m","app.cli.audit_launch_catalogue","--minimum-records","12","--manifest","data/launch-scholarships.json"]'
+          job_name="${RESOURCE_PREFIX}-migrate"
+          execution_name="$(az containerapp job start --name "$job_name" \
+            --resource-group "$RESOURCE_GROUP" --query name --output tsv)"
+          test -n "$execution_name"
+          status=TimedOut
+          for attempt in {1..45}; do
+            status="$(az containerapp job execution show --name "$job_name" \
+              --resource-group "$RESOURCE_GROUP" --job-execution-name "$execution_name" \
+              --query properties.status --output tsv)"
+            if [ "$status" = Succeeded ] || [ "$status" = Failed ]; then break; fi
+            sleep 10
+          done
+          az containerapp job logs show --name "$job_name" --resource-group "$RESOURCE_GROUP" \
+            --execution "$execution_name" --container migrate --format text --tail 300 \
+            > "$audit_dir/catalogue-audit.raw" 2>&1 || true
+          python scripts/release_provenance.py capture-audit \
+            --raw "$audit_dir/catalogue-audit.raw" \
+            --output "$audit_dir/catalogue-audit.json" \
+            --execution-output "$audit_dir/catalogue-audit-execution.json" \
+            --execution "$execution_name" --status "$status"
 
       - name: Run product and tenant-isolation smoke against candidate
         env:
@@ -266,11 +258,17 @@ jobs:
           SMOKE_USER_A_PASSWORD: ${{ secrets.SMOKE_USER_A_PASSWORD }}
           SMOKE_USER_B_EMAIL: ${{ vars.SMOKE_USER_B_EMAIL }}
           SMOKE_USER_B_PASSWORD: ${{ secrets.SMOKE_USER_B_PASSWORD }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-          mkdir -p release-provenance
+          if [ "$ENVIRONMENT" = staging ]; then
+            evidence_dir=release-provenance
+          else
+            evidence_dir=beta-release-evidence
+          fi
+          mkdir -p "$evidence_dir"
           python scripts/staging_smoke.py --base-url '${{ steps.candidate.outputs.base_url }}' \
-            | tee release-provenance/candidate-smoke.json
+            | tee "$evidence_dir/candidate-smoke.json"
 
       - name: Set up Python for staging Chromium gate
         if: inputs.environment == 'staging'
@@ -305,6 +303,20 @@ jobs:
             --output=release-provenance/chromium \
             --tracing=retain-on-failure \
             --screenshot=only-on-failure
+
+      - name: Create immutable staging promotion manifest
+        if: inputs.environment == 'staging'
+        env:
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -euo pipefail
+          python scripts/release_provenance.py create \
+            --root release-provenance \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit-sha "$GITHUB_SHA" \
+            --image-reference "$IMAGE_REFERENCE" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Deploy scheduled jobs only after candidate smoke
         env:
@@ -364,60 +376,8 @@ jobs:
           fi
           exit 1
 
-      - name: Create immutable staging promotion manifest
-        if: inputs.environment == 'staging'
-        env:
-          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json, os
-          from datetime import UTC, datetime
-          from pathlib import Path
-          from xml.etree import ElementTree
-
-          root = Path('release-provenance')
-          audit = json.loads((root / 'catalogue-audit.json').read_text(encoding='utf-8'))
-          candidate_smoke_evidence = json.loads(
-              (root / 'candidate-smoke.json').read_text(encoding='utf-8')
-          )
-          junit = ElementTree.parse(root / 'truth-first-chromium.xml').getroot()
-          suites = [junit] if junit.tag == 'testsuite' else list(junit.findall('testsuite'))
-          counts = {
-              key: sum(int(suite.attrib.get(key, '0')) for suite in suites)
-              for key in ('tests', 'failures', 'errors', 'skipped')
-          }
-          screenshot = root / 'chromium' / 'truth-first-application-plan.png'
-          if audit.get('ready') is not True:
-              raise SystemExit('Catalogue audit evidence is not ready')
-          if candidate_smoke_evidence.get('status') != 'staging_smoke_passed':
-              raise SystemExit('Candidate smoke evidence is invalid')
-          if counts != {'tests': 1, 'failures': 0, 'errors': 0, 'skipped': 0}:
-              raise SystemExit(f'Chromium journey evidence is invalid: {counts}')
-          if not screenshot.is_file():
-              raise SystemExit('Chromium success screenshot is missing')
-          record = {
-              'schema_version': 2,
-              'repository': os.environ['GITHUB_REPOSITORY'],
-              'commit_sha': os.environ['GITHUB_SHA'],
-              'image_reference': os.environ['IMAGE_REFERENCE'],
-              'staging_run_id': int(os.environ['GITHUB_RUN_ID']),
-              'environment': 'staging',
-              'candidate_smoke': 'passed',
-              'candidate_smoke_evidence': candidate_smoke_evidence,
-              'catalogue_audit': audit,
-              'truth_first_chromium': {
-                  'status': 'passed',
-                  'junit': 'truth-first-chromium.xml',
-                  'screenshot': 'chromium/truth-first-application-plan.png',
-              },
-              'created_at': datetime.now(UTC).isoformat(),
-          }
-          Path('release-provenance/release-provenance.json').write_text(json.dumps(record, sort_keys=True, indent=2) + '\n', encoding='utf-8')
-          PY
-
       - name: Upload staging promotion manifest
-        if: inputs.environment == 'staging'
+        if: ${{ always() && inputs.environment == 'staging' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-provenance

@@ -402,6 +402,36 @@ def test_matching_persists_reproducible_evaluation_history(
     assert db_session.get(MatchEvaluation, second.id) is None
 
 
+def test_student_can_delete_only_their_exact_match_evaluation(
+    client: TestClient, db_session: Session
+) -> None:
+    create_user(db_session, email="evaluation-owner@example.com", role=UserRole.STUDENT)
+    create_user(db_session, email="evaluation-other@example.com", role=UserRole.STUDENT)
+    owner_headers = headers(login(client, "evaluation-owner@example.com"))
+    other_headers = headers(login(client, "evaluation-other@example.com"))
+    assert client.put(
+        "/api/v1/profiles/me", json=profile_payload(), headers=owner_headers
+    ).status_code == 200
+
+    response = client.get("/api/v1/matches/me", headers=owner_headers)
+    evaluation_id = response.json()["evaluation_id"]
+
+    assert (
+        client.delete(
+            f"/api/v1/matches/me/evaluations/{evaluation_id}", headers=other_headers
+        ).status_code
+        == 404
+    )
+    assert db_session.get(MatchEvaluation, uuid.UUID(evaluation_id)) is not None
+    assert (
+        client.delete(
+            f"/api/v1/matches/me/evaluations/{evaluation_id}", headers=owner_headers
+        ).status_code
+        == 204
+    )
+    assert db_session.get(MatchEvaluation, uuid.UUID(evaluation_id)) is None
+
+
 def test_structured_rules_cover_all_profile_backed_categories_and_operators(
     client: TestClient, db_session: Session
 ) -> None:

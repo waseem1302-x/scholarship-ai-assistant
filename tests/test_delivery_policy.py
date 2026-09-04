@@ -32,13 +32,17 @@ def test_release_workflow_keeps_candidate_off_traffic_until_product_smoke() -> N
     source = workflow_source("azure-application-deploy.yml")
 
     smoke = source.index("Run product and tenant-isolation smoke against candidate")
+    receipt = source.index("Create immutable staging promotion manifest")
     promotion = source.index("Promote candidate traffic atomically")
     provenance = source.index("Upload staging promotion manifest")
-    assert smoke < promotion < provenance
+    assert smoke < receipt < promotion < provenance
     assert "staging_run_id" in source
     assert "actions/download-artifact@" in source
-    assert "@sha256:" in source
-    assert source.count('--job-execution-name "$execution_name"') == 2
+    assert "scripts/release_provenance.py create" in source
+    assert source.count('--job-execution-name "$execution_name"') >= 3
+    assert "az containerapp exec" not in source
+    assert '"--manifest","data/launch-scholarships.json"' in source
+    assert "scripts/release_provenance.py validate" in source
     assert "sort_by([].properties, &startTime)[-1].status" not in source
     dispatch_inputs = source.split("workflow_dispatch:", 1)[1].split("permissions:", 1)[0]
     assert "image_reference" not in dispatch_inputs

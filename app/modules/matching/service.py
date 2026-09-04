@@ -125,6 +125,11 @@ class MatchingService:
         result, _, _ = self._match_opportunity_with_rules(profile, opportunity, datetime.now(UTC))
         return result
 
+    def delete_evaluation(self, evaluation_id, *, user_id) -> None:
+        if not self.evaluation_repository.delete_owned(evaluation_id, user_id):
+            raise AppError("match_evaluation_not_found", "Match evaluation not found", 404)
+        self.opportunity_repository.session.commit()
+
     def _match_opportunity_with_rules(
         self,
         profile: StudentProfile,

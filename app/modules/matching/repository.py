@@ -25,6 +25,18 @@ class MatchEvaluationRepository:
     def add(self, evaluation: MatchEvaluation) -> None:
         self.session.add(evaluation)
 
+    def delete_owned(self, evaluation_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        evaluation = self.session.scalar(
+            select(MatchEvaluation).where(
+                MatchEvaluation.id == evaluation_id,
+                MatchEvaluation.user_id == user_id,
+            )
+        )
+        if evaluation is None:
+            return False
+        self.session.delete(evaluation)
+        return True
+
     def purge_expired(self, *, before: datetime) -> int:
         """Return the number of expired evaluations removed by a retention job."""
         evaluations = list(

@@ -1,7 +1,8 @@
+import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -93,6 +94,20 @@ def match_my_profile(
     service: Annotated[MatchingService, Depends(get_matching_service)],
 ) -> MatchListResponse:
     return service.match_for_user(user.id)
+
+
+@router.delete(
+    "/me/evaluations/{evaluation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={401: AUTHENTICATION_RESPONSE, 404: {"model": ErrorResponse}},
+)
+def delete_my_match_evaluation(
+    evaluation_id: uuid.UUID,
+    user: CurrentUser,
+    service: Annotated[MatchingService, Depends(get_matching_service)],
+) -> Response:
+    service.delete_evaluation(evaluation_id, user_id=user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

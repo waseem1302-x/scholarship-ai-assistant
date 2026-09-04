@@ -74,6 +74,8 @@ CRITICAL_OBJECTIVES = (
 def create_launch_fixture(
     db_session: Session,
     *,
+    opportunity_name: str | None = None,
+    source_url: str | None = None,
     stale: bool = False,
     coverage_state: ScopedCoverageState = ScopedCoverageState.COMPLETE,
     open_objective: ClaimObjective | None = None,
@@ -99,7 +101,7 @@ def create_launch_fixture(
     opportunity = Opportunity(
         id=uuid.uuid4(),
         provider_id=provider.id,
-        name=f"Flagship Scholarship {suffix}",
+        name=opportunity_name or f"Flagship Scholarship {suffix}",
         country="Singapore",
         degree_level=DegreeLevel.MASTERS,
         status=OpportunityStatus.ACTIVE,
@@ -109,8 +111,8 @@ def create_launch_fixture(
     source = Source(
         id=uuid.uuid4(),
         opportunity_id=opportunity.id,
-        url=f"https://official.example/{suffix}",
-        normalized_url=f"https://official.example/{suffix}",
+        url=source_url or f"https://official.example/{suffix}",
+        normalized_url=source_url or f"https://official.example/{suffix}",
         source_type=SourceType.OFFICIAL,
         title="Official scholarship call",
         relevant_excerpt="Official scholarship facts.",
@@ -1012,3 +1014,137 @@ def test_launch_catalogue_cli_emits_json_and_exits_nonzero_for_blocker(
     assert payload["minimum_records"] == 2
     assert payload["blockers_by_code"]["minimum_records"] == 1
     assert cli.parser().parse_args([]).minimum_records == 12
+
+
+def test_launch_audit_requires_every_manifest_name_and_reviewed_official_root(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import (
+        LaunchManifestEntry,
+        audit_launch_catalogue,
+    )
+
+    daad, _ = create_launch_fixture(
+        db_session,
+        opportunity_name="DAAD Development-Related Postgraduate Courses EPOS 2027/28",
+        source_url=(
+            "https://www2.daad.de/deutschland/stipendium/datenbank/en/"
+            "21148-scholarship-database?detail=50076777"
+        ),
+    )
+    create_launch_fixture(
+        db_session,
+        opportunity_name="Unrelated Scholarship",
+        source_url="https://unrelated.example/programme",
+    )
+    manifest = [
+        LaunchManifestEntry(
+            canonical_name="DAAD EPOS",
+            official_root_url=(
+                "https://www2.daad.de/deutschland/stipendium/datenbank/en/"
+                "21148-scholarship-database?detail=50076777"
+            ),
+        ),
+        LaunchManifestEntry(
+            canonical_name="Fulbright Foreign Student Program",
+            official_root_url="https://foreign.fulbrightonline.org/about/foreign-student-program",
+        ),
+    ]
+
+    result = audit_launch_catalogue(
+        db_session,
+        minimum_records=2,
+        manifest_entries=manifest,
+    )
+
+    assert result.ready is False
+    assert result.publishable_count == 2
+    assert result.manifest_required_count == 2
+    assert result.manifest_matched_count == 1
+    assert result.missing_manifest_entries == ["Fulbright Foreign Student Program"]
+    assert result.blockers_by_code["missing_manifest_scholarship"] == 1
+    assert result.manifest_matches[0].opportunity_id == daad.id
+
+
+def test_launch_audit_accepts_manifest_root_descendant_and_rejects_wrong_source(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import (
+        LaunchManifestEntry,
+        audit_launch_catalogue,
+    )
+
+    create_launch_fixture(
+        db_session,
+        opportunity_name="Chevening Scholarships 2027/28",
+        source_url="https://www.chevening.org/scholarships/application-timeline/",
+    )
+    manifest = [
+        LaunchManifestEntry(
+            canonical_name="Chevening",
+            official_root_url="https://www.chevening.org/scholarships/",
+        )
+    ]
+
+    accepted = audit_launch_catalogue(
+        db_session,
+        minimum_records=1,
+        manifest_entries=manifest,
+    )
+    rejected = audit_launch_catalogue(
+        db_session,
+        minimum_records=1,
+        manifest_entries=[
+            LaunchManifestEntry(
+                canonical_name="Chevening",
+                official_root_url="https://www.chevening.org/other-programme/",
+            )
+        ],
+    )
+
+    assert accepted.ready is True
+    assert accepted.manifest_matched_count == 1
+    assert accepted.manifest_matches[0].source_url.endswith("/application-timeline/")
+    assert rejected.ready is False
+    assert rejected.missing_manifest_entries == ["Chevening"]
+
+
+def test_launch_catalogue_cli_loads_manifest_and_reports_manifest_matches(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path,
+) -> None:
+    from app.cli import audit_launch_catalogue as cli
+
+    opportunity, _ = create_launch_fixture(
+        db_session,
+        opportunity_name="Chevening Scholarships 2027/28",
+        source_url="https://www.chevening.org/scholarships/application-timeline/",
+    )
+    manifest_path = tmp_path / "launch.json"
+    manifest_path.write_text(
+        json.dumps(
+            [
+                {
+                    "canonical_name": "Chevening",
+                    "official_root_url": "https://www.chevening.org/scholarships/",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "SystemSessionLocal", lambda: nullcontext(db_session))
+
+    cli.main(["--minimum-records", "1", "--manifest", str(manifest_path)])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ready"] is True
+    assert payload["manifest_matches"] == [
+        {
+            "canonical_name": "Chevening",
+            "official_root_url": "https://www.chevening.org/scholarships/",
+            "opportunity_id": str(opportunity.id),
+            "source_url": "https://www.chevening.org/scholarships/application-timeline/",
+        }
+    ]

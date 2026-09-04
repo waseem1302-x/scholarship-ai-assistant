@@ -3,8 +3,9 @@
 import json
 import os
 import re
+import unicodedata
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 from uuid import uuid4
 
 import pytest
@@ -12,6 +13,42 @@ import yaml
 from playwright.sync_api import Page, expect
 
 pytestmark = pytest.mark.e2e
+
+
+def _normalized_words(value: str) -> set[str]:
+    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    return set(re.findall(r"[a-z0-9]+", ascii_value.casefold()))
+
+
+def _manifest_entry_for_name(
+    opportunity_name: str, manifest: list[dict[str, str]]
+) -> dict[str, str] | None:
+    opportunity_words = _normalized_words(opportunity_name)
+    matches = [
+        entry
+        for entry in manifest
+        if _normalized_words(entry["canonical_name"]).issubset(opportunity_words)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _url_matches_official_root(source_url: str, root_url: str) -> bool:
+    source = urlparse(source_url)
+    root = urlparse(root_url)
+    source_host = (source.hostname or "").casefold().removeprefix("www.")
+    root_host = (root.hostname or "").casefold().removeprefix("www.")
+    source_path = unquote(source.path).rstrip("/") or "/"
+    root_path = unquote(root.path).rstrip("/") or "/"
+    return (
+        source.scheme == root.scheme == "https"
+        and source_host == root_host
+        and (
+            root_path == "/"
+            or source_path == root_path
+            or source_path.startswith(f"{root_path}/")
+        )
+        and (not root.query or sorted(parse_qsl(source.query)) == sorted(parse_qsl(root.query)))
+    )
 
 
 @pytest.fixture
@@ -46,12 +83,23 @@ def truth_first_staging_environment() -> dict[str, str]:
 
 def test_truth_first_launch_manifest_has_only_reviewed_official_roots() -> None:
     expected = [
-        ("DAAD EPOS", "https://www.daad.de/en/studying-in-germany/scholarships/daad-funding-programmes/epos/"),
-        ("Fulbright Foreign Student Program", "https://foreign.fulbrightonline.org/about/foreign-fulbright"),
+        (
+            "DAAD EPOS",
+            "https://www2.daad.de/deutschland/stipendium/datenbank/en/"
+            "21148-scholarship-database?detail=50076777",
+        ),
+        (
+            "Fulbright Foreign Student Program",
+            "https://foreign.fulbrightonline.org/about/foreign-student-program",
+        ),
         ("Chevening", "https://www.chevening.org/scholarships/"),
         ("Vanier", "https://vanier.gc.ca/en/home-accueil.html"),
         ("Australia Awards", "https://www.dfat.gov.au/people-to-people/australia-awards"),
-        ("Erasmus Mundus Joint Masters", "https://erasmus-plus.ec.europa.eu/opportunities/opportunities-for-individuals/students/erasmus-mundus-joint-masters"),
+        (
+            "Erasmus Mundus Joint Masters",
+            "https://erasmus-plus.ec.europa.eu/opportunities/individuals/students/"
+            "erasmus-mundus-joint-masters",
+        ),
         ("MEXT Research", "https://www.studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/"),
         (
             "Commonwealth Master\u2019s",
@@ -84,17 +132,27 @@ def test_launch_deployment_fails_closed_and_preserves_gate_evidence() -> None:
     audit = names.index("Run read-only launch catalogue audit")
     smoke = names.index("Run product and tenant-isolation smoke against candidate")
     journey = names.index("Run truth-first Chromium journey against candidate")
+    receipt = names.index("Create immutable staging promotion manifest")
     promotion = names.index("Promote candidate traffic atomically")
-    assert migration < audit < smoke < journey < promotion
+    assert migration < audit < smoke < journey < receipt < promotion
 
     audit_run = by_name["Run read-only launch catalogue audit"]["run"]
-    assert "python -m app.cli.audit_launch_catalogue --minimum-records 12" in audit_run
-    assert "release-provenance/catalogue-audit.json" in audit_run
-    assert "audit['ready'] is not True" in audit_run
+    assert "containerapp exec" not in audit_run
+    assert "containerapp job start" in audit_run
+    assert "containerapp job execution show" in audit_run
+    assert "containerapp job logs show" in audit_run
+    assert '"--manifest","data/launch-scholarships.json"' in audit_run
+    assert 'audit_dir=release-provenance' in audit_run
+    assert '"$audit_dir/catalogue-audit.json"' in audit_run
+    assert '"$audit_dir/catalogue-audit-execution.json"' in audit_run
+    assert "inputs.environment == 'staging'" not in str(
+        by_name["Run read-only launch catalogue audit"].get("if", "")
+    )
 
     smoke_run = by_name["Run product and tenant-isolation smoke against candidate"]["run"]
     assert "scripts/staging_smoke.py" in smoke_run
-    assert "release-provenance/candidate-smoke.json" in smoke_run
+    assert "evidence_dir=release-provenance" in smoke_run
+    assert '"$evidence_dir/candidate-smoke.json"' in smoke_run
 
     journey_step = by_name["Run truth-first Chromium journey against candidate"]
     journey_run = journey_step["run"]
@@ -110,13 +168,39 @@ def test_launch_deployment_fails_closed_and_preserves_gate_evidence() -> None:
     upload = by_name["Upload staging promotion manifest"]
     assert upload["with"]["path"] == "release-provenance"
     assert upload["with"]["if-no-files-found"] == "error"
+    assert "always()" in upload["if"]
 
     provenance_run = by_name["Create immutable staging promotion manifest"]["run"]
-    assert "catalogue-audit.json" in provenance_run
-    assert "truth-first-chromium.xml" in provenance_run
-    assert "candidate-smoke.json" in provenance_run
-    assert "candidate_smoke_evidence" in provenance_run
-    assert "catalogue_audit" in provenance_run
+    assert "scripts/release_provenance.py create" in provenance_run
+    assert "--run-attempt" in provenance_run
+
+    beta_validation = by_name["Validate staging provenance"]["run"]
+    assert "gh api" in beta_validation
+    assert "scripts/release_provenance.py validate" in beta_validation
+    assert by_name["Validate staging provenance"]["env"]["EXPECTED_HEAD_SHA"] == "${{ github.sha }}"
+
+    migration_job = Path("infra/azure/migration-job.bicep").read_text(encoding="utf-8")
+    assert "name: 'APP_DATABASE_URL'" in migration_job
+
+
+def test_manifest_name_and_official_root_matching_is_strict() -> None:
+    manifest = [
+        {
+            "canonical_name": "Chevening",
+            "official_root_url": "https://www.chevening.org/scholarships/",
+        }
+    ]
+
+    assert _manifest_entry_for_name("Chevening Scholarships 2027/28", manifest) == manifest[0]
+    assert _manifest_entry_for_name("Unrelated Scholarship", manifest) is None
+    assert _url_matches_official_root(
+        "https://www.chevening.org/scholarships/application-timeline/",
+        manifest[0]["official_root_url"],
+    )
+    assert not _url_matches_official_root(
+        "https://www.chevening.org/other-programme/",
+        manifest[0]["official_root_url"],
+    )
 
 
 @pytest.mark.browser_compat
@@ -977,12 +1061,101 @@ def _clear_staging_application_state(page: Page) -> None:
     assert status == 204
 
 
+def _get_staging_profile(page: Page) -> dict[str, object] | None:
+    result = page.evaluate(
+        """
+        async () => {
+          const csrf = document.cookie.split(';').map((item) => item.trim())
+            .find((item) => item.startsWith('csrf_token='))?.split('=')[1];
+          const headers = {Accept: 'application/json', 'Content-Type': 'application/json',
+            ...(csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {})};
+          const refresh = await fetch('/api/v1/auth/refresh', {
+            method: 'POST', headers, body: '{}', credentials: 'same-origin',
+          });
+          if (!refresh.ok) return {status: refresh.status, profile: null};
+          const session = await refresh.json();
+          const response = await fetch('/api/v1/profiles/me', {
+            headers: {...headers, Authorization: `Bearer ${session.access_token}`},
+            credentials: 'same-origin',
+          });
+          return {
+            status: response.status,
+            profile: response.status === 204 ? null : await response.json(),
+          };
+        }
+        """
+    )
+    assert result["status"] in {200, 204}
+    return result["profile"]
+
+
+def _restore_staging_profile(page: Page, original: dict[str, object]) -> None:
+    status = page.evaluate(
+        """
+        async (original) => {
+          const csrf = document.cookie.split(';').map((item) => item.trim())
+            .find((item) => item.startsWith('csrf_token='))?.split('=')[1];
+          const headers = {Accept: 'application/json', 'Content-Type': 'application/json',
+            ...(csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {})};
+          const refresh = await fetch('/api/v1/auth/refresh', {
+            method: 'POST', headers, body: '{}', credentials: 'same-origin',
+          });
+          if (!refresh.ok) return refresh.status;
+          const session = await refresh.json();
+          const authHeaders = {...headers, Authorization: `Bearer ${session.access_token}`};
+          const currentResponse = await fetch('/api/v1/profiles/me', {
+            headers: authHeaders, credentials: 'same-origin',
+          });
+          if (!currentResponse.ok) return currentResponse.status;
+          const current = await currentResponse.json();
+          const payload = {...original, expected_version: current.version};
+          for (const key of ['id', 'user_id', 'version', 'profile_completeness',
+            'missing_recommended_fields', 'completeness_context']) delete payload[key];
+          const restore = await fetch('/api/v1/profiles/me', {
+            method: 'PUT', headers: authHeaders, body: JSON.stringify(payload),
+            credentials: 'same-origin',
+          });
+          return restore.status;
+        }
+        """,
+        original,
+    )
+    assert status == 200
+
+
+def _delete_staging_match_evaluation(page: Page, evaluation_id: str) -> None:
+    status = page.evaluate(
+        """
+        async (evaluationId) => {
+          const csrf = document.cookie.split(';').map((item) => item.trim())
+            .find((item) => item.startsWith('csrf_token='))?.split('=')[1];
+          const headers = {Accept: 'application/json', 'Content-Type': 'application/json',
+            ...(csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {})};
+          const refresh = await fetch('/api/v1/auth/refresh', {
+            method: 'POST', headers, body: '{}', credentials: 'same-origin',
+          });
+          if (!refresh.ok) return refresh.status;
+          const session = await refresh.json();
+          const deletion = await fetch(`/api/v1/matches/me/evaluations/${evaluationId}`, {
+            method: 'DELETE',
+            headers: {...headers, Authorization: `Bearer ${session.access_token}`},
+            credentials: 'same-origin',
+          });
+          return deletion.status;
+        }
+        """,
+        evaluation_id,
+    )
+    assert status == 204
+
+
 def test_truth_first_mvp_launch_journey(
     page: Page,
     truth_first_staging_environment: dict[str, str],
 ) -> None:
     """A protected synthetic student traverses the complete reviewed launch journey."""
     base_url = truth_first_staging_environment["E2E_BASE_URL"]
+    manifest = json.loads(Path("data/launch-scholarships.json").read_text(encoding="utf-8"))
     page.goto(base_url, wait_until="networkidle")
 
     for deferred_product in ("Assistant", "Document Lab", "Community"):
@@ -992,7 +1165,19 @@ def test_truth_first_mvp_launch_journey(
         "region", name="Verified scholarships worth exploring"
     )
     expect(verified_section).to_be_visible()
-    homepage_card_link = verified_section.locator("h3 a").first
+    homepage_links = verified_section.locator("h3 a")
+    homepage_card_link = None
+    manifest_entry = None
+    for index in range(homepage_links.count()):
+        candidate_link = homepage_links.nth(index)
+        candidate_entry = _manifest_entry_for_name(candidate_link.inner_text().strip(), manifest)
+        if candidate_entry is not None:
+            homepage_card_link = candidate_link
+            manifest_entry = candidate_entry
+            break
+    assert homepage_card_link is not None and manifest_entry is not None, (
+        "The homepage must expose at least one of the reviewed launch flagships."
+    )
     expect(homepage_card_link).to_be_visible()
     scholarship_name = homepage_card_link.inner_text().strip()
     direct_detail_href = homepage_card_link.get_attribute("href")
@@ -1008,11 +1193,15 @@ def test_truth_first_mvp_launch_journey(
     expect(page.get_by_role("heading", name=scholarship_name, exact=True).first).to_be_visible()
     evidence = page.get_by_role("region", name="Reviewed source citations")
     expect(evidence).to_be_visible()
-    cited_source = evidence.get_by_role("link", name="Open cited source").first
-    cited_source_url = cited_source.get_attribute("href")
-    parsed_source = urlparse(cited_source_url or "")
-    assert parsed_source.scheme == "https" and parsed_source.hostname
-    assert parsed_source.hostname != urlparse(base_url).hostname
+    cited_sources = evidence.get_by_role("link", name="Open cited source")
+    cited_source_urls = [
+        cited_sources.nth(index).get_attribute("href") or ""
+        for index in range(cited_sources.count())
+    ]
+    assert any(
+        _url_matches_official_root(url, manifest_entry["official_root_url"])
+        for url in cited_source_urls
+    ), "The detail must cite the reviewed official root for the selected flagship."
 
     page.get_by_role("link", name="Sign in", exact=True).click()
     page.get_by_label("Email address", exact=True).fill(
@@ -1024,6 +1213,11 @@ def test_truth_first_mvp_launch_journey(
     page.get_by_role("button", name="Sign in", exact=True).click()
     expect(page).to_have_url(f"{base_url}/dashboard")
 
+    original_profile = _get_staging_profile(page)
+    assert original_profile is not None, (
+        "The dedicated staging student must have a restorable baseline profile."
+    )
+    evaluation_id = None
     try:
         _clear_staging_application_state(page)
 
@@ -1035,14 +1229,36 @@ def test_truth_first_mvp_launch_journey(
         page.get_by_role("button", name="Save profile").click()
         expect(page.get_by_role("status")).to_contain_text("Profile saved")
 
-        page.goto(f"{base_url}/matches", wait_until="networkidle")
+        with page.expect_response(
+            lambda response: urlparse(response.url).path == "/api/v1/matches/me"
+            and response.request.method == "GET"
+        ) as match_response_info:
+            page.goto(f"{base_url}/matches", wait_until="networkidle")
+        evaluation_id = match_response_info.value.json()["evaluation_id"]
+        assert evaluation_id
         expect(
             page.get_by_role("heading", name="Recommendations you can inspect.")
         ).to_be_visible()
         match_heading = page.get_by_role("heading", name=scholarship_name, exact=True)
         expect(match_heading).to_be_visible()
         match_card = match_heading.locator("xpath=ancestor::article")
-        expect(match_card.locator(".fit-score")).to_be_visible()
+        fit_score = match_card.locator(".fit-score")
+        expect(fit_score).to_be_visible()
+        score = fit_score.locator("strong").inner_text().strip()
+        score_label = fit_score.locator("span").inner_text().strip()
+        if score == "--":
+            assert score_label in {"ineligible", "likely ineligible"}
+            expect(match_card.locator(".hard-gate")).to_contain_text(
+                "known hard eligibility failures"
+            )
+            assert match_card.locator(".explanation li").count() > 0
+        else:
+            assert re.fullmatch(r"\d{1,3}", score) and 0 <= int(score) <= 100
+            assert score_label == "fit score"
+            assert match_card.locator(".explanation li").count() > 0
+        expect(match_card.locator(".match-disclaimer")).to_contain_text(
+            "not a probability"
+        )
         expect(match_card.get_by_text("Next steps")).to_be_visible()
         match_card.get_by_role("link", name="Review official opportunity details").click()
 
@@ -1062,4 +1278,11 @@ def test_truth_first_mvp_launch_journey(
                 path=str(output_dir / "truth-first-application-plan.png"), full_page=True
             )
     finally:
-        _clear_staging_application_state(page)
+        try:
+            if evaluation_id is not None:
+                _delete_staging_match_evaluation(page, evaluation_id)
+        finally:
+            try:
+                _restore_staging_profile(page, original_profile)
+            finally:
+                _clear_staging_application_state(page)

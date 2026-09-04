@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -156,6 +158,16 @@ class PublishableWithGapsRecord(BaseModel):
     open_coverage_cells: list[OpenCoverageCell]
 
 
+class LaunchManifestEntry(BaseModel):
+    canonical_name: str = Field(min_length=1, max_length=255)
+    official_root_url: str = Field(pattern=r"^https://", max_length=2048)
+
+
+class LaunchManifestMatch(LaunchManifestEntry):
+    opportunity_id: uuid.UUID
+    source_url: str
+
+
 class LaunchCatalogueAudit(BaseModel):
     ready: bool
     minimum_records: int
@@ -170,12 +182,18 @@ class LaunchCatalogueAudit(BaseModel):
     curator_action_opportunity_ids: list[uuid.UUID]
     complete_core_opportunity_ids: list[uuid.UUID]
     publishable_with_gaps: list[PublishableWithGapsRecord]
+    manifest_required_count: int = 0
+    manifest_matched_count: int = 0
+    manifest_matches: list[LaunchManifestMatch] = Field(default_factory=list)
+    missing_manifest_entries: list[str] = Field(default_factory=list)
+    ambiguous_manifest_entries: list[str] = Field(default_factory=list)
 
 
 def audit_launch_catalogue(
     session: Session,
     *,
     minimum_records: int,
+    manifest_entries: list[LaunchManifestEntry] | None = None,
 ) -> LaunchCatalogueAudit:
     """Audit persisted launch evidence without evaluating or changing catalogue state."""
 
@@ -220,6 +238,7 @@ def audit_launch_catalogue(
         complete_core_ids: list[uuid.UUID] = []
         publishable_with_gaps: list[PublishableWithGapsRecord] = []
         publishable_ids: list[uuid.UUID] = []
+        publishable_records: list[tuple[Opportunity, list[Source]]] = []
 
         for opportunity, candidate, review in reviewed_records:
             cells = list(
@@ -274,6 +293,7 @@ def audit_launch_catalogue(
             if record_blockers or not critical_is_terminal or has_impermissible_gap:
                 continue
             publishable_ids.append(opportunity.id)
+            publishable_records.append((opportunity, sources))
             if open_cells:
                 publishable_with_gaps.append(
                     PublishableWithGapsRecord(
@@ -295,6 +315,13 @@ def audit_launch_catalogue(
     }
     if shortfall:
         blockers_by_code["minimum_records"] = shortfall
+    manifest_matches, missing_manifest_entries, ambiguous_manifest_entries = _match_manifest(
+        manifest_entries or [], publishable_records, audit_now=audit_now
+    )
+    if missing_manifest_entries:
+        blockers_by_code["missing_manifest_scholarship"] = len(missing_manifest_entries)
+    if ambiguous_manifest_entries:
+        blockers_by_code["ambiguous_manifest_scholarship"] = len(ambiguous_manifest_entries)
     sorted_blocker_ids = {
         code: sorted(opportunity_ids, key=str)
         for code, opportunity_ids in sorted(blocker_ids.items())
@@ -318,7 +345,86 @@ def audit_launch_catalogue(
         curator_action_opportunity_ids=curator_ids,
         complete_core_opportunity_ids=complete_core_ids,
         publishable_with_gaps=publishable_with_gaps,
+        manifest_required_count=len(manifest_entries or []),
+        manifest_matched_count=len(manifest_matches),
+        manifest_matches=manifest_matches,
+        missing_manifest_entries=missing_manifest_entries,
+        ambiguous_manifest_entries=ambiguous_manifest_entries,
     )
+
+
+def _match_manifest(
+    entries: list[LaunchManifestEntry],
+    publishable_records: list[tuple[Opportunity, list[Source]]],
+    *,
+    audit_now: datetime,
+) -> tuple[list[LaunchManifestMatch], list[str], list[str]]:
+    matches: list[LaunchManifestMatch] = []
+    missing: list[str] = []
+    ambiguous: list[str] = []
+    for entry in entries:
+        candidates: list[LaunchManifestMatch] = []
+        for opportunity, sources in publishable_records:
+            if not _manifest_name_matches(entry.canonical_name, opportunity.name):
+                continue
+            matching_sources = sorted(
+                {
+                    source_url
+                    for source in sources
+                    if source.source_type is SourceType.OFFICIAL
+                    and source.is_active
+                    and EvidencePolicy.source_can_publish(source)
+                    and EvidencePolicy.source_is_fresh(
+                        source,
+                        freshness_days=SOURCE_FRESHNESS_DAYS,
+                        now=audit_now,
+                    )
+                    for source_url in (source.canonical_url or source.normalized_url or source.url,)
+                    if _url_belongs_to_root(source_url, entry.official_root_url)
+                }
+            )
+            if matching_sources:
+                candidates.append(
+                    LaunchManifestMatch(
+                        canonical_name=entry.canonical_name,
+                        official_root_url=entry.official_root_url,
+                        opportunity_id=opportunity.id,
+                        source_url=matching_sources[0],
+                    )
+                )
+        if len(candidates) == 1:
+            matches.append(candidates[0])
+        elif candidates:
+            ambiguous.append(entry.canonical_name)
+        else:
+            missing.append(entry.canonical_name)
+    return matches, missing, ambiguous
+
+
+def _manifest_name_matches(canonical_name: str, opportunity_name: str) -> bool:
+    required_tokens = set(_normalized_words(canonical_name))
+    return bool(required_tokens) and required_tokens.issubset(_normalized_words(opportunity_name))
+
+
+def _normalized_words(value: str) -> set[str]:
+    ascii_value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    return set(re.findall(r"[a-z0-9]+", ascii_value.casefold()))
+
+
+def _url_belongs_to_root(source_url: str, root_url: str) -> bool:
+    source = urlsplit(source_url)
+    root = urlsplit(root_url)
+    source_host = (source.hostname or "").casefold().removeprefix("www.")
+    root_host = (root.hostname or "").casefold().removeprefix("www.")
+    if source.scheme != "https" or root.scheme != "https" or source_host != root_host:
+        return False
+    source_path = unquote(source.path).rstrip("/") or "/"
+    root_path = unquote(root.path).rstrip("/") or "/"
+    if root_path != "/" and not (
+        source_path == root_path or source_path.startswith(f"{root_path}/")
+    ):
+        return False
+    return not root.query or sorted(parse_qsl(source.query)) == sorted(parse_qsl(root.query))
 
 
 def _review_rows_by_opportunity(
@@ -855,6 +961,8 @@ def _open_cell(cell: CatalogueCoverageCell) -> OpenCoverageCell:
 
 __all__ = [
     "LaunchCatalogueAudit",
+    "LaunchManifestEntry",
+    "LaunchManifestMatch",
     "OpenCoverageCell",
     "PublishableWithGapsRecord",
     "audit_launch_catalogue",

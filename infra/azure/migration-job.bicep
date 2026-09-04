@@ -93,6 +93,10 @@ resource migrationJob 'Microsoft.App/jobs@2024-03-01' = {
               secretRef: 'migration-database-url'
             }
             {
+              name: 'APP_DATABASE_URL'
+              secretRef: 'migration-database-url'
+            }
+            {
               name: 'APP_RELEASE_VERSION'
               value: imageReference
             }

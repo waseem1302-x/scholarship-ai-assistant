@@ -105,30 +105,42 @@ Repeat until all 12 canonical scholarships are public and evidence-backed.
 
 1. Configure the protected `azure-staging` environment with `E2E_STAGING_EMAIL`,
    `E2E_STAGING_PASSWORD`, both existing smoke users, and the Azure deployment variables. The E2E
-   account must be a dedicated verified student whose application data may be deleted by the test.
+   account must be a dedicated verified student with an existing baseline profile. The journey
+   restores that profile, deletes only its newly created match evaluation, and clears its synthetic
+   saved/application records.
 2. Dispatch **Azure staged application deployment** with `environment=staging` and
    `deployment_confirmation=DEPLOY_STAGING`.
 3. The workflow applies the expand migration, deploys the zero-traffic candidate, and runs, in
    order:
-   - `python -m app.cli.audit_launch_catalogue --minimum-records 12` inside the candidate;
+   - a noninteractive Container App Job running
+     `python -m app.cli.audit_launch_catalogue --minimum-records 12 --manifest data/launch-scholarships.json`;
    - `python scripts/staging_smoke.py --base-url <candidate>` for product and tenant isolation;
    - the protected Chromium catalogue-to-application journey against the real staging APIs.
 4. Any non-zero command, invalid/missing JSON, `catalogue-audit.json` with `ready` other than
    `true`, skipped/missing Chromium evidence, or missing smoke evidence stops before promotion.
    The audit is read-only and must never delete or auto-correct records.
-5. After the candidate receives traffic and passes promoted readiness, download the
+5. The staging artifact upload runs even when an audit or Chromium gate fails, so inspect the raw
+   audit log, job execution status, JUnit, screenshots, and traces that exist. A failed workflow or
+   an artifact without a valid signed-off receipt is diagnostic only and cannot be promoted.
+6. After the candidate receives traffic and passes promoted readiness, download the
    `release-provenance` artifact. Record its workflow run URL and SHA-256 digest in the release
    ticket. It must contain:
-   - `release-provenance.json` with immutable repository, commit, image, and staging run identity;
+   - `release-provenance.json` with schema version 3, immutable repository/workflow/commit/image,
+     run ID and run attempt, plus SHA-256 hashes for each required evidence file;
    - `catalogue-audit.json` (machine-readable audit result);
    - `candidate-smoke.json` (product and tenant-isolation result);
    - `truth-first-chromium.xml`, the success screenshot, and any retained failure trace.
-6. Inspect the JSON and JUnit files directly. Confirm at least 12 records, `ready=true`, smoke
-   status `staging_smoke_passed`, one passed Chromium journey, the expected commit SHA, and an image
-   digest reference. Do not describe a staging run as complete until this protected artifact exists.
-7. To promote beta, dispatch the same workflow with `environment=beta`, the successful staging run
-   ID, and `deployment_confirmation=PROMOTE_BETA`. Beta imports the immutable staging image only
-   after validating the audit, smoke, and Chromium receipts.
+7. Inspect the JSON and JUnit files directly. Confirm all 12 manifest entries have exactly one
+   publishable name/source-root match, `ready=true`, smoke status `staging_smoke_passed`, one passed
+   Chromium journey, the expected commit SHA, and an image digest reference. Do not describe a
+   staging run as complete until this protected artifact exists.
+8. To promote beta, dispatch the same workflow from the exact staging commit with
+   `environment=beta`, the successful staging run ID, and
+   `deployment_confirmation=PROMOTE_BETA`. Before import, beta queries the GitHub Actions API and
+   verifies the source workflow path, successful conclusion, event, repository, head SHA, run ID,
+   run attempt, receipt schema, and every evidence-file hash and content. It then imports the
+   immutable staging image, deploys a zero-traffic candidate, and runs the same manifest-aware,
+   read-only audit against the isolated beta catalogue before beta smoke and traffic promotion.
 
 If any gate fails, leave stable traffic unchanged, preserve the artifact/logs, correct the evidence
 through ingestion and human review, and start a new staging run. Never mutate or delete catalogue
