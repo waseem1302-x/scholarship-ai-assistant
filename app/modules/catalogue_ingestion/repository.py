@@ -415,7 +415,7 @@ class CatalogueIngestionRepository:
                 attempt_count=1,
             )
             self.session.add(job)
-        elif job.state is not CatalogueJobState.SUCCEEDED:
+        elif job.state not in {CatalogueJobState.SUCCEEDED, CatalogueJobState.FAILED}:
             job.stage = stage
             job.state = CatalogueJobState.RUNNING
             job.worker_id = worker_id
@@ -466,6 +466,30 @@ class CatalogueIngestionRepository:
         job.state = CatalogueJobState.SUCCEEDED
         if checkpoint is not None:
             job.checkpoint = dict(checkpoint)
+        job.completed_at = datetime.now(UTC)
+        self.session.commit()
+
+    def fail_job(
+        self,
+        job_id: uuid.UUID,
+        *,
+        worker_id: str,
+        run_lease_token: str,
+        candidate_lease_token: str,
+        error_code: str,
+        error_detail: str,
+        checkpoint: dict[str, object],
+    ) -> None:
+        job = self._owned_job(
+            job_id,
+            worker_id=worker_id,
+            run_lease_token=run_lease_token,
+            candidate_lease_token=candidate_lease_token,
+        )
+        job.state = CatalogueJobState.FAILED
+        job.error_code = error_code[:100]
+        job.error_detail = error_detail[:1000]
+        job.checkpoint = dict(checkpoint)
         job.completed_at = datetime.now(UTC)
         self.session.commit()
 

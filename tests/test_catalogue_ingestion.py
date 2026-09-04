@@ -11,6 +11,12 @@ from sqlalchemy import func, select
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.models import User, UserRole
+from app.modules.catalogue_ingestion.claim_bundle_provider import FakeBundleClaimProvider
+from app.modules.catalogue_ingestion.claim_bundle_schemas import (
+    BundleEvidenceReference,
+    BundleObjectiveCoverage,
+    ClaimBundleExtractionOutput,
+)
 from app.modules.catalogue_ingestion.claim_provider import (
     AzureOpenAIClaimProvider,
     ClaimExtractionResult,
@@ -28,6 +34,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimValue,
 )
 from app.modules.catalogue_ingestion.evaluation import GoldItem, evaluate
+from app.modules.catalogue_ingestion.extraction_cache_models import CatalogueExtractionCacheEvent
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceRole,
     CandidateSourceStatus,
@@ -36,11 +43,14 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidateSource,
     CatalogueExtractionAttempt,
     CatalogueIngestionRun,
+    CatalogueJobState,
+    CatalogueResumableJob,
     CatalogueSourceArtifact,
     IngestionInputKind,
     IngestionMode,
     IngestionRunStatus,
 )
+from app.modules.catalogue_ingestion.production_service import ProductionCatalogueIngestionService
 from app.modules.catalogue_ingestion.provider import (
     AzureOpenAIExtractionProvider,
     ExtractionProviderError,
@@ -95,7 +105,11 @@ from app.modules.opportunities.models import (
 )
 from app.modules.opportunities.schemas import ReviewAction, ReviewActionRequest
 from app.modules.opportunities.service import OpportunityService
-from app.modules.opportunities.source_monitor import FetchedSource, SafeSourceFetcher
+from app.modules.opportunities.source_monitor import (
+    FetchedSource,
+    SafeSourceFetcher,
+    SourceFetchError,
+)
 
 OFFICIAL_URL = "https://scholarships.gov.uk/example"
 SOURCE_TEXT = (
@@ -533,6 +547,12 @@ class FakeFetcher:
             content_type="text/html",
         )
 
+    def fetch_with_limit(self, url: str, *, max_bytes: int) -> FetchedSource:
+        fetched = self.fetch(url)
+        if fetched.bytes_read > max_bytes:
+            raise SourceFetchError("crawl_byte_budget_exceeded")
+        return fetched
+
 
 class MappingFetcher:
     def __init__(self, sources: dict[str, str]) -> None:
@@ -649,6 +669,145 @@ def test_candidate_claiming_prefers_the_least_served_candidate(db_session) -> No
     )
 
     assert [item.id for item in claimed] == [waiting.id]
+
+
+def test_resumable_job_failure_is_terminal_and_retains_diagnostics(db_session) -> None:
+    run = CatalogueIngestionRun(
+        source_label="failed-job.json",
+        source_fingerprint="f" * 64,
+        mode=IngestionMode.CANDIDATE_ONLY,
+        dry_run=True,
+        max_candidates=1,
+        max_pages_per_candidate=1,
+        max_model_calls=0,
+        max_input_characters=1_000,
+        max_output_tokens=256,
+        max_estimated_cost=Decimal("0"),
+    )
+    candidate = CatalogueCandidate(
+        run=run,
+        seed_index=0,
+        idempotency_key="j" * 64,
+        seed_name="Failed Job Scholarship",
+    )
+    db_session.add_all((run, candidate))
+    db_session.commit()
+    repository = CatalogueIngestionRepository(db_session)
+    run_lease = repository.acquire_run_lease(run.id, lease_seconds=60)
+    claimed = repository.claim_candidates(
+        run_id=run.id,
+        run_lease_token=run_lease,
+        worker_id="job-worker",
+        limit=1,
+        lease_seconds=60,
+    )[0]
+    assert claimed.lease_token is not None
+    job = repository.start_or_resume_job(
+        run_id=run.id,
+        candidate_id=claimed.id,
+        stage="claim_bundle_extraction",
+        job_key="terminal-job",
+        worker_id="job-worker",
+        run_lease_token=run_lease,
+        candidate_lease_token=claimed.lease_token,
+    )
+
+    repository.fail_job(
+        job.id,
+        worker_id="job-worker",
+        run_lease_token=run_lease,
+        candidate_lease_token=claimed.lease_token,
+        error_code="bundle_validation_failed",
+        error_detail="invalid_evidence_span:deadline",
+        checkpoint={"outcome": "validation_failed"},
+    )
+
+    db_session.refresh(job)
+    assert job.state is CatalogueJobState.FAILED
+    assert job.error_code == "bundle_validation_failed"
+    assert job.error_detail == "invalid_evidence_span:deadline"
+    assert job.checkpoint["outcome"] == "validation_failed"
+    assert job.completed_at is not None
+
+    resumed = repository.start_or_resume_job(
+        run_id=run.id,
+        candidate_id=claimed.id,
+        stage="claim_bundle_extraction",
+        job_key="terminal-job",
+        worker_id="job-worker",
+        run_lease_token=run_lease,
+        candidate_lease_token=claimed.lease_token,
+        checkpoint={"outcome": "pending"},
+    )
+
+    assert resumed.state is CatalogueJobState.FAILED
+    assert resumed.attempt_count == 1
+
+
+def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
+    db_session,
+) -> None:
+    invalid_output = ClaimBundleExtractionOutput(
+        evidence_refs=[
+            BundleEvidenceReference(
+                ref_id="outside",
+                block_key="z" * 64,
+                excerpt="not present in the supplied evidence",
+                excerpt_start=0,
+                excerpt_end=36,
+            )
+        ],
+        claims=[],
+        objective_coverage=[
+            BundleObjectiveCoverage(
+                objective=objective,
+                coverage_state="partial",
+                unknown_objectives=["Invalid evidence reference used for recovery test"],
+            )
+            for objective in ClaimObjective
+        ],
+    )
+    provider = FakeBundleClaimProvider(invalid_output)
+    long_evidence = (MEXT_TEXT + "\n") * 70
+    service = ProductionCatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_bounded_crawling_enabled=False,
+            catalogue_ai_max_calls_per_run=100,
+        ),
+        fetcher=FakeFetcher(long_evidence),
+        claim_extractor=FakeClaimProvider(claim_output()),
+        bundle_claim_extractor=provider,
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+
+    service.process_run(run.id, worker_id="validation-recovery")
+
+    jobs = list(
+        db_session.scalars(
+            select(CatalogueResumableJob).where(
+                CatalogueResumableJob.stage == "claim_bundle_extraction"
+            )
+        )
+    )
+    events = list(
+        db_session.scalars(
+            select(CatalogueExtractionCacheEvent).where(
+                CatalogueExtractionCacheEvent.reason == "bundle_validation_boundary_rejected"
+            )
+        )
+    )
+    assert any(job.checkpoint.get("outcome") == "split" for job in jobs)
+    failed = [job for job in jobs if job.state is CatalogueJobState.FAILED]
+    assert failed
+    assert all(job.error_code == "bundle_validation_failed" for job in failed)
+    assert events
+    assert events[-1].detail_json["output_json"] == invalid_output.model_dump(mode="json")
+    assert "unknown_evidence_block:outside" in events[-1].detail_json["validation_warnings"]
 
 
 def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_session) -> None:

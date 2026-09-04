@@ -223,5 +223,7 @@ def test_recovery_child_rejects_evidence_outside_its_supplied_span() -> None:
     )
     service = object.__new__(ProductionCatalogueIngestionService)
 
-    with pytest.raises(ExtractionSchemaError):
+    with pytest.raises(ExtractionSchemaError) as exc_info:
         service._expand_bundle(raw_output, job=left, blocks=[block])
+
+    assert "invalid_evidence_span:outside" in str(exc_info.value)

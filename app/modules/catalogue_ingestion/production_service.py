@@ -76,6 +76,27 @@ from app.modules.catalogue_ingestion.provider import (
 from app.modules.catalogue_ingestion.provider_execution import ProviderExecutionBudgetExhausted
 from app.modules.opportunities.source_monitor import FetchedSource
 
+_SEVERE_VALIDATION_PREFIXES = (
+    "unknown_evidence_block:",
+    "invalid_evidence_span:",
+    "unrequested_objective_claim:",
+    "objective_entity_mismatch:",
+    "invalid_atomic_claim:",
+    "objective_field_mismatch:",
+    "provider_invalid_claims_dropped:",
+)
+
+
+def _validation_warnings(message: str) -> list[str]:
+    warnings: list[str] = []
+    for item in message.split("; "):
+        for prefix in _SEVERE_VALIDATION_PREFIXES:
+            position = item.find(prefix)
+            if position >= 0:
+                warnings.append(item[position:].strip())
+                break
+    return list(dict.fromkeys(warnings))
+
 
 @dataclass(slots=True)
 class _BundleGroupAccumulator:
@@ -234,6 +255,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             )
 
         groups: dict[tuple[uuid.UUID, tuple[str, ...]], _BundleGroupAccumulator] = {}
+        terminal_failures: list[str] = []
         pending_jobs = list(plan.jobs)
         while pending_jobs:
             self._heartbeat_candidate(run, candidate, run_lease_token)
@@ -342,6 +364,11 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                     run_lease_token,
                 )
                 return
+            if resumable.state is CatalogueJobState.FAILED:
+                error_code = resumable.error_code or "bundle_extraction_failed"
+                error_detail = resumable.error_detail or error_code
+                terminal_failures.append(f"{error_code}:{error_detail}")
+                continue
 
             source_links = artifact.fetch_metadata.get("links", [])
             if not isinstance(source_links, list):
@@ -431,11 +458,13 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             except ExtractionSchemaError as exc:
                 self.metrics.add("ai_schema_failures")
                 self._observe_provider_usage(exc.usage)
-                self.repository.checkpoint_job(
+                self.repository.fail_job(
                     resumable.id,
                     worker_id=candidate.claimed_by or "",
                     run_lease_token=run_lease_token,
                     candidate_lease_token=candidate.lease_token or "",
+                    error_code=exc.code,
+                    error_detail=f"{type(exc).__name__}:{exc.code}",
                     checkpoint={
                         "cache_key": identity.cache_key,
                         "planner_job_key": job.job_key,
@@ -449,11 +478,13 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             except ExtractionProviderError as exc:
                 self.metrics.add("ai_extraction_failures")
                 self._observe_provider_usage(exc.usage)
-                self.repository.checkpoint_job(
+                self.repository.fail_job(
                     resumable.id,
                     worker_id=candidate.claimed_by or "",
                     run_lease_token=run_lease_token,
                     candidate_lease_token=candidate.lease_token or "",
+                    error_code=exc.code,
+                    error_detail=f"{type(exc).__name__}:{exc.code}",
                     checkpoint={
                         "cache_key": identity.cache_key,
                         "planner_job_key": job.job_key,
@@ -470,7 +501,8 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             raw_output = result.output
             try:
                 expanded = self._expand_bundle(raw_output, job=job, blocks=job_blocks)
-            except ExtractionSchemaError:
+            except ExtractionSchemaError as exc:
+                validation_warnings = _validation_warnings(str(exc))
                 self.extraction_cache.record_event(
                     identity.cache_key,
                     decision=ExtractionCacheDecision.QUARANTINED,
@@ -478,27 +510,50 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                     run_id=run.id,
                     candidate_id=candidate.id,
                     source_artifact_id=artifact.id,
-                    detail={"provider_attempt_id": str(execution.provider_attempt_id)},
+                    detail={
+                        "provider_attempt_id": str(execution.provider_attempt_id),
+                        "validation_error": str(exc)[:1000],
+                        "validation_warnings": validation_warnings,
+                        "objective_bundle": [item.value for item in job.objectives],
+                        "evidence_spans": [list(item) for item in evidence_spans],
+                        "output_json": raw_output.model_dump(mode="json"),
+                    },
                 )
-                self.repository.checkpoint_job(
+                children = self._split_job(
+                    job,
+                    blocks_by_id=blocks_by_id,
+                    routes=job_routes,
+                    run=run,
+                )
+                checkpoint = {
+                    "cache_key": identity.cache_key,
+                    "planner_job_key": job.job_key,
+                    "outcome": "split" if children else "validation_failed",
+                    "provider_attempt_id": str(execution.provider_attempt_id),
+                    "child_job_keys": [child.job_key for child in children],
+                }
+                if children:
+                    self.repository.complete_job(
+                        resumable.id,
+                        worker_id=candidate.claimed_by or "",
+                        run_lease_token=run_lease_token,
+                        candidate_lease_token=candidate.lease_token or "",
+                        checkpoint=checkpoint,
+                    )
+                    pending_jobs = [*children, *pending_jobs]
+                    continue
+                failure_detail = "; ".join(validation_warnings) or str(exc)
+                self.repository.fail_job(
                     resumable.id,
                     worker_id=candidate.claimed_by or "",
                     run_lease_token=run_lease_token,
                     candidate_lease_token=candidate.lease_token or "",
-                    checkpoint={
-                        "cache_key": identity.cache_key,
-                        "planner_job_key": job.job_key,
-                        "outcome": "validation_failed",
-                        "provider_attempt_id": str(execution.provider_attempt_id),
-                    },
+                    error_code="bundle_validation_failed",
+                    error_detail=failure_detail,
+                    checkpoint=checkpoint,
                 )
-                self._manual_review(
-                    run,
-                    candidate,
-                    "bundle_validation_failed",
-                    run_lease_token,
-                )
-                return
+                terminal_failures.append(f"bundle_validation_failed:{failure_detail}")
+                continue
 
             cache_entry = self.extraction_cache.store_success(
                 identity,
@@ -538,6 +593,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             run_lease_token,
             sources=sources,
             groups=groups,
+            terminal_failures=terminal_failures,
         )
 
     def _current_official_sources(self, candidate_id: uuid.UUID) -> list[CatalogueCandidateSource]:
@@ -639,19 +695,16 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             allowed_entity_types=OBJECTIVE_ENTITY_TYPES,
             allowed_field_paths=OBJECTIVE_FIELD_PATHS,
         )
-        severe_prefixes = (
-            "unknown_evidence_block:",
-            "invalid_evidence_span:",
-            "unrequested_objective_claim:",
-            "objective_entity_mismatch:",
-            "invalid_atomic_claim:",
-            "objective_field_mismatch:",
-            "provider_invalid_claims_dropped:",
-        )
         warnings = [warning for output in expanded.outputs.values() for warning in output.warnings]
-        if any(warning.startswith(severe_prefixes) for warning in warnings):
+        severe_warnings = list(
+            dict.fromkeys(
+                warning for warning in warnings if warning.startswith(_SEVERE_VALIDATION_PREFIXES)
+            )
+        )
+        if severe_warnings:
             raise ExtractionSchemaError(
-                "Bundled claim output failed deterministic evidence validation",
+                "Bundled claim output failed deterministic evidence validation: "
+                + "; ".join(severe_warnings),
                 failure_class="schema_validation_failure",
             )
         return expanded
@@ -692,6 +745,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         *,
         sources: list[CatalogueCandidateSource],
         groups: dict[tuple[uuid.UUID, tuple[str, ...]], _BundleGroupAccumulator],
+        terminal_failures: list[str],
     ) -> None:
         self._heartbeat_candidate(run, candidate, run_lease_token)
         extracted: list[tuple[CatalogueSourceArtifact, int, list[Any]]] = []
@@ -725,6 +779,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                 extracted.append((group.artifact, effective_trust_tier, merged.claims))
 
         if not extracted:
+            candidate.validation_errors = list(dict.fromkeys(terminal_failures))
             self._manual_review(run, candidate, "insufficient_routed_evidence", run_lease_token)
             return
 
@@ -745,7 +800,11 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         )
         self._heartbeat_candidate(run, candidate, run_lease_token)
         candidate.proposed_payload = resolution.model_dump(mode="json")
-        candidate.validation_errors = resolution.rejected + resolution.completeness_errors
+        candidate.validation_errors = list(
+            dict.fromkeys(
+                resolution.rejected + resolution.completeness_errors + terminal_failures
+            )
+        )
         candidate.conflicts = sorted(set(candidate.conflicts + resolution.conflicts))
         if candidate.conflicts:
             candidate.status = CandidateStatus.CONFLICT_DETECTED
