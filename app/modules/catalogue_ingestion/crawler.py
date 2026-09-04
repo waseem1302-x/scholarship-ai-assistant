@@ -37,6 +37,18 @@ _DEFAULT_TOTAL_BYTES = 20 * 1024 * 1024
 _DEFAULT_WALL_SECONDS = 120.0
 _DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv"}
 _IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+_NON_CONTENT_EXTENSIONS = {
+    ".css",
+    ".eot",
+    ".ico",
+    ".ics",
+    ".js",
+    ".map",
+    ".otf",
+    ".ttf",
+    ".woff",
+    ".woff2",
+}
 _CHALLENGE_MARKERS = (
     "captcha",
     "verify you are human",
@@ -462,6 +474,10 @@ def score_crawl_link(
     ).casefold()
     score = 20
     score += _structural_link_score(link)
+    if not link.text.strip() and not (link.title or "").strip() and not _looks_like_document(
+        link.url
+    ):
+        score -= 40
 
     needs = tuple(frontier_needs)
     objectives = tuple(dict.fromkeys(need.objective for need in needs))
@@ -791,6 +807,15 @@ class BoundedOfficialSiteCrawler:
                             url=normalized,
                             depth=depth,
                             reason="authentication_or_session_link",
+                        )
+                    )
+                    continue
+                if _is_non_content_link(normalized):
+                    rejected.append(
+                        RejectedCrawlLink(
+                            url=normalized,
+                            depth=depth,
+                            reason="non_content_resource",
                         )
                     )
                     continue
@@ -1131,6 +1156,11 @@ def _structural_link_score(link: FetchedLink) -> int:
 def _looks_like_document(url: str) -> bool:
     path = urlsplit(url).path.casefold()
     return any(path.endswith(extension) for extension in _DOCUMENT_EXTENSIONS)
+
+
+def _is_non_content_link(url: str) -> bool:
+    path = urlsplit(url).path.casefold()
+    return any(path.endswith(extension) for extension in _NON_CONTENT_EXTENSIONS)
 
 
 def _looks_like_image(url: str) -> bool:

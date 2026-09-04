@@ -99,9 +99,24 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
         if (
             len(primary_sources) != 1
             or not explicit_sources
-            or len(explicit_sources) > run.max_pages_per_candidate
+            or (
+                not self.settings.catalogue_completeness_mode_enabled
+                and len(explicit_sources) > run.max_pages_per_candidate
+            )
         ):
             self._manual_review(run, candidate, "direct_source_bundle_invalid", run_lease_token)
+            return
+
+        if candidate.status is CandidateStatus.SOURCE_FETCHED and all(
+            source.status is CandidateSourceStatus.FETCHED and source.artifacts
+            for source in explicit_sources
+        ):
+            if run.mode is IngestionMode.CANDIDATE_ONLY:
+                self._manual_review(run, candidate, "candidate_only_complete", run_lease_token)
+            elif not self.settings.catalogue_ai_ingestion_enabled:
+                self._manual_review(run, candidate, "ai_ingestion_disabled", run_lease_token)
+            else:
+                self._process_direct_claims(run, candidate, run_lease_token)
             return
 
         provider_url, university_url = self._known_identity_urls(candidate)

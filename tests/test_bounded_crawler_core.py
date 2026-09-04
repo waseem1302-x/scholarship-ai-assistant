@@ -6,6 +6,7 @@ from app.modules.catalogue_ingestion.crawler import (
     BoundedOfficialSiteCrawler,
     CrawlBudget,
     normalize_crawl_url,
+    score_crawl_link,
 )
 from app.modules.opportunities.source_monitor import FetchedLink, FetchedSource, SourceFetchError
 
@@ -96,6 +97,47 @@ def test_bounded_crawler_fetches_root_then_highest_value_same_host_pages() -> No
     assert [page.url for page in result.pages] == [ROOT, deadline, funding]
     assert news not in fetcher.calls
     assert result.budget_exhausted is True
+
+
+def test_crawler_skips_static_and_calendar_resources_before_fetch() -> None:
+    script = "https://example.edu/build/app.js"
+    calendar = "https://example.edu/calendar/event.ics"
+    eligibility = "https://example.edu/scholarships/csc/eligibility"
+    fetcher = FakeFetcher(
+        {
+            ROOT: fetched_page(
+                ROOT,
+                "Official scholarship overview.",
+                links=(
+                    FetchedLink(url=script, text=""),
+                    FetchedLink(url=calendar, text=""),
+                    FetchedLink(url=eligibility, text="Eligibility requirements"),
+                ),
+            ),
+            eligibility: fetched_page(eligibility, "Official eligibility requirements."),
+        }
+    )
+
+    result = BoundedOfficialSiteCrawler(fetcher=fetcher).crawl(
+        ROOT,
+        budget=CrawlBudget(max_pages=10, max_depth=1),
+    )
+
+    assert fetcher.calls == [ROOT, eligibility]
+    assert [item.reason for item in result.rejected].count("non_content_resource") == 2
+
+
+def test_unlabeled_schedule_link_ranks_below_labeled_scholarship_content() -> None:
+    blank_schedule = FetchedLink(
+        url="https://example.edu/calendar/schedule-items/application-form",
+        text="",
+    )
+    eligibility = FetchedLink(
+        url="https://example.edu/scholarships/csc/eligibility",
+        text="Eligibility requirements",
+    )
+
+    assert score_crawl_link(blank_schedule) < score_crawl_link(eligibility)
 
 
 def test_bounded_crawler_rejects_cross_domain_auth_and_session_links() -> None:

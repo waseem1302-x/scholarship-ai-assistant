@@ -6,11 +6,13 @@ from sqlalchemy import select
 
 from app.core.config import Settings
 from app.modules.catalogue_ingestion.acquisition_runtime import crawl_budget_for_run
+from app.modules.catalogue_ingestion.hardened_service import HardenedCatalogueIngestionService
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
     CandidateStatus,
     CatalogueCandidate,
     CatalogueCandidateSource,
+    CatalogueSourceArtifact,
     IngestionMode,
 )
 from app.modules.catalogue_ingestion.service import CatalogueIngestionService
@@ -187,6 +189,74 @@ def test_completeness_mode_accepts_direct_source_bundle_beyond_page_budget(
     run = service.repository.get_run(response.id)
     assert run is not None
     assert run.max_pages_per_candidate == 10
+
+
+def test_hardened_resume_reuses_persisted_artifact_without_recrawling(
+    db_session,
+    monkeypatch,
+) -> None:
+    configured = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="test-secret-that-is-at-least-32-characters-long",
+        catalogue_ai_ingestion_enabled=True,
+        catalogue_ai_provider="azure_openai",
+        catalogue_ai_endpoint="https://example.openai.azure.com",
+        catalogue_ai_model="structured-output-deployment",
+        catalogue_ai_input_cost_per_million=Decimal("1"),
+        catalogue_ai_output_cost_per_million=Decimal("2"),
+        catalogue_bounded_crawling_enabled=True,
+        source_monitor_per_host_interval_seconds=0,
+    )
+    service = HardenedCatalogueIngestionService(
+        db_session,
+        configured,
+        fetcher=MappingFetcher(),
+    )
+    response = service.create_run_from_url(
+        ROOT,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    run = service.repository.get_run(response.id)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == response.id)
+    )
+    assert run is not None
+    assert candidate is not None
+    source = candidate.sources[0]
+    source.status = CandidateSourceStatus.FETCHED
+    source.artifacts.append(
+        CatalogueSourceArtifact(
+            final_url=ROOT,
+            content_type="text/html",
+            content_hash="a" * 64,
+            normalized_text="Persisted official scholarship evidence.",
+            extraction_method="normalized_text",
+            byte_count=40,
+            character_count=40,
+            fetch_metadata={},
+        )
+    )
+    candidate.status = CandidateStatus.SOURCE_FETCHED
+    db_session.flush()
+    claim_calls: list[str] = []
+
+    monkeypatch.setattr(service, "_heartbeat_candidate", lambda *_args: None)
+    monkeypatch.setattr(
+        service,
+        "_process_direct_claims",
+        lambda *_args: claim_calls.append("claims"),
+    )
+
+    def fail_if_crawled(*_args, **_kwargs):
+        raise AssertionError("persisted evidence must be reused")
+
+    monkeypatch.setattr(service.acquisition_crawler, "crawl_many", fail_if_crawled)
+
+    service._process_direct_candidate(run, candidate, "lease-token")
+
+    assert claim_calls == ["claims"]
 
 
 def test_ingestion_keeps_single_page_behavior_when_bounded_crawling_is_disabled(
