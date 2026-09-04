@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -92,6 +93,8 @@ class _EvidenceRow:
 def build_public_projection(
     session: Session,
     opportunity: Opportunity,
+    *,
+    now: datetime | None = None,
 ) -> PublicScholarshipProjectionResponse:
     """Build a field-level, evidence-gated projection for one scholarship.
 
@@ -187,13 +190,15 @@ def build_public_projection(
         evidence=public_evidence,
         known_unknowns=[name for name in _PUBLIC_DIMENSIONS if not dimensions[name]],
     )
-    projection.summary = build_decision_summary(opportunity, projection)
+    projection.summary = build_decision_summary(opportunity, projection, now=now)
     return projection
 
 
 def build_decision_summary(
     opportunity: Opportunity,
     projection: PublicScholarshipProjectionResponse,
+    *,
+    now: datetime | None = None,
 ) -> ScholarshipDecisionSummaryResponse:
     """Compose a compact decision summary from reviewed projection values only."""
 
@@ -234,6 +239,7 @@ def build_decision_summary(
     source_is_stale = current_source is not None and not EvidencePolicy.source_is_fresh(
         current_source,
         freshness_days=SOURCE_FRESHNESS_DAYS,
+        now=now,
     )
     if has_expired_source and not projection.evidence:
         return _uniform_decision_summary(

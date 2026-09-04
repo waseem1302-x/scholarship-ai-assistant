@@ -198,11 +198,24 @@ def create_launch_fixture(
         idempotency_key=suffix.ljust(64, "0")[:64],
         seed_name=opportunity.name,
         seed_provider=provider.name,
+        seed_intake_year=2027,
         seed_official_url=source.url,
         status=CandidateStatus.PUBLISHED,
         opportunity_id=opportunity.id,
+        proposed_payload={
+            "schema_version": "catalogue-graph.v1",
+            "name": opportunity.name,
+        },
     )
-    proposal_hash = (suffix * 2)[:64]
+    proposal_hash = hashlib.sha256(
+        json.dumps(
+            candidate.proposed_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
     review = CatalogueCandidateReview(
         id=uuid.uuid4(),
         candidate_id=candidate.id,
@@ -219,8 +232,9 @@ def create_launch_fixture(
         id=uuid.uuid4(),
         candidate_id=candidate.id,
         node_type=ScopeNodeType.SCHOLARSHIP_FAMILY,
-        canonical_key=f"scholarship-{suffix}",
+        canonical_key="scholarship",
         display_label=opportunity.name,
+        lifecycle_key="2027",
         provenance_json={"reviewed": True},
     )
     db_session.add_all([reviewer, provider, run])
@@ -279,6 +293,7 @@ def create_launch_fixture(
         character_count=len(evidence_text),
         fetch_metadata={},
     )
+    evidence_source.content_hash = snapshot.content_hash
     db_session.add(snapshot)
     db_session.flush()
     db_session.add(candidate)
@@ -579,7 +594,7 @@ def test_launch_audit_rejects_coverage_evidence_from_another_opportunity(
     assert result.opportunity_ids_by_blocker["missing_tier0_evidence"] == [opportunity.id]
 
 
-def test_launch_audit_keeps_source_blockers_separate_from_coverage_tier(
+def test_launch_audit_excludes_source_blocked_records_from_publishable_threshold(
     db_session: Session,
 ) -> None:
     from app.modules.opportunities.launch_audit import audit_launch_catalogue
@@ -589,10 +604,223 @@ def test_launch_audit_keeps_source_blockers_separate_from_coverage_tier(
     result = audit_launch_catalogue(db_session, minimum_records=1)
 
     assert result.ready is False
-    assert result.complete_core_count == 1
-    assert result.publishable_count == 1
-    assert "minimum_records" not in result.blockers_by_code
+    assert result.complete_core_count == 0
+    assert result.publishable_count == 0
+    assert result.blockers_by_code["minimum_records"] == 1
     assert result.blockers_by_code["stale_official_source"] == 1
+
+
+def test_launch_audit_reports_active_opportunity_without_review(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import audit_launch_catalogue
+
+    _, reviewed_candidate = create_launch_fixture(db_session)
+    reviewed_opportunity = db_session.get(Opportunity, reviewed_candidate.opportunity_id)
+    assert reviewed_opportunity is not None
+    unreviewed = Opportunity(
+        id=uuid.uuid4(),
+        provider_id=reviewed_opportunity.provider_id,
+        name="Active scholarship without review",
+        country="Singapore",
+        degree_level=DegreeLevel.MASTERS,
+        status=OpportunityStatus.ACTIVE,
+    )
+    db_session.add(unreviewed)
+    db_session.commit()
+
+    result = audit_launch_catalogue(db_session, minimum_records=1)
+
+    assert result.active_reviewed_count == 1
+    assert result.publishable_count == 1
+    assert result.opportunity_ids_by_blocker["unreviewed_active_opportunity"] == [
+        unreviewed.id
+    ]
+    assert result.curator_action_opportunity_ids == [unreviewed.id]
+
+
+def test_launch_audit_blocks_ambiguous_current_reviewed_materializations(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import audit_launch_catalogue
+
+    opportunity, candidate = create_launch_fixture(db_session)
+    review = db_session.scalar(
+        select(CatalogueCandidateReview).where(
+            CatalogueCandidateReview.candidate_id == candidate.id
+        )
+    )
+    assert review is not None
+    duplicate = CatalogueCandidate(
+        id=uuid.uuid4(),
+        run_id=candidate.run_id,
+        seed_index=1,
+        idempotency_key=uuid.uuid4().hex.ljust(64, "0"),
+        seed_name=candidate.seed_name,
+        seed_provider=candidate.seed_provider,
+        seed_intake_year=candidate.seed_intake_year,
+        seed_official_url=candidate.seed_official_url,
+        status=CandidateStatus.PUBLISHED,
+        opportunity_id=opportunity.id,
+        proposed_payload=candidate.proposed_payload,
+    )
+    duplicate_review = CatalogueCandidateReview(
+        id=uuid.uuid4(),
+        candidate_id=duplicate.id,
+        state=CatalogueProposalState.PUBLISHED,
+        proposal_hash=review.proposal_hash,
+        approved_proposal_hash=review.approved_proposal_hash,
+        reviewed_by_user_id=review.reviewed_by_user_id,
+        reviewed_at=review.reviewed_at,
+        materialized_at=review.materialized_at,
+        published_at=review.published_at,
+        materialization_revision=review.materialization_revision,
+    )
+    db_session.add_all([duplicate, duplicate_review])
+    db_session.commit()
+
+    result = audit_launch_catalogue(db_session, minimum_records=1)
+
+    assert result.active_reviewed_count == 0
+    assert result.publishable_count == 0
+    assert result.opportunity_ids_by_blocker["ambiguous_reviewed_materialization"] == [
+        opportunity.id
+    ]
+
+
+def test_launch_audit_blocks_review_when_current_proposal_hash_changed(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import audit_launch_catalogue
+
+    opportunity, candidate = create_launch_fixture(db_session)
+    candidate.proposed_payload = {**(candidate.proposed_payload or {}), "changed": True}
+    db_session.commit()
+
+    result = audit_launch_catalogue(db_session, minimum_records=1)
+
+    assert result.active_reviewed_count == 0
+    assert result.publishable_count == 0
+    assert result.opportunity_ids_by_blocker["stale_current_proposal"] == [opportunity.id]
+
+
+def test_launch_audit_requires_materialization_receipt_for_active_review(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import audit_launch_catalogue
+
+    opportunity, candidate = create_launch_fixture(db_session)
+    review = db_session.scalar(
+        select(CatalogueCandidateReview).where(
+            CatalogueCandidateReview.candidate_id == candidate.id
+        )
+    )
+    assert review is not None
+    review.materialization_revision = None
+    db_session.commit()
+
+    result = audit_launch_catalogue(db_session, minimum_records=1)
+
+    assert result.active_reviewed_count == 0
+    assert result.opportunity_ids_by_blocker["unreviewed_active_opportunity"] == [
+        opportunity.id
+    ]
+
+
+def test_launch_audit_rejects_superseded_snapshot_after_source_reverification(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import audit_launch_catalogue
+
+    opportunity, _ = create_launch_fixture(db_session)
+    source = opportunity.sources[0]
+    source.content_hash = "f" * 64
+    source.last_verified_at = datetime.now(UTC)
+    db_session.commit()
+
+    result = audit_launch_catalogue(db_session, minimum_records=1)
+
+    assert result.publishable_count == 0
+    assert result.opportunity_ids_by_blocker["missing_evidence"] == [opportunity.id]
+    assert result.opportunity_ids_by_blocker["missing_tier0_evidence"] == [opportunity.id]
+
+
+def test_launch_audit_rejects_old_cycle_evidence_for_current_critical_coverage(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import audit_launch_catalogue
+
+    opportunity, _ = create_launch_fixture(db_session)
+    old_cycle = OpportunityCycle(
+        id=uuid.uuid4(),
+        opportunity_id=opportunity.id,
+        label="2026",
+        intake_year=2026,
+        is_current=False,
+        is_archived=True,
+        source_id=opportunity.sources[0].id,
+    )
+    funding = db_session.scalar(
+        select(FundingComponent).where(FundingComponent.scholarship_id == opportunity.id)
+    )
+    assert funding is not None
+    db_session.add(old_cycle)
+    db_session.flush()
+    funding.cycle_id = old_cycle.id
+    db_session.commit()
+
+    result = audit_launch_catalogue(db_session, minimum_records=1)
+
+    assert result.publishable_count == 0
+    assert result.opportunity_ids_by_blocker["missing_evidence"] == [opportunity.id]
+
+
+def test_launch_audit_rejects_real_unknown_critical_summary(
+    db_session: Session,
+) -> None:
+    from app.modules.opportunities.launch_audit import audit_launch_catalogue
+
+    opportunity, _ = create_launch_fixture(db_session)
+    funding = db_session.scalar(
+        select(FundingComponent).where(FundingComponent.scholarship_id == opportunity.id)
+    )
+    assert funding is not None
+    funding.component_type = ""
+    db_session.commit()
+
+    projection = build_public_projection(db_session, opportunity)
+    result = audit_launch_catalogue(db_session, minimum_records=1)
+
+    assert projection.summary is not None
+    assert projection.summary.funding.state is DecisionSummaryState.UNKNOWN
+    assert result.publishable_count == 0
+    assert result.opportunity_ids_by_blocker["unsupported_public_summary_claim"] == [
+        opportunity.id
+    ]
+
+
+def test_launch_audit_captures_one_clock_value(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.modules.opportunities import launch_audit
+
+    create_launch_fixture(db_session)
+    fixed_now = datetime.now(UTC)
+
+    class CountingDateTime(datetime):
+        calls = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            cls.calls += 1
+            return fixed_now
+
+    monkeypatch.setattr(launch_audit, "datetime", CountingDateTime)
+
+    launch_audit.audit_launch_catalogue(db_session, minimum_records=1)
+
+    assert CountingDateTime.calls == 1
 
 
 def test_launch_audit_allows_only_noncritical_open_cells_and_lists_them(
@@ -730,7 +958,11 @@ def test_launch_audit_blocks_summary_claims_without_projection_evidence(
             application_route=unknown,
         )
     )
-    monkeypatch.setattr(launch_audit, "build_public_projection", lambda *_: projection)
+    monkeypatch.setattr(
+        launch_audit,
+        "build_public_projection",
+        lambda *_, **__: projection,
+    )
 
     result = launch_audit.audit_launch_catalogue(db_session, minimum_records=1)
 

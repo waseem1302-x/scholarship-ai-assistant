@@ -292,7 +292,7 @@ class CatalogueReviewWorkflow:
         return CataloguePublicationReadinessResponse(
             candidate_id=candidate.id,
             opportunity_id=candidate.opportunity_id,
-            proposal_hash=_proposal_hash(candidate.proposed_payload),
+            proposal_hash=proposal_payload_hash(candidate.proposed_payload),
             ready=not blockers,
             blockers=blockers,
             official_source_id=source_id,
@@ -516,7 +516,7 @@ class CatalogueReviewWorkflow:
         review: CatalogueCandidateReview | None,
     ) -> tuple[list[str], uuid.UUID | None]:
         blockers: list[str] = []
-        current_hash = _proposal_hash(candidate.proposed_payload)
+        current_hash = proposal_payload_hash(candidate.proposed_payload)
         if review is None:
             return ["review_state_missing"], None
         if review.state not in {
@@ -696,7 +696,7 @@ class CatalogueReviewWorkflow:
         )
         if review is not None:
             return review
-        current_hash = _proposal_hash(candidate.proposed_payload)
+        current_hash = proposal_payload_hash(candidate.proposed_payload)
         if current_hash is None:
             raise AppError(
                 "catalogue_proposal_missing",
@@ -734,7 +734,7 @@ class CatalogueReviewWorkflow:
         candidate: CatalogueCandidate,
         review: CatalogueCandidateReview,
     ) -> CatalogueCandidateReview:
-        current_hash = _proposal_hash(candidate.proposed_payload)
+        current_hash = proposal_payload_hash(candidate.proposed_payload)
         if current_hash is None:
             raise AppError(
                 "catalogue_proposal_missing",
@@ -768,7 +768,7 @@ class CatalogueReviewWorkflow:
         review: CatalogueCandidateReview,
         expected: str,
     ) -> str:
-        current_hash = _proposal_hash(candidate.proposed_payload)
+        current_hash = proposal_payload_hash(candidate.proposed_payload)
         if current_hash is None:
             raise AppError("catalogue_proposal_missing", "Candidate has no proposal", 409)
         if expected != current_hash:
@@ -791,7 +791,7 @@ class CatalogueReviewWorkflow:
         candidate: CatalogueCandidate,
         review: CatalogueCandidateReview,
     ) -> str:
-        current_hash = _proposal_hash(candidate.proposed_payload)
+        current_hash = proposal_payload_hash(candidate.proposed_payload)
         if current_hash is None:
             raise AppError("catalogue_proposal_missing", "Candidate has no proposal", 409)
         if review.proposal_hash != current_hash or review.approved_proposal_hash != current_hash:
@@ -807,7 +807,7 @@ class CatalogueReviewWorkflow:
         candidate: CatalogueCandidate,
         review: CatalogueCandidateReview | None,
     ) -> CatalogueCandidateReviewResponse:
-        current_hash = _proposal_hash(candidate.proposed_payload)
+        current_hash = proposal_payload_hash(candidate.proposed_payload)
         if review is None:
             return CatalogueCandidateReviewResponse(
                 candidate_id=candidate.id,
@@ -907,7 +907,7 @@ def _initial_review_state(candidate: CatalogueCandidate) -> CatalogueProposalSta
     return CatalogueProposalState.DRAFT
 
 
-def _proposal_hash(payload: dict[str, object] | None) -> str | None:
+def proposal_payload_hash(payload: dict[str, object] | None) -> str | None:
     if payload is None:
         return None
     canonical = json.dumps(
@@ -935,4 +935,8 @@ def _safe_materialization_failure(exc: Exception) -> tuple[str, str]:
     return "materialization_failed", "Materialization failed without committing catalogue writes"
 
 
-__all__ = ["LEGACY_OPPORTUNITY_MATERIALIZER_VERSION", "CatalogueReviewWorkflow"]
+__all__ = [
+    "LEGACY_OPPORTUNITY_MATERIALIZER_VERSION",
+    "CatalogueReviewWorkflow",
+    "proposal_payload_hash",
+]

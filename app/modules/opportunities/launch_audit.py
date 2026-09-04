@@ -19,6 +19,7 @@ from app.modules.catalogue_ingestion.review_models import (
     CatalogueCandidateReview,
     CatalogueProposalState,
 )
+from app.modules.catalogue_ingestion.review_workflow import proposal_payload_hash
 from app.modules.catalogue_ingestion.topology_models import (
     CatalogueCoverageCell,
     CatalogueScopeNode,
@@ -181,9 +182,41 @@ def audit_launch_catalogue(
     if minimum_records < 1:
         raise ValueError("minimum_records must be at least 1")
 
+    audit_now = datetime.now(UTC)
     with session.no_autoflush:
-        reviewed_records = _active_reviewed_records(session)
         blocker_ids: dict[str, set[uuid.UUID]] = defaultdict(set)
+        active_opportunities = list(
+            session.scalars(
+                select(Opportunity)
+                .where(Opportunity.status == OpportunityStatus.ACTIVE)
+                .order_by(Opportunity.id)
+            )
+        )
+        review_rows_by_opportunity = _review_rows_by_opportunity(
+            session,
+            opportunity_ids={opportunity.id for opportunity in active_opportunities},
+        )
+        reviewed_records: list[
+            tuple[Opportunity, CatalogueCandidate, CatalogueCandidateReview]
+        ] = []
+        for opportunity in active_opportunities:
+            review_rows = review_rows_by_opportunity.get(opportunity.id, [])
+            materialized_rows = [
+                row for row in review_rows if _has_materialization_receipt(*row)
+            ]
+            current_rows = [
+                row for row in materialized_rows if _review_matches_current_proposal(*row)
+            ]
+            if len(current_rows) == 1:
+                candidate, review = current_rows[0]
+                reviewed_records.append((opportunity, candidate, review))
+            elif len(current_rows) > 1:
+                blocker_ids["ambiguous_reviewed_materialization"].add(opportunity.id)
+            elif materialized_rows:
+                blocker_ids["stale_current_proposal"].add(opportunity.id)
+            else:
+                blocker_ids["unreviewed_active_opportunity"].add(opportunity.id)
+
         complete_core_ids: list[uuid.UUID] = []
         publishable_with_gaps: list[PublishableWithGapsRecord] = []
         publishable_ids: list[uuid.UUID] = []
@@ -224,6 +257,7 @@ def audit_launch_catalogue(
                 sources=sources,
                 cycles=cycles,
                 session=session,
+                audit_now=audit_now,
             )
             for code in record_blockers:
                 blocker_ids[code].add(opportunity.id)
@@ -237,7 +271,7 @@ def audit_launch_catalogue(
                 and cell.state is not ScopedCoverageState.UNKNOWN
                 for cell in cells
             )
-            if not critical_is_terminal or has_impermissible_gap:
+            if record_blockers or not critical_is_terminal or has_impermissible_gap:
                 continue
             publishable_ids.append(opportunity.id)
             if open_cells:
@@ -287,45 +321,58 @@ def audit_launch_catalogue(
     )
 
 
-def _active_reviewed_records(
+def _review_rows_by_opportunity(
     session: Session,
-) -> list[tuple[Opportunity, CatalogueCandidate, CatalogueCandidateReview]]:
+    *,
+    opportunity_ids: set[uuid.UUID],
+) -> dict[uuid.UUID, list[tuple[CatalogueCandidate, CatalogueCandidateReview]]]:
+    if not opportunity_ids:
+        return {}
     rows = session.execute(
-        select(Opportunity, CatalogueCandidate, CatalogueCandidateReview)
-        .join(CatalogueCandidate, CatalogueCandidate.opportunity_id == Opportunity.id)
+        select(CatalogueCandidate, CatalogueCandidateReview)
         .join(
             CatalogueCandidateReview,
             CatalogueCandidateReview.candidate_id == CatalogueCandidate.id,
         )
         .where(
-            Opportunity.status == OpportunityStatus.ACTIVE,
-            CatalogueCandidateReview.state.in_(_MATERIALIZED_REVIEW_STATES),
-            CatalogueCandidateReview.reviewed_by_user_id.is_not(None),
-            CatalogueCandidateReview.reviewed_at.is_not(None),
-            CatalogueCandidateReview.materialized_at.is_not(None),
+            CatalogueCandidate.opportunity_id.in_(opportunity_ids),
         )
     ).all()
-    state_rank = {
-        CatalogueProposalState.MATERIALIZED: 0,
-        CatalogueProposalState.PUBLICATION_READY: 1,
-        CatalogueProposalState.PUBLISHED: 2,
-    }
-    selected: dict[uuid.UUID, tuple[Opportunity, CatalogueCandidate, CatalogueCandidateReview]] = {}
-    for opportunity, candidate, review in rows:
-        current = selected.get(opportunity.id)
-        rank = (state_rank[review.state], _as_utc(review.reviewed_at), str(candidate.id))
-        if current is None:
-            selected[opportunity.id] = (opportunity, candidate, review)
-            continue
-        current_review = current[2]
-        current_rank = (
-            state_rank[current_review.state],
-            _as_utc(current_review.reviewed_at),
-            str(current[1].id),
-        )
-        if rank > current_rank:
-            selected[opportunity.id] = (opportunity, candidate, review)
-    return sorted(selected.values(), key=lambda item: str(item[0].id))
+    grouped: dict[uuid.UUID, list[tuple[CatalogueCandidate, CatalogueCandidateReview]]] = (
+        defaultdict(list)
+    )
+    for candidate, review in rows:
+        if candidate.opportunity_id is not None:
+            grouped[candidate.opportunity_id].append((candidate, review))
+    for review_rows in grouped.values():
+        review_rows.sort(key=lambda row: str(row[0].id))
+    return dict(grouped)
+
+
+def _has_materialization_receipt(
+    candidate: CatalogueCandidate,
+    review: CatalogueCandidateReview,
+) -> bool:
+    return (
+        review.state in _MATERIALIZED_REVIEW_STATES
+        and review.reviewed_by_user_id is not None
+        and review.reviewed_at is not None
+        and review.materialized_at is not None
+        and review.materialization_revision is not None
+        and candidate.opportunity_id is not None
+    )
+
+
+def _review_matches_current_proposal(
+    candidate: CatalogueCandidate,
+    review: CatalogueCandidateReview,
+) -> bool:
+    current_hash = proposal_payload_hash(candidate.proposed_payload)
+    return (
+        current_hash is not None
+        and review.proposal_hash == current_hash
+        and review.approved_proposal_hash == current_hash
+    )
 
 
 def _record_blockers(
@@ -337,6 +384,7 @@ def _record_blockers(
     sources: list[Source],
     cycles: list[OpportunityCycle],
     session: Session,
+    audit_now: datetime,
 ) -> set[str]:
     blockers: set[str] = set()
     dimensions = {
@@ -385,6 +433,7 @@ def _record_blockers(
     current_source = EvidencePolicy.select_current_official_source(
         official_sources,
         require_fresh_days=SOURCE_FRESHNESS_DAYS,
+        now=audit_now,
     )
     has_expired_source = any(
         source.verification_status in {VerificationStatus.EXPIRED, VerificationStatus.ARCHIVED}
@@ -396,6 +445,7 @@ def _record_blockers(
             EvidencePolicy.source_is_fresh(
                 source,
                 freshness_days=SOURCE_FRESHNESS_DAYS,
+                now=audit_now,
             )
             for source in verified_sources
         )
@@ -409,6 +459,8 @@ def _record_blockers(
         review=review,
         cells=cells,
         sources=official_sources,
+        current_cycle=current_cycle,
+        audit_now=audit_now,
     )
     identity_cells = [cell for cell in cells if cell.objective is ClaimObjective.IDENTITY]
     identity_is_terminal = _objective_is_terminal(cells, ClaimObjective.IDENTITY)
@@ -451,7 +503,7 @@ def _record_blockers(
     ):
         blockers.add("incomplete_record")
 
-    projection = build_public_projection(session, opportunity)
+    projection = build_public_projection(session, opportunity, now=audit_now)
     if not _summary_is_supported(
         projection,
         verified_coverage.evidence_ids_by_objective,
@@ -468,6 +520,8 @@ def _verified_coverage_fields(
     review: CatalogueCandidateReview,
     cells: list[CatalogueCoverageCell],
     sources: list[Source],
+    current_cycle: OpportunityCycle | None,
+    audit_now: datetime,
 ) -> _VerifiedCoverageEvidence:
     claim_ids = {
         claim_id
@@ -496,6 +550,7 @@ def _verified_coverage_fields(
         and EvidencePolicy.source_is_fresh(
             source,
             freshness_days=SOURCE_FRESHNESS_DAYS,
+            now=audit_now,
         )
     }
     if EvidencePolicy.has_disqualifying_official_source(sources):
@@ -520,7 +575,7 @@ def _verified_coverage_fields(
         if cell.state not in _TERMINAL_COVERAGE_STATES or not cell.supporting_claim_ids:
             continue
         node = nodes.get(cell.scope_node_id)
-        if node is None:
+        if node is None or not _scope_matches_current_cycle(node, current_cycle):
             continue
         fields: set[str] = set()
         field_evidence_ids: set[uuid.UUID] = set()
@@ -534,6 +589,7 @@ def _verified_coverage_fields(
                     session,
                     opportunity=opportunity,
                     node=node,
+                    current_cycle=current_cycle,
                     fresh_source_ids=fresh_source_ids,
                     row=row,
                 )
@@ -565,6 +621,7 @@ def _coverage_evidence_row_is_valid(
     *,
     opportunity: Opportunity,
     node: CatalogueScopeNode,
+    current_cycle: OpportunityCycle | None,
     fresh_source_ids: set[uuid.UUID],
     row: tuple[CatalogueMaterializedClaimLink, FieldEvidence, SourceSnapshot, Source],
 ) -> bool:
@@ -577,6 +634,8 @@ def _coverage_evidence_row_is_valid(
         or evidence.validator_status is not EvidenceValidatorStatus.PASSED
         or source.id not in fresh_source_ids
         or source.opportunity_id != opportunity.id
+        or source.content_hash is None
+        or snapshot.content_hash != source.content_hash
     ):
         return False
     provenance = link.provenance_json or {}
@@ -590,12 +649,22 @@ def _coverage_evidence_row_is_valid(
     trusted_domain = trust_domain in {domain.value for domain in OFFICIAL_FACTUAL_DOMAINS}
     if not trusted_domain and provenance.get("trust_tier") not in {1, 2, 3}:
         return False
-    return _entity_belongs_to_opportunity(
-        session,
-        entity_type=link.entity_type,
-        entity_id=link.entity_id,
-        opportunity_id=opportunity.id,
-    ) and _claim_matches_scope(link, node)
+    return (
+        _entity_belongs_to_opportunity(
+            session,
+            entity_type=link.entity_type,
+            entity_id=link.entity_id,
+            opportunity_id=opportunity.id,
+        )
+        and _entity_matches_current_cycle(
+            session,
+            entity_type=link.entity_type,
+            entity_id=link.entity_id,
+            current_cycle=current_cycle,
+        )
+        and _claim_matches_scope(link, node)
+        and _provenance_matches_current_cycle(link, current_cycle)
+    )
 
 
 def _entity_belongs_to_opportunity(
@@ -626,6 +695,61 @@ def _entity_belongs_to_opportunity(
         return False
     entity = session.get(model, entity_id)
     return entity is not None and entity.scholarship_id == opportunity_id
+
+
+def _entity_matches_current_cycle(
+    session: Session,
+    *,
+    entity_type: str,
+    entity_id: uuid.UUID,
+    current_cycle: OpportunityCycle | None,
+) -> bool:
+    if entity_type in {"scholarship", "opportunity", "institution"}:
+        return True
+    if entity_type in {"cycle", "opportunity_cycle"}:
+        return current_cycle is not None and entity_id == current_cycle.id
+    model = _SCHOLARSHIP_OWNED_EVIDENCE_MODELS.get(entity_type)
+    if model is None:
+        return False
+    entity = session.get(model, entity_id)
+    if entity is None:
+        return False
+    cycle_id = getattr(entity, "cycle_id", None)
+    return cycle_id is None or (current_cycle is not None and cycle_id == current_cycle.id)
+
+
+def _scope_matches_current_cycle(
+    node: CatalogueScopeNode,
+    current_cycle: OpportunityCycle | None,
+) -> bool:
+    return not node.lifecycle_key or _is_current_cycle_key(node.lifecycle_key, current_cycle)
+
+
+def _provenance_matches_current_cycle(
+    link: CatalogueMaterializedClaimLink,
+    current_cycle: OpportunityCycle | None,
+) -> bool:
+    scope = (link.provenance_json or {}).get("scope")
+    if not isinstance(scope, dict) or not scope.get("cycle_key"):
+        return True
+    return _is_current_cycle_key(str(scope["cycle_key"]), current_cycle)
+
+
+def _is_current_cycle_key(value: str, current_cycle: OpportunityCycle | None) -> bool:
+    if current_cycle is None:
+        return False
+    normalized = _canonical_key(value)
+    exact_keys = {
+        _canonical_key(str(item))
+        for item in (current_cycle.id, current_cycle.label, current_cycle.intake_year)
+        if item is not None and str(item).strip()
+    }
+    if normalized in exact_keys:
+        return True
+    return current_cycle.intake_year is not None and re.search(
+        rf"(?<!\d){current_cycle.intake_year}(?!\d)",
+        value,
+    ) is not None
 
 
 def _claim_matches_scope(link: CatalogueMaterializedClaimLink, node: CatalogueScopeNode) -> bool:
@@ -714,7 +838,7 @@ def _summary_is_supported(
                 or not evidence_ids.issubset(reviewed_evidence_ids)
             ):
                 return False
-        elif block.state is DecisionSummaryState.UNKNOWN and evidence_ids:
+        elif block.state is DecisionSummaryState.UNKNOWN:
             return False
     return True
 
@@ -727,12 +851,6 @@ def _open_cell(cell: CatalogueCoverageCell) -> OpenCoverageCell:
         reason=cell.reason,
         missing_frontier_reasons=sorted(cell.missing_frontier_reasons or []),
     )
-
-
-def _as_utc(value: datetime | None) -> datetime:
-    if value is None:
-        return datetime.min.replace(tzinfo=UTC)
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 __all__ = [
