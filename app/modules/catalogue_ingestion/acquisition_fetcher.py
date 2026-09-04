@@ -201,7 +201,7 @@ def sniff_catalogue_mime(payload: bytes, *, declared_type: str, url: str) -> str
         detected = _sniff_ooxml_type(payload)
         return detected or declared_type
     if head.startswith(b"<"):
-        prefix = head[:256].casefold()
+        prefix = head[:256].lower()
         if b"<html" in prefix or b"<!doctype html" in prefix:
             return "text/html"
         if lowered_path.endswith((".xml", ".rss", ".atom")) or declared_type in _XML_TYPES:

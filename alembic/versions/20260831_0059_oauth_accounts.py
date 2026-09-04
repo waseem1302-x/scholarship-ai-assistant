@@ -18,7 +18,12 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # 1. Allow nullable password_hash on users table
-    op.alter_column("users", "password_hash", existing_type=sa.String(length=255), nullable=True)
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column(
+            "password_hash",
+            existing_type=sa.String(length=255),
+            nullable=True,
+        )
 
     # 2. Create oauth_accounts table
     op.create_table(
@@ -47,4 +52,9 @@ def downgrade() -> None:
     op.drop_index("ix_oauth_accounts_provider_user_id", table_name="oauth_accounts")
     op.drop_index("ix_oauth_accounts_provider", table_name="oauth_accounts")
     op.drop_table("oauth_accounts")
-    op.alter_column("users", "password_hash", existing_type=sa.String(length=255), nullable=False)
+    with op.batch_alter_table("users") as batch_op:
+        batch_op.alter_column(
+            "password_hash",
+            existing_type=sa.String(length=255),
+            nullable=False,
+        )

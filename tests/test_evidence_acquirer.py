@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.modules.catalogue_ingestion.acquisition_fetcher import sniff_catalogue_mime
 from app.modules.catalogue_ingestion.evidence_acquirer import (
     EVIDENCE_ACQUIRER_CONTRACT_VERSION,
     AcquiredArtifact,
@@ -141,6 +142,19 @@ def test_acquisition_request_rejects_non_positive_max_bytes() -> None:
 def test_default_factory_returns_legacy_acquirer() -> None:
     acquirer = default_evidence_acquirer()
     assert isinstance(acquirer, LegacySafeEvidenceAcquirer)
+
+
+def test_catalogue_mime_sniffer_recognizes_case_insensitive_html_bytes() -> None:
+    payload = b"<!DOCTYPE HTML><HTML><BODY>Official scholarship details</BODY></HTML>"
+
+    assert (
+        sniff_catalogue_mime(
+            payload,
+            declared_type="text/plain",
+            url="https://example.edu/scholarship",
+        )
+        == "text/html"
+    )
 
 
 def test_tier_alias_is_identical() -> None:

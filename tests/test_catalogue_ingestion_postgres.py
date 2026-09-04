@@ -11,6 +11,7 @@ from app.modules.catalogue_ingestion.models import (
     CatalogueCandidate,
     CatalogueIngestionRun,
     IngestionMode,
+    IngestionRunStatus,
 )
 from app.modules.catalogue_ingestion.repository import CatalogueIngestionRepository
 from app.modules.catalogue_ingestion.schemas import SeedCandidate
@@ -52,6 +53,31 @@ def _run() -> CatalogueIngestionRun:
         max_output_tokens=256,
         max_estimated_cost=Decimal("0"),
     )
+
+
+def test_terminal_failure_status_fits_migrated_postgres_schema(postgres_engine) -> None:
+    sessions = sessionmaker(bind=postgres_engine, expire_on_commit=False)
+    run_id = None
+    try:
+        with sessions() as session:
+            run = _run()
+            session.add(run)
+            session.flush()
+            run_id = run.id
+            run.status = IngestionRunStatus.COMPLETED_WITH_FAILURES
+            session.commit()
+
+        with sessions() as session:
+            persisted = session.get(CatalogueIngestionRun, run_id)
+            assert persisted is not None
+            assert persisted.status is IngestionRunStatus.COMPLETED_WITH_FAILURES
+    finally:
+        if run_id is not None:
+            with sessions() as cleanup:
+                persisted = cleanup.get(CatalogueIngestionRun, run_id)
+                if persisted is not None:
+                    cleanup.delete(persisted)
+                    cleanup.commit()
 
 
 def test_candidate_worker_claim_skips_a_row_locked_by_another_worker(postgres_engine) -> None:
