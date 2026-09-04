@@ -1,10 +1,14 @@
 """Browser journeys that run only when a live app URL is supplied."""
 
+import json
 import os
 import re
+from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import pytest
+import yaml
 from playwright.sync_api import Page, expect
 
 pytestmark = pytest.mark.e2e
@@ -16,6 +20,103 @@ def live_base_url() -> str:
     if not base_url:
         pytest.skip("Set E2E_BASE_URL to run browser end-to-end tests.")
     return base_url.rstrip("/")
+
+
+@pytest.fixture
+def truth_first_staging_environment() -> dict[str, str]:
+    names = (
+        "E2E_BASE_URL",
+        "E2E_STAGING_EMAIL",
+        "E2E_STAGING_PASSWORD",
+    )
+    values = {name: os.getenv(name, "").strip() for name in names}
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        pytest.skip(
+            "Set the protected staging journey values: " + ", ".join(missing)
+        )
+
+    parsed = urlparse(values["E2E_BASE_URL"])
+    assert parsed.scheme == "https" and parsed.hostname not in {"localhost", "127.0.0.1"}, (
+        "The truth-first launch journey must target a live HTTPS staging revision."
+    )
+    values["E2E_BASE_URL"] = values["E2E_BASE_URL"].rstrip("/")
+    return values
+
+
+def test_truth_first_launch_manifest_has_only_reviewed_official_roots() -> None:
+    expected = [
+        ("DAAD EPOS", "https://www.daad.de/en/studying-in-germany/scholarships/daad-funding-programmes/epos/"),
+        ("Fulbright Foreign Student Program", "https://foreign.fulbrightonline.org/about/foreign-fulbright"),
+        ("Chevening", "https://www.chevening.org/scholarships/"),
+        ("Vanier", "https://vanier.gc.ca/en/home-accueil.html"),
+        ("Australia Awards", "https://www.dfat.gov.au/people-to-people/australia-awards"),
+        ("Erasmus Mundus Joint Masters", "https://erasmus-plus.ec.europa.eu/opportunities/opportunities-for-individuals/students/erasmus-mundus-joint-masters"),
+        ("MEXT Research", "https://www.studyinjapan.go.jp/en/planning/scholarships/mext-scholarships/"),
+        (
+            "Commonwealth Master\u2019s",
+            "https://cscuk.fcdo.gov.uk/scholarships/commonwealth-masters-scholarships/",
+        ),
+        ("Gates Cambridge", "https://www.gatescambridge.org/"),
+        ("Türkiye Scholarships", "https://www.turkiyeburslari.gov.tr/"),
+        ("Stipendium Hungaricum", "https://stipendiumhungaricum.hu/"),
+        (
+            "Swedish Institute Scholarships for Global Professionals",
+            "https://si.se/en/apply/scholarships/swedish-institute-scholarships-for-global-professionals/",
+        ),
+    ]
+
+    manifest = json.loads(Path("data/launch-scholarships.json").read_text(encoding="utf-8"))
+
+    assert [(item["canonical_name"], item["official_root_url"]) for item in manifest] == expected
+    assert all(set(item) == {"canonical_name", "official_root_url"} for item in manifest)
+
+
+def test_launch_deployment_fails_closed_and_preserves_gate_evidence() -> None:
+    workflow = yaml.safe_load(
+        Path(".github/workflows/azure-application-deploy.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["deploy"]["steps"]
+    by_name = {step.get("name"): step for step in steps if step.get("name")}
+    names = list(by_name)
+
+    migration = names.index("Apply rolling-safe expand migration")
+    audit = names.index("Run read-only launch catalogue audit")
+    smoke = names.index("Run product and tenant-isolation smoke against candidate")
+    journey = names.index("Run truth-first Chromium journey against candidate")
+    promotion = names.index("Promote candidate traffic atomically")
+    assert migration < audit < smoke < journey < promotion
+
+    audit_run = by_name["Run read-only launch catalogue audit"]["run"]
+    assert "python -m app.cli.audit_launch_catalogue --minimum-records 12" in audit_run
+    assert "release-provenance/catalogue-audit.json" in audit_run
+    assert "audit['ready'] is not True" in audit_run
+
+    smoke_run = by_name["Run product and tenant-isolation smoke against candidate"]["run"]
+    assert "scripts/staging_smoke.py" in smoke_run
+    assert "release-provenance/candidate-smoke.json" in smoke_run
+
+    journey_step = by_name["Run truth-first Chromium journey against candidate"]
+    journey_run = journey_step["run"]
+    assert "tests/test_browser_e2e.py::test_truth_first_mvp_launch_journey" in journey_run
+    assert journey_run.count("--browser chromium") == 1
+    assert "--junitxml=release-provenance/truth-first-chromium.xml" in journey_run
+    assert journey_step["env"]["E2E_BASE_URL"] == "${{ steps.candidate.outputs.base_url }}"
+    assert journey_step["env"]["E2E_STAGING_EMAIL"] == "${{ vars.E2E_STAGING_EMAIL }}"
+    assert journey_step["env"]["E2E_STAGING_PASSWORD"] == "${{ secrets.E2E_STAGING_PASSWORD }}"
+
+    assert "continue-on-error" not in workflow
+
+    upload = by_name["Upload staging promotion manifest"]
+    assert upload["with"]["path"] == "release-provenance"
+    assert upload["with"]["if-no-files-found"] == "error"
+
+    provenance_run = by_name["Create immutable staging promotion manifest"]["run"]
+    assert "catalogue-audit.json" in provenance_run
+    assert "truth-first-chromium.xml" in provenance_run
+    assert "candidate-smoke.json" in provenance_run
+    assert "candidate_smoke_evidence" in provenance_run
+    assert "catalogue_audit" in provenance_run
 
 
 @pytest.mark.browser_compat
@@ -840,3 +941,125 @@ def test_phase_five_application_command_centre_journey(page: Page, live_base_url
     page.get_by_role("button", name="Move to ready to submit").click()
     page.get_by_role("button", name="Move to submitted").click()
     expect(page.get_by_text("Current: submitted")).to_be_visible()
+
+
+def _clear_staging_application_state(page: Page) -> None:
+    status = page.evaluate(
+        """
+        async () => {
+          const csrf = document.cookie
+            .split(';')
+            .map((item) => item.trim())
+            .find((item) => item.startsWith('csrf_token='))
+            ?.split('=')[1];
+          const headers = {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            ...(csrf ? {'X-CSRF-Token': decodeURIComponent(csrf)} : {}),
+          };
+          const refresh = await fetch('/api/v1/auth/refresh', {
+            method: 'POST',
+            headers,
+            body: '{}',
+            credentials: 'same-origin',
+          });
+          if (!refresh.ok) return refresh.status;
+          const session = await refresh.json();
+          const deletion = await fetch('/api/v1/applications/data', {
+            method: 'DELETE',
+            headers: {...headers, Authorization: `Bearer ${session.access_token}`},
+            credentials: 'same-origin',
+          });
+          return deletion.status;
+        }
+        """
+    )
+    assert status == 204
+
+
+def test_truth_first_mvp_launch_journey(
+    page: Page,
+    truth_first_staging_environment: dict[str, str],
+) -> None:
+    """A protected synthetic student traverses the complete reviewed launch journey."""
+    base_url = truth_first_staging_environment["E2E_BASE_URL"]
+    page.goto(base_url, wait_until="networkidle")
+
+    for deferred_product in ("Assistant", "Document Lab", "Community"):
+        expect(page.get_by_role("link", name=deferred_product, exact=True)).to_have_count(0)
+
+    verified_section = page.get_by_role(
+        "region", name="Verified scholarships worth exploring"
+    )
+    expect(verified_section).to_be_visible()
+    homepage_card_link = verified_section.locator("h3 a").first
+    expect(homepage_card_link).to_be_visible()
+    scholarship_name = homepage_card_link.inner_text().strip()
+    direct_detail_href = homepage_card_link.get_attribute("href")
+    assert direct_detail_href and re.fullmatch(r"/catalogue/[0-9a-f-]{36}", direct_detail_href)
+
+    verified_section.get_by_role("link", name="View all scholarships").click()
+    expect(page).to_have_url(re.compile(rf"^{re.escape(base_url)}/catalogue(?:\?.*)?$"))
+    catalogue_result = page.get_by_role("heading", name=scholarship_name, exact=True).first
+    expect(catalogue_result).to_be_visible()
+    catalogue_result.get_by_role("link", name=scholarship_name, exact=True).click()
+
+    expect(page).to_have_url(f"{base_url}{direct_detail_href}")
+    expect(page.get_by_role("heading", name=scholarship_name, exact=True).first).to_be_visible()
+    evidence = page.get_by_role("region", name="Reviewed source citations")
+    expect(evidence).to_be_visible()
+    cited_source = evidence.get_by_role("link", name="Open cited source").first
+    cited_source_url = cited_source.get_attribute("href")
+    parsed_source = urlparse(cited_source_url or "")
+    assert parsed_source.scheme == "https" and parsed_source.hostname
+    assert parsed_source.hostname != urlparse(base_url).hostname
+
+    page.get_by_role("link", name="Sign in", exact=True).click()
+    page.get_by_label("Email address", exact=True).fill(
+        truth_first_staging_environment["E2E_STAGING_EMAIL"]
+    )
+    page.get_by_label("Password").fill(
+        truth_first_staging_environment["E2E_STAGING_PASSWORD"]
+    )
+    page.get_by_role("button", name="Sign in", exact=True).click()
+    expect(page).to_have_url(f"{base_url}/dashboard")
+
+    try:
+        _clear_staging_application_state(page)
+
+        page.goto(f"{base_url}/profile", wait_until="networkidle")
+        expect(page.get_by_role("heading", name="Build a profile you can trust.")).to_be_visible()
+        page.get_by_label("Nationality").fill("Singaporean")
+        page.get_by_label("Target degree").select_option("")
+        page.get_by_label("Intended field").fill("Public policy")
+        page.get_by_role("button", name="Save profile").click()
+        expect(page.get_by_role("status")).to_contain_text("Profile saved")
+
+        page.goto(f"{base_url}/matches", wait_until="networkidle")
+        expect(
+            page.get_by_role("heading", name="Recommendations you can inspect.")
+        ).to_be_visible()
+        match_heading = page.get_by_role("heading", name=scholarship_name, exact=True)
+        expect(match_heading).to_be_visible()
+        match_card = match_heading.locator("xpath=ancestor::article")
+        expect(match_card.locator(".fit-score")).to_be_visible()
+        expect(match_card.get_by_text("Next steps")).to_be_visible()
+        match_card.get_by_role("link", name="Review official opportunity details").click()
+
+        page.get_by_role("button", name="Save & track", exact=True).first.click()
+        expect(page.get_by_role("status").first).to_contain_text(
+            "Saved. Your application plan is ready."
+        )
+        page.get_by_role("link", name=re.compile("Open application plan")).first.click()
+        expect(page.get_by_role("heading", name="Task board")).to_be_visible()
+        expect(page.get_by_role("link", name="Open official evidence")).to_be_visible()
+
+        evidence_dir = os.getenv("E2E_EVIDENCE_DIR", "").strip()
+        if evidence_dir:
+            output_dir = Path(evidence_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            page.screenshot(
+                path=str(output_dir / "truth-first-application-plan.png"), full_page=True
+            )
+    finally:
+        _clear_staging_application_state(page)
