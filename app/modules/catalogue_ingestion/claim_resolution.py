@@ -502,6 +502,12 @@ def _semantic_claim_error(
     ):
         return "invalid_non_negative_integer"
     if (
+        claim.entity_type is ClaimEntityType.SCHOLARSHIP
+        and claim.field_path == "participating_institution_count"
+        and (not isinstance(value, int) or isinstance(value, bool) or value < 0)
+    ):
+        return "invalid_participating_institution_count"
+    if (
         claim.entity_type is ClaimEntityType.FUNDING
         and claim.field_path == "amount"
         and (

@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     catalogue_source_max_bytes_per_page: int = Field(default=5_000_000, ge=100_000, le=20_000_000)
     catalogue_ai_max_calls_per_run: int = Field(default=500, ge=0, le=5_000)
     catalogue_ai_max_input_characters: int = Field(default=80_000, ge=1_000, le=500_000)
-    catalogue_ai_max_output_tokens: int = Field(default=16_000, ge=256, le=16_000)
+    catalogue_ai_max_output_tokens: int = Field(default=50_000, ge=256, le=50_000)
     catalogue_ai_max_estimated_cost_per_run: Decimal = Field(
         default=Decimal("50.00"), ge=0, le=10_000
     )

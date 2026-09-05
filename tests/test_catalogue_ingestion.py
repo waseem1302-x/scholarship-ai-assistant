@@ -1578,6 +1578,41 @@ def test_claim_resolution_rejects_prose_misclassified_as_programme_duration() ->
     assert resolution.resolved == []
 
 
+def test_claim_resolution_rejects_non_integer_participating_institution_count() -> None:
+    text = "Open Doors is organized by a consortium of leading Russian universities."
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="9" * 64,
+        normalized_text=text,
+        extraction_method="normalized_text",
+        byte_count=len(text),
+        character_count=len(text),
+    )
+    claim = claim_output().claims[0].model_copy(deep=True)
+    claim.field_path = "participating_institution_count"
+    claim.value = ClaimValue(
+        string_value="a consortium of leading Russian universities",
+        decimal_value=None,
+        integer_value=None,
+        boolean_value=None,
+        string_list_value=None,
+    )
+    claim.excerpt = text
+    claim.excerpt_start = 0
+    claim.excerpt_end = len(text)
+
+    resolution = resolve_claims([(artifact, 1, [claim])])
+
+    assert any(
+        item.endswith("invalid_participating_institution_count")
+        for item in resolution.rejected
+    )
+    assert resolution.resolved == []
+
+
 def test_rich_materializer_preserves_supported_scoped_fields(db_session) -> None:
     provider = Provider(name=f"Materializer provider {uuid.uuid4()}")
     db_session.add(provider)

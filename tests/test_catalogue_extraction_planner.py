@@ -181,7 +181,7 @@ def test_truncation_recovery_is_finite_and_preserves_every_character_once() -> N
 
 
 def test_catalogue_default_output_budget_has_room_for_dense_structured_claims() -> None:
-    assert Settings(_env_file=None).catalogue_ai_max_output_tokens == 16_000
+    assert Settings(_env_file=None).catalogue_ai_max_output_tokens == 50_000
 
 
 def test_cache_identity_distinguishes_slices_of_the_same_evidence_block(db_session) -> None:
