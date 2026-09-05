@@ -819,18 +819,6 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             allowed_entity_types=OBJECTIVE_ENTITY_TYPES,
             allowed_field_paths=OBJECTIVE_FIELD_PATHS,
         )
-        warnings = [warning for output in expanded.outputs.values() for warning in output.warnings]
-        severe_warnings = list(
-            dict.fromkeys(
-                warning for warning in warnings if warning.startswith(_SEVERE_VALIDATION_PREFIXES)
-            )
-        )
-        if severe_warnings:
-            raise ExtractionSchemaError(
-                "Bundled claim output failed deterministic evidence validation: "
-                + "; ".join(severe_warnings),
-                failure_class="schema_validation_failure",
-            )
         return expanded
 
     def _accumulate_bundle_group(

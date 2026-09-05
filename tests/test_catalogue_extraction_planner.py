@@ -4,15 +4,12 @@ from dataclasses import replace
 from decimal import Decimal
 from itertools import pairwise
 
-import pytest
-
 from app.core.config import Settings
 from app.modules.catalogue_ingestion.claim_bundle_schemas import (
     BundleEvidenceReference,
     BundleObjectiveCoverage,
     ClaimBundleExtractionOutput,
 )
-from app.modules.catalogue_ingestion.claim_provider import ExtractionSchemaError
 from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective, ObjectiveCoverageState
 from app.modules.catalogue_ingestion.evidence_block_models import (
     EVIDENCE_BLOCK_BUILDER_VERSION,
@@ -242,7 +239,7 @@ def test_cache_identity_distinguishes_slices_of_the_same_evidence_block(db_sessi
     assert left.cache_key != right.cache_key
 
 
-def test_recovery_child_rejects_evidence_outside_its_supplied_span() -> None:
+def test_recovery_child_drops_evidence_outside_its_supplied_span() -> None:
     job, block, route = _single_block_job()
     left, _right = split_extraction_job(
         job,
@@ -275,10 +272,11 @@ def test_recovery_child_rejects_evidence_outside_its_supplied_span() -> None:
     )
     service = object.__new__(ProductionCatalogueIngestionService)
 
-    with pytest.raises(ExtractionSchemaError) as exc_info:
-        service._expand_bundle(raw_output, job=left, blocks=[block])
+    expanded = service._expand_bundle(raw_output, job=left, blocks=[block])
 
-    assert "invalid_evidence_span:outside" in str(exc_info.value)
+    timeline = expanded.outputs[ClaimObjective.APPLICATION_TIMELINE]
+    assert timeline.claims == []
+    assert "invalid_evidence_span:outside" in timeline.warnings
 
 
 def test_truncation_recovery_keeps_all_objectives_on_each_bounded_slice() -> None:

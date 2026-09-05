@@ -18,19 +18,25 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     StrictClaimModel,
 )
 
-CLAIM_BUNDLE_SCHEMA_VERSION = "catalogue-claim-bundle.v2"
+CLAIM_BUNDLE_SCHEMA_VERSION = "catalogue-claim-bundle.v3"
 
 
 class BundleEvidenceReference(StrictClaimModel):
     ref_id: str = Field(min_length=1, max_length=100)
     block_key: str = Field(min_length=1, max_length=64)
     excerpt: str = Field(min_length=1)
-    excerpt_start: int = Field(ge=0)
-    excerpt_end: int = Field(ge=0)
+    excerpt_start: int | None = Field(default=None, ge=0)
+    excerpt_end: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def valid_span(self) -> BundleEvidenceReference:
-        if self.excerpt_end <= self.excerpt_start:
+        if (self.excerpt_start is None) != (self.excerpt_end is None):
+            raise ValueError("Bundle evidence offsets must both be present or both be omitted")
+        if (
+            self.excerpt_start is not None
+            and self.excerpt_end is not None
+            and self.excerpt_end <= self.excerpt_start
+        ):
             raise ValueError("Bundle evidence span must be non-empty")
         return self
 
@@ -206,12 +212,15 @@ def _bind_reference(
     ref: BundleEvidenceReference,
     block: EvidenceBlockSpan,
 ) -> BundleEvidenceReference | None:
-    if not (block.start_offset <= ref.excerpt_start < ref.excerpt_end <= block.end_offset):
-        return _find_unique_reference(ref, block)
-    local_start = ref.excerpt_start - block.start_offset
-    local_end = ref.excerpt_end - block.start_offset
-    if block.block_text[local_start:local_end] == ref.excerpt:
-        return ref
+    if (
+        ref.excerpt_start is not None
+        and ref.excerpt_end is not None
+        and block.start_offset <= ref.excerpt_start < ref.excerpt_end <= block.end_offset
+    ):
+        local_start = ref.excerpt_start - block.start_offset
+        local_end = ref.excerpt_end - block.start_offset
+        if block.block_text[local_start:local_end] == ref.excerpt:
+            return ref
     return _find_unique_reference(ref, block)
 
 
@@ -219,20 +228,66 @@ def _find_unique_reference(
     ref: BundleEvidenceReference,
     block: EvidenceBlockSpan,
 ) -> BundleEvidenceReference | None:
-    starts: list[int] = []
-    position = block.block_text.find(ref.excerpt)
-    while position >= 0 and len(starts) < 100:
-        starts.append(position)
-        position = block.block_text.find(ref.excerpt, position + 1)
-    if len(starts) != 1:
+    exact_starts = _match_starts(block.block_text, ref.excerpt)
+    if len(exact_starts) == 1:
+        local_start = exact_starts[0]
+        local_end = local_start + len(ref.excerpt)
+    elif exact_starts:
         return None
-    start = block.start_offset + starts[0]
+    else:
+        normalized_text, source_starts, source_ends = _normalize_whitespace(block.block_text)
+        normalized_excerpt, _, _ = _normalize_whitespace(ref.excerpt)
+        if not normalized_excerpt:
+            return None
+        normalized_starts = _match_starts(normalized_text, normalized_excerpt)
+        if len(normalized_starts) != 1:
+            return None
+        normalized_start = normalized_starts[0]
+        normalized_end = normalized_start + len(normalized_excerpt)
+        local_start = source_starts[normalized_start]
+        local_end = source_ends[normalized_end - 1]
+    start = block.start_offset + local_start
+    exact_excerpt = block.block_text[local_start:local_end]
     return ref.model_copy(
         update={
+            "excerpt": exact_excerpt,
             "excerpt_start": start,
-            "excerpt_end": start + len(ref.excerpt),
+            "excerpt_end": block.start_offset + local_end,
         }
     )
+
+
+def _match_starts(text: str, excerpt: str) -> list[int]:
+    starts: list[int] = []
+    position = text.find(excerpt)
+    while position >= 0 and len(starts) < 2:
+        starts.append(position)
+        position = text.find(excerpt, position + 1)
+    return starts
+
+
+def _normalize_whitespace(text: str) -> tuple[str, list[int], list[int]]:
+    normalized: list[str] = []
+    source_starts: list[int] = []
+    source_ends: list[int] = []
+    for index, character in enumerate(text):
+        if character.isspace():
+            if not normalized or normalized[-1] == " ":
+                if normalized:
+                    source_ends[-1] = index + 1
+                continue
+            normalized.append(" ")
+            source_starts.append(index)
+            source_ends.append(index + 1)
+            continue
+        normalized.append(character)
+        source_starts.append(index)
+        source_ends.append(index + 1)
+    if normalized and normalized[-1] == " ":
+        normalized.pop()
+        source_starts.pop()
+        source_ends.pop()
+    return "".join(normalized), source_starts, source_ends
 
 
 __all__ = [

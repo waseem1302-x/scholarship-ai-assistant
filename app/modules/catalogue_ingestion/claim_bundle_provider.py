@@ -38,14 +38,19 @@ from app.modules.catalogue_ingestion.provider import (
 from app.modules.catalogue_ingestion.provider_transport import send_json_request
 from app.modules.catalogue_ingestion.schemas import ExtractionUsage
 
-CLAIM_BUNDLE_PROMPT_VERSION = "catalogue-claim-bundle-prompt.v3"
-CLAIM_BUNDLE_SYSTEM_INSTRUCTION = f"""{CLAIM_SYSTEM_INSTRUCTION}
+CLAIM_BUNDLE_PROMPT_VERSION = "catalogue-claim-bundle-prompt.v4"
+_BUNDLE_BASE_SYSTEM_INSTRUCTION = CLAIM_SYSTEM_INSTRUCTION.replace(
+    "Every claim must cite an exact verbatim\nexcerpt and exact character offsets in SOURCE TEXT.",
+    "Every claim must cite an exact verbatim excerpt from a supplied evidence block.",
+)
+CLAIM_BUNDLE_SYSTEM_INSTRUCTION = f"""{_BUNDLE_BASE_SYSTEM_INSTRUCTION}
 
 This request may contain every applicable OBJECTIVE at once. Every atomic claim MUST include its
 objective. Do not transfer a fact between objectives. Use shared evidence references: declare an
 excerpt once in evidence_refs and let one or more claims point to that ref_id. Every evidence
-reference MUST name one supplied block_key and use the absolute source-artifact character offsets
-recorded in that block header, not prompt-relative offsets. Never cite block metadata as evidence.
+reference MUST name one supplied block_key and quote a short, exact, contiguous source passage.
+Include enough surrounding words to make the quote unique within that block. Do not calculate or
+return character offsets; the backend binds exact offsets. Never cite block metadata as evidence.
 
 Extract each distinct fact once under its best objective. Do not repeat a fact merely because it
 could relate to another objective, and do not restate the same evidence in multiple references.
@@ -155,7 +160,7 @@ class AzureOpenAIBundleClaimProvider:
         self.settings = settings
         self.model = settings.catalogue_ai_model
         self.capability_identity = (
-            f"azure_openai:{self.model}:strict_json_schema:multi_objective:shared_evidence:v1"
+            f"azure_openai:{self.model}:strict_json_schema:multi_objective:shared_evidence:v2"
         )
         self.credential = credential or self._default_credential()
         self.opener = opener or urllib.request.build_opener()
@@ -361,6 +366,13 @@ def get_bundle_claim_provider(settings: Settings) -> CatalogueBundleClaimProvide
 def _bundle_azure_schema(objectives: tuple[ClaimObjective, ...]) -> dict[str, Any]:
     schema = _azure_schema(ClaimBundleExtractionOutput)
     definitions = schema.get("$defs", {})
+    evidence_schema = definitions.get("BundleEvidenceReference")
+    if isinstance(evidence_schema, dict):
+        properties = evidence_schema.get("properties")
+        if isinstance(properties, dict):
+            properties.pop("excerpt_start", None)
+            properties.pop("excerpt_end", None)
+            evidence_schema["required"] = list(properties)
     objective_schema = definitions.get("ClaimObjective")
     if isinstance(objective_schema, dict):
         objective_schema["enum"] = sorted(item.value for item in objectives)

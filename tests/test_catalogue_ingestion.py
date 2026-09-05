@@ -789,7 +789,7 @@ def test_resumable_job_failure_is_terminal_and_retains_diagnostics(db_session) -
     assert retried.error_code is None
 
 
-def test_bundle_validation_failure_fails_once_without_recursive_paid_calls(
+def test_invalid_bundle_reference_is_dropped_without_recursive_paid_calls(
     db_session,
 ) -> None:
     invalid_output = ClaimBundleExtractionOutput(
@@ -852,12 +852,10 @@ def test_bundle_validation_failure_fails_once_without_recursive_paid_calls(
     )
     assert provider.calls == 1
     assert all(job.checkpoint.get("outcome") != "split" for job in jobs)
-    failed = [job for job in jobs if job.state is CatalogueJobState.FAILED]
-    assert failed
-    assert all(job.error_code == "bundle_validation_failed" for job in failed)
-    assert events
-    assert events[-1].detail_json["output_json"] == invalid_output.model_dump(mode="json")
-    assert "unknown_evidence_block:outside" in events[-1].detail_json["validation_warnings"]
+    assert jobs
+    assert all(job.state is CatalogueJobState.SUCCEEDED for job in jobs)
+    assert all(job.checkpoint.get("outcome") == "cached" for job in jobs)
+    assert events == []
     assert candidate is not None
     assert candidate.status is not CandidateStatus.READY_FOR_REVIEW
     assert "acquisition_snapshot_missing" in candidate.validation_errors
