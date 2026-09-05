@@ -25,11 +25,10 @@ from app.modules.catalogue_ingestion.models import (
 )
 from app.modules.catalogue_ingestion.topology_models import CatalogueCoverageCell
 
-EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v5"
+EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v6"
 _DEFAULT_PROMPT_RESERVE_CHARS = 8_000
 _DEFAULT_MAX_EVIDENCE_CHARS = 48_000
 _MIN_RECOVERY_SPAN_CHARS = 1_500
-_MAX_FOCUSED_OBJECTIVES_PER_JOB = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +261,6 @@ def _build_artifact_jobs(
             )
         )
         if not selected:
-            flush()
             continue
         block_chars = len(_render_block(block, objectives=selected))
         if block_chars > max_evidence_chars:
@@ -272,13 +270,7 @@ def _build_artifact_jobs(
             for objective in ClaimObjective
             if objective in {*current_objectives, *selected}
         )
-        if current and (
-            current_chars + block_chars > max_evidence_chars
-            or (
-                len(merged_objectives) > _MAX_FOCUSED_OBJECTIVES_PER_JOB
-                and selected != current_objectives
-            )
-        ):
+        if current and current_chars + block_chars > max_evidence_chars:
             flush()
             merged_objectives = selected
         current_objectives = merged_objectives

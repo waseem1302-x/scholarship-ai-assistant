@@ -456,7 +456,7 @@ def test_primary_planner_packs_adjacent_blocks_into_a_small_objective_union() ->
     assert '"objectives":["funding"]' in rendered_blocks[1]
 
 
-def test_open_doors_sized_page_does_not_multiply_packets_by_objective() -> None:
+def test_open_doors_sized_page_packs_varying_routes_across_unrouted_units() -> None:
     candidate_id = uuid.uuid4()
     source_id = uuid.uuid4()
     artifact_id = uuid.uuid4()
@@ -494,7 +494,15 @@ def test_open_doors_sized_page_does_not_multiply_packets_by_objective() -> None:
         for spec in specs
     ]
     routes_by_block: dict[uuid.UUID, list[CatalogueEvidenceRoute]] = {}
-    for block in blocks:
+    skipped_block = blocks[len(blocks) // 2]
+    for index, block in enumerate(blocks):
+        if block is skipped_block:
+            continue
+        objectives = (
+            tuple(ClaimObjective)
+            if index % 2 == 0
+            else (ClaimObjective.IDENTITY, ClaimObjective.FUNDING)
+        )
         routes_by_block[block.id] = [
             CatalogueEvidenceRoute(
                 id=uuid.uuid4(),
@@ -513,7 +521,7 @@ def test_open_doors_sized_page_does_not_multiply_packets_by_objective() -> None:
                     objective.value.encode()
                 ).hexdigest(),
             )
-            for objective in ClaimObjective
+            for objective in objectives
         ]
 
     jobs = _build_artifact_jobs(
@@ -527,5 +535,5 @@ def test_open_doors_sized_page_does_not_multiply_packets_by_objective() -> None:
 
     planned_block_ids = [ref.block_id for job in jobs for ref in job.evidence]
     assert len(jobs) == 1
-    assert planned_block_ids == [block.id for block in blocks]
-    assert all(job.objectives == tuple(ClaimObjective) for job in jobs)
+    assert planned_block_ids == [block.id for block in blocks if block is not skipped_block]
+    assert jobs[0].objectives == tuple(ClaimObjective)
