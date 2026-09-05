@@ -31,7 +31,7 @@ from app.modules.catalogue_ingestion.pipeline_versions import (
     BUNDLE_VALIDATOR_VERSION,
 )
 
-CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v5"
+CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v6"
 
 
 class CatalogueDeploymentMap(BaseModel):

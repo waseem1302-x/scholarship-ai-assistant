@@ -789,7 +789,7 @@ def test_resumable_job_failure_is_terminal_and_retains_diagnostics(db_session) -
     assert retried.error_code is None
 
 
-def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
+def test_bundle_validation_failure_fails_once_without_recursive_paid_calls(
     db_session,
 ) -> None:
     invalid_output = ClaimBundleExtractionOutput(
@@ -850,7 +850,8 @@ def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
             )
         )
     )
-    assert any(job.checkpoint.get("outcome") == "split" for job in jobs)
+    assert provider.calls == 1
+    assert all(job.checkpoint.get("outcome") != "split" for job in jobs)
     failed = [job for job in jobs if job.state is CatalogueJobState.FAILED]
     assert failed
     assert all(job.error_code == "bundle_validation_failed" for job in failed)

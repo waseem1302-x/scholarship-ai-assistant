@@ -25,11 +25,10 @@ from app.modules.catalogue_ingestion.models import (
 )
 from app.modules.catalogue_ingestion.topology_models import CatalogueCoverageCell
 
-EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v3"
+EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v4"
 _DEFAULT_PROMPT_RESERVE_CHARS = 8_000
 _DEFAULT_MAX_EVIDENCE_CHARS = 48_000
 _MIN_RECOVERY_SPAN_CHARS = 1_500
-_MAX_RECOVERY_DEPTH = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,8 +250,6 @@ def split_extraction_job(
 ) -> tuple[ExtractionJobPlan, ...]:
     """Deterministically split a truncated job without losing evidence coverage."""
 
-    if job.recovery_depth >= _MAX_RECOVERY_DEPTH:
-        return ()
     split_single_block = len(job.evidence) == 1
     if not split_single_block:
         midpoint = len(job.evidence) // 2

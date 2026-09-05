@@ -69,6 +69,12 @@ explicitly not applicable, not stated by the reviewed sources, or blocked with a
 explicit run-wide fetch, model-call, cost, and wall-time ceilings remain emergency failures rather
 than normal completeness targets.
 
+Paid extraction reserves the configured 16,000-token response allowance for dense structured
+claims. If a response still truncates, only that packet is divided at persisted block or semantic
+text boundaries. The resulting ranges are disjoint and continue shrinking to the minimum evidence
+span, so recovery is finite, preserves every source character exactly once, and does not retry the
+same oversized request.
+
 Autonomous Foundry web search is not wired in this version;
 `APP_CATALOGUE_WEB_DISCOVERY_ENABLED` remains false and an absent official URL goes to manual review.
 The `WebDiscoveryProvider` interface allows a later reviewed adapter without changing verification.

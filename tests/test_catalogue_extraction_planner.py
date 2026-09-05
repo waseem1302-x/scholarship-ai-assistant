@@ -2,9 +2,11 @@ import hashlib
 import uuid
 from dataclasses import replace
 from decimal import Decimal
+from itertools import pairwise
 
 import pytest
 
+from app.core.config import Settings
 from app.modules.catalogue_ingestion.claim_bundle_schemas import (
     BundleEvidenceReference,
     BundleObjectiveCoverage,
@@ -139,17 +141,50 @@ def test_truncated_single_block_job_splits_into_contiguous_evidence_spans() -> N
     right_text = right.evidence_text.split("\n", 1)[1].rsplit("\n</EVIDENCE_BLOCK>", 1)[0]
     assert left_text + right_text == block.block_text
 
-    assert (
-        split_extraction_job(
-            left,
+    grandchildren = split_extraction_job(
+        left,
+        blocks_by_id={block.id: block},
+        routes=[route],
+        run_max_output_tokens=6_000,
+        input_cost_per_million=Decimal("0.25"),
+        output_cost_per_million=Decimal("2.00"),
+    )
+    assert len(grandchildren) == 2
+    assert all(child.recovery_depth == 2 for child in grandchildren)
+
+
+def test_truncation_recovery_is_finite_and_preserves_every_character_once() -> None:
+    job, block, route = _single_block_job()
+    pending = [job]
+    leaves: list[ExtractionJobPlan] = []
+
+    while pending:
+        current = pending.pop()
+        children = split_extraction_job(
+            current,
             blocks_by_id={block.id: block},
             routes=[route],
-            run_max_output_tokens=6_000,
+            run_max_output_tokens=16_000,
             input_cost_per_million=Decimal("0.25"),
             output_cost_per_million=Decimal("2.00"),
         )
-        == ()
+        if children:
+            pending.extend(children)
+        else:
+            leaves.append(current)
+
+    spans = sorted(
+        (leaf.evidence[0].start_offset, leaf.evidence[0].end_offset) for leaf in leaves
     )
+    assert spans[0][0] == 0
+    assert spans[-1][1] == len(block.block_text)
+    assert all(left[1] == right[0] for left, right in pairwise(spans))
+    assert sum(end - start for start, end in spans) == len(block.block_text)
+    assert len(leaves) < 16
+
+
+def test_catalogue_default_output_budget_has_room_for_dense_structured_claims() -> None:
+    assert Settings(_env_file=None).catalogue_ai_max_output_tokens == 16_000
 
 
 def test_cache_identity_distinguishes_slices_of_the_same_evidence_block(db_session) -> None:

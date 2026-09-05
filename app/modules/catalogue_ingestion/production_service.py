@@ -505,31 +505,6 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             except ExtractionSchemaError as exc:
                 self.metrics.add("ai_schema_failures")
                 self._observe_provider_usage(exc.usage)
-                children = self._split_job(
-                    job,
-                    blocks_by_id=blocks_by_id,
-                    routes=job_routes,
-                    run=run,
-                )
-                if children:
-                    self.repository.complete_job(
-                        resumable.id,
-                        worker_id=candidate.claimed_by or "",
-                        run_lease_token=run_lease_token,
-                        candidate_lease_token=candidate.lease_token or "",
-                        checkpoint={
-                            "cache_key": identity.cache_key,
-                            "planner_job_key": job.job_key,
-                            "outcome": "split",
-                            "error_code": exc.code,
-                            "provider_attempt_id": str(
-                                getattr(exc, "provider_attempt_id", "") or ""
-                            ),
-                            "child_job_keys": [child.job_key for child in children],
-                        },
-                    )
-                    pending_jobs = [*children, *pending_jobs]
-                    continue
                 self.repository.fail_job(
                     resumable.id,
                     worker_id=candidate.claimed_by or "",
@@ -550,35 +525,6 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             except ExtractionProviderError as exc:
                 self.metrics.add("ai_extraction_failures")
                 self._observe_provider_usage(exc.usage)
-                children = (
-                    self._split_job(
-                        job,
-                        blocks_by_id=blocks_by_id,
-                        routes=job_routes,
-                        run=run,
-                    )
-                    if exc.retryable
-                    else ()
-                )
-                if children:
-                    self.repository.complete_job(
-                        resumable.id,
-                        worker_id=candidate.claimed_by or "",
-                        run_lease_token=run_lease_token,
-                        candidate_lease_token=candidate.lease_token or "",
-                        checkpoint={
-                            "cache_key": identity.cache_key,
-                            "planner_job_key": job.job_key,
-                            "outcome": "split",
-                            "error_code": exc.code,
-                            "provider_attempt_id": str(
-                                getattr(exc, "provider_attempt_id", "") or ""
-                            ),
-                            "child_job_keys": [child.job_key for child in children],
-                        },
-                    )
-                    pending_jobs = [*children, *pending_jobs]
-                    continue
                 self.repository.fail_job(
                     resumable.id,
                     worker_id=candidate.claimed_by or "",
@@ -620,29 +566,12 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                         "output_json": raw_output.model_dump(mode="json"),
                     },
                 )
-                children = self._split_job(
-                    job,
-                    blocks_by_id=blocks_by_id,
-                    routes=job_routes,
-                    run=run,
-                )
                 checkpoint = {
                     "cache_key": identity.cache_key,
                     "planner_job_key": job.job_key,
-                    "outcome": "split" if children else "validation_failed",
+                    "outcome": "validation_failed",
                     "provider_attempt_id": str(execution.provider_attempt_id),
-                    "child_job_keys": [child.job_key for child in children],
                 }
-                if children:
-                    self.repository.complete_job(
-                        resumable.id,
-                        worker_id=candidate.claimed_by or "",
-                        run_lease_token=run_lease_token,
-                        candidate_lease_token=candidate.lease_token or "",
-                        checkpoint=checkpoint,
-                    )
-                    pending_jobs = [*children, *pending_jobs]
-                    continue
                 failure_detail = "; ".join(validation_warnings) or str(exc)
                 self.repository.fail_job(
                     resumable.id,
