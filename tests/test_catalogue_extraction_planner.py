@@ -329,7 +329,7 @@ def test_truncation_recovery_keeps_all_objectives_on_each_bounded_slice() -> Non
     assert right.objectives == (ClaimObjective.ELIGIBILITY, ClaimObjective.FUNDING)
 
 
-def test_primary_planner_extracts_each_block_once_across_all_objectives() -> None:
+def test_primary_planner_extracts_each_block_once_for_only_its_routed_objectives() -> None:
     job, block, timeline_route = _single_block_job()
 
     def route(objective: ClaimObjective, marker: str) -> CatalogueEvidenceRoute:
@@ -366,12 +366,19 @@ def test_primary_planner_extracts_each_block_once_across_all_objectives() -> Non
     )
 
     assert len(jobs) == 1
-    assert jobs[0].evidence == (job.evidence[0],)
-    assert jobs[0].objectives == tuple(ClaimObjective)
+    assert jobs[0].evidence[0].block_id == job.evidence[0].block_id
+    assert jobs[0].evidence[0].start_offset == job.evidence[0].start_offset
+    assert jobs[0].evidence[0].end_offset == job.evidence[0].end_offset
+    assert jobs[0].objectives == (
+        ClaimObjective.IDENTITY,
+        ClaimObjective.ELIGIBILITY,
+        ClaimObjective.FUNDING,
+        ClaimObjective.APPLICATION_TIMELINE,
+    )
     assert jobs[0].max_output_tokens == 6_000
 
 
-def test_primary_planner_does_not_drop_an_unrouted_official_block() -> None:
+def test_primary_planner_does_not_send_an_unrouted_official_block_to_the_provider() -> None:
     _job, block, _route = _single_block_job()
 
     jobs = _build_artifact_jobs(
@@ -383,10 +390,70 @@ def test_primary_planner_does_not_drop_an_unrouted_official_block() -> None:
         output_cost_per_million=Decimal("2.00"),
     )
 
+    assert jobs == ()
+
+
+def test_primary_planner_packs_adjacent_blocks_into_a_small_objective_union() -> None:
+    _job, identity_block, _template_route = _single_block_job()
+    funding_block = CatalogueEvidenceBlock(
+        id=uuid.uuid4(),
+        candidate_id=identity_block.candidate_id,
+        source_id=identity_block.source_id,
+        source_artifact_id=identity_block.source_artifact_id,
+        block_index=identity_block.block_index + 1,
+        block_key="g" * 64,
+        block_hash="h" * 64,
+        source_content_hash=identity_block.source_content_hash,
+        start_offset=identity_block.end_offset,
+        end_offset=identity_block.end_offset + 31,
+        block_text="Tuition and stipend are covered.",
+        heading="Funding",
+        section_key="funding",
+        coordinate_json=[],
+        topology_hints=[],
+        language_hints=["en"],
+        source_role=identity_block.source_role,
+        builder_version=EVIDENCE_BLOCK_BUILDER_VERSION,
+    )
+
+    def selected_route(block: CatalogueEvidenceBlock, objective: ClaimObjective, marker: str):
+        return CatalogueEvidenceRoute(
+            id=uuid.uuid4(),
+            route_key=marker * 64,
+            candidate_id=block.candidate_id,
+            evidence_block_id=block.id,
+            coverage_cell_id=None,
+            scope_node_id=None,
+            objective=objective,
+            scope_type="scholarship_family",
+            scope_key="scholarship",
+            relevance_score=100,
+            relevance_reasons=["objective_lexicon_match"],
+            selected=True,
+            coverage_input_fingerprint=marker * 64,
+        )
+
+    jobs = _build_artifact_jobs(
+        [identity_block, funding_block],
+        routes_by_block={
+            identity_block.id: [selected_route(identity_block, ClaimObjective.IDENTITY, "i")],
+            funding_block.id: [selected_route(funding_block, ClaimObjective.FUNDING, "f")],
+        },
+        max_evidence_chars=20_000,
+        run_max_output_tokens=6_000,
+        input_cost_per_million=Decimal("0.25"),
+        output_cost_per_million=Decimal("2.00"),
+    )
+
     assert len(jobs) == 1
-    assert jobs[0].evidence[0].block_id == block.id
-    assert jobs[0].objectives == tuple(ClaimObjective)
-    assert jobs[0].scopes == ()
+    assert jobs[0].objectives == (ClaimObjective.IDENTITY, ClaimObjective.FUNDING)
+    assert [item.block_id for item in jobs[0].evidence] == [
+        identity_block.id,
+        funding_block.id,
+    ]
+    rendered_blocks = jobs[0].evidence_text.split("</EVIDENCE_BLOCK>")
+    assert '"objectives":["identity"]' in rendered_blocks[0]
+    assert '"objectives":["funding"]' in rendered_blocks[1]
 
 
 def test_open_doors_sized_page_does_not_multiply_packets_by_objective() -> None:

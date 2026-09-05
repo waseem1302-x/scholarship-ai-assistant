@@ -850,7 +850,7 @@ def test_invalid_bundle_reference_is_dropped_without_recursive_paid_calls(
             )
         )
     )
-    assert provider.calls == 1
+    assert provider.calls == len(jobs)
     assert all(job.checkpoint.get("outcome") != "split" for job in jobs)
     assert jobs
     assert all(job.state is CatalogueJobState.SUCCEEDED for job in jobs)
@@ -1428,6 +1428,44 @@ def test_claim_resolution_collapses_equivalent_scholarship_name_variants() -> No
         if item.claim.entity_type is ClaimEntityType.SCHOLARSHIP
         and item.claim.field_path == "name"
     } == {"Open Doors: Russian Scholarship Project"}
+
+
+def test_claim_resolution_merges_distinct_scholarship_aliases_as_a_set() -> None:
+    text = "Open Doors is also called the Open Doors Olympiad."
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url="https://od.globaluni.ru/",
+        content_type="text/html",
+        content_hash="d" * 64,
+        normalized_text=text,
+        extraction_method="normalized_text",
+        byte_count=len(text),
+        character_count=len(text),
+    )
+    aliases = []
+    for value in ("Open Doors", "Open Doors Olympiad"):
+        claim = claim_output().claims[0].model_copy(deep=True)
+        claim.field_path = "alias"
+        claim.value = ClaimValue(
+            string_value=value,
+            decimal_value=None,
+            integer_value=None,
+            boolean_value=None,
+            string_list_value=None,
+        )
+        claim.excerpt = value
+        claim.excerpt_start = text.index(value)
+        claim.excerpt_end = claim.excerpt_start + len(value)
+        aliases.append(claim)
+
+    resolution = resolve_claims([(artifact, 1, aliases)])
+
+    assert resolution.conflicts == []
+    assert {item.claim.value.primitive() for item in resolution.resolved} == {
+        "Open Doors",
+        "Open Doors Olympiad",
+    }
 
 
 def test_claim_resolution_fails_closed_when_one_entity_key_spans_routes() -> None:
@@ -2341,6 +2379,22 @@ def test_completeness_gap_pass_runs_once_after_initial_coverage_evaluation() -> 
     )
 
 
+def test_gap_pass_is_not_suppressed_by_an_unrelated_conflict_or_rejection() -> None:
+    resolution = ClaimResolution(
+        resolved=[],
+        conflicts=["scholarship:scholarship:name:same_tier_conflict"],
+        rejected=["resource:contact:email:unsupported_field_path"],
+        completeness_errors=["evidence_unit:funding-gap:unresolved"],
+    )
+
+    assert _should_run_gap_pass(
+        completeness_mode=True,
+        resolution=resolution,
+        completeness_blockers=[],
+        used_gap_routes=False,
+    )
+
+
 def test_compatible_application_method_evidence_coexists_without_a_false_conflict() -> None:
     text = (
         f"{MEXT_TEXT} Apply through the Embassy of Japan. "
@@ -3057,7 +3111,7 @@ def test_azure_claim_provider_uses_strict_schema_and_preserves_billed_failure_us
 
     assert_objects_are_strict(schema)
     programme_schema = _objective_azure_schema(ClaimObjective.PROGRAMMES)
-    assert programme_schema["$defs"]["ClaimEntityType"]["enum"] == ["programme"]
+    assert programme_schema["$defs"]["ClaimEntityType"]["enum"] == ["guidance", "programme"]
     assert programme_schema["$defs"]["ClaimObjective"]["enum"] == ["programmes"]
     assert "name" in programme_schema["$defs"]["ExtractedClaim"]["properties"]["field_path"]["enum"]
     provider = AzureOpenAIClaimProvider(enabled_settings(), credential=object())

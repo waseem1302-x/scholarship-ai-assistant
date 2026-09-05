@@ -18,7 +18,9 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimRejectionRecord,
     ClaimResolution,
     ExtractedClaim,
+    FieldCardinality,
     ResolvedClaim,
+    claim_field_cardinality,
 )
 from app.modules.catalogue_ingestion.models import CatalogueSourceArtifact
 from app.modules.catalogue_ingestion.scoped_completeness import evaluate_scoped_completeness
@@ -150,7 +152,10 @@ def resolve_claims(
                 item.claim.value.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
             )
             by_value[normalized].append(item)
-        if len(by_value) > 1 and not _allows_multiple_values(best[0].claim):
+        if len(by_value) > 1 and claim_field_cardinality(best[0].claim) in {
+            FieldCardinality.SINGLETON,
+            FieldCardinality.SCOPED_SINGLETON,
+        }:
             conflict_code = ":".join(key[:3]) + ":same_tier_conflict"
             conflicts.append(conflict_code)
             conflict_records.append(
@@ -572,28 +577,3 @@ def _semantic_claim_error(
     ):
         return "invalid_funding_amount"
     return None
-
-
-def _allows_multiple_values(claim: ExtractedClaim) -> bool:
-    return (claim.entity_type, claim.field_path) in {
-        (ClaimEntityType.TRACK, "application_method"),
-        (ClaimEntityType.PROGRAMME, "description"),
-        (ClaimEntityType.PROGRAMME, "duration"),
-        (ClaimEntityType.PROGRAMME, "fields_of_study"),
-        (ClaimEntityType.PROGRAMME, "application_route_keys"),
-        (ClaimEntityType.ELIGIBILITY, "condition"),
-        (ClaimEntityType.ELIGIBILITY, "original_text"),
-        (ClaimEntityType.ELIGIBILITY, "notes"),
-        (ClaimEntityType.FUNDING, "qualifier"),
-        (ClaimEntityType.FUNDING, "original_text"),
-        (ClaimEntityType.FUNDING, "description"),
-        (ClaimEntityType.DOCUMENT, "condition"),
-        (ClaimEntityType.DOCUMENT, "notes"),
-        (ClaimEntityType.DEADLINE, "notes"),
-        (ClaimEntityType.EVENT, "notes"),
-        (ClaimEntityType.STEP, "outcome"),
-        (ClaimEntityType.STEP, "original_text"),
-        (ClaimEntityType.STEP, "description"),
-        (ClaimEntityType.RESOURCE, "original_text"),
-        (ClaimEntityType.RESOURCE, "notes"),
-    }

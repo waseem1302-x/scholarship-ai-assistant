@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 from app.core.config import Settings
 from app.modules.catalogue_ingestion.claim_bundle_schemas import (
     BundledAtomicClaim,
+    BundleEvidenceDisposition,
     BundleEvidenceReference,
     BundleObjectiveCoverage,
     ClaimBundleExtractionOutput,
@@ -38,7 +39,7 @@ from app.modules.catalogue_ingestion.provider import (
 from app.modules.catalogue_ingestion.provider_transport import send_json_request
 from app.modules.catalogue_ingestion.schemas import ExtractionUsage
 
-CLAIM_BUNDLE_PROMPT_VERSION = "catalogue-claim-bundle-prompt.v4"
+CLAIM_BUNDLE_PROMPT_VERSION = "catalogue-claim-bundle-prompt.v5"
 _BUNDLE_BASE_SYSTEM_INSTRUCTION = CLAIM_SYSTEM_INSTRUCTION.replace(
     "Every claim must cite an exact verbatim\nexcerpt and exact character offsets in SOURCE TEXT.",
     "Every claim must cite an exact verbatim excerpt from a supplied evidence block.",
@@ -57,7 +58,13 @@ could relate to another objective, and do not restate the same evidence in multi
 
 Return objective_coverage exactly once for every requested objective. A coverage state describes
 only the supplied evidence blocks, not the whole website. If the supplied routed blocks are
-insufficient, use partial or not_stated and name what remains unknown rather than guessing."""
+insufficient, use partial or not_stated and name what remains unknown rather than guessing.
+
+Return unit_dispositions exactly once for every supplied block_key. Use mapped only when at least
+one claim cites that block. Use duplicate only when the same supplied text appears under another
+named block_key. Use irrelevant only for a routing false positive containing no student-relevant
+scholarship fact. Otherwise use unresolved and explain what could not be represented. Nothing in
+a supplied evidence block may silently disappear."""
 
 
 class BundleClaimExtractionResult(BaseModel):
@@ -160,7 +167,7 @@ class AzureOpenAIBundleClaimProvider:
         self.settings = settings
         self.model = settings.catalogue_ai_model
         self.capability_identity = (
-            f"azure_openai:{self.model}:strict_json_schema:multi_objective:shared_evidence:v2"
+            f"azure_openai:{self.model}:strict_json_schema:multi_objective:shared_evidence:v3"
         )
         self.credential = credential or self._default_credential()
         self.opener = opener or urllib.request.build_opener()
@@ -365,6 +372,7 @@ def get_bundle_claim_provider(settings: Settings) -> CatalogueBundleClaimProvide
 
 def _bundle_azure_schema(objectives: tuple[ClaimObjective, ...]) -> dict[str, Any]:
     schema = _azure_schema(ClaimBundleExtractionOutput)
+    schema["required"] = list(dict.fromkeys([*schema.get("required", []), "unit_dispositions"]))
     definitions = schema.get("$defs", {})
     evidence_schema = definitions.get("BundleEvidenceReference")
     if isinstance(evidence_schema, dict):
@@ -473,6 +481,22 @@ def _sanitize_bundle_payload(
                 f"{len(raw_coverage) - len(valid_coverage)}"
             )
         payload["objective_coverage"] = valid_coverage
+
+    raw_dispositions = payload.get("unit_dispositions")
+    valid_dispositions: list[dict[str, Any]] = []
+    if isinstance(raw_dispositions, list):
+        for raw in raw_dispositions:
+            try:
+                item = BundleEvidenceDisposition.model_validate(raw)
+            except ValidationError:
+                continue
+            valid_dispositions.append(item.model_dump(mode="json"))
+        if len(valid_dispositions) != len(raw_dispositions):
+            warnings.append(
+                "provider_invalid_unit_dispositions_dropped:"
+                f"{len(raw_dispositions) - len(valid_dispositions)}"
+            )
+        payload["unit_dispositions"] = valid_dispositions
     return payload, dropped_objectives, warnings
 
 

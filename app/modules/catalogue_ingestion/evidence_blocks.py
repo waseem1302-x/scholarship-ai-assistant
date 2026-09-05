@@ -74,46 +74,55 @@ def build_evidence_blocks(
     language_hints = _string_tuple(metadata.get("language_hints"))
     topology_hints = _topology_hints(metadata, source_role)
     blocks: list[EvidenceBlockSpec] = []
-    start = 0
     index = 0
-    text_length = len(text)
-    while start < text_length:
-        end = _preferred_cut(text, start=start, target_chars=target_chars, max_chars=max_chars)
-        if end <= start:
-            end = min(text_length, start + max_chars)
-        block_text = text[start:end]
-        heading = _active_heading(heading_positions, start, end)
-        block_hash = hashlib.sha256(block_text.encode("utf-8")).hexdigest()
-        section_key = _section_key(heading, index)
-        block_key = _block_key(
-            source_artifact_id=source_artifact_id,
-            source_content_hash=source_content_hash,
-            start=start,
-            end=end,
-            block_hash=block_hash,
-        )
-        coordinates = tuple(_coordinates_for_span(metadata.get("coordinates"), start, end))
-        blocks.append(
-            EvidenceBlockSpec(
-                block_index=index,
-                block_key=block_key,
-                block_hash=block_hash,
+    for semantic_start, semantic_end in _semantic_spans(text):
+        start = semantic_start
+        while start < semantic_end:
+            if semantic_end - start <= max_chars:
+                end = semantic_end
+            else:
+                end = _preferred_cut(
+                    text,
+                    start=start,
+                    target_chars=target_chars,
+                    max_chars=max_chars,
+                    boundary=semantic_end,
+                )
+                if end <= start:
+                    end = min(semantic_end, start + max_chars)
+            block_text = text[start:end]
+            heading = _active_heading(heading_positions, start, end)
+            block_hash = hashlib.sha256(block_text.encode("utf-8")).hexdigest()
+            section_key = _section_key(heading, index)
+            block_key = _block_key(
+                source_artifact_id=source_artifact_id,
                 source_content_hash=source_content_hash,
-                start_offset=start,
-                end_offset=end,
-                block_text=block_text,
-                heading=heading,
-                section_key=section_key,
-                coordinate_json=coordinates,
-                topology_hints=topology_hints,
-                language_hints=language_hints,
-                source_role=source_role.strip(),
+                start=start,
+                end=end,
+                block_hash=block_hash,
             )
-        )
-        start = end
-        index += 1
+            coordinates = tuple(_coordinates_for_span(metadata.get("coordinates"), start, end))
+            blocks.append(
+                EvidenceBlockSpec(
+                    block_index=index,
+                    block_key=block_key,
+                    block_hash=block_hash,
+                    source_content_hash=source_content_hash,
+                    start_offset=start,
+                    end_offset=end,
+                    block_text=block_text,
+                    heading=heading,
+                    section_key=section_key,
+                    coordinate_json=coordinates,
+                    topology_hints=topology_hints,
+                    language_hints=language_hints,
+                    source_role=source_role.strip(),
+                )
+            )
+            start = end
+            index += 1
 
-    if blocks[-1].end_offset != text_length:
+    if blocks[-1].end_offset != len(text):
         raise AssertionError("evidence block builder did not cover the complete artifact")
     for previous, current in itertools.pairwise(blocks):
         if previous.end_offset != current.start_offset:
@@ -182,9 +191,17 @@ class CatalogueEvidenceBlockBuilder:
         return records
 
 
-def _preferred_cut(text: str, *, start: int, target_chars: int, max_chars: int) -> int:
-    hard_end = min(len(text), start + max_chars)
-    if hard_end == len(text):
+def _preferred_cut(
+    text: str,
+    *,
+    start: int,
+    target_chars: int,
+    max_chars: int,
+    boundary: int | None = None,
+) -> int:
+    text_end = len(text) if boundary is None else min(len(text), boundary)
+    hard_end = min(text_end, start + max_chars)
+    if hard_end == text_end:
         return hard_end
     preferred_start = min(hard_end, start + max(1, int(target_chars * _MIN_PREFERRED_CUT)))
     target_end = min(hard_end, start + target_chars)
@@ -204,6 +221,48 @@ def _preferred_cut(text: str, *, start: int, target_chars: int, max_chars: int) 
     if position >= preferred_start:
         return position + 1
     return hard_end
+
+
+def _semantic_spans(text: str) -> tuple[tuple[int, int], ...]:
+    """Return complete contiguous spans around normalized document block boundaries."""
+
+    lines = list(re.finditer(r"[^\n]*(?:\n|$)", text))
+    lines = [match for match in lines if match.end() > match.start()]
+    if not lines:
+        return ((0, len(text)),)
+
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while index < len(lines):
+        current = lines[index]
+        value = current.group().strip()
+        if not value:
+            if spans:
+                spans[-1] = (spans[-1][0], current.end())
+            else:
+                spans.append((current.start(), current.end()))
+            index += 1
+            continue
+
+        if index + 1 < len(lines) and _is_semantic_heading(value, lines[index + 1].group().strip()):
+            spans.append((current.start(), lines[index + 1].end()))
+            index += 2
+            continue
+
+        spans.append((current.start(), current.end()))
+        index += 1
+
+    return tuple(spans)
+
+
+def _is_semantic_heading(value: str, next_value: str) -> bool:
+    if _looks_like_heading(value):
+        return True
+    if not next_value or len(value) > 120 or len(value.split()) > 10:
+        return False
+    if value.endswith((".", "!", "?", ";")):
+        return False
+    return bool(re.search(r"[.!?\u3002\uFF01\uFF1F:]$", next_value))
 
 
 def _heading_positions(text: str) -> tuple[tuple[int, str], ...]:

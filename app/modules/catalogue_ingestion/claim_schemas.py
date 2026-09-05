@@ -10,8 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.catalogue_ingestion.trust_domains import EvidenceTrustDomain
 
-CLAIM_SCHEMA_VERSION = "catalogue-claims.v6"
-PREVIOUS_CLAIM_SCHEMA_VERSION = "catalogue-claims.v5"
+CLAIM_SCHEMA_VERSION = "catalogue-claims.v7"
+PREVIOUS_CLAIM_SCHEMA_VERSION = "catalogue-claims.v6"
 V3_CLAIM_SCHEMA_VERSION = "catalogue-claims.v3"
 LEGACY_CLAIM_SCHEMA_VERSION = "catalogue-claims.v2"
 CLAIM_SCHEMA_VERSIONS = frozenset(
@@ -19,6 +19,7 @@ CLAIM_SCHEMA_VERSIONS = frozenset(
         LEGACY_CLAIM_SCHEMA_VERSION,
         V3_CLAIM_SCHEMA_VERSION,
         "catalogue-claims.v4",
+        "catalogue-claims.v5",
         PREVIOUS_CLAIM_SCHEMA_VERSION,
         CLAIM_SCHEMA_VERSION,
     }
@@ -60,6 +61,13 @@ class ScopedCoverageState(StrEnum):
     FAILED = "failed"
 
 
+class EvidenceDispositionState(StrEnum):
+    MAPPED = "mapped"
+    DUPLICATE = "duplicate"
+    IRRELEVANT = "irrelevant"
+    UNRESOLVED = "unresolved"
+
+
 class ClaimEntityType(StrEnum):
     SCHOLARSHIP = "scholarship"
     CYCLE = "cycle"
@@ -74,6 +82,13 @@ class ClaimEntityType(StrEnum):
     STEP = "step"
     RESOURCE = "resource"
     GUIDANCE = "guidance"
+
+
+class FieldCardinality(StrEnum):
+    SINGLETON = "singleton"
+    SET = "set"
+    ORDERED = "ordered"
+    SCOPED_SINGLETON = "scoped_singleton"
 
 
 SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
@@ -272,6 +287,42 @@ CLAIM_FIELD_ALIASES: dict[ClaimEntityType, dict[str, str]] = {
 }
 
 
+FIELD_CARDINALITY: dict[tuple[ClaimEntityType, str], FieldCardinality] = {
+    (ClaimEntityType.SCHOLARSHIP, "alias"): FieldCardinality.SET,
+    (ClaimEntityType.SCHOLARSHIP, "degree_levels"): FieldCardinality.SET,
+    (ClaimEntityType.PROGRAMME, "description"): FieldCardinality.ORDERED,
+    (ClaimEntityType.PROGRAMME, "duration"): FieldCardinality.SET,
+    (ClaimEntityType.PROGRAMME, "fields_of_study"): FieldCardinality.SET,
+    (ClaimEntityType.PROGRAMME, "application_route_keys"): FieldCardinality.SET,
+    (ClaimEntityType.TRACK, "application_method"): FieldCardinality.SET,
+    (ClaimEntityType.ELIGIBILITY, "condition"): FieldCardinality.SET,
+    (ClaimEntityType.ELIGIBILITY, "original_text"): FieldCardinality.ORDERED,
+    (ClaimEntityType.ELIGIBILITY, "notes"): FieldCardinality.ORDERED,
+    (ClaimEntityType.FUNDING, "amount"): FieldCardinality.SCOPED_SINGLETON,
+    (ClaimEntityType.FUNDING, "qualifier"): FieldCardinality.SET,
+    (ClaimEntityType.FUNDING, "original_text"): FieldCardinality.ORDERED,
+    (ClaimEntityType.FUNDING, "description"): FieldCardinality.ORDERED,
+    (ClaimEntityType.DOCUMENT, "condition"): FieldCardinality.SET,
+    (ClaimEntityType.DOCUMENT, "notes"): FieldCardinality.ORDERED,
+    (ClaimEntityType.DEADLINE, "deadline_at"): FieldCardinality.SCOPED_SINGLETON,
+    (ClaimEntityType.DEADLINE, "notes"): FieldCardinality.ORDERED,
+    (ClaimEntityType.EVENT, "notes"): FieldCardinality.ORDERED,
+    (ClaimEntityType.STEP, "outcome"): FieldCardinality.SET,
+    (ClaimEntityType.STEP, "original_text"): FieldCardinality.ORDERED,
+    (ClaimEntityType.STEP, "description"): FieldCardinality.ORDERED,
+    (ClaimEntityType.RESOURCE, "original_text"): FieldCardinality.ORDERED,
+    (ClaimEntityType.RESOURCE, "notes"): FieldCardinality.ORDERED,
+    (ClaimEntityType.GUIDANCE, "text"): FieldCardinality.ORDERED,
+}
+
+
+def claim_field_cardinality(claim: ExtractedClaim) -> FieldCardinality:
+    return FIELD_CARDINALITY.get(
+        (claim.entity_type, claim.field_path),
+        FieldCardinality.SINGLETON,
+    )
+
+
 class StrictClaimModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -405,6 +456,23 @@ class ScopeCoverageDecision(StrictClaimModel):
     missing_frontier_reasons: list[str] = Field(default_factory=list)
 
 
+class EvidenceUnitDisposition(StrictClaimModel):
+    block_key: str = Field(min_length=1, max_length=64)
+    state: EvidenceDispositionState
+    reason: str = Field(min_length=1, max_length=500)
+    objectives: list[ClaimObjective] = Field(default_factory=list)
+    duplicate_of_block_key: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def valid_duplicate_target(self) -> EvidenceUnitDisposition:
+        if self.state is EvidenceDispositionState.DUPLICATE:
+            if not self.duplicate_of_block_key or self.duplicate_of_block_key == self.block_key:
+                raise ValueError("Duplicate evidence disposition requires another block key")
+        elif self.duplicate_of_block_key is not None:
+            raise ValueError("Only duplicate evidence dispositions may name a duplicate target")
+        return self
+
+
 class ClaimResolution(StrictClaimModel):
     schema_version: Literal[
         "catalogue-claims.v2",
@@ -412,6 +480,7 @@ class ClaimResolution(StrictClaimModel):
         "catalogue-claims.v4",
         "catalogue-claims.v5",
         "catalogue-claims.v6",
+        "catalogue-claims.v7",
     ] = CLAIM_SCHEMA_VERSION
     resolved: list[ResolvedClaim]
     conflicts: list[str]
@@ -425,6 +494,7 @@ class ClaimResolution(StrictClaimModel):
     rejection_records: list[ClaimRejectionRecord] = Field(default_factory=list)
     scope_coverage: list[ScopeCoverageDecision] = Field(default_factory=list)
     coverage_revision: str | None = None
+    evidence_dispositions: list[EvidenceUnitDisposition] = Field(default_factory=list)
 
     @property
     def is_materializable(self) -> bool:

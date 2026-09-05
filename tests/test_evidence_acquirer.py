@@ -222,6 +222,66 @@ def test_multi_charset_decoding() -> None:
     assert "Eiffel" in res_win.text
 
 
+def test_html_conversion_preserves_student_visible_semantic_boundaries() -> None:
+    """Flattening block tags would merge independently extractable facts into one opaque line."""
+    from app.modules.catalogue_ingestion.acquisition_fetcher import convert_catalogue_payload
+
+    payload = b"""
+        <html><body>
+          <h2>Eligibility</h2>
+          <p>Applicants must hold a bachelor's degree.</p>
+          <ul><li>Passport copy</li><li>Academic transcript</li></ul>
+          <table><tr><th>Stage</th><th>Duration</th></tr>
+                 <tr><td>Second stage</td><td>180 minutes</td></tr></table>
+        </body></html>
+    """
+
+    converted = convert_catalogue_payload(
+        payload,
+        content_type="text/html",
+        final_url="https://example.edu/scholarship",
+    )
+
+    assert converted.text.splitlines() == [
+        "Eligibility",
+        "Applicants must hold a bachelor's degree.",
+        "Passport copy",
+        "Academic transcript",
+        "Stage Duration",
+        "Second stage 180 minutes",
+    ]
+    assert [
+        (coordinate["start_offset"], coordinate["end_offset"])
+        for coordinate in converted.coordinates
+    ] == [
+        (0, 11),
+        (12, 53),
+        (54, 67),
+        (68, 87),
+        (88, 102),
+        (103, 127),
+    ]
+
+
+def test_html_conversion_preserves_div_and_break_boundaries_used_by_javascript_pages() -> None:
+    from app.modules.catalogue_ingestion.acquisition_fetcher import convert_catalogue_payload
+
+    converted = convert_catalogue_payload(
+        (
+            b"<main><div>Use one account only</div>"
+            b"<div>Second stage: 175 minutes<br>Oral answer: 5 minutes</div></main>"
+        ),
+        content_type="text/html",
+        final_url="https://example.edu/rules",
+    )
+
+    assert converted.text.splitlines() == [
+        "Use one account only",
+        "Second stage: 175 minutes",
+        "Oral answer: 5 minutes",
+    ]
+
+
 def test_unicode_and_whitespace_invariant_evidence_span_matching() -> None:
     """Verify smart-quote, non-breaking-space, and whitespace span matching."""
     from decimal import Decimal

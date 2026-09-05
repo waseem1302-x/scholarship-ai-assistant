@@ -63,3 +63,44 @@ def test_large_mixed_page_is_partitioned_into_compact_non_overlapping_blocks() -
     assert len(blocks) > 3
     assert max(len(block.block_text) for block in blocks) <= DEFAULT_EVIDENCE_BLOCK_MAX_CHARS
     assert "".join(block.block_text for block in blocks) == text
+
+
+def test_semantic_lines_become_stable_exact_evidence_units() -> None:
+    """A later fact must not disappear inside a 4,000-character mixed-topic block."""
+    artifact_id = uuid.UUID("00000000-0000-0000-0000-000000000123")
+    text = (
+        "Eligibility\n"
+        "Applicants must hold a bachelor's degree.\n"
+        "Passport copy\n"
+        "Academic transcript\n"
+        "Appeals\n"
+        "An appeal must be submitted within two days."
+    )
+
+    first = build_evidence_blocks(
+        text,
+        source_artifact_id=artifact_id,
+        source_content_hash="b" * 64,
+        source_role="primary",
+    )
+    second = build_evidence_blocks(
+        text,
+        source_artifact_id=artifact_id,
+        source_content_hash="b" * 64,
+        source_role="primary",
+    )
+
+    assert [block.block_text for block in first] == [
+        "Eligibility\nApplicants must hold a bachelor's degree.\n",
+        "Passport copy\n",
+        "Academic transcript\n",
+        "Appeals\nAn appeal must be submitted within two days.",
+    ]
+    assert "".join(block.block_text for block in first) == text
+    assert [block.block_key for block in first] == [block.block_key for block in second]
+    assert [(block.start_offset, block.end_offset) for block in first] == [
+        (0, 54),
+        (54, 68),
+        (68, 88),
+        (88, 140),
+    ]

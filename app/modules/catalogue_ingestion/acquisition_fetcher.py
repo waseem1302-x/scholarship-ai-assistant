@@ -32,7 +32,7 @@ from app.modules.opportunities.source_monitor import (
     validate_response_peer,
 )
 
-CATALOGUE_CONVERSION_VERSION = "catalogue-acquisition-conversion.v1"
+CATALOGUE_CONVERSION_VERSION = "catalogue-acquisition-conversion.v2"
 _MAX_ARCHIVE_ENTRIES = 5_000
 _MAX_ARCHIVE_UNCOMPRESSED_BYTES = 50_000_000
 _MAX_DOCX_PARAGRAPHS = 20_000
@@ -40,6 +40,42 @@ _MAX_XLSX_SHEETS = 50
 _MAX_XLSX_CELLS = 100_000
 _MAX_SITEMAP_LINKS = 5_000
 _MAX_COORDINATES = 2_000
+_HTML_TEXT_BOUNDARY_TAGS = {
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "br",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hr",
+    "li",
+    "main",
+    "nav",
+    "ol",
+    "p",
+    "pre",
+    "section",
+    "table",
+    "tbody",
+    "tfoot",
+    "thead",
+    "tr",
+    "ul",
+}
 
 _HTML_TYPES = {"text/html", "application/xhtml+xml"}
 _XML_TYPES = {"application/xml", "text/xml", "application/rss+xml", "application/atom+xml"}
@@ -294,9 +330,21 @@ class _StructuredHTMLParser(HTMLParser):
             self._ignored_depth += 1
             return
         values = {key.casefold(): (value or "") for key, value in attrs}
-        if tag in {"table", "thead", "tbody", "tr", "td", "th", "main", "article", "nav"}:
+        if tag in {
+            "article",
+            "div",
+            "main",
+            "nav",
+            "section",
+            "table",
+            "tbody",
+            "td",
+            "th",
+            "thead",
+            "tr",
+        }:
             self._contexts.append(tag)
-        if tag in {"p", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section"}:
+        if tag in _HTML_TEXT_BOUNDARY_TAGS:
             self.text_parts.append("\n")
         lang = (values.get("lang") or "").strip()
         if lang:
@@ -372,6 +420,8 @@ class _StructuredHTMLParser(HTMLParser):
             self._hreflang = None
             self._media_type = None
             self._anchor_text = []
+        if tag in _HTML_TEXT_BOUNDARY_TAGS:
+            self.text_parts.append("\n")
         if tag in self._contexts:
             for index in range(len(self._contexts) - 1, -1, -1):
                 if self._contexts[index] == tag:
@@ -425,9 +475,18 @@ def _convert_html(payload: bytes, *, final_url: str) -> _ConvertedPayload:
     except Exception as exc:
         raise SourceFetchError("malformed_source_html") from exc
     text = _normalize_text(" ".join(parser.text_parts))
+    coordinates = tuple(
+        {
+            "kind": "html_block",
+            "start_offset": match.start(),
+            "end_offset": match.end(),
+        }
+        for match in re.finditer(r"[^\n]+", text)
+    )
     return _ConvertedPayload(
         text=text,
         links=tuple(parser.links),
+        coordinates=coordinates,
         canonical_url_hint=parser.canonical_url,
         language_hints=tuple(sorted(parser.languages)),
     )

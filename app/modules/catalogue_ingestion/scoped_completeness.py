@@ -17,6 +17,8 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimEntityType,
     ClaimObjective,
     ClaimResolution,
+    EvidenceDispositionState,
+    EvidenceUnitDisposition,
     ExtractedClaim,
     ObjectiveCoverageState,
     ResolvedClaim,
@@ -41,7 +43,33 @@ from app.modules.catalogue_ingestion.topology_models import (
     SourceScopeRelationship,
 )
 
-COVERAGE_EVALUATOR_VERSION = "catalogue-scoped-coverage.v2"
+COVERAGE_EVALUATOR_VERSION = "catalogue-scoped-coverage.v3"
+
+
+def apply_evidence_accounting(
+    resolution: ClaimResolution,
+    dispositions: Iterable[EvidenceUnitDisposition],
+) -> ClaimResolution:
+    """Make terminal evidence-unit accounting an independent completeness gate."""
+
+    by_block = {item.block_key: item for item in dispositions}
+    ordered = [by_block[key] for key in sorted(by_block)]
+    errors = {
+        item
+        for item in resolution.completeness_errors
+        if not item.startswith("evidence_unit:")
+    }
+    errors.update(
+        f"evidence_unit:{item.block_key}:unresolved"
+        for item in ordered
+        if item.state is EvidenceDispositionState.UNRESOLVED
+    )
+    return resolution.model_copy(
+        update={
+            "completeness_errors": sorted(errors),
+            "evidence_dispositions": ordered,
+        }
+    )
 
 _SCOPE_FIELD_TYPES: dict[str, ScopeNodeType] = {
     "scholarship_family_key": ScopeNodeType.SCHOLARSHIP_FAMILY,

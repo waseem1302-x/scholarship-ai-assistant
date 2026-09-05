@@ -1,9 +1,9 @@
 """Version identities for the routed paid catalogue extraction pipeline."""
 
-BUNDLE_PROVIDER_PARSER_VERSION = "catalogue-provider-parser.v1.claim-bundle.v2"
-BUNDLE_NORMALIZER_VERSION = "catalogue-provider-normalizer.v1.claim-bundle.v2"
-BUNDLE_RESOLVER_VERSION = "catalogue-claim-resolution.v2"
-BUNDLE_VALIDATOR_VERSION = "catalogue-claim-bundle-validation.v2"
+BUNDLE_PROVIDER_PARSER_VERSION = "catalogue-provider-parser.v1.claim-bundle.v3"
+BUNDLE_NORMALIZER_VERSION = "catalogue-provider-normalizer.v1.claim-bundle.v3"
+BUNDLE_RESOLVER_VERSION = "catalogue-claim-resolution.v3"
+BUNDLE_VALIDATOR_VERSION = "catalogue-claim-bundle-validation.v3"
 
 __all__ = [
     "BUNDLE_NORMALIZER_VERSION",

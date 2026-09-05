@@ -25,10 +25,11 @@ from app.modules.catalogue_ingestion.models import (
 )
 from app.modules.catalogue_ingestion.topology_models import CatalogueCoverageCell
 
-EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v4"
+EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v5"
 _DEFAULT_PROMPT_RESERVE_CHARS = 8_000
 _DEFAULT_MAX_EVIDENCE_CHARS = 48_000
 _MIN_RECOVERY_SPAN_CHARS = 1_500
+_MAX_FOCUSED_OBJECTIVES_PER_JOB = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class ExtractionEvidenceRef:
     start_offset: int
     end_offset: int
     heading: str | None
+    objectives: tuple[ClaimObjective, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,27 +217,74 @@ def _build_artifact_jobs(
     input_cost_per_million: Decimal,
     output_cost_per_million: Decimal,
 ) -> tuple[ExtractionJobPlan, ...]:
-    """Extract each evidence block once, with every objective relevant to that packet."""
+    """Extract each selected evidence block once for only its routed objectives."""
 
     ordered = sorted(blocks, key=lambda block: block.block_index)
     jobs: list[ExtractionJobPlan] = []
-    for chunk in _chunk_blocks(ordered, max_evidence_chars=max_evidence_chars):
-        chunk_routes = [
+    current: list[CatalogueEvidenceBlock] = []
+    current_objectives: tuple[ClaimObjective, ...] = ()
+    current_chars = 0
+
+    def flush() -> None:
+        nonlocal current, current_objectives, current_chars
+        if not current:
+            return
+        current_ids = {block.id for block in current}
+        current_routes = [
             route
-            for block in chunk
+            for block in current
             for route in routes_by_block.get(block.id, ())
             if route.selected
+            and route.evidence_block_id in current_ids
+            and route.objective in current_objectives
         ]
         jobs.append(
             _build_job(
-                chunk,
-                chunk_routes,
-                objectives=tuple(ClaimObjective),
+                tuple(current),
+                current_routes,
+                objectives=current_objectives,
                 run_max_output_tokens=run_max_output_tokens,
                 input_cost_per_million=input_cost_per_million,
                 output_cost_per_million=output_cost_per_million,
             )
         )
+        current = []
+        current_objectives = ()
+        current_chars = 0
+
+    for block in ordered:
+        selected = tuple(
+            objective
+            for objective in ClaimObjective
+            if any(
+                route.selected and route.objective is objective
+                for route in routes_by_block.get(block.id, ())
+            )
+        )
+        if not selected:
+            flush()
+            continue
+        block_chars = len(_render_block(block, objectives=selected))
+        if block_chars > max_evidence_chars:
+            raise ValueError("evidence block exceeds configured provider evidence budget")
+        merged_objectives = tuple(
+            objective
+            for objective in ClaimObjective
+            if objective in {*current_objectives, *selected}
+        )
+        if current and (
+            current_chars + block_chars > max_evidence_chars
+            or (
+                len(merged_objectives) > _MAX_FOCUSED_OBJECTIVES_PER_JOB
+                and selected != current_objectives
+            )
+        ):
+            flush()
+            merged_objectives = selected
+        current_objectives = merged_objectives
+        current.append(block)
+        current_chars += block_chars
+    flush()
     return tuple(jobs)
 
 
@@ -322,6 +371,19 @@ def _build_job(
     input_cost_per_million: Decimal,
     output_cost_per_million: Decimal,
 ) -> ExtractionJobPlan:
+    objectives_by_block = {
+        block.id: tuple(
+            objective
+            for objective in ClaimObjective
+            if any(
+                route.selected
+                and route.evidence_block_id == block.id
+                and route.objective is objective
+                for route in routes
+            )
+        )
+        for block in blocks
+    }
     evidence = tuple(
         ExtractionEvidenceRef(
             block_id=block.id,
@@ -331,6 +393,7 @@ def _build_job(
             start_offset=block.start_offset,
             end_offset=block.end_offset,
             heading=block.heading,
+            objectives=objectives_by_block.get(block.id, ()),
         )
         for block in blocks
     )
@@ -363,7 +426,12 @@ def _build_job_from_evidence(
     if any(block.source_artifact_id != first.source_artifact_id for block in blocks):
         raise ValueError("one extraction job cannot cross source artifacts")
     evidence_text = "\n\n".join(
-        _render_evidence_span(block, item) for block, item in zip(blocks, evidence, strict=True)
+        _render_evidence_span(
+            block,
+            item,
+            objectives=item.objectives or objectives,
+        )
+        for block, item in zip(blocks, evidence, strict=True)
     )
     scopes = tuple(
         sorted(
@@ -408,7 +476,11 @@ def _build_job_from_evidence(
     )
 
 
-def _render_block(block: CatalogueEvidenceBlock) -> str:
+def _render_block(
+    block: CatalogueEvidenceBlock,
+    *,
+    objectives: tuple[ClaimObjective, ...] = (),
+) -> str:
     evidence = ExtractionEvidenceRef(
         block_id=block.id,
         block_key=block.block_key,
@@ -417,13 +489,16 @@ def _render_block(block: CatalogueEvidenceBlock) -> str:
         start_offset=block.start_offset,
         end_offset=block.end_offset,
         heading=block.heading,
+        objectives=objectives,
     )
-    return _render_evidence_span(block, evidence)
+    return _render_evidence_span(block, evidence, objectives=objectives)
 
 
 def _render_evidence_span(
     block: CatalogueEvidenceBlock,
     evidence: ExtractionEvidenceRef,
+    *,
+    objectives: tuple[ClaimObjective, ...] = (),
 ) -> str:
     local_start = evidence.start_offset - block.start_offset
     local_end = evidence.end_offset - block.start_offset
@@ -434,6 +509,7 @@ def _render_evidence_span(
         "end_offset": evidence.end_offset,
         "heading": evidence.heading,
         "language_hints": block.language_hints,
+        "objectives": [item.value for item in objectives],
         "section_key": block.section_key,
         "source_role": block.source_role,
         "start_offset": evidence.start_offset,
@@ -490,6 +566,7 @@ def _slice_evidence_ref(
         start_offset=evidence.start_offset if start_offset is None else start_offset,
         end_offset=evidence.end_offset if end_offset is None else end_offset,
         heading=evidence.heading,
+        objectives=evidence.objectives,
     )
 
 
@@ -505,6 +582,7 @@ def _job_key(
             {
                 "block_hash": item.block_hash,
                 "end_offset": item.end_offset,
+                "objectives": [objective.value for objective in item.objectives],
                 "start_offset": item.start_offset,
             }
             for item in evidence

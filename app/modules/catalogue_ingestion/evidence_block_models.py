@@ -26,8 +26,8 @@ from app.db.base import Base
 from app.modules.auth.models import enum_values, utc_now
 from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective
 
-EVIDENCE_BLOCK_BUILDER_VERSION = "catalogue-evidence-blocks.v2"
-EVIDENCE_ROUTER_VERSION = "catalogue-evidence-router.v2"
+EVIDENCE_BLOCK_BUILDER_VERSION = "catalogue-evidence-blocks.v3"
+EVIDENCE_ROUTER_VERSION = "catalogue-evidence-router.v3"
 
 
 class CatalogueEvidenceBlock(Base):

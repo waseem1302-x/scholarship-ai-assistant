@@ -13,12 +13,14 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimObjective,
     ClaimScope,
     ClaimValue,
+    EvidenceDispositionState,
+    EvidenceUnitDisposition,
     ExtractedClaim,
     ObjectiveCoverageState,
     StrictClaimModel,
 )
 
-CLAIM_BUNDLE_SCHEMA_VERSION = "catalogue-claim-bundle.v3"
+CLAIM_BUNDLE_SCHEMA_VERSION = "catalogue-claim-bundle.v4"
 
 
 class BundleEvidenceReference(StrictClaimModel):
@@ -64,10 +66,27 @@ class BundleObjectiveCoverage(StrictClaimModel):
     unknown_objectives: list[str] = Field(default_factory=list)
 
 
+class BundleEvidenceDisposition(StrictClaimModel):
+    block_key: str = Field(min_length=1, max_length=64)
+    state: EvidenceDispositionState
+    reason: str = Field(min_length=1, max_length=500)
+    duplicate_of_block_key: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def valid_duplicate_target(self) -> BundleEvidenceDisposition:
+        if self.state is EvidenceDispositionState.DUPLICATE:
+            if not self.duplicate_of_block_key or self.duplicate_of_block_key == self.block_key:
+                raise ValueError("Duplicate evidence disposition requires another block key")
+        elif self.duplicate_of_block_key is not None:
+            raise ValueError("Only duplicate evidence dispositions may name a duplicate target")
+        return self
+
+
 class ClaimBundleExtractionOutput(StrictClaimModel):
     evidence_refs: list[BundleEvidenceReference]
     claims: list[BundledAtomicClaim]
     objective_coverage: list[BundleObjectiveCoverage]
+    unit_dispositions: list[BundleEvidenceDisposition] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -82,6 +101,9 @@ class ClaimBundleExtractionOutput(StrictClaimModel):
         known = set(ref_ids)
         if any(claim.evidence_ref_id not in known for claim in self.claims):
             raise ValueError("Every bundled claim must reference a declared evidence reference")
+        disposition_keys = [item.block_key for item in self.unit_dispositions]
+        if len(disposition_keys) != len(set(disposition_keys)):
+            raise ValueError("Bundle evidence dispositions must be unique per block")
         return self
 
 
@@ -91,12 +113,14 @@ class EvidenceBlockSpan:
     start_offset: int
     end_offset: int
     block_text: str
+    objectives: tuple[ClaimObjective, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class ExpandedClaimBundle:
     outputs: Mapping[ClaimObjective, ClaimExtractionOutput]
     warnings: tuple[str, ...]
+    dispositions: tuple[EvidenceUnitDisposition, ...]
 
 
 def expand_claim_bundle(
@@ -132,6 +156,7 @@ def expand_claim_bundle(
         objective: [] for objective in requested
     }
     dropped_by_objective: dict[ClaimObjective, int] = {objective: 0 for objective in requested}
+    accepted_blocks: set[str] = set()
     for bundled in output.claims:
         objective = bundled.objective
         if objective not in requested_set:
@@ -169,6 +194,47 @@ def expand_claim_bundle(
             warnings.append(f"objective_field_mismatch:{objective.value}:{claim.field_path}")
             continue
         claims_by_objective[objective].append(claim)
+        accepted_blocks.add(ref.block_key)
+
+    supplied_dispositions = {item.block_key: item for item in output.unit_dispositions}
+    dispositions: list[EvidenceUnitDisposition] = []
+    unresolved_blocks: list[str] = []
+    for block_key, block in blocks_by_key.items():
+        supplied = supplied_dispositions.get(block_key)
+        state = supplied.state if supplied is not None else (
+            EvidenceDispositionState.MAPPED
+            if block_key in accepted_blocks
+            else EvidenceDispositionState.UNRESOLVED
+        )
+        reason = supplied.reason if supplied is not None else "legacy disposition inferred"
+        duplicate_of = supplied.duplicate_of_block_key if supplied is not None else None
+        if state is EvidenceDispositionState.MAPPED and block_key not in accepted_blocks:
+            state = EvidenceDispositionState.UNRESOLVED
+            duplicate_of = None
+            reason = "mapped disposition had no accepted evidence-bound claim"
+            warnings.append(f"unit_disposition_without_accepted_claim:{block_key}")
+        if state is EvidenceDispositionState.DUPLICATE:
+            target = blocks_by_key.get(duplicate_of or "")
+            if target is None or _normalized_unit_text(target.block_text) != _normalized_unit_text(
+                block.block_text
+            ):
+                state = EvidenceDispositionState.UNRESOLVED
+                duplicate_of = None
+                reason = "duplicate disposition did not match its canonical unit"
+                warnings.append(f"invalid_duplicate_disposition:{block_key}")
+        if state is EvidenceDispositionState.UNRESOLVED:
+            unresolved_blocks.append(block_key)
+        dispositions.append(
+            EvidenceUnitDisposition(
+                block_key=block_key,
+                state=state,
+                reason=reason,
+                objectives=list(block.objectives or requested),
+                duplicate_of_block_key=duplicate_of,
+            )
+        )
+    for block_key in sorted(set(supplied_dispositions) - set(blocks_by_key)):
+        warnings.append(f"unknown_unit_disposition:{block_key}")
 
     coverage = {item.objective: item for item in output.objective_coverage}
     expanded: dict[ClaimObjective, ClaimExtractionOutput] = {}
@@ -197,6 +263,12 @@ def expand_claim_bundle(
         if coverage_item is None:
             objective_warnings.append("provider_objective_coverage_missing")
             unknown.append("Provider omitted objective coverage state")
+        if unresolved_blocks:
+            state = ObjectiveCoverageState.PARTIAL
+            objective_warnings.extend(
+                f"unresolved_evidence_unit:{block_key}" for block_key in unresolved_blocks
+            )
+            unknown.append("One or more routed evidence units remain unresolved")
         expanded[objective] = ClaimExtractionOutput(
             objective=objective,
             coverage_state=state,
@@ -205,7 +277,15 @@ def expand_claim_bundle(
             conflicts=list(output.conflicts),
             warnings=list(dict.fromkeys([*warnings, *objective_warnings])),
         )
-    return ExpandedClaimBundle(outputs=expanded, warnings=tuple(dict.fromkeys(warnings)))
+    return ExpandedClaimBundle(
+        outputs=expanded,
+        warnings=tuple(dict.fromkeys(warnings)),
+        dispositions=tuple(dispositions),
+    )
+
+
+def _normalized_unit_text(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 def _bind_reference(
@@ -292,6 +372,7 @@ def _normalize_whitespace(text: str) -> tuple[str, list[int], list[int]]:
 
 __all__ = [
     "CLAIM_BUNDLE_SCHEMA_VERSION",
+    "BundleEvidenceDisposition",
     "BundleEvidenceReference",
     "BundleObjectiveCoverage",
     "BundledAtomicClaim",

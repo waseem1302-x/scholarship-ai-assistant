@@ -60,6 +60,13 @@ contains none of the requested facts; not_applicable only when the source explic
 that the objective does not apply. Put absent or unresolved requested facts in unknown_objectives.
 Report real contradictions; do not silently reconcile them."""
 
+CLAIM_SYSTEM_INSTRUCTION += """
+
+Preserve every student-relevant fact in the routed evidence. Prefer the objective's typed entities
+and fields. When a valid fact has no typed representation, emit it as a guidance entity using
+title, guidance_type, text, and display_order as applicable. Guidance is a strict evidence-backed
+fallback, not permission to summarize, infer, or duplicate a typed fact."""
+
 CLAIM_SOURCE_SELECTION_VERSION = "objective-evidence-mask.v3"
 
 OBJECTIVE_SOURCE_TERMS: dict[ClaimObjective, tuple[str, ...]] = {
@@ -350,6 +357,10 @@ OBJECTIVE_ENTITY_TYPES: dict[ClaimObjective, frozenset[ClaimEntityType]] = {
         }
     ),
 }
+OBJECTIVE_ENTITY_TYPES = {
+    objective: frozenset({*entity_types, ClaimEntityType.GUIDANCE})
+    for objective, entity_types in OBJECTIVE_ENTITY_TYPES.items()
+}
 
 OBJECTIVE_FIELD_PATHS: dict[ClaimObjective, frozenset[str]] = {
     ClaimObjective.PROGRAMMES: frozenset(
@@ -382,6 +393,11 @@ OBJECTIVE_FIELD_PATHS: dict[ClaimObjective, frozenset[str]] = {
             "notes",
         }
     ),
+}
+_GUIDANCE_FIELD_PATHS = SUPPORTED_CLAIM_FIELDS[ClaimEntityType.GUIDANCE]
+OBJECTIVE_FIELD_PATHS = {
+    objective: frozenset({*field_paths, *_GUIDANCE_FIELD_PATHS})
+    for objective, field_paths in OBJECTIVE_FIELD_PATHS.items()
 }
 
 

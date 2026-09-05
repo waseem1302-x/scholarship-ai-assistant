@@ -34,10 +34,13 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimExtractionOutput,
     ClaimObjective,
     ClaimResolution,
+    EvidenceDispositionState,
+    EvidenceUnitDisposition,
     ObjectiveCoverageState,
 )
 from app.modules.catalogue_ingestion.deterministic_extractors import extract_calendar_claims
 from app.modules.catalogue_ingestion.evidence_block_models import (
+    EVIDENCE_BLOCK_BUILDER_VERSION,
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
 )
@@ -78,6 +81,7 @@ from app.modules.catalogue_ingestion.provider import (
     ExtractionSchemaError,
 )
 from app.modules.catalogue_ingestion.provider_execution import ProviderExecutionBudgetExhausted
+from app.modules.catalogue_ingestion.scoped_completeness import apply_evidence_accounting
 from app.modules.opportunities.source_monitor import FetchedSource
 
 _SEVERE_VALIDATION_PREFIXES = (
@@ -115,10 +119,11 @@ def _should_run_gap_pass(
         completeness_mode
         and not used_gap_routes
         and not completeness_blockers
-        and not resolution.conflicts
-        and not resolution.rejected
         and bool(resolution.completeness_errors)
-        and all(item.startswith("coverage:") for item in resolution.completeness_errors)
+        and all(
+            item.startswith(("coverage:", "evidence_unit:"))
+            for item in resolution.completeness_errors
+        )
     )
 
 
@@ -128,6 +133,9 @@ def _coverage_error_objectives(resolution: ClaimResolution) -> set[str]:
         parts = error.split(":")
         if len(parts) >= 5 and parts[0] == "coverage":
             objectives.add(parts[-2])
+    for disposition in resolution.evidence_dispositions:
+        if disposition.state is EvidenceDispositionState.UNRESOLVED:
+            objectives.update(item.value for item in disposition.objectives)
     return objectives
 
 
@@ -140,6 +148,7 @@ class _BundleGroupAccumulator:
     cache_keys: list[str] = field(default_factory=list)
     provider_attempt_ids: list[uuid.UUID] = field(default_factory=list)
     outputs: dict[ClaimObjective, list[ClaimExtractionOutput]] = field(default_factory=dict)
+    dispositions: list[EvidenceUnitDisposition] = field(default_factory=list)
 
     def add(
         self,
@@ -155,6 +164,82 @@ class _BundleGroupAccumulator:
             self.provider_attempt_ids.append(provider_attempt_id)
         for objective, output in expanded.outputs.items():
             self.outputs.setdefault(objective, []).append(output)
+        self.dispositions.extend(expanded.dispositions)
+
+
+def _build_evidence_ledger(
+    *,
+    blocks: list[CatalogueEvidenceBlock],
+    selected_block_ids: set[uuid.UUID],
+    reported: list[EvidenceUnitDisposition],
+    resolution: ClaimResolution,
+) -> list[EvidenceUnitDisposition]:
+    """Reconcile provider dispositions against final accepted evidence spans."""
+
+    reported_by_key = {item.block_key: item for item in reported}
+    blocks_by_artifact: dict[str, list[CatalogueEvidenceBlock]] = {}
+    for block in blocks:
+        blocks_by_artifact.setdefault(str(block.source_artifact_id), []).append(block)
+    accepted_block_keys: set[str] = set()
+    for item in resolution.resolved:
+        for block in blocks_by_artifact.get(item.artifact_id, []):
+            if (
+                block.start_offset <= item.claim.excerpt_start
+                and item.claim.excerpt_end <= block.end_offset
+            ):
+                accepted_block_keys.add(block.block_key)
+                break
+
+    ledger: list[EvidenceUnitDisposition] = []
+    canonical_by_hash: dict[str, str] = {}
+    block_by_key = {block.block_key: block for block in blocks}
+    for block in sorted(blocks, key=lambda item: (str(item.source_artifact_id), item.block_index)):
+        prior = reported_by_key.get(block.block_key)
+        objectives = prior.objectives if prior is not None else []
+        if block.block_key in accepted_block_keys:
+            disposition = EvidenceUnitDisposition(
+                block_key=block.block_key,
+                state=EvidenceDispositionState.MAPPED,
+                reason="at least one final accepted claim cites this unit",
+                objectives=objectives,
+            )
+        elif block.block_hash in canonical_by_hash:
+            disposition = EvidenceUnitDisposition(
+                block_key=block.block_key,
+                state=EvidenceDispositionState.DUPLICATE,
+                reason="unit text duplicates an earlier canonical unit",
+                objectives=objectives,
+                duplicate_of_block_key=canonical_by_hash[block.block_hash],
+            )
+        elif (
+            prior is not None
+            and prior.state is EvidenceDispositionState.DUPLICATE
+            and prior.duplicate_of_block_key in block_by_key
+            and block_by_key[prior.duplicate_of_block_key].block_hash == block.block_hash
+        ):
+            disposition = prior
+        elif block.id not in selected_block_ids:
+            disposition = EvidenceUnitDisposition(
+                block_key=block.block_key,
+                state=EvidenceDispositionState.IRRELEVANT,
+                reason="no extraction objective selected this unit",
+            )
+        elif prior is not None and prior.state is EvidenceDispositionState.IRRELEVANT:
+            disposition = prior
+        else:
+            disposition = EvidenceUnitDisposition(
+                block_key=block.block_key,
+                state=EvidenceDispositionState.UNRESOLVED,
+                reason=(
+                    prior.reason
+                    if prior is not None
+                    else "selected evidence unit produced no terminal provider disposition"
+                ),
+                objectives=objectives,
+            )
+        ledger.append(disposition)
+        canonical_by_hash.setdefault(block.block_hash, block.block_key)
+    return ledger
 
 
 class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
@@ -811,6 +896,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                 start_offset=item.start_offset,
                 end_offset=item.end_offset,
                 block_text=block.block_text[local_start:local_end],
+                objectives=item.objectives or job.objectives,
             )
         expanded = expand_claim_bundle(
             raw_output,
@@ -871,6 +957,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         extracted: list[tuple[CatalogueSourceArtifact, int, list[Any]]] = []
         unknown_objectives: set[str] = set()
         warnings: set[str] = set()
+        reported_dispositions: list[EvidenceUnitDisposition] = []
         coverage_by_objective: dict[ClaimObjective, list[ObjectiveCoverageState]] = {
             objective: [] for objective in ClaimObjective
         }
@@ -901,6 +988,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             )
             unknown_objectives.update(prior_resolution.unknown_objectives)
             warnings.update(prior_resolution.warnings)
+            reported_dispositions.extend(prior_resolution.evidence_dispositions)
             for objective, state in prior_resolution.provider_objective_coverage.items():
                 try:
                     coverage_by_objective[ClaimObjective(objective)].append(
@@ -934,6 +1022,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             effective_trust_tier = (group.source.trust_tier or 99) * 10 + role_order[
                 group.source.source_role
             ]
+            reported_dispositions.extend(group.dispositions)
             for objective in group.objectives:
                 outputs = group.outputs.get(objective, [])
                 if not outputs:
@@ -976,6 +1065,36 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                 "warnings": sorted(warnings),
             }
         )
+        evidence_blocks = list(
+            self.session.scalars(
+                select(CatalogueEvidenceBlock)
+                .where(
+                    CatalogueEvidenceBlock.candidate_id == candidate.id,
+                    CatalogueEvidenceBlock.builder_version == EVIDENCE_BLOCK_BUILDER_VERSION,
+                )
+                .order_by(
+                    CatalogueEvidenceBlock.source_artifact_id,
+                    CatalogueEvidenceBlock.block_index,
+                )
+            )
+        )
+        selected_block_ids = set(
+            self.session.scalars(
+                select(CatalogueEvidenceRoute.evidence_block_id).where(
+                    CatalogueEvidenceRoute.candidate_id == candidate.id,
+                    CatalogueEvidenceRoute.selected.is_(True),
+                )
+            )
+        )
+        resolution = apply_evidence_accounting(
+            resolution,
+            _build_evidence_ledger(
+                blocks=evidence_blocks,
+                selected_block_ids=selected_block_ids,
+                reported=reported_dispositions,
+                resolution=resolution,
+            ),
+        )
         self._heartbeat_candidate(run, candidate, run_lease_token)
         candidate.proposed_payload = resolution.model_dump(mode="json")
         candidate.validation_errors = list(
@@ -999,8 +1118,6 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         should_continue_acquisition = bool(
             self.settings.catalogue_completeness_mode_enabled
             and not completeness_blockers
-            and not resolution.conflicts
-            and not resolution.rejected
             and missing_objectives
             and has_deferred
             and bool(missing_objectives & pending_objectives)
