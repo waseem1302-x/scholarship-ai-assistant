@@ -143,6 +143,7 @@ def resolve_claims(
             for item in values
             if (trust_domain_rank(item.trust_domain), item.trust_tier) == best_authority
         ]
+        best = _canonicalize_equivalent_scholarship_names(best)
         by_value: dict[str, list[ResolvedClaim]] = defaultdict(list)
         for item in best:
             normalized = json.dumps(
@@ -317,16 +318,69 @@ def _cycle_aliases(
         if _artifact_trust_domain(artifact, trust_tier) not in OFFICIAL_FACTUAL_DOMAINS:
             continue
         for claim in claims:
+            if not _valid_evidence_span(artifact.normalized_text, claim):
+                continue
+            if _semantic_claim_error(claim, artifact=artifact) is not None:
+                continue
+            scope_cycle_key = claim.scope.cycle_key
+            if scope_cycle_key:
+                scope_years = {
+                    int(value)
+                    for value in re.findall(r"(?<!\d)(?:19|20)\d{2}(?!\d)", scope_cycle_key)
+                }
+                if len(scope_years) == 1:
+                    years_by_alias[scope_cycle_key].update(scope_years)
             if (
                 claim.entity_type is ClaimEntityType.CYCLE
                 and claim.field_path == "intake_year"
-                and _valid_evidence_span(artifact.normalized_text, claim)
-                and _semantic_claim_error(claim) is None
             ):
                 value = claim.value.primitive()
                 if isinstance(value, int):
                     years_by_alias[claim.entity_key].add(value)
     return {alias: next(iter(years)) for alias, years in years_by_alias.items() if len(years) == 1}
+
+
+def _canonicalize_equivalent_scholarship_names(
+    values: list[ResolvedClaim],
+) -> list[ResolvedClaim]:
+    if len(values) < 2 or any(
+        item.claim.entity_type is not ClaimEntityType.SCHOLARSHIP
+        or item.claim.field_path != "name"
+        or not isinstance(item.claim.value.primitive(), str)
+        for item in values
+    ):
+        return values
+
+    ignored = {
+        "award",
+        "awards",
+        "fellowship",
+        "fellowships",
+        "program",
+        "programme",
+        "programmes",
+        "programs",
+        "project",
+        "scholarship",
+        "scholarships",
+        "the",
+    }
+    token_sets = [
+        set(re.findall(r"[a-z0-9]+", str(item.claim.value.primitive()).casefold())) - ignored
+        for item in values
+    ]
+    base = min(token_sets, key=len)
+    if len(base) < 2 or any(not base <= tokens or len(tokens - base) > 1 for tokens in token_sets):
+        return values
+
+    canonical = max(values, key=lambda item: len(str(item.claim.value.primitive())))
+    canonical_value = canonical.claim.value
+    return [
+        item.model_copy(
+            update={"claim": item.claim.model_copy(update={"value": canonical_value})}
+        )
+        for item in values
+    ]
 
 
 def _canonicalize_cycle_aliases(

@@ -2,7 +2,7 @@
 
 BUNDLE_PROVIDER_PARSER_VERSION = "catalogue-provider-parser.v1.claim-bundle.v2"
 BUNDLE_NORMALIZER_VERSION = "catalogue-provider-normalizer.v1.claim-bundle.v2"
-BUNDLE_RESOLVER_VERSION = "catalogue-claim-resolution.v1"
+BUNDLE_RESOLVER_VERSION = "catalogue-claim-resolution.v2"
 BUNDLE_VALIDATOR_VERSION = "catalogue-claim-bundle-validation.v2"
 
 __all__ = [

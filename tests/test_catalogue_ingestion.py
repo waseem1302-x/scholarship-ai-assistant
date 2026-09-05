@@ -1387,6 +1387,49 @@ def test_claim_resolution_rejects_bad_offsets_and_same_tier_conflicts() -> None:
     assert resolution.is_materializable is False
 
 
+def test_claim_resolution_collapses_equivalent_scholarship_name_variants() -> None:
+    names = (
+        "Open Doors",
+        "Open Doors: Russian Scholarship Project",
+        "Open Doors Russian Scholarship Project",
+    )
+    extracted = []
+    for index, name in enumerate(names):
+        artifact = CatalogueSourceArtifact(
+            id=uuid.uuid4(),
+            source_id=uuid.uuid4(),
+            final_url=f"https://od.globaluni.ru/source-{index}",
+            content_type="text/html",
+            content_hash=str(index + 1) * 64,
+            normalized_text=name,
+            extraction_method="normalized_text",
+            byte_count=len(name),
+            character_count=len(name),
+        )
+        claim = claim_output().claims[0].model_copy(deep=True)
+        claim.value = ClaimValue(
+            string_value=name,
+            decimal_value=None,
+            integer_value=None,
+            boolean_value=None,
+            string_list_value=None,
+        )
+        claim.excerpt = name
+        claim.excerpt_start = 0
+        claim.excerpt_end = len(name)
+        extracted.append((artifact, 1, [claim]))
+
+    resolution = resolve_claims(extracted)
+
+    assert "scholarship:scholarship:name:same_tier_conflict" not in resolution.conflicts
+    assert {
+        item.claim.value.primitive()
+        for item in resolution.resolved
+        if item.claim.entity_type is ClaimEntityType.SCHOLARSHIP
+        and item.claim.field_path == "name"
+    } == {"Open Doors: Russian Scholarship Project"}
+
+
 def test_claim_resolution_fails_closed_when_one_entity_key_spans_routes() -> None:
     artifact = CatalogueSourceArtifact(
         id=uuid.uuid4(),
@@ -1518,6 +1561,29 @@ def test_claim_resolution_canonicalizes_same_year_cycle_aliases() -> None:
     assert "cycle:scope:multiple_cycles" not in resolution.conflicts
     assert {item.claim.entity_key for item in resolution.resolved} == {"intake_2027"}
     assert {item.claim.scope.cycle_key for item in resolution.resolved} == {"intake_2027"}
+
+
+def test_claim_resolution_canonicalizes_unambiguous_year_only_scope_aliases() -> None:
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="7" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    first = claim_output().claims[1].model_copy(deep=True)
+    second = first.model_copy(deep=True)
+    first.scope.cycle_key = "cycle-2026"
+    second.scope.cycle_key = "registration_2026"
+
+    resolution = resolve_claims([(artifact, 1, [first, second])])
+
+    assert "cycle:scope:multiple_cycles" not in resolution.conflicts
+    assert {item.claim.scope.cycle_key for item in resolution.resolved} == {"intake_2026"}
 
 
 def test_claim_resolution_rejects_a_route_inferred_from_generic_university_text() -> None:
