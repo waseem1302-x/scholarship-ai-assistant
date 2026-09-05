@@ -19,6 +19,10 @@ from app.core.config import Settings
 from app.modules.catalogue_ingestion.claim_bundle_provider import bundle_claim_prompt_hash
 from app.modules.catalogue_ingestion.claim_bundle_schemas import CLAIM_BUNDLE_SCHEMA_VERSION
 from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective
+from app.modules.catalogue_ingestion.evidence_block_models import (
+    EVIDENCE_BLOCK_BUILDER_VERSION,
+    EVIDENCE_ROUTER_VERSION,
+)
 from app.modules.catalogue_ingestion.extraction_planner import EXTRACTION_JOB_PLANNER_VERSION
 from app.modules.catalogue_ingestion.pipeline_versions import (
     BUNDLE_NORMALIZER_VERSION,
@@ -27,7 +31,7 @@ from app.modules.catalogue_ingestion.pipeline_versions import (
     BUNDLE_VALIDATOR_VERSION,
 )
 
-CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v4"
+CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v5"
 
 
 class CatalogueDeploymentMap(BaseModel):
@@ -128,6 +132,8 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
         "paid_pipeline_contract": {
             "bundle_prompt_family_hash": bundle_prompt_family_hash,
             "bundle_schema_version": CLAIM_BUNDLE_SCHEMA_VERSION,
+            "evidence_block_builder_version": EVIDENCE_BLOCK_BUILDER_VERSION,
+            "evidence_router_version": EVIDENCE_ROUTER_VERSION,
             "extraction_job_planner_version": EXTRACTION_JOB_PLANNER_VERSION,
             "provider_parser_version": BUNDLE_PROVIDER_PARSER_VERSION,
             "normalizer_version": BUNDLE_NORMALIZER_VERSION,

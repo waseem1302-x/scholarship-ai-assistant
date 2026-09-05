@@ -175,6 +175,7 @@ def test_completeness_mode_persists_paid_failsafes_and_exhausts_frontier(
     assert budget.max_depth is None
     assert budget.max_total_bytes is None
     assert budget.max_links_per_page == 500
+    assert budget.max_round_fetch_attempts is None
 
 
 def test_completeness_mode_accepts_direct_source_bundle_beyond_page_budget(

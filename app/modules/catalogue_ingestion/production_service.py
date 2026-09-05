@@ -36,6 +36,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimResolution,
     ObjectiveCoverageState,
 )
+from app.modules.catalogue_ingestion.deterministic_extractors import extract_calendar_claims
 from app.modules.catalogue_ingestion.evidence_block_models import (
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
@@ -411,7 +412,12 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                 terminal_failures.append(f"{error_code}:{error_detail}")
                 continue
 
-            source_links = artifact.fetch_metadata.get("links", [])
+            first_block = job_blocks[0]
+            include_source_links = (
+                job.evidence[0].block_index == 0
+                and job.evidence[0].start_offset == first_block.start_offset
+            )
+            source_links = artifact.fetch_metadata.get("links", []) if include_source_links else []
             if not isinstance(source_links, list):
                 source_links = []
             try:
@@ -942,7 +948,7 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             candidate,
             terminal_failures,
         )
-        closed_objectives, pending_objectives, has_deferred, sitemap_attempted = (
+        closed_objectives, pending_objectives, has_deferred, _sitemap_attempted = (
             self._acquisition_progress(run, candidate)
         )
         extracted: list[tuple[CatalogueSourceArtifact, int, list[Any]]] = []
@@ -986,6 +992,25 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                 except ValueError:
                     continue
         role_order = self._source_role_order()
+
+        if prior_resolution is None:
+            for source in sources:
+                effective_trust_tier = (source.trust_tier or 99) * 10 + role_order[
+                    source.source_role
+                ]
+                for artifact in source.artifacts:
+                    if artifact.content_type.split(";", 1)[0].strip() != "text/calendar":
+                        continue
+                    calendar_output = extract_calendar_claims(artifact.normalized_text)
+                    if calendar_output is None:
+                        warnings.add(f"{artifact.id}:invalid_calendar_source")
+                        continue
+                    extracted.append(
+                        (artifact, effective_trust_tier, calendar_output.claims)
+                    )
+                    coverage_by_objective[ClaimObjective.APPLICATION_TIMELINE].append(
+                        calendar_output.coverage_state
+                    )
 
         for group in groups.values():
             self._persist_bundle_group_attempt(run, candidate, run_lease_token, group)
@@ -1060,10 +1085,8 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             and not resolution.conflicts
             and not resolution.rejected
             and missing_objectives
-            and (
-                (has_deferred and bool(missing_objectives & pending_objectives))
-                or (not has_deferred and not sitemap_attempted)
-            )
+            and has_deferred
+            and bool(missing_objectives & pending_objectives)
         )
         if should_continue_acquisition:
             candidate.status = CandidateStatus.OFFICIAL_SOURCE_CANDIDATE

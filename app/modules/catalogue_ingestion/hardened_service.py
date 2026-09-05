@@ -156,16 +156,6 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
         latest_snapshot = prior_snapshots[-1] if prior_snapshots else None
         resume_frontier = self._resume_frontier(latest_snapshot, plan.objectives)
         completed_urls = self._completed_acquisition_urls(candidate)
-        sitemap_attempted = any(
-            bool((snapshot.result_json or {}).get("sitemap_attempted"))
-            for snapshot in prior_snapshots
-        )
-        use_sitemap_fallback = bool(
-            self.settings.catalogue_completeness_mode_enabled
-            and latest_snapshot is not None
-            and not resume_frontier
-            and not sitemap_attempted
-        )
         if self.settings.catalogue_completeness_mode_enabled:
             attempts_used = sum(
                 int((snapshot.result_json or {}).get("fetch_attempts") or 0)
@@ -197,7 +187,7 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
                     )
                 ),
                 primary_root=primary_sources[0].url,
-                enqueue_seed_sitemaps=use_sitemap_fallback,
+                enqueue_seed_sitemaps=False,
                 resume_frontier=resume_frontier,
                 completed_urls=completed_urls,
             )

@@ -41,7 +41,7 @@ def crawl_budget_for_run(run: CatalogueIngestionRun, settings: Settings) -> Craw
             max_document_conversions=attempts,
             max_links_per_page=500,
             minimum_link_score=30,
-            max_round_fetch_attempts=12,
+            max_round_fetch_attempts=None,
             per_host_interval_seconds=float(settings.source_monitor_per_host_interval_seconds),
         )
 

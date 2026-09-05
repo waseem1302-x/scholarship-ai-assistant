@@ -18,8 +18,8 @@ from app.modules.catalogue_ingestion.evidence_block_models import (
 )
 from app.modules.catalogue_ingestion.models import CatalogueSourceArtifact
 
-DEFAULT_EVIDENCE_BLOCK_TARGET_CHARS = 8_000
-DEFAULT_EVIDENCE_BLOCK_MAX_CHARS = 12_000
+DEFAULT_EVIDENCE_BLOCK_TARGET_CHARS = 3_000
+DEFAULT_EVIDENCE_BLOCK_MAX_CHARS = 4_000
 _MIN_PREFERRED_CUT = 0.55
 
 

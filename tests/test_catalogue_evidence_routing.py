@@ -1,6 +1,10 @@
 import uuid
 
 from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective, ScopedCoverageState
+from app.modules.catalogue_ingestion.evidence_blocks import (
+    DEFAULT_EVIDENCE_BLOCK_MAX_CHARS,
+    build_evidence_blocks,
+)
 from app.modules.catalogue_ingestion.evidence_routing import _route_is_selected, _RouteTarget
 from app.modules.catalogue_ingestion.topology_models import ScopeNodeType
 
@@ -40,3 +44,22 @@ def test_topic_match_schedules_the_relevant_paid_objective() -> None:
         scope_signal=True,
         selection_threshold=18,
     )
+
+
+def test_large_mixed_page_is_partitioned_into_compact_non_overlapping_blocks() -> None:
+    sections = [
+        f"SECTION {index}:\n" + (f"Scholarship detail {index}. " * 220)
+        for index in range(8)
+    ]
+    text = "\n\n".join(sections)
+
+    blocks = build_evidence_blocks(
+        text,
+        source_artifact_id=uuid.uuid4(),
+        source_content_hash="a" * 64,
+        source_role="primary",
+    )
+
+    assert len(blocks) > 3
+    assert max(len(block.block_text) for block in blocks) <= DEFAULT_EVIDENCE_BLOCK_MAX_CHARS
+    assert "".join(block.block_text for block in blocks) == text

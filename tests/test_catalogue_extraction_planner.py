@@ -17,11 +17,13 @@ from app.modules.catalogue_ingestion.evidence_block_models import (
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
 )
+from app.modules.catalogue_ingestion.evidence_blocks import build_evidence_blocks
 from app.modules.catalogue_ingestion.extraction_cache import CatalogueExtractionCache
 from app.modules.catalogue_ingestion.extraction_planner import (
     ExtractionEvidenceRef,
     ExtractionJobPlan,
     ExtractionScopeTarget,
+    _build_artifact_jobs,
     split_extraction_job,
 )
 from app.modules.catalogue_ingestion.models import (
@@ -131,9 +133,23 @@ def test_truncated_single_block_job_splits_into_contiguous_evidence_spans() -> N
     assert left.job_key != right.job_key
     assert left.max_output_tokens == 6_000
     assert right.max_output_tokens == 6_000
+    assert left.recovery_depth == 1
+    assert right.recovery_depth == 1
     left_text = left.evidence_text.split("\n", 1)[1].rsplit("\n</EVIDENCE_BLOCK>", 1)[0]
     right_text = right.evidence_text.split("\n", 1)[1].rsplit("\n</EVIDENCE_BLOCK>", 1)[0]
     assert left_text + right_text == block.block_text
+
+    assert (
+        split_extraction_job(
+            left,
+            blocks_by_id={block.id: block},
+            routes=[route],
+            run_max_output_tokens=6_000,
+            input_cost_per_million=Decimal("0.25"),
+            output_cost_per_million=Decimal("2.00"),
+        )
+        == ()
+    )
 
 
 def test_cache_identity_distinguishes_slices_of_the_same_evidence_block(db_session) -> None:
@@ -230,7 +246,7 @@ def test_recovery_child_rejects_evidence_outside_its_supplied_span() -> None:
     assert "invalid_evidence_span:outside" in str(exc_info.value)
 
 
-def test_truncation_recovery_routes_objectives_to_the_matching_text_slice() -> None:
+def test_truncation_recovery_keeps_all_objectives_on_each_bounded_slice() -> None:
     job, block, timeline_route = _single_block_job()
     text = ("Funding stipend tuition benefits. " * 220) + "\n\n" + (
         "Eligibility age nationality language requirements. " * 180
@@ -276,5 +292,140 @@ def test_truncation_recovery_routes_objectives_to_the_matching_text_slice() -> N
         output_cost_per_million=Decimal("2.00"),
     )
 
-    assert left.objectives == (ClaimObjective.FUNDING,)
-    assert right.objectives == (ClaimObjective.ELIGIBILITY,)
+    assert left.objectives == (ClaimObjective.ELIGIBILITY, ClaimObjective.FUNDING)
+    assert right.objectives == (ClaimObjective.ELIGIBILITY, ClaimObjective.FUNDING)
+
+
+def test_primary_planner_extracts_each_block_once_across_all_objectives() -> None:
+    job, block, timeline_route = _single_block_job()
+
+    def route(objective: ClaimObjective, marker: str) -> CatalogueEvidenceRoute:
+        return CatalogueEvidenceRoute(
+            id=uuid.uuid4(),
+            route_key=marker * 64,
+            candidate_id=timeline_route.candidate_id,
+            evidence_block_id=block.id,
+            coverage_cell_id=None,
+            scope_node_id=None,
+            objective=objective,
+            scope_type="scholarship_family",
+            scope_key="scholarship",
+            relevance_score=100,
+            relevance_reasons=["objective_lexicon_match"],
+            selected=True,
+            coverage_input_fingerprint=marker * 64,
+        )
+
+    routes = [
+        route(ClaimObjective.IDENTITY, "i"),
+        route(ClaimObjective.ELIGIBILITY, "e"),
+        route(ClaimObjective.FUNDING, "f"),
+        timeline_route,
+    ]
+
+    jobs = _build_artifact_jobs(
+        [block],
+        routes_by_block={block.id: routes},
+        max_evidence_chars=20_000,
+        run_max_output_tokens=6_000,
+        input_cost_per_million=Decimal("0.25"),
+        output_cost_per_million=Decimal("2.00"),
+    )
+
+    assert len(jobs) == 1
+    assert jobs[0].evidence == (job.evidence[0],)
+    assert jobs[0].objectives == tuple(ClaimObjective)
+    assert jobs[0].max_output_tokens == 6_000
+
+
+def test_primary_planner_does_not_drop_an_unrouted_official_block() -> None:
+    _job, block, _route = _single_block_job()
+
+    jobs = _build_artifact_jobs(
+        [block],
+        routes_by_block={},
+        max_evidence_chars=20_000,
+        run_max_output_tokens=6_000,
+        input_cost_per_million=Decimal("0.25"),
+        output_cost_per_million=Decimal("2.00"),
+    )
+
+    assert len(jobs) == 1
+    assert jobs[0].evidence[0].block_id == block.id
+    assert jobs[0].objectives == tuple(ClaimObjective)
+    assert jobs[0].scopes == ()
+
+
+def test_open_doors_sized_page_does_not_multiply_packets_by_objective() -> None:
+    candidate_id = uuid.uuid4()
+    source_id = uuid.uuid4()
+    artifact_id = uuid.uuid4()
+    text = "\n\n".join(
+        f"SECTION {index}:\n" + ("Official scholarship information. " * 120)
+        for index in range(8)
+    )
+    specs = build_evidence_blocks(
+        text,
+        source_artifact_id=artifact_id,
+        source_content_hash="c" * 64,
+        source_role="primary",
+    )
+    blocks = [
+        CatalogueEvidenceBlock(
+            id=uuid.uuid4(),
+            candidate_id=candidate_id,
+            source_id=source_id,
+            source_artifact_id=artifact_id,
+            block_index=spec.block_index,
+            block_key=spec.block_key,
+            block_hash=spec.block_hash,
+            source_content_hash=spec.source_content_hash,
+            start_offset=spec.start_offset,
+            end_offset=spec.end_offset,
+            block_text=spec.block_text,
+            heading=spec.heading,
+            section_key=spec.section_key,
+            coordinate_json=[],
+            topology_hints=[],
+            language_hints=["en"],
+            source_role="primary",
+            builder_version=spec.builder_version,
+        )
+        for spec in specs
+    ]
+    routes_by_block: dict[uuid.UUID, list[CatalogueEvidenceRoute]] = {}
+    for block in blocks:
+        routes_by_block[block.id] = [
+            CatalogueEvidenceRoute(
+                id=uuid.uuid4(),
+                route_key=hashlib.sha256(f"{block.id}|{objective.value}".encode()).hexdigest(),
+                candidate_id=candidate_id,
+                evidence_block_id=block.id,
+                coverage_cell_id=None,
+                scope_node_id=None,
+                objective=objective,
+                scope_type="scholarship_family",
+                scope_key="scholarship",
+                relevance_score=100,
+                relevance_reasons=["objective_lexicon_match"],
+                selected=True,
+                coverage_input_fingerprint=hashlib.sha256(
+                    objective.value.encode()
+                ).hexdigest(),
+            )
+            for objective in ClaimObjective
+        ]
+
+    jobs = _build_artifact_jobs(
+        blocks,
+        routes_by_block=routes_by_block,
+        max_evidence_chars=48_000,
+        run_max_output_tokens=6_000,
+        input_cost_per_million=Decimal("0.25"),
+        output_cost_per_million=Decimal("2.00"),
+    )
+
+    planned_block_ids = [ref.block_id for job in jobs for ref in job.evidence]
+    assert len(jobs) == 1
+    assert planned_block_ids == [block.id for block in blocks]
+    assert all(job.objectives == tuple(ClaimObjective) for job in jobs)

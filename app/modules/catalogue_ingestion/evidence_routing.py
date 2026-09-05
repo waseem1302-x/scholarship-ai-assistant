@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective, ScopedCoverageState
 from app.modules.catalogue_ingestion.crawler import AcquisitionLexicon
 from app.modules.catalogue_ingestion.evidence_block_models import (
+    EVIDENCE_BLOCK_BUILDER_VERSION,
     EVIDENCE_ROUTER_VERSION,
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
@@ -98,7 +99,11 @@ class CatalogueEvidenceRouter:
         blocks = list(
             self.session.scalars(
                 select(CatalogueEvidenceBlock)
-                .where(CatalogueEvidenceBlock.candidate_id == candidate_id)
+                .where(
+                    CatalogueEvidenceBlock.candidate_id == candidate_id,
+                    CatalogueEvidenceBlock.builder_version
+                    == EVIDENCE_BLOCK_BUILDER_VERSION,
+                )
                 .order_by(
                     CatalogueEvidenceBlock.source_artifact_id,
                     CatalogueEvidenceBlock.block_index,

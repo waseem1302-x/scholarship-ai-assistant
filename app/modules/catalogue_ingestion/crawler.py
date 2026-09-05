@@ -80,6 +80,7 @@ _NEGATIVE_TERMS = (
     "berita",
 )
 _HIGH_VALUE_LINK_TERMS = (
+    "about",
     "frequently asked question",
     "faq",
     "rules",
@@ -93,6 +94,7 @@ _HIGH_VALUE_LINK_TERMS = (
 )
 _DEFAULT_LEXICON: dict[str, tuple[str, ...]] = {
     "identity": (
+        "about",
         "scholarship",
         "scholarships",
         "award",
@@ -526,7 +528,53 @@ def _host(value: str) -> str | None:
 
 
 def _is_authentication_or_session_link(url: str) -> bool:
-    return is_authentication_or_session_url(url)
+    path = urlsplit(url).path.casefold().rstrip("/")
+    return is_authentication_or_session_url(url) or path.endswith(
+        ("/register", "/registration", "/sign-up", "/signup")
+    )
+
+
+def _is_excluded_section_link(url: str) -> bool:
+    segments = {part for part in urlsplit(url).path.casefold().split("/") if part}
+    return bool(segments & {"blog", "news", "newsroom", "press", "privacy"})
+
+
+def _enumerated_detail_urls(links: tuple[FetchedLink, ...]) -> set[str]:
+    """Identify high-cardinality item pages whose labels are already present on the list page."""
+
+    groups: dict[tuple[str, str], list[str]] = {}
+    collection_segments = {
+        "cities",
+        "city",
+        "institutions",
+        "programmes",
+        "programs",
+        "subjects",
+        "subject",
+        "universities",
+        "university",
+    }
+    for link in links:
+        normalized = normalize_crawl_url(link.url)
+        if (
+            normalized is None
+            or _looks_like_document(normalized)
+            or _looks_like_calendar(normalized)
+        ):
+            continue
+        parsed = urlsplit(normalized)
+        segments = [part for part in parsed.path.casefold().split("/") if part]
+        if len(segments) < 2 or segments[-2] not in collection_segments:
+            continue
+        groups.setdefault((parsed.hostname or "", "/".join(segments[:-1])), []).append(
+            normalized
+        )
+    return {
+        url
+        for urls in groups.values()
+        if len(set(urls)) >= 5
+        for url in urls
+    }
 
 
 def score_crawl_link(
@@ -904,6 +952,7 @@ class BoundedOfficialSiteCrawler:
 
         def enqueue_links(links: tuple[FetchedLink, ...], *, depth: int) -> None:
             considered = 0
+            enumerated_detail_urls = _enumerated_detail_urls(links)
             for link in links:
                 if considered >= limits.max_links_per_page:
                     break
@@ -924,6 +973,24 @@ class BoundedOfficialSiteCrawler:
                             url=normalized,
                             depth=depth,
                             reason="authentication_or_session_link",
+                        )
+                    )
+                    continue
+                if normalized in enumerated_detail_urls:
+                    rejected.append(
+                        RejectedCrawlLink(
+                            url=normalized,
+                            depth=depth,
+                            reason="enumerated_detail_link",
+                        )
+                    )
+                    continue
+                if _is_excluded_section_link(normalized):
+                    rejected.append(
+                        RejectedCrawlLink(
+                            url=normalized,
+                            depth=depth,
+                            reason="not_scholarship_relevant",
                         )
                     )
                     continue

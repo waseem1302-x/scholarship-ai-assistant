@@ -862,7 +862,7 @@ def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
     assert "acquisition_snapshot_missing" in candidate.validation_errors
 
 
-def test_provider_timeout_does_not_abort_independent_bundle_jobs(db_session) -> None:
+def test_provider_timeout_does_not_create_a_retry_storm(db_session) -> None:
     class TimeoutOnceBundleProvider:
         name = "fake_timeout_once"
         model = "fake-timeout-once-v1"
@@ -933,9 +933,8 @@ def test_provider_timeout_does_not_abort_independent_bundle_jobs(db_session) -> 
             )
         )
     )
-    assert provider.calls > 1
+    assert provider.calls == 1
     assert any(job.state is CatalogueJobState.FAILED for job in jobs)
-    assert any(job.state is CatalogueJobState.SUCCEEDED for job in jobs)
 
 
 def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_session) -> None:

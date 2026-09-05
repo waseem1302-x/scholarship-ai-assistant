@@ -38,14 +38,17 @@ from app.modules.catalogue_ingestion.provider import (
 from app.modules.catalogue_ingestion.provider_transport import send_json_request
 from app.modules.catalogue_ingestion.schemas import ExtractionUsage
 
-CLAIM_BUNDLE_PROMPT_VERSION = "catalogue-claim-bundle-prompt.v2"
+CLAIM_BUNDLE_PROMPT_VERSION = "catalogue-claim-bundle-prompt.v3"
 CLAIM_BUNDLE_SYSTEM_INSTRUCTION = f"""{CLAIM_SYSTEM_INSTRUCTION}
 
-This request may contain several compatible OBJECTIVES at once. Every atomic claim MUST include its
+This request may contain every applicable OBJECTIVE at once. Every atomic claim MUST include its
 objective. Do not transfer a fact between objectives. Use shared evidence references: declare an
 excerpt once in evidence_refs and let one or more claims point to that ref_id. Every evidence
 reference MUST name one supplied block_key and use the absolute source-artifact character offsets
 recorded in that block header, not prompt-relative offsets. Never cite block metadata as evidence.
+
+Extract each distinct fact once under its best objective. Do not repeat a fact merely because it
+could relate to another objective, and do not restate the same evidence in multiple references.
 
 Return objective_coverage exactly once for every requested objective. A coverage state describes
 only the supplied evidence blocks, not the whole website. If the supplied routed blocks are

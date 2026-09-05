@@ -98,11 +98,12 @@ def test_bounded_crawler_fetches_root_then_highest_value_same_host_pages() -> No
     assert fetcher.calls == [ROOT, deadline, funding]
     assert [page.url for page in result.pages] == [ROOT, deadline, funding]
     assert news not in fetcher.calls
-    assert result.budget_exhausted is True
-    assert result.frontier_exhausted is False
+    assert result.budget_exhausted is False
+    assert result.frontier_exhausted is True
 
 
 def test_completeness_crawler_admits_only_scholarship_information_links() -> None:
+    about = "https://example.edu/scholarships/csc/about"
     faq = "https://example.edu/scholarships/csc/faq"
     rules = "https://example.edu/scholarships/csc/rules.pdf"
     institutions = "https://example.edu/scholarships/csc/participating-universities"
@@ -116,6 +117,7 @@ def test_completeness_crawler_admits_only_scholarship_information_links() -> Non
                 "Official scholarship overview.",
                 links=(
                     FetchedLink(url=faq, text="Frequently asked questions"),
+                    FetchedLink(url=about, text="About the scholarship"),
                     FetchedLink(url=rules, text="Rules of participation PDF"),
                     FetchedLink(url=institutions, text="Participating universities"),
                     FetchedLink(url=news, text="News archive"),
@@ -124,6 +126,7 @@ def test_completeness_crawler_admits_only_scholarship_information_links() -> Non
                 ),
             ),
             faq: fetched_page(faq, "Scholarship application answers and eligibility guidance."),
+            about: fetched_page(about, "About the official scholarship provider and purpose."),
             rules: fetched_page(
                 rules,
                 "Official participation rules and required documents.",
@@ -152,12 +155,50 @@ def test_completeness_crawler_admits_only_scholarship_information_links() -> Non
         ),
     )
 
-    assert set(fetcher.calls) == {ROOT, faq, rules, institutions}
+    assert set(fetcher.calls) == {ROOT, about, faq, rules, institutions}
     assert {item.url for item in result.rejected if item.reason == "not_scholarship_relevant"} == {
         news,
         privacy,
         university_profile,
     }
+
+
+def test_crawler_keeps_list_content_without_visiting_every_enumerated_item() -> None:
+    register = "https://example.edu/register"
+    subjects = tuple(
+        FetchedLink(
+            url=f"https://example.edu/subject/{index}",
+            text=f"Scholarship subject {index}",
+        )
+        for index in range(1, 7)
+    )
+    fetcher = FakeFetcher(
+        {
+            ROOT: fetched_page(
+                ROOT,
+                "Official scholarship subject list and application link.",
+                links=(FetchedLink(url=register, text="Apply now"), *subjects),
+            )
+        }
+    )
+
+    result = BoundedOfficialSiteCrawler(fetcher=fetcher).crawl(
+        ROOT,
+        budget=CrawlBudget(
+            max_fetch_attempts=20,
+            max_accepted_artifacts=None,
+            max_depth=None,
+            max_total_bytes=None,
+            max_host_requests=20,
+            minimum_link_score=30,
+            per_host_interval_seconds=0,
+        ),
+    )
+
+    assert fetcher.calls == [ROOT]
+    reasons = {item.url: item.reason for item in result.rejected}
+    assert reasons[register] == "authentication_or_session_link"
+    assert all(reasons[item.url] == "enumerated_detail_link" for item in subjects)
 
 
 def test_crawler_returns_and_resumes_a_relevant_frontier_without_refetching_pages() -> None:

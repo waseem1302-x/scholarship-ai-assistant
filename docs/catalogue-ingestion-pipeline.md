@@ -50,16 +50,22 @@ must cite an excerpt present in the fetched normalized source. Inferred model kn
 ## Supported and deliberately deferred adapters
 
 Seed-supplied URLs are implemented as discovery leads. When
-`APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED=true`, an already-classified official root is expanded in
-small resumable rounds. Links are admitted only when they can support a missing scholarship
+`APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED=true`, an already-classified official root is expanded across
+the visible scholarship-relevant link frontier before paid extraction begins. Links are admitted
+only when they can support a scholarship
 objective such as funding, eligibility, documents, application steps, dates, programmes, official
 FAQ/rules, or the participating-institution list. News, generic navigation, legal pages, and
-individual participating-university profile sites are not part of the scholarship crawl. Sitemap
-discovery is a fallback after visible relevant links are exhausted and uses the same admission gate.
+individual participating-university profile sites are not part of the scholarship crawl. Repeated
+item links such as every subject, city, or institution profile remain represented by their visible
+parent list instead of being crawled individually. Hidden sitemap expansion is not used.
 
 Each fetched official HTML page or PDF remains a separate evidence artifact. Extraction routes only
-objective-relevant blocks to a model job and feeds objective closure back into the next acquisition
-round. The run stops when the scholarship contract is covered and no relevant frontier remains;
+relevant compact evidence blocks into packets, and each block appears in only one primary model
+job containing all applicable scholarship objectives. Adjacent blocks from one artifact are packed
+within the provider input budget, so objectives classify coverage without multiplying model calls.
+Structured iCalendar sources are converted to cited timeline claims locally.
+The run stops when the visible relevant frontier is exhausted and each objective is present,
+explicitly not applicable, not stated by the reviewed sources, or blocked with a recorded failure;
 explicit run-wide fetch, model-call, cost, and wall-time ceilings remain emergency failures rather
 than normal completeness targets.
 

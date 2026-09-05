@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -14,42 +13,23 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective
-from app.modules.catalogue_ingestion.crawler import AcquisitionLexicon
 from app.modules.catalogue_ingestion.evidence_block_models import (
+    EVIDENCE_BLOCK_BUILDER_VERSION,
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
 )
 from app.modules.catalogue_ingestion.models import (
     CandidateSourceStatus,
     CatalogueCandidateSource,
+    CatalogueSourceArtifact,
 )
 from app.modules.catalogue_ingestion.topology_models import CatalogueCoverageCell
 
-EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v2"
+EXTRACTION_JOB_PLANNER_VERSION = "catalogue-extraction-jobs.v3"
 _DEFAULT_PROMPT_RESERVE_CHARS = 8_000
 _DEFAULT_MAX_EVIDENCE_CHARS = 48_000
 _MIN_RECOVERY_SPAN_CHARS = 1_500
-
-_COMPATIBLE_OBJECTIVE_GROUPS: tuple[tuple[ClaimObjective, ...], ...] = (
-    (
-        ClaimObjective.IDENTITY,
-        ClaimObjective.PROGRAMMES,
-        ClaimObjective.PROGRAMME_DETAILS,
-        ClaimObjective.ROUTES,
-    ),
-    (
-        ClaimObjective.ELIGIBILITY,
-        ClaimObjective.ELIGIBILITY_CONTEXT,
-    ),
-    (
-        ClaimObjective.DOCUMENTS_CORE,
-        ClaimObjective.DOCUMENTS_REQUIREMENTS,
-        ClaimObjective.DOCUMENTS_COUNTS,
-        ClaimObjective.DOCUMENTS_FORMAT,
-    ),
-    (ClaimObjective.FUNDING,),
-    (ClaimObjective.APPLICATION_TIMELINE,),
-)
+_MAX_RECOVERY_DEPTH = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +65,7 @@ class ExtractionJobPlan:
     estimated_input_tokens: int
     max_output_tokens: int
     estimated_cost_upper: Decimal
+    recovery_depth: int = 0
     planner_version: str = EXTRACTION_JOB_PLANNER_VERSION
 
 
@@ -100,7 +81,7 @@ class CandidateExtractionPlan:
 
 
 class CatalogueExtractionPlanner:
-    """Create bounded paid-work jobs only from selected deterministic relevance routes."""
+    """Create bounded paid-work jobs over every accepted official evidence block."""
 
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -135,12 +116,18 @@ class CatalogueExtractionPlanner:
                     CatalogueCandidateSource,
                     CatalogueCandidateSource.id == CatalogueEvidenceBlock.source_id,
                 )
+                .join(
+                    CatalogueSourceArtifact,
+                    CatalogueSourceArtifact.id == CatalogueEvidenceBlock.source_artifact_id,
+                )
                 .where(
                     CatalogueEvidenceBlock.candidate_id == candidate_id,
+                    CatalogueEvidenceBlock.builder_version == EVIDENCE_BLOCK_BUILDER_VERSION,
                     CatalogueCandidateSource.candidate_id == candidate_id,
                     CatalogueCandidateSource.is_official.is_(True),
                     CatalogueCandidateSource.status == CandidateSourceStatus.FETCHED,
                     CatalogueCandidateSource.content_hash.is_not(None),
+                    CatalogueSourceArtifact.content_type != "text/calendar",
                     CatalogueEvidenceBlock.source_content_hash
                     == CatalogueCandidateSource.content_hash,
                 )
@@ -167,7 +154,7 @@ class CatalogueExtractionPlanner:
         else:
             route_query = route_query.where(CatalogueEvidenceRoute.coverage_cell_id.is_(None))
         routes = list(self.session.scalars(route_query))
-        if not blocks or not routes:
+        if not blocks:
             return CandidateExtractionPlan(
                 candidate_id=candidate_id,
                 jobs=(),
@@ -184,40 +171,20 @@ class CatalogueExtractionPlanner:
             if route.evidence_block_id in block_by_id:
                 routes_by_block.setdefault(route.evidence_block_id, []).append(route)
         jobs: list[ExtractionJobPlan] = []
-        for objective_group in _COMPATIBLE_OBJECTIVE_GROUPS:
-            group_set = set(objective_group)
-            by_artifact: dict[uuid.UUID, list[CatalogueEvidenceBlock]] = {}
-            for block_id, block_routes in routes_by_block.items():
-                if any(route.objective in group_set for route in block_routes):
-                    block = block_by_id[block_id]
-                    by_artifact.setdefault(block.source_artifact_id, []).append(block)
-            for artifact_blocks in by_artifact.values():
-                artifact_blocks.sort(key=lambda block: block.block_index)
-                for chunk in _chunk_blocks(artifact_blocks, max_evidence_chars=max_evidence_chars):
-                    chunk_ids = {block.id for block in chunk}
-                    chunk_routes = [
-                        route
-                        for block_id in chunk_ids
-                        for route in routes_by_block.get(block_id, [])
-                        if route.objective in group_set
-                    ]
-                    objectives = tuple(
-                        objective
-                        for objective in objective_group
-                        if any(route.objective is objective for route in chunk_routes)
-                    )
-                    if not objectives:
-                        continue
-                    jobs.append(
-                        _build_job(
-                            chunk,
-                            chunk_routes,
-                            objectives=objectives,
-                            run_max_output_tokens=run_max_output_tokens,
-                            input_cost_per_million=input_cost_per_million,
-                            output_cost_per_million=output_cost_per_million,
-                        )
-                    )
+        by_artifact: dict[uuid.UUID, list[CatalogueEvidenceBlock]] = {}
+        for block in blocks:
+            by_artifact.setdefault(block.source_artifact_id, []).append(block)
+        for artifact_blocks in by_artifact.values():
+            jobs.extend(
+                _build_artifact_jobs(
+                    artifact_blocks,
+                    routes_by_block=routes_by_block,
+                    max_evidence_chars=max_evidence_chars,
+                    run_max_output_tokens=run_max_output_tokens,
+                    input_cost_per_million=input_cost_per_million,
+                    output_cost_per_million=output_cost_per_million,
+                )
+            )
 
         jobs.sort(
             key=lambda job: (
@@ -240,6 +207,39 @@ class CatalogueExtractionPlanner:
         )
 
 
+def _build_artifact_jobs(
+    blocks: list[CatalogueEvidenceBlock],
+    *,
+    routes_by_block: Mapping[uuid.UUID, Sequence[CatalogueEvidenceRoute]],
+    max_evidence_chars: int,
+    run_max_output_tokens: int,
+    input_cost_per_million: Decimal,
+    output_cost_per_million: Decimal,
+) -> tuple[ExtractionJobPlan, ...]:
+    """Extract each evidence block once, with every objective relevant to that packet."""
+
+    ordered = sorted(blocks, key=lambda block: block.block_index)
+    jobs: list[ExtractionJobPlan] = []
+    for chunk in _chunk_blocks(ordered, max_evidence_chars=max_evidence_chars):
+        chunk_routes = [
+            route
+            for block in chunk
+            for route in routes_by_block.get(block.id, ())
+            if route.selected
+        ]
+        jobs.append(
+            _build_job(
+                chunk,
+                chunk_routes,
+                objectives=tuple(ClaimObjective),
+                run_max_output_tokens=run_max_output_tokens,
+                input_cost_per_million=input_cost_per_million,
+                output_cost_per_million=output_cost_per_million,
+            )
+        )
+    return tuple(jobs)
+
+
 def split_extraction_job(
     job: ExtractionJobPlan,
     *,
@@ -251,6 +251,8 @@ def split_extraction_job(
 ) -> tuple[ExtractionJobPlan, ...]:
     """Deterministically split a truncated job without losing evidence coverage."""
 
+    if job.recovery_depth >= _MAX_RECOVERY_DEPTH:
+        return ()
     split_single_block = len(job.evidence) == 1
     if not split_single_block:
         midpoint = len(job.evidence) // 2
@@ -267,12 +269,7 @@ def split_extraction_job(
         )
     children: list[ExtractionJobPlan] = []
     objective_set = set(job.objectives)
-    slice_objectives = (
-        _objectives_for_slices(parts, job.objectives, blocks_by_id)
-        if split_single_block
-        else None
-    )
-    for part_index, part in enumerate(parts):
+    for part in parts:
         part_ids = {item.block_id for item in part}
         part_routes = [
             route
@@ -280,60 +277,20 @@ def split_extraction_job(
             if route.selected
             and route.evidence_block_id in part_ids
             and route.objective in objective_set
-            and (slice_objectives is None or route.objective in slice_objectives[part_index])
         ]
-        objectives = tuple(
-            objective
-            for objective in job.objectives
-            if any(route.objective is objective for route in part_routes)
-        )
-        if not objectives:
-            continue
         children.append(
             _build_job_from_evidence(
                 part,
                 part_routes,
                 blocks_by_id=blocks_by_id,
-                objectives=objectives,
+                objectives=job.objectives,
                 run_max_output_tokens=run_max_output_tokens,
                 input_cost_per_million=input_cost_per_million,
                 output_cost_per_million=output_cost_per_million,
-                output_token_floor=run_max_output_tokens,
+                recovery_depth=job.recovery_depth + 1,
             )
         )
     return tuple(children)
-
-
-def _objectives_for_slices(
-    parts: tuple[tuple[ExtractionEvidenceRef, ...], ...],
-    objectives: tuple[ClaimObjective, ...],
-    blocks_by_id: Mapping[uuid.UUID, CatalogueEvidenceBlock],
-) -> tuple[set[ClaimObjective], ...]:
-    """Route a split block by terms in each actual slice, retaining a safe tie fallback."""
-
-    lexicon = AcquisitionLexicon.defaults()
-    assigned = [set() for _part in parts]
-    texts: list[str] = []
-    for part in parts:
-        fragments: list[str] = []
-        for evidence in part:
-            block = blocks_by_id[evidence.block_id]
-            start = evidence.start_offset - block.start_offset
-            end = evidence.end_offset - block.start_offset
-            fragments.append(block.block_text[start:end].casefold())
-        texts.append("\n".join(fragments))
-    for objective in objectives:
-        terms = lexicon.terms_by_objective.get(objective.value, ())
-        scores = [sum(text.count(term.casefold()) for term in terms) for text in texts]
-        best = max(scores, default=0)
-        if best == 0:
-            for target in assigned:
-                target.add(objective)
-            continue
-        for index, score in enumerate(scores):
-            if score == best:
-                assigned[index].add(objective)
-    return tuple(assigned)
 
 
 def _chunk_blocks(
@@ -400,7 +357,7 @@ def _build_job_from_evidence(
     run_max_output_tokens: int,
     input_cost_per_million: Decimal,
     output_cost_per_million: Decimal,
-    output_token_floor: int = 0,
+    recovery_depth: int = 0,
 ) -> ExtractionJobPlan:
     if not evidence:
         raise ValueError("one extraction job requires evidence")
@@ -430,15 +387,7 @@ def _build_job_from_evidence(
             ),
         )
     )
-    entity_estimate = max(1, len(scopes), len(blocks), _enumerated_row_estimate(evidence_text))
-    max_output_tokens = min(
-        run_max_output_tokens,
-        max(
-            output_token_floor,
-            600,
-            500 + len(objectives) * 450 + entity_estimate * 120,
-        ),
-    )
+    max_output_tokens = run_max_output_tokens
     estimated_input_tokens = max(1, (len(evidence_text) + _DEFAULT_PROMPT_RESERVE_CHARS) // 4)
     estimated_cost_upper = (
         Decimal(estimated_input_tokens) * input_cost_per_million
@@ -458,16 +407,8 @@ def _build_job_from_evidence(
         estimated_input_tokens=estimated_input_tokens,
         max_output_tokens=max_output_tokens,
         estimated_cost_upper=estimated_cost_upper,
+        recovery_depth=recovery_depth,
     )
-
-
-def _enumerated_row_estimate(text: str) -> int:
-    rows = 0
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if re.match(r"^(?:[-*•]|\d{1,3}[.)]|\|)\s*\S", line):
-            rows += 1
-    return rows
 
 
 def _render_block(block: CatalogueEvidenceBlock) -> str:
