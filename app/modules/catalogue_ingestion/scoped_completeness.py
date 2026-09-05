@@ -41,7 +41,7 @@ from app.modules.catalogue_ingestion.topology_models import (
     SourceScopeRelationship,
 )
 
-COVERAGE_EVALUATOR_VERSION = "catalogue-scoped-coverage.v1"
+COVERAGE_EVALUATOR_VERSION = "catalogue-scoped-coverage.v2"
 
 _SCOPE_FIELD_TYPES: dict[str, ScopeNodeType] = {
     "scholarship_family_key": ScopeNodeType.SCHOLARSHIP_FAMILY,
@@ -116,11 +116,26 @@ class _CoverageResult:
     resolved_item_count: int
 
 
+def _coverage_result_is_complete(result: _CoverageResult) -> bool:
+    return result.state in _TERMINAL_COMPLETE_STATES or (
+        result.state is ScopedCoverageState.NOT_STATED
+        and not result.missing_frontier_reasons
+    )
+
+
+def _decision_is_complete(decision: ScopeCoverageDecision) -> bool:
+    return decision.state in _TERMINAL_COMPLETE_STATES or (
+        decision.state is ScopedCoverageState.NOT_STATED
+        and not decision.missing_frontier_reasons
+    )
+
+
 def evaluate_scoped_completeness(
     *,
     artifacts: Iterable[CatalogueSourceArtifact],
     resolution: ClaimResolution,
     provider_objective_coverage: dict[str, str] | None = None,
+    evidence_frontier_complete: bool = False,
 ) -> ClaimResolution:
     """Compute scoped coverage from validated claims and persisted topology.
 
@@ -137,6 +152,7 @@ def evaluate_scoped_completeness(
         candidate_id=candidate_id,
         resolution=resolution,
         provider_signals=provider_signals,
+        evidence_frontier_complete=evidence_frontier_complete,
     )
 
 
@@ -150,6 +166,7 @@ class _PersistentCoverageEvaluator:
         candidate_id: uuid.UUID,
         resolution: ClaimResolution,
         provider_signals: dict[str, str],
+        evidence_frontier_complete: bool,
     ) -> ClaimResolution:
         candidate = self.session.get(CatalogueCandidate, candidate_id)
         if candidate is None:
@@ -269,6 +286,7 @@ class _PersistentCoverageEvaluator:
                     edges=edges,
                     source_by_id=source_by_id,
                     provider_signal=provider_signals.get(objective.value),
+                    evidence_frontier_complete=evidence_frontier_complete,
                 )
                 scoped_results.append((node, result))
 
@@ -279,6 +297,7 @@ class _PersistentCoverageEvaluator:
                 objective=objective,
                 direct=direct_root,
                 children=children,
+                evidence_frontier_complete=evidence_frontier_complete,
             )
             root_results[objective] = root_result
 
@@ -293,6 +312,7 @@ class _PersistentCoverageEvaluator:
                     edges=edges,
                     sources=source_by_id,
                     provider_signal=provider_signals.get(objective.value),
+                    evidence_frontier_complete=evidence_frontier_complete,
                 )
                 cell = self._upsert_cell(
                     candidate_id=candidate.id,
@@ -325,7 +345,7 @@ class _PersistentCoverageEvaluator:
                 f"coverage:{decision.scope_type}:{decision.scope_key}:"
                 f"{decision.objective.value}:{decision.state.value}"
                 for decision in decisions
-                if decision.required and decision.state not in _TERMINAL_COMPLETE_STATES
+                if decision.required and not _decision_is_complete(decision)
             }
         )
         return resolution.model_copy(
@@ -655,6 +675,7 @@ class _PersistentCoverageEvaluator:
         edges: list[CatalogueScopeEdge],
         source_by_id: dict[uuid.UUID, CatalogueCandidateSource],
         provider_signal: str | None,
+        evidence_frontier_complete: bool,
     ) -> _CoverageResult:
         supporting = [
             item
@@ -817,6 +838,22 @@ class _PersistentCoverageEvaluator:
             )
 
         if supporting:
+            if (
+                evidence_frontier_complete
+                and provider_signal == ObjectiveCoverageState.COMPLETE.value
+            ):
+                return _CoverageResult(
+                    state=ScopedCoverageState.COMPLETE,
+                    reason=(
+                        "validated claims cover the objective after the official evidence "
+                        "frontier was exhausted"
+                    ),
+                    missing_frontier_reasons=[],
+                    supporting_claim_ids=support_ids,
+                    supporting_evidence_ids=evidence_ids,
+                    expected_item_count=resolved_items,
+                    resolved_item_count=resolved_items,
+                )
             return _CoverageResult(
                 state=ScopedCoverageState.PARTIAL,
                 reason=(
@@ -833,9 +870,18 @@ class _PersistentCoverageEvaluator:
             return _CoverageResult(
                 state=ScopedCoverageState.NOT_STATED,
                 reason=(
-                    "provider absence signal is retained but does not prove semantic completeness"
+                    "the objective was not stated in the exhausted official evidence frontier"
+                    if evidence_frontier_complete
+                    else (
+                        "provider absence signal is retained but does not prove semantic "
+                        "completeness"
+                    )
                 ),
-                missing_frontier_reasons=["verify_absence_with_deterministic_source_coverage"],
+                missing_frontier_reasons=(
+                    []
+                    if evidence_frontier_complete
+                    else ["verify_absence_with_deterministic_source_coverage"]
+                ),
                 supporting_claim_ids=[],
                 supporting_evidence_ids=[],
                 expected_item_count=None,
@@ -868,6 +914,7 @@ class _PersistentCoverageEvaluator:
         objective: ClaimObjective,
         direct: _CoverageResult,
         children: list[tuple[CatalogueScopeNode, _CoverageResult]],
+        evidence_frontier_complete: bool,
     ) -> _CoverageResult:
         aggregate_support_ids = sorted(
             set(direct.supporting_claim_ids).union(
@@ -905,7 +952,7 @@ class _PersistentCoverageEvaluator:
                     reason=f"one or more required child scopes are {state.value}",
                     frontier=[f"resolve_child_scope:{state.value}"],
                 )
-        if any(state not in _TERMINAL_COMPLETE_STATES for state in child_states):
+        if any(not _coverage_result_is_complete(result) for _node, result in children):
             return _aggregate_result(
                 base,
                 state=ScopedCoverageState.PARTIAL,
@@ -921,6 +968,18 @@ class _PersistentCoverageEvaluator:
             expected = _expected_child_count(root, enumerated_type)
             actual = len({node.canonical_key for node in enumerated_children})
             if expected is None:
+                if evidence_frontier_complete:
+                    return _aggregate_result(
+                        base,
+                        state=ScopedCoverageState.COMPLETE,
+                        reason=(
+                            "the exhausted official evidence frontier establishes the observed "
+                            "authoritative branch set"
+                        ),
+                        frontier=[],
+                        expected=actual,
+                        resolved=actual,
+                    )
                 return _aggregate_result(
                     base,
                     state=ScopedCoverageState.PARTIAL,
@@ -953,7 +1012,7 @@ class _PersistentCoverageEvaluator:
                 resolved=actual,
             )
 
-        if base.state in _TERMINAL_COMPLETE_STATES:
+        if _coverage_result_is_complete(base):
             return _aggregate_result(
                 base,
                 state=base.state,
@@ -1497,6 +1556,7 @@ def _coverage_input_fingerprint(
     edges: list[CatalogueScopeEdge],
     sources: dict[uuid.UUID, CatalogueCandidateSource],
     provider_signal: str | None,
+    evidence_frontier_complete: bool,
 ) -> str:
     payload = {
         "evaluator": COVERAGE_EVALUATOR_VERSION,
@@ -1535,6 +1595,7 @@ def _coverage_input_fingerprint(
             for item in edges
         ),
         "provider_signal": provider_signal,
+        "evidence_frontier_complete": evidence_frontier_complete,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()

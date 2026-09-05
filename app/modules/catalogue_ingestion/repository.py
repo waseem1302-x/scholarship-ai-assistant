@@ -387,6 +387,8 @@ class CatalogueIngestionRepository:
         run_lease_token: str,
         candidate_lease_token: str,
         checkpoint: dict[str, object] | None = None,
+        retryable_error_codes: set[str] | None = None,
+        max_attempts: int = 1,
     ) -> CatalogueResumableJob:
         self.assert_candidate_lease(
             candidate_id,
@@ -415,7 +417,11 @@ class CatalogueIngestionRepository:
                 attempt_count=1,
             )
             self.session.add(job)
-        elif job.state not in {CatalogueJobState.SUCCEEDED, CatalogueJobState.FAILED}:
+        elif job.state not in {CatalogueJobState.SUCCEEDED, CatalogueJobState.FAILED} or (
+            job.state is CatalogueJobState.FAILED
+            and job.error_code in (retryable_error_codes or set())
+            and job.attempt_count < max_attempts
+        ):
             job.stage = stage
             job.state = CatalogueJobState.RUNNING
             job.worker_id = worker_id

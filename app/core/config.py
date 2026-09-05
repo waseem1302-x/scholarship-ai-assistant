@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     catalogue_ai_max_estimated_cost_per_run: Decimal = Field(
         default=Decimal("50.00"), ge=0, le=10_000
     )
-    catalogue_completeness_mode_enabled: bool = False
+    catalogue_completeness_mode_enabled: bool = True
     catalogue_completeness_max_fetch_attempts: int = Field(default=1_000, ge=1, le=10_000)
     catalogue_completeness_max_model_calls: int = Field(default=500, ge=1, le=5_000)
     catalogue_completeness_max_estimated_cost_per_run: Decimal = Field(
@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     )
     catalogue_discovery_max_tool_calls_per_provider_request: int = Field(default=1, ge=0, le=5)
     catalogue_bounded_crawling_enabled: bool = True
-    catalogue_browser_fetching_enabled: bool = False
+    catalogue_browser_fetching_enabled: bool = True
     catalogue_document_intelligence_enabled: bool = False
     catalogue_docling_enabled: bool = True
     catalogue_docling_models_dir: str = ".docling-models"

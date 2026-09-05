@@ -16,7 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from typing import Any
 from xml.etree import ElementTree
@@ -56,6 +56,7 @@ _IMAGE_TYPES = {
 }
 _ACCEPTED_TYPES = {
     "application/pdf",
+    "text/calendar",
     "text/plain",
     *_HTML_TYPES,
     *_XML_TYPES,
@@ -144,7 +145,9 @@ class CatalogueSafeSourceFetcher(SafeSourceFetcher):
             final_url=final_url,
         )
         text = conversion.text.strip()
-        if sniffed_type == "application/pdf" and len(" ".join(text.split())) < 20:
+        if sniffed_type == "application/pdf" and (
+            conversion.requires_ocr or len(" ".join(text.split())) < 20
+        ):
             raise SourceFetchError("source_requires_ocr: textless_or_scanned_pdf")
         if len(" ".join(text.split())) < 20 and sniffed_type not in _XML_TYPES:
             raise SourceFetchError("source_has_no_extractable_evidence")
@@ -178,6 +181,9 @@ class _ConvertedPayload:
     coordinates: tuple[dict[str, Any], ...] = ()
     canonical_url_hint: str | None = None
     language_hints: tuple[str, ...] = ()
+    page_count: int = 0
+    text_page_count: int = 0
+    requires_ocr: bool = False
 
 
 def sniff_catalogue_mime(payload: bytes, *, declared_type: str, url: str) -> str:
@@ -221,7 +227,7 @@ def convert_catalogue_payload(
         return _convert_html(payload, final_url=final_url)
     if content_type in _XML_TYPES:
         return _convert_xml(payload, final_url=final_url)
-    if content_type == "text/plain":
+    if content_type in {"text/plain", "text/calendar"}:
         return _ConvertedPayload(_normalize_text(payload.decode("utf-8", errors="ignore")))
     if content_type == "text/csv":
         return _convert_csv(payload)
@@ -582,14 +588,19 @@ def _convert_pdf_pypdf(payload: bytes) -> _ConvertedPayload:
             raise SourceFetchError("unsupported_or_oversized_source_pdf")
         pages: list[str] = []
         coordinates: list[dict[str, Any]] = []
+        text_page_count = 0
         for page_number, page in enumerate(reader.pages, start=1):
             value = page.extract_text() or ""
             pages.append(value)
             if value.strip() and len(coordinates) < _MAX_COORDINATES:
                 coordinates.append({"page": page_number})
+            if len(value.split()) >= 10:
+                text_page_count += 1
         return _ConvertedPayload(
             text=_normalize_text("\n".join(pages)),
             coordinates=tuple(coordinates),
+            page_count=len(reader.pages),
+            text_page_count=text_page_count,
         )
     except SourceFetchError:
         raise
@@ -598,6 +609,16 @@ def _convert_pdf_pypdf(payload: bytes) -> _ConvertedPayload:
 
 
 def _convert_pdf(payload: bytes, *, prefer_docling: bool = True) -> _ConvertedPayload:
+    native: _ConvertedPayload | None = None
+    native_error: SourceFetchError | None = None
+    try:
+        native = _convert_pdf_pypdf(payload)
+    except SourceFetchError as exc:
+        native_error = exc
+
+    if native is not None and _native_pdf_text_is_sufficient(native):
+        return native
+
     if prefer_docling:
         try:
             from app.core.config import get_settings
@@ -619,6 +640,8 @@ def _convert_pdf(payload: bytes, *, prefer_docling: bool = True) -> _ConvertedPa
                     return _ConvertedPayload(
                         text=_normalize_text(result.text),
                         coordinates=result.coordinates,
+                        page_count=result.pages_count,
+                        text_page_count=result.pages_count,
                     )
         except DoclingConversionError:
             pass
@@ -627,7 +650,17 @@ def _convert_pdf(payload: bytes, *, prefer_docling: bool = True) -> _ConvertedPa
         except Exception:
             pass
 
-    return _convert_pdf_pypdf(payload)
+    if native is not None:
+        return replace(native, requires_ocr=True)
+    assert native_error is not None
+    raise native_error
+
+
+def _native_pdf_text_is_sufficient(converted: _ConvertedPayload) -> bool:
+    words = len(converted.text.split())
+    if words < 20 or converted.page_count < 1:
+        return False
+    return converted.text_page_count == converted.page_count
 
 
 class _BoundedZip:

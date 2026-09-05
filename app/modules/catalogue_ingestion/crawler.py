@@ -41,7 +41,6 @@ _NON_CONTENT_EXTENSIONS = {
     ".css",
     ".eot",
     ".ico",
-    ".ics",
     ".js",
     ".map",
     ".otf",
@@ -323,8 +322,8 @@ class CrawlBudget:
 
     max_fetch_attempts: int = 12
     max_accepted_artifacts: int | None = _MAX_ROOT_PAGES
-    max_depth: int = 2
-    max_total_bytes: int = _DEFAULT_TOTAL_BYTES
+    max_depth: int | None = 2
+    max_total_bytes: int | None = _DEFAULT_TOTAL_BYTES
     max_host_requests: int = 10
     max_wall_seconds: float | None = _DEFAULT_WALL_SECONDS
     max_browser_renders: int = 0
@@ -350,9 +349,9 @@ class CrawlBudget:
             raise ValueError(
                 f"max_accepted_artifacts must be between 1 and {_MAX_ACCEPTED_ARTIFACTS}"
             )
-        if not 0 <= self.max_depth <= 3:
-            raise ValueError("max_depth must be between 0 and 3")
-        if self.max_total_bytes < 1:
+        if self.max_depth is not None and self.max_depth < 0:
+            raise ValueError("max_depth cannot be negative")
+        if self.max_total_bytes is not None and self.max_total_bytes < 1:
             raise ValueError("max_total_bytes must be positive")
         if self.max_host_requests < 1:
             raise ValueError("max_host_requests must be positive")
@@ -419,6 +418,7 @@ class CrawlResult:
     escalations: tuple[AcquisitionEscalation, ...] = ()
     budget_reasons: tuple[str, ...] = ()
     unresolved_frontier: tuple[str, ...] = ()
+    frontier_exhausted: bool = False
 
 
 @dataclass(order=True, slots=True)
@@ -518,7 +518,14 @@ def classify_static_page(fetched: FetchedSource) -> StaticPageSufficiency:
         return StaticPageSufficiency.CHALLENGE
     if content_type not in {
         "application/pdf",
+        "application/atom+xml",
+        "application/rss+xml",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/xml",
         "application/xhtml+xml",
+        "text/calendar",
+        "text/xml",
         "text/html",
         "text/plain",
         "text/csv",
@@ -572,9 +579,16 @@ def _safe_fetch_with_limit(
         raise
 
 
-def _fetch_with_limit(fetcher: SourceFetcher, url: str, *, max_bytes: int) -> FetchedSource:
+def _fetch_with_limit(
+    fetcher: SourceFetcher,
+    url: str,
+    *,
+    max_bytes: int | None,
+) -> FetchedSource:
     """Fetch through a boundary capable of enforcing the remaining crawl allowance."""
 
+    if max_bytes is None:
+        return fetcher.fetch(url)
     if max_bytes < 1:
         raise SourceFetchError("crawl_byte_budget_exceeded")
     bounded_fetch = getattr(fetcher, "fetch_with_limit", None)
@@ -592,6 +606,7 @@ class BoundedOfficialSiteCrawler:
         self,
         *,
         fetcher: SourceFetcher,
+        browser_fetcher: SourceFetcher | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -600,6 +615,7 @@ class BoundedOfficialSiteCrawler:
         ):
             raise SourceFetchError("crawler_fetcher_does_not_support_byte_budget")
         self.fetcher = fetcher
+        self.browser_fetcher = browser_fetcher
         self.sleeper = sleeper
         self.clock = clock
 
@@ -835,9 +851,10 @@ class BoundedOfficialSiteCrawler:
             depth: int,
             kind: AcquisitionEscalationKind,
             reason: str,
+            capability_enabled: bool | None = None,
         ) -> None:
-            enabled = (
-                browser_enabled
+            enabled = capability_enabled if capability_enabled is not None else (
+                browser_enabled and self.browser_fetcher is not None
                 if kind is AcquisitionEscalationKind.BROWSER_RENDER
                 else ocr_enabled
                 if kind is AcquisitionEscalationKind.OCR
@@ -859,6 +876,7 @@ class BoundedOfficialSiteCrawler:
 
         def fetch_page(item: _QueuedLink) -> bool:
             nonlocal total_bytes, fetch_attempts, accepted_artifacts, document_conversions
+            nonlocal browser_renders
             pulse()
             if limits.max_wall_seconds is not None and elapsed() >= limits.max_wall_seconds:
                 mark_budget("wall_time")
@@ -872,7 +890,7 @@ class BoundedOfficialSiteCrawler:
             ):
                 mark_budget("accepted_artifacts")
                 return False
-            if item.depth > limits.max_depth:
+            if limits.max_depth is not None and item.depth > limits.max_depth:
                 return True
 
             current_host = _host(item.url)
@@ -888,8 +906,12 @@ class BoundedOfficialSiteCrawler:
             if host_requests.get(current_host, 0) >= limits.max_host_requests:
                 mark_budget(f"host_requests:{current_host}")
                 return False
-            remaining_bytes = limits.max_total_bytes - total_bytes
-            if remaining_bytes <= 0:
+            remaining_bytes = (
+                None
+                if limits.max_total_bytes is None
+                else limits.max_total_bytes - total_bytes
+            )
+            if remaining_bytes is not None and remaining_bytes <= 0:
                 mark_budget("bytes")
                 return False
             if (
@@ -944,7 +966,7 @@ class BoundedOfficialSiteCrawler:
                 return True
             pulse()
 
-            if fetched.bytes_read > remaining_bytes:
+            if remaining_bytes is not None and fetched.bytes_read > remaining_bytes:
                 failures.append(
                     CrawlFailure(
                         url=item.url,
@@ -988,24 +1010,77 @@ class BoundedOfficialSiteCrawler:
                 unresolved.add("acquisition_blocked:challenge_or_captcha")
                 return True
             if sufficiency is StaticPageSufficiency.JAVASCRIPT_SHELL:
-                add_escalation(
-                    url=final_url,
-                    depth=item.depth,
-                    kind=AcquisitionEscalationKind.BROWSER_RENDER,
-                    reason="static_javascript_shell",
+                if not browser_enabled or self.browser_fetcher is None:
+                    add_escalation(
+                        url=final_url,
+                        depth=item.depth,
+                        kind=AcquisitionEscalationKind.BROWSER_RENDER,
+                        reason="static_javascript_shell",
+                        capability_enabled=False,
+                    )
+                    return True
+                if browser_renders >= limits.max_browser_renders:
+                    mark_budget("browser_renders")
+                    return False
+                browser_remaining = (
+                    None
+                    if limits.max_total_bytes is None
+                    else limits.max_total_bytes - total_bytes
                 )
-                return True
-            if (
-                fetched.content_type.casefold() == "application/pdf"
-                and sufficiency is StaticPageSufficiency.PARTIAL_CONTENT
-            ):
-                add_escalation(
-                    url=final_url,
-                    depth=item.depth,
-                    kind=AcquisitionEscalationKind.OCR,
-                    reason="pdf_static_text_partial",
-                )
-            elif sufficiency is StaticPageSufficiency.UNSUPPORTED:
+                browser_renders += 1
+                try:
+                    rendered = _fetch_with_limit(
+                        self.browser_fetcher,
+                        final_url,
+                        max_bytes=browser_remaining,
+                    )
+                except SourceFetchError as exc:
+                    failures.append(
+                        CrawlFailure(
+                            url=final_url,
+                            depth=item.depth,
+                            reason=_failure_code(exc),
+                        )
+                    )
+                    add_escalation(
+                        url=final_url,
+                        depth=item.depth,
+                        kind=AcquisitionEscalationKind.BROWSER_RENDER,
+                        reason="browser_render_failed",
+                        capability_enabled=True,
+                    )
+                    return True
+                rendered_url = normalize_crawl_url(rendered.final_url)
+                if rendered_url is None or _host(rendered_url) not in authority_by_host:
+                    failures.append(
+                        CrawlFailure(
+                            url=final_url,
+                            depth=item.depth,
+                            reason="browser_redirect_left_verified_domain",
+                        )
+                    )
+                    return True
+                if browser_remaining is not None and rendered.bytes_read > browser_remaining:
+                    mark_budget("bytes")
+                    return False
+                total_bytes += rendered.bytes_read
+                fetched = rendered
+                final_url = rendered_url
+                sufficiency = classify_static_page(fetched)
+                if sufficiency in {
+                    StaticPageSufficiency.JAVASCRIPT_SHELL,
+                    StaticPageSufficiency.CHALLENGE,
+                    StaticPageSufficiency.UNSUPPORTED,
+                }:
+                    add_escalation(
+                        url=final_url,
+                        depth=item.depth,
+                        kind=AcquisitionEscalationKind.BROWSER_RENDER,
+                        reason="browser_render_insufficient",
+                        capability_enabled=True,
+                    )
+                    return True
+            if sufficiency is StaticPageSufficiency.UNSUPPORTED:
                 failures.append(
                     CrawlFailure(
                         url=final_url, depth=item.depth, reason="static_content_unsupported"
@@ -1030,7 +1105,7 @@ class BoundedOfficialSiteCrawler:
             content_hash = fetched.normalized_content_hash or fetched.content_hash
             if content_hash in seen_hashes:
                 duplicates.append(final_url)
-                if item.depth < limits.max_depth:
+                if limits.max_depth is None or item.depth < limits.max_depth:
                     enqueue_links(fetched.links, depth=item.depth + 1)
                 return True
 
@@ -1053,7 +1128,7 @@ class BoundedOfficialSiteCrawler:
                 )
             )
             accepted_artifacts += 1
-            if item.depth < limits.max_depth:
+            if limits.max_depth is None or item.depth < limits.max_depth:
                 enqueue_links(fetched.links, depth=item.depth + 1)
             if (
                 limits.max_accepted_artifacts is not None
@@ -1062,7 +1137,11 @@ class BoundedOfficialSiteCrawler:
             ):
                 mark_budget("accepted_artifacts")
                 return False
-            if total_bytes >= limits.max_total_bytes and queue:
+            if (
+                limits.max_total_bytes is not None
+                and total_bytes >= limits.max_total_bytes
+                and queue
+            ):
                 mark_budget("bytes")
                 return False
             return True
@@ -1070,7 +1149,7 @@ class BoundedOfficialSiteCrawler:
         roots_to_enqueue = normalized_seeds if enqueue_auxiliary_roots else normalized_seeds[:1]
         for index, seed in enumerate(roots_to_enqueue):
             enqueue(seed.url, depth=0, score=100 - index, is_seed=True)
-            if enqueue_seed_sitemaps and limits.max_depth > 0:
+            if enqueue_seed_sitemaps and (limits.max_depth is None or limits.max_depth > 0):
                 enqueue_sitemap(seed.url)
 
         while queue and not budget_exhausted:
@@ -1111,6 +1190,7 @@ class BoundedOfficialSiteCrawler:
             escalations=tuple(escalations),
             budget_reasons=tuple(sorted(budget_reasons)),
             unresolved_frontier=tuple(sorted(unresolved)),
+            frontier_exhausted=not queue and not budget_exhausted,
         )
 
 

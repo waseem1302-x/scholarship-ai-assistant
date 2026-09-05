@@ -11,7 +11,10 @@ from sqlalchemy import func, select
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.models import User, UserRole
-from app.modules.catalogue_ingestion.claim_bundle_provider import FakeBundleClaimProvider
+from app.modules.catalogue_ingestion.claim_bundle_provider import (
+    BundleClaimExtractionResult,
+    FakeBundleClaimProvider,
+)
 from app.modules.catalogue_ingestion.claim_bundle_schemas import (
     BundleEvidenceReference,
     BundleObjectiveCoverage,
@@ -31,7 +34,10 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimEntityType,
     ClaimExtractionOutput,
     ClaimObjective,
+    ClaimResolution,
+    ClaimScope,
     ClaimValue,
+    ResolvedClaim,
 )
 from app.modules.catalogue_ingestion.evaluation import GoldItem, evaluate
 from app.modules.catalogue_ingestion.extraction_cache_models import CatalogueExtractionCacheEvent
@@ -50,11 +56,15 @@ from app.modules.catalogue_ingestion.models import (
     IngestionMode,
     IngestionRunStatus,
 )
-from app.modules.catalogue_ingestion.production_service import ProductionCatalogueIngestionService
+from app.modules.catalogue_ingestion.production_service import (
+    ProductionCatalogueIngestionService,
+    _should_run_gap_pass,
+)
 from app.modules.catalogue_ingestion.provider import (
     AzureOpenAIExtractionProvider,
     ExtractionProviderError,
     ExtractionProviderRateLimited,
+    ExtractionProviderTimeout,
     ExtractionSchemaError,
     FakeExtractionProvider,
     azure_structured_output_schema,
@@ -62,6 +72,10 @@ from app.modules.catalogue_ingestion.provider import (
     extraction_retry_delay,
 )
 from app.modules.catalogue_ingestion.repository import CatalogueIngestionRepository
+from app.modules.catalogue_ingestion.rich_graph_materializer import (
+    CatalogueGraphMaterializer,
+    _claim_groups,
+)
 from app.modules.catalogue_ingestion.schemas import (
     CatalogueExtractionOutput,
     ExtractionResult,
@@ -97,9 +111,18 @@ from app.modules.opportunities.graph_models import (
     Institution,
     InstitutionParticipation,
 )
+from app.modules.opportunities.materialization_models import (
+    OpportunityResource,
+    ScholarshipEligibilityRule,
+)
 from app.modules.opportunities.models import (
+    DataConfidence,
+    DegreeLevel,
+    FundingType,
     Opportunity,
+    OpportunityCycle,
     OpportunityStatus,
+    Provider,
     University,
     VerificationStatus,
 )
@@ -521,6 +544,7 @@ def enabled_settings(**overrides) -> Settings:
         "catalogue_ai_endpoint": "https://example.openai.azure.com",
         "catalogue_ai_model": "structured-output-deployment",
         "catalogue_bounded_crawling_enabled": False,
+        "catalogue_completeness_mode_enabled": False,
         "catalogue_ai_max_retries": 2,
         "catalogue_ai_input_cost_per_million": Decimal("1"),
         "catalogue_ai_output_cost_per_million": Decimal("2"),
@@ -743,6 +767,23 @@ def test_resumable_job_failure_is_terminal_and_retains_diagnostics(db_session) -
     assert resumed.state is CatalogueJobState.FAILED
     assert resumed.attempt_count == 1
 
+    retried = repository.start_or_resume_job(
+        run_id=run.id,
+        candidate_id=claimed.id,
+        stage="claim_bundle_extraction",
+        job_key="terminal-job",
+        worker_id="job-worker",
+        run_lease_token=run_lease,
+        candidate_lease_token=claimed.lease_token,
+        checkpoint={"outcome": "pending"},
+        retryable_error_codes={"bundle_validation_failed"},
+        max_attempts=2,
+    )
+
+    assert retried.state is CatalogueJobState.RUNNING
+    assert retried.attempt_count == 2
+    assert retried.error_code is None
+
 
 def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
     db_session,
@@ -815,6 +856,82 @@ def test_bundle_validation_failure_splits_then_fails_terminally_with_raw_output(
     assert candidate is not None
     assert candidate.status is not CandidateStatus.READY_FOR_REVIEW
     assert "acquisition_snapshot_missing" in candidate.validation_errors
+
+
+def test_provider_timeout_does_not_abort_independent_bundle_jobs(db_session) -> None:
+    class TimeoutOnceBundleProvider:
+        name = "fake_timeout_once"
+        model = "fake-timeout-once-v1"
+        capability_identity = "fake:timeout-once:claim_bundle_v1"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract_bundle(
+            self,
+            *,
+            source_url,
+            evidence_text,
+            objectives,
+            scope_targets,
+            source_links=None,
+            max_output_tokens,
+        ):
+            del source_url, scope_targets, source_links, max_output_tokens
+            self.calls += 1
+            if self.calls == 1:
+                raise ExtractionProviderTimeout("simulated timeout")
+            output = ClaimBundleExtractionOutput(
+                evidence_refs=[],
+                claims=[],
+                objective_coverage=[
+                    BundleObjectiveCoverage(
+                        objective=objective,
+                        coverage_state="not_stated",
+                        unknown_objectives=["Not stated in this evidence block"],
+                    )
+                    for objective in objectives
+                ],
+            )
+            return BundleClaimExtractionResult(
+                output=output,
+                usage=ExtractionUsage(
+                    input_tokens=max(1, len(evidence_text) // 4),
+                    output_tokens=20,
+                    latency_ms=1,
+                ),
+            )
+
+    provider = TimeoutOnceBundleProvider()
+    service = ProductionCatalogueIngestionService(
+        db_session,
+        enabled_settings(
+            catalogue_bounded_crawling_enabled=False,
+            catalogue_ai_max_calls_per_run=100,
+            catalogue_ai_max_retries=0,
+        ),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+        bundle_claim_extractor=provider,
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+
+    service.process_run(run.id, worker_id="continue-after-timeout")
+
+    jobs = list(
+        db_session.scalars(
+            select(CatalogueResumableJob).where(
+                CatalogueResumableJob.stage == "claim_bundle_extraction"
+            )
+        )
+    )
+    assert provider.calls > 1
+    assert any(job.state is CatalogueJobState.FAILED for job in jobs)
+    assert any(job.state is CatalogueJobState.SUCCEEDED for job in jobs)
 
 
 def test_direct_url_run_is_first_class_and_does_not_assert_invented_identity(db_session) -> None:
@@ -1427,6 +1544,188 @@ def test_claim_resolution_rejects_a_route_inferred_from_generic_university_text(
     assert resolution.resolved == []
 
 
+def test_claim_resolution_rejects_prose_misclassified_as_programme_duration() -> None:
+    text = "Applicants develop advanced competencies in their selected subject area."
+    artifact = CatalogueSourceArtifact(
+        id=uuid.uuid4(),
+        source_id=uuid.uuid4(),
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="8" * 64,
+        normalized_text=text,
+        extraction_method="normalized_text",
+        byte_count=len(text),
+        character_count=len(text),
+    )
+    claim = claim_output().claims[16].model_copy(deep=True)
+    claim.field_path = "duration"
+    claim.value = ClaimValue(
+        string_value=text,
+        decimal_value=None,
+        integer_value=None,
+        boolean_value=None,
+        string_list_value=None,
+    )
+    claim.excerpt = text
+    claim.excerpt_start = 0
+    claim.excerpt_end = len(text)
+
+    resolution = resolve_claims([(artifact, 1, [claim])])
+
+    assert any(item.endswith("invalid_programme_duration") for item in resolution.rejected)
+    assert resolution.resolved == []
+
+
+def test_rich_materializer_preserves_supported_scoped_fields(db_session) -> None:
+    provider = Provider(name=f"Materializer provider {uuid.uuid4()}")
+    db_session.add(provider)
+    db_session.flush()
+    opportunity = Opportunity(
+        provider_id=provider.id,
+        name="Materializer Scholarship",
+        canonical_slug=f"materializer-{uuid.uuid4().hex}",
+        country="JP",
+        degree_level=DegreeLevel.MASTERS,
+        degree_levels=[DegreeLevel.MASTERS.value],
+        funding_type=FundingType.UNKNOWN,
+        status=OpportunityStatus.DRAFT,
+        data_confidence=DataConfidence.LOW,
+        required_documents=[],
+        eligibility_warnings=[],
+    )
+    db_session.add(opportunity)
+    db_session.flush()
+    cycle = OpportunityCycle(
+        opportunity_id=opportunity.id,
+        label="2027",
+        intake_year=2027,
+        timezone="UTC",
+        is_current=True,
+    )
+    db_session.add(cycle)
+    db_session.flush()
+
+    def resolved(entity_type, entity_key, field_path, value):
+        typed = {
+            "string_value": None,
+            "decimal_value": None,
+            "integer_value": None,
+            "boolean_value": None,
+            "string_list_value": None,
+        }
+        if isinstance(value, bool):
+            typed["boolean_value"] = value
+        elif isinstance(value, int):
+            typed["integer_value"] = value
+        elif isinstance(value, Decimal):
+            typed["decimal_value"] = value
+        else:
+            typed["string_value"] = value
+        claim = claim_output().claims[0].model_copy(
+            update={
+                "entity_type": entity_type,
+                "entity_key": entity_key,
+                "field_path": field_path,
+                "value": ClaimValue(**typed),
+                "scope": ClaimScope(cycle_key="2027"),
+                "excerpt": "Official evidence",
+                "excerpt_start": 0,
+                "excerpt_end": len("Official evidence"),
+            }
+        )
+        return ResolvedClaim(
+            claim=claim,
+            artifact_id=str(uuid.uuid4()),
+            source_id=str(uuid.uuid4()),
+            source_url=OFFICIAL_URL,
+            content_hash="7" * 64,
+            trust_tier=1,
+        )
+
+    claims = [
+        resolved(ClaimEntityType.ELIGIBILITY, "age", "rule_type", "age"),
+        resolved(ClaimEntityType.ELIGIBILITY, "age", "operator", "less_than"),
+        resolved(ClaimEntityType.ELIGIBILITY, "age", "value", 30),
+        resolved(ClaimEntityType.ELIGIBILITY, "age", "critical", True),
+        resolved(ClaimEntityType.ELIGIBILITY, "age", "original_text", "Under 30"),
+        resolved(ClaimEntityType.FUNDING, "stipend", "component_type", "stipend"),
+        resolved(ClaimEntityType.FUNDING, "stipend", "coverage_status", "confirmed"),
+        resolved(ClaimEntityType.FUNDING, "stipend", "unit", "month"),
+        resolved(ClaimEntityType.FUNDING, "stipend", "qualifier", "up to"),
+        resolved(ClaimEntityType.FUNDING, "stipend", "original_text", "Monthly stipend"),
+        resolved(ClaimEntityType.STEP, "submit", "title", "Submit application"),
+        resolved(ClaimEntityType.STEP, "submit", "stage_type", "submission"),
+        resolved(ClaimEntityType.STEP, "submit", "required", True),
+        resolved(ClaimEntityType.STEP, "submit", "actor_type", "applicant"),
+        resolved(ClaimEntityType.STEP, "submit", "actor_name", "Student"),
+        resolved(ClaimEntityType.STEP, "submit", "outcome", "Application received"),
+        resolved(ClaimEntityType.STEP, "submit", "original_text", "Submit online"),
+        resolved(ClaimEntityType.RESOURCE, "help", "title", "Help desk"),
+        resolved(ClaimEntityType.RESOURCE, "help", "resource_type", "contact"),
+        resolved(ClaimEntityType.RESOURCE, "help", "url", "https://example.edu/help"),
+        resolved(ClaimEntityType.RESOURCE, "help", "contact_type", "email"),
+        resolved(ClaimEntityType.RESOURCE, "help", "organization", "Admissions"),
+        resolved(ClaimEntityType.RESOURCE, "help", "contact_name", "Help Team"),
+        resolved(ClaimEntityType.RESOURCE, "help", "email", "help@example.edu"),
+        resolved(ClaimEntityType.RESOURCE, "help", "phone", "+81 1 2345 6789"),
+        resolved(ClaimEntityType.RESOURCE, "help", "address", "Tokyo"),
+        resolved(ClaimEntityType.RESOURCE, "help", "original_text", "Contact the help desk"),
+    ]
+    materializer = CatalogueGraphMaterializer(db_session)
+    materializer._materialize_scoped_entities(
+        uuid.uuid4(),
+        "a" * 64,
+        opportunity,
+        cycle,
+        _claim_groups(claims),
+        {},
+        track_by_key={},
+        institution_by_key={},
+        programmes_by_key={},
+    )
+    db_session.flush()
+
+    eligibility = db_session.scalar(select(ScholarshipEligibilityRule))
+    funding = db_session.scalar(select(FundingComponent))
+    step = db_session.scalar(select(ApplicationStep))
+    resource = db_session.scalar(select(OpportunityResource))
+    assert eligibility is not None
+    assert eligibility.critical is True
+    assert eligibility.original_text == "Under 30"
+    assert funding is not None
+    assert (funding.unit, funding.qualifier, funding.original_text) == (
+        "month",
+        "up to",
+        "Monthly stipend",
+    )
+    assert step is not None
+    assert (step.stage_type, step.required, step.actor_type, step.actor_name) == (
+        "submission",
+        True,
+        "applicant",
+        "Student",
+    )
+    assert (step.outcome, step.original_text) == ("Application received", "Submit online")
+    assert resource is not None
+    assert (
+        resource.contact_type,
+        resource.organization,
+        resource.contact_name,
+        resource.email,
+        resource.phone,
+        resource.address,
+        resource.original_text,
+    ) == (
+        "email",
+        "Admissions",
+        "Help Team",
+        "help@example.edu",
+        "+81 1 2345 6789",
+        "Tokyo",
+        "Contact the help desk",
+    )
+
+
 def test_claim_resolution_separates_events_and_validates_resource_links() -> None:
     text = (
         "Arrival in Japan: April 2027. Application deadline: May 15, 2026. "
@@ -1578,12 +1877,96 @@ def test_multi_programme_compatibility_resolution_requires_topology_evaluation()
     )
 
 
+def test_frontier_proof_closes_open_ended_persisted_coverage(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert candidate is not None
+    source = candidate.sources[0]
+    source.status = CandidateSourceStatus.FETCHED
+    artifact = CatalogueSourceArtifact(
+        source=source,
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="9" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    db_session.add(artifact)
+    db_session.flush()
+    coverage = {objective.value: "complete" for objective in ClaimObjective}
+
+    unresolved = resolve_claims(
+        [(artifact, 1, claim_output().claims)],
+        require_detail=True,
+        objective_coverage=coverage,
+        evidence_frontier_complete=False,
+    )
+    closed = resolve_claims(
+        [(artifact, 1, claim_output().claims)],
+        require_detail=True,
+        objective_coverage=coverage,
+        evidence_frontier_complete=True,
+    )
+
+    unresolved_funding = next(
+        item
+        for item in unresolved.scope_coverage
+        if item.objective is ClaimObjective.FUNDING
+        and item.scope_type == "scholarship_family"
+    )
+    closed_funding = next(
+        item
+        for item in closed.scope_coverage
+        if item.objective is ClaimObjective.FUNDING
+        and item.scope_type == "scholarship_family"
+    )
+    assert unresolved_funding.state.value == "partial"
+    assert closed_funding.state.value == "complete"
+    assert closed_funding.missing_frontier_reasons == []
+
+
 def test_objective_coverage_is_partial_when_any_official_source_is_partial() -> None:
     from app.modules.catalogue_ingestion.claim_schemas import ObjectiveCoverageState
 
     assert (
         _aggregate_coverage([ObjectiveCoverageState.COMPLETE, ObjectiveCoverageState.PARTIAL])
         is ObjectiveCoverageState.PARTIAL
+    )
+
+
+def test_completeness_gap_pass_runs_once_after_initial_coverage_evaluation() -> None:
+    resolution = ClaimResolution(
+        resolved=[],
+        conflicts=[],
+        rejected=[],
+        completeness_errors=["coverage:scholarship_family:example:funding:partial"],
+    )
+
+    assert _should_run_gap_pass(
+        completeness_mode=True,
+        resolution=resolution,
+        completeness_blockers=[],
+        used_gap_routes=False,
+    )
+    assert not _should_run_gap_pass(
+        completeness_mode=True,
+        resolution=resolution,
+        completeness_blockers=[],
+        used_gap_routes=True,
     )
 
 

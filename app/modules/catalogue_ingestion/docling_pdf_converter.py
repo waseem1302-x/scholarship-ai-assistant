@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 DOCLING_CONVERTER_VERSION = "catalogue-docling-pdf.v1"
 _MAX_COORDINATES = 2_000
 _DOCLING_SEMAPHORE = threading.BoundedSemaphore(value=2)
+_DOCLING_THREAD_LOCAL = threading.local()
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,25 +88,27 @@ def convert_pdf_docling(
         )
         from docling.document_converter import DocumentConverter, PdfFormatOption
 
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = do_ocr
-        pipeline_options.do_table_structure = True
-
         mode = (
             TableFormerMode.FAST
             if str(table_mode).casefold() == "fast"
             else TableFormerMode.ACCURATE
         )
-        pipeline_options.table_structure_options = TableStructureOptions(mode=mode)
-
-        if models_dir:
-            models_path = Path(models_dir)
-            if models_path.is_dir():
-                pipeline_options.artifacts_path = str(models_path.resolve())
-
-        format_options = {InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
-
-        converter = DocumentConverter(format_options=format_options)
+        models_path = (
+            Path(models_dir).resolve() if models_dir and Path(models_dir).is_dir() else None
+        )
+        converter_key = (str(models_path or ""), mode.value, do_ocr)
+        converter = getattr(_DOCLING_THREAD_LOCAL, "converter", None)
+        if getattr(_DOCLING_THREAD_LOCAL, "converter_key", None) != converter_key:
+            pipeline_options = PdfPipelineOptions()
+            pipeline_options.do_ocr = do_ocr
+            pipeline_options.do_table_structure = True
+            pipeline_options.table_structure_options = TableStructureOptions(mode=mode)
+            if models_path is not None:
+                pipeline_options.artifacts_path = str(models_path)
+            format_options = {InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+            converter = DocumentConverter(format_options=format_options)
+            _DOCLING_THREAD_LOCAL.converter = converter
+            _DOCLING_THREAD_LOCAL.converter_key = converter_key
         doc_stream = DocumentStream(name="scholarship.pdf", stream=io.BytesIO(payload))
         conv_result = converter.convert(doc_stream)
 

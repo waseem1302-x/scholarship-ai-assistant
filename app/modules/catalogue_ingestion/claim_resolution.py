@@ -8,6 +8,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from collections.abc import Iterable
+from decimal import Decimal
 
 from app.modules.catalogue_ingestion.claim_schemas import (
     SUPPORTED_CLAIM_FIELDS,
@@ -34,6 +35,7 @@ def resolve_claims(
     *,
     require_detail: bool = False,
     objective_coverage: dict[str, str] | None = None,
+    evidence_frontier_complete: bool = False,
 ) -> ClaimResolution:
     extracted_items = list(extracted)
     cycle_aliases = _cycle_aliases(extracted_items)
@@ -281,6 +283,7 @@ def resolve_claims(
         artifacts=artifacts,
         resolution=resolution,
         provider_objective_coverage=provider_signals,
+        evidence_frontier_complete=evidence_frontier_complete,
     )
 
 
@@ -423,8 +426,19 @@ def _semantic_claim_error(
     claim: ExtractedClaim, *, artifact: CatalogueSourceArtifact | None = None
 ) -> str | None:
     excerpt = claim.excerpt.casefold()
+    value = claim.value.primitive()
+    if claim.entity_type is ClaimEntityType.PROGRAMME and claim.field_path == "duration":
+        duration = str(value).casefold()
+        duration_unit = re.search(
+            r"\b(?:\d+(?:\.\d+)?|one|two|three|four|five|six)"
+            r"(?:\s*(?:-|\u2013|to)\s*(?:\d+(?:\.\d+)?|one|two|three|four|five|six))?"
+            r"\s*(?:year|month|semester|term|week)s?\b",
+            duration,
+        )
+        date_range = len(re.findall(r"\b(?:19|20)\d{2}\b", duration)) >= 2
+        if duration_unit is None and not date_range:
+            return "invalid_programme_duration"
     if claim.entity_type is ClaimEntityType.CYCLE and claim.field_path == "intake_year":
-        value = claim.value.primitive()
         if not isinstance(value, int) or str(value) not in excerpt:
             return "intake_year_evidence_mismatch"
         if not re.search(
@@ -480,6 +494,20 @@ def _semantic_claim_error(
         }
         if value not in allowed and value != artifact.final_url:
             return "resource_url_not_in_fetched_links"
+    if claim.field_path in {"original_count", "copy_count", "display_order"} and (
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+    ):
+        return "invalid_non_negative_integer"
+    if (
+        claim.entity_type is ClaimEntityType.FUNDING
+        and claim.field_path == "amount"
+        and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float, Decimal))
+            or value < 0
+        )
+    ):
+        return "invalid_funding_amount"
     return None
 
 

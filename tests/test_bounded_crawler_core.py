@@ -20,6 +20,7 @@ def fetched_page(
     links: tuple[FetchedLink, ...] = (),
     content_hash: str | None = None,
     final_url: str | None = None,
+    content_type: str = "text/html",
 ) -> FetchedSource:
     normalized_hash = content_hash or hashlib.sha256(text.encode()).hexdigest()
     return FetchedSource(
@@ -31,7 +32,7 @@ def fetched_page(
         bytes_read=len(text.encode()),
         normalized_text=text,
         normalized_content_hash=normalized_hash,
-        content_type="text/html",
+        content_type=content_type,
         links=links,
     )
 
@@ -97,9 +98,10 @@ def test_bounded_crawler_fetches_root_then_highest_value_same_host_pages() -> No
     assert [page.url for page in result.pages] == [ROOT, deadline, funding]
     assert news not in fetcher.calls
     assert result.budget_exhausted is True
+    assert result.frontier_exhausted is False
 
 
-def test_crawler_skips_static_and_calendar_resources_before_fetch() -> None:
+def test_crawler_skips_static_assets_but_keeps_calendar_evidence() -> None:
     script = "https://example.edu/build/app.js"
     calendar = "https://example.edu/calendar/event.ics"
     eligibility = "https://example.edu/scholarships/csc/eligibility"
@@ -114,6 +116,11 @@ def test_crawler_skips_static_and_calendar_resources_before_fetch() -> None:
                     FetchedLink(url=eligibility, text="Eligibility requirements"),
                 ),
             ),
+            calendar: fetched_page(
+                calendar,
+                "Application deadline 15 May 2027",
+                content_type="text/calendar",
+            ),
             eligibility: fetched_page(eligibility, "Official eligibility requirements."),
         }
     )
@@ -123,8 +130,39 @@ def test_crawler_skips_static_and_calendar_resources_before_fetch() -> None:
         budget=CrawlBudget(max_pages=10, max_depth=1),
     )
 
-    assert fetcher.calls == [ROOT, eligibility]
-    assert [item.reason for item in result.rejected].count("non_content_resource") == 2
+    assert fetcher.calls == [ROOT, eligibility, calendar]
+    assert [item.reason for item in result.rejected].count("non_content_resource") == 1
+
+
+def test_crawler_follows_links_discovered_in_seed_sitemap() -> None:
+    sitemap = "https://example.edu/sitemap.xml"
+    deep_page = "https://example.edu/scholarships/csc/requirements/documents"
+    fetcher = FakeFetcher(
+        {
+            ROOT: fetched_page(ROOT, "Official scholarship overview."),
+            sitemap: fetched_page(
+                sitemap,
+                deep_page,
+                links=(FetchedLink(url=deep_page, text=""),),
+                content_type="application/xml",
+            ),
+            deep_page: fetched_page(deep_page, "Official required documents."),
+        }
+    )
+
+    result = BoundedOfficialSiteCrawler(fetcher=fetcher).crawl_many(
+        [ROOT],
+        budget=CrawlBudget(
+            max_fetch_attempts=10,
+            max_accepted_artifacts=None,
+            max_depth=None,
+            max_host_requests=10,
+        ),
+        enqueue_seed_sitemaps=True,
+    )
+
+    assert fetcher.calls == [ROOT, sitemap, deep_page]
+    assert result.frontier_exhausted is True
 
 
 def test_unlabeled_schedule_link_ranks_below_labeled_scholarship_content() -> None:
@@ -200,6 +238,41 @@ def test_bounded_crawler_enforces_depth_limit() -> None:
     assert fetcher.calls == [ROOT, level_one]
     assert [page.depth for page in result.pages] == [0, 1]
     assert level_two not in fetcher.calls
+
+
+def test_crawler_can_exhaust_frontier_without_depth_or_aggregate_byte_limit() -> None:
+    level_one = "https://example.edu/scholarships/csc/requirements"
+    level_two = "https://example.edu/scholarships/csc/requirements/documents"
+    fetcher = FakeFetcher(
+        {
+            ROOT: fetched_page(
+                ROOT,
+                "Scholarship overview.",
+                links=(FetchedLink(url=level_one, text="Eligibility requirements"),),
+            ),
+            level_one: fetched_page(
+                level_one,
+                "Eligibility requirements.",
+                links=(FetchedLink(url=level_two, text="Required documents"),),
+            ),
+            level_two: fetched_page(level_two, "Required document list."),
+        }
+    )
+
+    result = BoundedOfficialSiteCrawler(fetcher=fetcher).crawl(
+        ROOT,
+        budget=CrawlBudget(
+            max_fetch_attempts=10,
+            max_accepted_artifacts=None,
+            max_depth=None,
+            max_total_bytes=None,
+            max_host_requests=10,
+        ),
+    )
+
+    assert fetcher.calls == [ROOT, level_one, level_two]
+    assert result.frontier_exhausted is True
+    assert result.budget_exhausted is False
 
 
 def test_bounded_crawler_normalizes_and_deduplicates_urls_before_fetch() -> None:
@@ -323,6 +396,30 @@ def test_bounded_crawler_records_child_failure_and_continues() -> None:
     assert [page.url for page in result.pages] == [ROOT, eligibility]
     assert result.failures[0].url == broken
     assert result.failures[0].reason == "source_unreachable"
+
+
+def test_crawler_executes_browser_renderer_for_javascript_shell() -> None:
+    shell = fetched_page(ROOT, "Please enable JavaScript to continue loading page")
+    rendered = fetched_page(
+        ROOT,
+        "Official scholarship eligibility funding documents and application timeline details.",
+    )
+    static_fetcher = FakeFetcher({ROOT: shell})
+    browser_fetcher = FakeFetcher({ROOT: rendered})
+
+    result = BoundedOfficialSiteCrawler(
+        fetcher=static_fetcher,
+        browser_fetcher=browser_fetcher,
+    ).crawl(
+        ROOT,
+        budget=CrawlBudget(max_pages=10, max_depth=1, max_browser_renders=1),
+        browser_enabled=True,
+    )
+
+    assert browser_fetcher.calls == [ROOT]
+    assert result.browser_renders == 1
+    assert [page.fetched.normalized_text for page in result.pages] == [rendered.normalized_text]
+    assert result.escalations == ()
 
 
 def test_bounded_crawler_root_failure_fails_closed() -> None:

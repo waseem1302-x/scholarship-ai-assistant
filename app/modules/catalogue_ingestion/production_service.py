@@ -33,6 +33,7 @@ from app.modules.catalogue_ingestion.claim_resolution import resolve_claims
 from app.modules.catalogue_ingestion.claim_schemas import (
     ClaimExtractionOutput,
     ClaimObjective,
+    ClaimResolution,
     ObjectiveCoverageState,
 )
 from app.modules.catalogue_ingestion.evidence_block_models import (
@@ -98,6 +99,26 @@ def _validation_warnings(message: str) -> list[str]:
                 warnings.append(item[position:].strip())
                 break
     return list(dict.fromkeys(warnings))
+
+
+def _should_run_gap_pass(
+    *,
+    completeness_mode: bool,
+    resolution: ClaimResolution,
+    completeness_blockers: list[str],
+    used_gap_routes: bool,
+) -> bool:
+    """Allow one targeted extraction pass after initial scoped coverage is persisted."""
+
+    return (
+        completeness_mode
+        and not used_gap_routes
+        and not completeness_blockers
+        and not resolution.conflicts
+        and not resolution.rejected
+        and bool(resolution.completeness_errors)
+        and all(item.startswith("coverage:") for item in resolution.completeness_errors)
+    )
 
 
 @dataclass(slots=True)
@@ -337,6 +358,15 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                     "evidence_block_keys": [item.block_key for item in job.evidence],
                     "outcome": "pending",
                 },
+                retryable_error_codes={
+                    "ai_extraction_failed",
+                    "ai_rate_limited",
+                    "ai_provider_timeout",
+                    "ai_provider_server_error",
+                    "ai_provider_connection_failed",
+                    "ai_provider_response_interrupted",
+                },
+                max_attempts=2,
             )
             if resumable.state is CatalogueJobState.SUCCEEDED:
                 outcome = str((resumable.checkpoint or {}).get("outcome") or "")
@@ -455,11 +485,36 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                         "provider_attempt_id": str(getattr(exc, "provider_attempt_id", "") or ""),
                     },
                 )
-                self._manual_review(run, candidate, exc.code, run_lease_token)
-                return
+                terminal_failures.append(exc.code)
+                continue
             except ExtractionSchemaError as exc:
                 self.metrics.add("ai_schema_failures")
                 self._observe_provider_usage(exc.usage)
+                children = self._split_job(
+                    job,
+                    blocks_by_id=blocks_by_id,
+                    routes=job_routes,
+                    run=run,
+                )
+                if children:
+                    self.repository.complete_job(
+                        resumable.id,
+                        worker_id=candidate.claimed_by or "",
+                        run_lease_token=run_lease_token,
+                        candidate_lease_token=candidate.lease_token or "",
+                        checkpoint={
+                            "cache_key": identity.cache_key,
+                            "planner_job_key": job.job_key,
+                            "outcome": "split",
+                            "error_code": exc.code,
+                            "provider_attempt_id": str(
+                                getattr(exc, "provider_attempt_id", "") or ""
+                            ),
+                            "child_job_keys": [child.job_key for child in children],
+                        },
+                    )
+                    pending_jobs = [*children, *pending_jobs]
+                    continue
                 self.repository.fail_job(
                     resumable.id,
                     worker_id=candidate.claimed_by or "",
@@ -475,11 +530,40 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                         "provider_attempt_id": str(getattr(exc, "provider_attempt_id", "") or ""),
                     },
                 )
-                self._manual_review(run, candidate, exc.code, run_lease_token)
-                return
+                terminal_failures.append(exc.code)
+                continue
             except ExtractionProviderError as exc:
                 self.metrics.add("ai_extraction_failures")
                 self._observe_provider_usage(exc.usage)
+                children = (
+                    self._split_job(
+                        job,
+                        blocks_by_id=blocks_by_id,
+                        routes=job_routes,
+                        run=run,
+                    )
+                    if exc.retryable
+                    else ()
+                )
+                if children:
+                    self.repository.complete_job(
+                        resumable.id,
+                        worker_id=candidate.claimed_by or "",
+                        run_lease_token=run_lease_token,
+                        candidate_lease_token=candidate.lease_token or "",
+                        checkpoint={
+                            "cache_key": identity.cache_key,
+                            "planner_job_key": job.job_key,
+                            "outcome": "split",
+                            "error_code": exc.code,
+                            "provider_attempt_id": str(
+                                getattr(exc, "provider_attempt_id", "") or ""
+                            ),
+                            "child_job_keys": [child.job_key for child in children],
+                        },
+                    )
+                    pending_jobs = [*children, *pending_jobs]
+                    continue
                 self.repository.fail_job(
                     resumable.id,
                     worker_id=candidate.claimed_by or "",
@@ -495,8 +579,8 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                         "provider_attempt_id": str(getattr(exc, "provider_attempt_id", "") or ""),
                     },
                 )
-                self._manual_review(run, candidate, exc.code, run_lease_token)
-                return
+                terminal_failures.append(exc.code)
+                continue
 
             result = execution.result
             self._observe_provider_usage(result.usage)
@@ -649,11 +733,13 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             blockers.append("acquisition_snapshot_missing")
         else:
             result = snapshot.result_json or {}
+            if result.get("frontier_exhausted") is not True:
+                blockers.append("acquisition_frontier_incomplete")
             if result.get("budget_exhausted"):
                 reasons = result.get("budget_reasons") or ["unknown"]
                 blockers.extend(f"acquisition_budget:{reason}" for reason in reasons)
             for escalation in result.get("escalations") or []:
-                if isinstance(escalation, dict) and escalation.get("capability_enabled") is False:
+                if isinstance(escalation, dict):
                     kind = escalation.get("kind") or "unknown"
                     reason = escalation.get("reason") or "required"
                     blockers.append(f"acquisition_escalation:{kind}:{reason}")
@@ -816,6 +902,40 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
         coverage_by_objective: dict[ClaimObjective, list[ObjectiveCoverageState]] = {
             objective: [] for objective in ClaimObjective
         }
+        prior_resolution: ClaimResolution | None = None
+        if candidate.proposed_payload:
+            try:
+                prior_resolution = ClaimResolution.model_validate(candidate.proposed_payload)
+            except ValueError:
+                prior_resolution = None
+        if prior_resolution is not None:
+            prior_by_artifact: dict[tuple[uuid.UUID, int], list[Any]] = {}
+            artifact_by_id = {
+                artifact.id: artifact for source in sources for artifact in source.artifacts
+            }
+            for item in prior_resolution.resolved:
+                try:
+                    artifact_id = uuid.UUID(item.artifact_id)
+                except ValueError:
+                    continue
+                artifact = artifact_by_id.get(artifact_id)
+                if artifact is not None:
+                    prior_by_artifact.setdefault((artifact_id, item.trust_tier), []).append(
+                        item.claim
+                    )
+            extracted.extend(
+                (artifact_by_id[artifact_id], trust_tier, claims)
+                for (artifact_id, trust_tier), claims in prior_by_artifact.items()
+            )
+            unknown_objectives.update(prior_resolution.unknown_objectives)
+            warnings.update(prior_resolution.warnings)
+            for objective, state in prior_resolution.provider_objective_coverage.items():
+                try:
+                    coverage_by_objective[ClaimObjective(objective)].append(
+                        ObjectiveCoverageState(state)
+                    )
+                except ValueError:
+                    continue
         role_order = self._source_role_order()
 
         for group in groups.values():
@@ -854,6 +974,10 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             extracted,
             require_detail=True,
             objective_coverage=aggregate_coverage,
+            evidence_frontier_complete=(
+                self.settings.catalogue_completeness_mode_enabled
+                and not completeness_blockers
+            ),
         ).model_copy(
             update={
                 "unknown_objectives": sorted(unknown_objectives),
@@ -868,6 +992,27 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             )
         )
         candidate.conflicts = sorted(set(candidate.conflicts + resolution.conflicts))
+        used_gap_routes = (
+            self.session.scalar(
+                select(CatalogueEvidenceRoute.id)
+                .where(
+                    CatalogueEvidenceRoute.candidate_id == candidate.id,
+                    CatalogueEvidenceRoute.coverage_cell_id.is_not(None),
+                )
+                .limit(1)
+            )
+            is not None
+        )
+        if _should_run_gap_pass(
+            completeness_mode=self.settings.catalogue_completeness_mode_enabled,
+            resolution=resolution,
+            completeness_blockers=completeness_blockers,
+            used_gap_routes=used_gap_routes,
+        ):
+            candidate.status = CandidateStatus.SOURCE_FETCHED
+            self.repository.release_candidate(candidate)
+            self.session.commit()
+            return
         if candidate.conflicts:
             candidate.status = CandidateStatus.CONFLICT_DETECTED
         elif candidate.validation_errors:

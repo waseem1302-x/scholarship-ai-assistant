@@ -10,6 +10,7 @@ from pypdf import PageObject, PdfWriter
 
 from app.modules.catalogue_ingestion.acquisition_fetcher import (
     _convert_pdf,
+    _ConvertedPayload,
     convert_catalogue_payload,
 )
 from app.modules.catalogue_ingestion.docling_pdf_converter import (
@@ -61,6 +62,60 @@ def test_convert_pdf_fallback_to_pypdf_when_docling_fails() -> None:
         converted = _convert_pdf(pdf_bytes, prefer_docling=True)
         assert converted is not None
         assert isinstance(converted.text, str)
+
+
+def test_convert_pdf_keeps_readable_native_text_without_starting_docling() -> None:
+    native = _ConvertedPayload(
+        text=" ".join(["official scholarship guidance"] * 20),
+        coordinates=({"page": 1},),
+        page_count=1,
+        text_page_count=1,
+    )
+    with (
+        patch(
+            "app.modules.catalogue_ingestion.acquisition_fetcher._convert_pdf_pypdf",
+            return_value=native,
+        ),
+        patch(
+            "app.modules.catalogue_ingestion.docling_pdf_converter.convert_pdf_docling"
+        ) as docling,
+    ):
+        converted = _convert_pdf(b"%PDF-readable", prefer_docling=True)
+
+    assert converted is native
+    docling.assert_not_called()
+
+
+def test_convert_pdf_escalates_sparse_native_pages_to_docling_ocr() -> None:
+    native = _ConvertedPayload(
+        text="title",
+        coordinates=({"page": 1},),
+        page_count=3,
+        text_page_count=1,
+    )
+    rendered = ConvertedDoclingResult(
+        text="Official scanned scholarship eligibility and application requirements.",
+        coordinates=({"page": 1}, {"page": 2}, {"page": 3}),
+        pages_count=3,
+    )
+    with (
+        patch(
+            "app.modules.catalogue_ingestion.acquisition_fetcher._convert_pdf_pypdf",
+            return_value=native,
+        ),
+        patch(
+            "app.modules.catalogue_ingestion.docling_pdf_converter.is_docling_available",
+            return_value=True,
+        ),
+        patch(
+            "app.modules.catalogue_ingestion.docling_pdf_converter.convert_pdf_docling",
+            return_value=rendered,
+        ) as docling,
+    ):
+        converted = _convert_pdf(b"%PDF-scanned", prefer_docling=True)
+
+    assert converted.text.startswith("Official scanned")
+    assert docling.call_args.kwargs["do_ocr"] is True
 
 
 def test_convert_pdf_uses_docling_when_available() -> None:

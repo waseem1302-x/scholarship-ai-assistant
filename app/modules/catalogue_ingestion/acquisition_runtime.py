@@ -33,11 +33,11 @@ def crawl_budget_for_run(run: CatalogueIngestionRun, settings: Settings) -> Craw
         return CrawlBudget(
             max_fetch_attempts=attempts,
             max_accepted_artifacts=None,
-            max_depth=3,
-            max_total_bytes=20_000_000,
+            max_depth=None,
+            max_total_bytes=None,
             max_host_requests=attempts,
             max_wall_seconds=None,
-            max_browser_renders=1 if settings.catalogue_browser_fetching_enabled else 0,
+            max_browser_renders=(attempts if settings.catalogue_browser_fetching_enabled else 0),
             max_document_conversions=attempts,
             max_links_per_page=500,
             per_host_interval_seconds=float(settings.source_monitor_per_host_interval_seconds),
@@ -127,6 +127,7 @@ def acquisition_snapshot_payload(
         "budget_exhausted": result.budget_exhausted,
         "budget_reasons": list(result.budget_reasons),
         "unresolved_frontier": list(result.unresolved_frontier),
+        "frontier_exhausted": result.frontier_exhausted,
     }
     return plan_json, budget_json, result_json
 

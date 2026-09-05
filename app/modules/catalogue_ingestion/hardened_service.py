@@ -19,6 +19,7 @@ from app.modules.catalogue_ingestion.acquisition_runtime import (
     acquisition_snapshot_payload,
     crawl_budget_for_run,
 )
+from app.modules.catalogue_ingestion.browser_fetcher import PlaywrightBrowserSourceFetcher
 from app.modules.catalogue_ingestion.crawler import (
     BoundedOfficialSiteCrawler,
     CrawlBudget,
@@ -68,7 +69,16 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
             classifier=classifier,
         )
         self.acquisition_planner = CatalogueAcquisitionPlanner(session)
-        self.acquisition_crawler = BoundedOfficialSiteCrawler(fetcher=self.fetcher)
+        browser_fetcher = (
+            PlaywrightBrowserSourceFetcher(effective_fetcher)
+            if settings.catalogue_browser_fetching_enabled
+            and isinstance(effective_fetcher, CatalogueSafeSourceFetcher)
+            else None
+        )
+        self.acquisition_crawler = BoundedOfficialSiteCrawler(
+            fetcher=self.fetcher,
+            browser_fetcher=browser_fetcher,
+        )
 
     def _process_direct_candidate(
         self,
@@ -148,8 +158,15 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
                 heartbeat=lambda: self._heartbeat_candidate(run, candidate, run_lease_token),
                 frontier_needs=plan.needs,
                 browser_enabled=self.settings.catalogue_browser_fetching_enabled,
-                ocr_enabled=self.settings.catalogue_document_intelligence_enabled,
+                ocr_enabled=(
+                    self.settings.catalogue_document_intelligence_enabled
+                    or (
+                        self.settings.catalogue_docling_enabled
+                        and self.settings.catalogue_docling_do_ocr
+                    )
+                ),
                 primary_root=primary_sources[0].url,
+                enqueue_seed_sitemaps=self.settings.catalogue_completeness_mode_enabled,
             )
             self._record_acquisition_snapshot(run, candidate, plan, budget, crawl_result)
             self._heartbeat_candidate(run, candidate, run_lease_token)

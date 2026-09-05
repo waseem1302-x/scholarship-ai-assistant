@@ -172,7 +172,8 @@ def test_completeness_mode_persists_paid_failsafes_and_exhausts_frontier(
     assert budget.max_fetch_attempts == 1_000
     assert budget.max_accepted_artifacts is None
     assert budget.max_wall_seconds is None
-    assert budget.max_depth == 3
+    assert budget.max_depth is None
+    assert budget.max_total_bytes is None
     assert budget.max_links_per_page == 500
 
 
@@ -352,6 +353,7 @@ def test_completeness_blockers_are_empty_after_clean_frontier_and_terminal_jobs(
                     "budget_exhausted": False,
                     "budget_reasons": [],
                     "escalations": [],
+                    "frontier_exhausted": True,
                 },
             ),
             CatalogueResumableJob(
@@ -371,6 +373,44 @@ def test_completeness_blockers_are_empty_after_clean_frontier_and_terminal_jobs(
     service.settings = configured
 
     assert service._completeness_blockers(run, candidate, []) == []
+
+
+def test_completeness_blockers_reject_an_unfinished_acquisition_frontier(
+    db_session,
+) -> None:
+    configured = settings(crawling=True, completeness=True)
+    base_service = CatalogueIngestionService(db_session, configured, fetcher=MappingFetcher())
+    response = base_service.create_run_from_url(
+        ROOT,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    run = base_service.repository.get_run(response.id)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == response.id)
+    )
+    assert run is not None
+    assert candidate is not None
+    db_session.add(
+        CatalogueAcquisitionSnapshot(
+            run_id=run.id,
+            candidate_id=candidate.id,
+            result_json={
+                "budget_exhausted": False,
+                "budget_reasons": [],
+                "escalations": [],
+                "frontier_exhausted": False,
+            },
+        )
+    )
+    db_session.commit()
+    service = object.__new__(ProductionCatalogueIngestionService)
+    service.session = db_session
+    service.settings = configured
+
+    assert "acquisition_frontier_incomplete" in service._completeness_blockers(
+        run, candidate, []
+    )
 
 
 def test_ingestion_keeps_single_page_behavior_when_bounded_crawling_is_disabled(

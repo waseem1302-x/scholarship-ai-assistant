@@ -45,7 +45,7 @@ def test_ambiguous_candidates_remain_unresolved() -> None:
     assert candidate["counts_as_scholarship"] is False
 
 
-def test_pr0_keeps_all_graph_and_external_capabilities_disabled_by_default() -> None:
+def test_pr0_keeps_state_changing_and_paid_capabilities_disabled_by_default() -> None:
     settings = Settings(
         env="test",
         database_url="sqlite+pysqlite:///:memory:",
@@ -56,6 +56,7 @@ def test_pr0_keeps_all_graph_and_external_capabilities_disabled_by_default() -> 
     assert settings.catalogue_graph_writes_enabled is False
     assert settings.catalogue_ai_ingestion_enabled is False
     assert settings.catalogue_web_discovery_enabled is False
-    assert settings.catalogue_browser_fetching_enabled is False
+    assert settings.catalogue_completeness_mode_enabled is True
+    assert settings.catalogue_browser_fetching_enabled is True
     assert settings.catalogue_document_intelligence_enabled is False
     assert settings.catalogue_scheduled_ingestion_enabled is False
