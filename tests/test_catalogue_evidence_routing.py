@@ -1,11 +1,17 @@
 import uuid
 
+import app.modules.catalogue_ingestion.evidence_routing as evidence_routing_module
 from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective, ScopedCoverageState
 from app.modules.catalogue_ingestion.evidence_blocks import (
     DEFAULT_EVIDENCE_BLOCK_MAX_CHARS,
     build_evidence_blocks,
 )
-from app.modules.catalogue_ingestion.evidence_routing import _route_is_selected, _RouteTarget
+from app.modules.catalogue_ingestion.evidence_routing import (
+    CatalogueEvidenceRouter,
+    EvidenceRouteDecision,
+    _route_is_selected,
+    _RouteTarget,
+)
 from app.modules.catalogue_ingestion.topology_models import ScopeNodeType
 
 
@@ -44,6 +50,60 @@ def test_topic_match_schedules_the_relevant_paid_objective() -> None:
         scope_signal=True,
         selection_threshold=18,
     )
+
+
+def test_route_persistence_batches_selected_keys_and_omits_unselected(monkeypatch) -> None:
+    class RecordingSession:
+        def __init__(self) -> None:
+            self.lookup_batch_sizes: list[int] = []
+            self.added = []
+
+        def scalars(self, statement):
+            values = next(
+                value
+                for value in statement.compile().params.values()
+                if isinstance(value, list)
+            )
+            self.lookup_batch_sizes.append(len(values))
+            return []
+
+        def add_all(self, records) -> None:
+            self.added.extend(records)
+
+        def flush(self) -> None:
+            return None
+
+    decisions = tuple(
+        EvidenceRouteDecision(
+            route_key=str(index) * 64,
+            block_id=uuid.uuid4(),
+            coverage_cell_id=None,
+            scope_node_id=None,
+            objective=ClaimObjective.FUNDING,
+            scope_type=ScopeNodeType.SCHOLARSHIP_FAMILY.value,
+            scope_key="scholarship",
+            relevance_score=30,
+            relevance_reasons=("objective_lexicon_match",),
+            selected=index != 2,
+            coverage_input_fingerprint=uuid.uuid4().hex * 2,
+        )
+        for index in range(4)
+    )
+    session = RecordingSession()
+    router = CatalogueEvidenceRouter(session)
+    monkeypatch.setattr(router, "decisions_for_candidate", lambda _candidate_id: decisions)
+    monkeypatch.setattr(
+        evidence_routing_module,
+        "_ROUTE_KEY_LOOKUP_BATCH_SIZE",
+        2,
+        raising=False,
+    )
+
+    persisted = router.persist_candidate(uuid.uuid4())
+
+    assert session.lookup_batch_sizes == [2, 1]
+    assert len(persisted) == 3
+    assert all(item.selected for item in persisted)
 
 
 def test_large_mixed_page_is_partitioned_into_compact_non_overlapping_blocks() -> None:

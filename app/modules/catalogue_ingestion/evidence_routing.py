@@ -39,6 +39,7 @@ _OPEN_COVERAGE_STATES = frozenset(
     }
 )
 _DEFAULT_SELECTION_THRESHOLD = 18
+_ROUTE_KEY_LOOKUP_BATCH_SIZE = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,17 +174,26 @@ class CatalogueEvidenceRouter:
         return tuple(decisions)
 
     def persist_candidate(self, candidate_id: uuid.UUID) -> list[CatalogueEvidenceRoute]:
-        decisions = self.decisions_for_candidate(candidate_id)
+        decisions = tuple(
+            decision
+            for decision in self.decisions_for_candidate(candidate_id)
+            if decision.selected
+        )
         if not decisions:
             return []
-        route_keys = [decision.route_key for decision in decisions]
-        existing = set(
-            self.session.scalars(
-                select(CatalogueEvidenceRoute.route_key).where(
-                    CatalogueEvidenceRoute.route_key.in_(route_keys)
+        existing: set[str] = set()
+        for offset in range(0, len(decisions), _ROUTE_KEY_LOOKUP_BATCH_SIZE):
+            route_keys = [
+                decision.route_key
+                for decision in decisions[offset : offset + _ROUTE_KEY_LOOKUP_BATCH_SIZE]
+            ]
+            existing.update(
+                self.session.scalars(
+                    select(CatalogueEvidenceRoute.route_key).where(
+                        CatalogueEvidenceRoute.route_key.in_(route_keys)
+                    )
                 )
             )
-        )
         records = [
             CatalogueEvidenceRoute(
                 route_key=decision.route_key,
