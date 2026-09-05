@@ -2,6 +2,7 @@ import hashlib
 
 import pytest
 
+from app.modules.catalogue_ingestion.acquisition_planner import AcquisitionFrontierNeed
 from app.modules.catalogue_ingestion.crawler import (
     BoundedOfficialSiteCrawler,
     CrawlBudget,
@@ -101,6 +102,176 @@ def test_bounded_crawler_fetches_root_then_highest_value_same_host_pages() -> No
     assert result.frontier_exhausted is False
 
 
+def test_completeness_crawler_admits_only_scholarship_information_links() -> None:
+    faq = "https://example.edu/scholarships/csc/faq"
+    rules = "https://example.edu/scholarships/csc/rules.pdf"
+    institutions = "https://example.edu/scholarships/csc/participating-universities"
+    news = "https://example.edu/news/archive"
+    privacy = "https://example.edu/privacy"
+    university_profile = "https://example.edu/universities/moscow-state"
+    fetcher = FakeFetcher(
+        {
+            ROOT: fetched_page(
+                ROOT,
+                "Official scholarship overview.",
+                links=(
+                    FetchedLink(url=faq, text="Frequently asked questions"),
+                    FetchedLink(url=rules, text="Rules of participation PDF"),
+                    FetchedLink(url=institutions, text="Participating universities"),
+                    FetchedLink(url=news, text="News archive"),
+                    FetchedLink(url=privacy, text="Privacy policy"),
+                    FetchedLink(url=university_profile, text="Moscow State University"),
+                ),
+            ),
+            faq: fetched_page(faq, "Scholarship application answers and eligibility guidance."),
+            rules: fetched_page(
+                rules,
+                "Official participation rules and required documents.",
+                content_type="application/pdf",
+            ),
+            institutions: fetched_page(
+                institutions,
+                "The scholarship has 20 participating universities.",
+            ),
+            news: fetched_page(news, "General university news."),
+            privacy: fetched_page(privacy, "Privacy policy."),
+            university_profile: fetched_page(university_profile, "University profile."),
+        }
+    )
+
+    result = BoundedOfficialSiteCrawler(fetcher=fetcher).crawl(
+        ROOT,
+        budget=CrawlBudget(
+            max_fetch_attempts=20,
+            max_accepted_artifacts=None,
+            max_depth=None,
+            max_total_bytes=None,
+            max_host_requests=20,
+            minimum_link_score=30,
+            per_host_interval_seconds=0,
+        ),
+    )
+
+    assert set(fetcher.calls) == {ROOT, faq, rules, institutions}
+    assert {item.url for item in result.rejected if item.reason == "not_scholarship_relevant"} == {
+        news,
+        privacy,
+        university_profile,
+    }
+
+
+def test_crawler_returns_and_resumes_a_relevant_frontier_without_refetching_pages() -> None:
+    eligibility = "https://example.edu/scholarships/csc/eligibility"
+    funding = "https://example.edu/scholarships/csc/funding"
+    documents = "https://example.edu/scholarships/csc/required-documents"
+    responses = {
+        ROOT: fetched_page(
+            ROOT,
+            "Official scholarship overview.",
+            links=(
+                FetchedLink(url=eligibility, text="Eligibility requirements"),
+                FetchedLink(url=funding, text="Funding benefits"),
+                FetchedLink(url=documents, text="Required documents"),
+            ),
+        ),
+        eligibility: fetched_page(eligibility, "Official eligibility requirements."),
+        funding: fetched_page(funding, "Official funding benefits."),
+        documents: fetched_page(documents, "Official required documents."),
+    }
+    first_fetcher = FakeFetcher(responses)
+    first = BoundedOfficialSiteCrawler(fetcher=first_fetcher).crawl(
+        ROOT,
+        budget=CrawlBudget(
+            max_fetch_attempts=20,
+            max_round_fetch_attempts=2,
+            max_accepted_artifacts=None,
+            max_depth=None,
+            max_total_bytes=None,
+            max_host_requests=20,
+            minimum_link_score=30,
+            per_host_interval_seconds=0,
+        ),
+    )
+
+    assert len(first_fetcher.calls) == 2
+    assert first.frontier_exhausted is False
+    assert len(first.deferred_frontier) == 2
+
+    second_fetcher = FakeFetcher(responses)
+    second = BoundedOfficialSiteCrawler(fetcher=second_fetcher).crawl_many(
+        [ROOT],
+        budget=CrawlBudget(
+            max_fetch_attempts=20,
+            max_round_fetch_attempts=10,
+            max_accepted_artifacts=None,
+            max_depth=None,
+            max_total_bytes=None,
+            max_host_requests=20,
+            minimum_link_score=30,
+            per_host_interval_seconds=0,
+        ),
+        resume_frontier=first.deferred_frontier,
+        completed_urls={page.url for page in first.pages},
+        primary_root=ROOT,
+    )
+
+    assert ROOT not in second_fetcher.calls
+    assert set(second_fetcher.calls) == {item.url for item in first.deferred_frontier}
+    assert second.frontier_exhausted is True
+    assert second.deferred_frontier == ()
+
+
+def test_crawler_closes_only_objectives_without_a_remaining_relevant_link() -> None:
+    funding = "https://example.edu/scholarships/csc/funding"
+    fetcher = FakeFetcher(
+        {
+            ROOT: fetched_page(
+                ROOT,
+                "Official scholarship overview and eligibility requirements.",
+                links=(FetchedLink(url=funding, text="Funding benefits"),),
+            ),
+            funding: fetched_page(funding, "Official funding benefits."),
+        }
+    )
+    needs = (
+        AcquisitionFrontierNeed(
+            objective="eligibility",
+            scope_type="scholarship_family",
+            scope_key="scholarship",
+            lifecycle_key=None,
+            coverage_state="unknown",
+            reasons=("initial_acquisition_frontier",),
+        ),
+        AcquisitionFrontierNeed(
+            objective="funding",
+            scope_type="scholarship_family",
+            scope_key="scholarship",
+            lifecycle_key=None,
+            coverage_state="unknown",
+            reasons=("initial_acquisition_frontier",),
+        ),
+    )
+
+    first = BoundedOfficialSiteCrawler(fetcher=fetcher).crawl(
+        ROOT,
+        budget=CrawlBudget(
+            max_fetch_attempts=20,
+            max_round_fetch_attempts=1,
+            max_accepted_artifacts=None,
+            max_depth=None,
+            max_total_bytes=None,
+            max_host_requests=20,
+            minimum_link_score=30,
+            per_host_interval_seconds=0,
+        ),
+        frontier_needs=needs,
+    )
+
+    assert first.closed_objectives == ("eligibility",)
+    assert first.pending_objectives == ("funding",)
+    assert first.deferred_frontier[0].objectives == ("funding",)
+
+
 def test_crawler_skips_static_assets_but_keeps_calendar_evidence() -> None:
     script = "https://example.edu/build/app.js"
     calendar = "https://example.edu/calendar/event.ics"
@@ -137,13 +308,17 @@ def test_crawler_skips_static_assets_but_keeps_calendar_evidence() -> None:
 def test_crawler_follows_links_discovered_in_seed_sitemap() -> None:
     sitemap = "https://example.edu/sitemap.xml"
     deep_page = "https://example.edu/scholarships/csc/requirements/documents"
+    unrelated = "https://example.edu/news/archive"
     fetcher = FakeFetcher(
         {
             ROOT: fetched_page(ROOT, "Official scholarship overview."),
             sitemap: fetched_page(
                 sitemap,
                 deep_page,
-                links=(FetchedLink(url=deep_page, text=""),),
+                links=(
+                    FetchedLink(url=deep_page, text=""),
+                    FetchedLink(url=unrelated, text="University news archive"),
+                ),
                 content_type="application/xml",
             ),
             deep_page: fetched_page(deep_page, "Official required documents."),
@@ -157,11 +332,15 @@ def test_crawler_follows_links_discovered_in_seed_sitemap() -> None:
             max_accepted_artifacts=None,
             max_depth=None,
             max_host_requests=10,
+            minimum_link_score=30,
         ),
         enqueue_seed_sitemaps=True,
     )
 
     assert fetcher.calls == [ROOT, sitemap, deep_page]
+    assert sitemap not in {page.url for page in result.pages}
+    assert any(item.url == unrelated for item in result.rejected)
+    assert result.sitemap_attempted is True
     assert result.frontier_exhausted is True
 
 

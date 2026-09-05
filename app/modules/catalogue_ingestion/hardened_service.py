@@ -7,6 +7,7 @@ shared topology-aware frontier without replacing the large compatibility service
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -23,6 +24,7 @@ from app.modules.catalogue_ingestion.browser_fetcher import PlaywrightBrowserSou
 from app.modules.catalogue_ingestion.crawler import (
     BoundedOfficialSiteCrawler,
     CrawlBudget,
+    CrawlFrontierItem,
     CrawlResult,
 )
 from app.modules.catalogue_ingestion.models import (
@@ -150,6 +152,35 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
             seed_keywords=candidate.seed_keywords,
         )
         budget = crawl_budget_for_run(run, self.settings)
+        prior_snapshots = self._acquisition_snapshots(run, candidate)
+        latest_snapshot = prior_snapshots[-1] if prior_snapshots else None
+        resume_frontier = self._resume_frontier(latest_snapshot, plan.objectives)
+        completed_urls = self._completed_acquisition_urls(candidate)
+        sitemap_attempted = any(
+            bool((snapshot.result_json or {}).get("sitemap_attempted"))
+            for snapshot in prior_snapshots
+        )
+        use_sitemap_fallback = bool(
+            self.settings.catalogue_completeness_mode_enabled
+            and latest_snapshot is not None
+            and not resume_frontier
+            and not sitemap_attempted
+        )
+        if self.settings.catalogue_completeness_mode_enabled:
+            attempts_used = sum(
+                int((snapshot.result_json or {}).get("fetch_attempts") or 0)
+                for snapshot in prior_snapshots
+            )
+            remaining_attempts = budget.max_fetch_attempts - attempts_used
+            if remaining_attempts <= 0:
+                self._manual_review(
+                    run,
+                    candidate,
+                    "acquisition_fetch_attempts_exhausted",
+                    run_lease_token,
+                )
+                return
+            budget = replace(budget, max_fetch_attempts=remaining_attempts)
         try:
             self._heartbeat_candidate(run, candidate, run_lease_token)
             crawl_result = self.acquisition_crawler.crawl_many(
@@ -166,7 +197,9 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
                     )
                 ),
                 primary_root=primary_sources[0].url,
-                enqueue_seed_sitemaps=self.settings.catalogue_completeness_mode_enabled,
+                enqueue_seed_sitemaps=use_sitemap_fallback,
+                resume_frontier=resume_frontier,
+                completed_urls=completed_urls,
             )
             self._record_acquisition_snapshot(run, candidate, plan, budget, crawl_result)
             self._heartbeat_candidate(run, candidate, run_lease_token)
@@ -249,6 +282,79 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
             self._manual_review(run, candidate, "ai_ingestion_disabled", run_lease_token)
             return
         self._process_direct_claims(run, candidate, run_lease_token)
+
+    def _acquisition_snapshots(
+        self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+    ) -> list[CatalogueAcquisitionSnapshot]:
+        snapshots = list(
+            self.session.scalars(
+                select(CatalogueAcquisitionSnapshot)
+                .where(
+                    CatalogueAcquisitionSnapshot.run_id == run.id,
+                    CatalogueAcquisitionSnapshot.candidate_id == candidate.id,
+                )
+                .order_by(
+                    CatalogueAcquisitionSnapshot.created_at,
+                    CatalogueAcquisitionSnapshot.id,
+                )
+            )
+        )
+        snapshots.sort(
+            key=lambda item: (
+                int((item.plan_json or {}).get("round_index") or 0),
+                item.created_at,
+                str(item.id),
+            )
+        )
+        return snapshots
+
+    @staticmethod
+    def _resume_frontier(
+        snapshot: CatalogueAcquisitionSnapshot | None,
+        active_objectives: tuple[str, ...],
+    ) -> tuple[CrawlFrontierItem, ...]:
+        if snapshot is None:
+            return ()
+        active = set(active_objectives)
+        frontier: list[CrawlFrontierItem] = []
+        for raw in (snapshot.result_json or {}).get("deferred_frontier") or []:
+            if not isinstance(raw, dict):
+                continue
+            objectives = tuple(
+                value
+                for value in raw.get("objectives") or ()
+                if isinstance(value, str) and value in active
+            )
+            if not objectives:
+                continue
+            try:
+                frontier.append(
+                    CrawlFrontierItem(
+                        url=str(raw["url"]),
+                        depth=int(raw["depth"]),
+                        score=int(raw["score"]),
+                        objectives=objectives,
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return tuple(frontier)
+
+    @staticmethod
+    def _completed_acquisition_urls(candidate: CatalogueCandidate) -> tuple[str, ...]:
+        urls: set[str] = set()
+        for source in candidate.sources:
+            if source.status is not CandidateSourceStatus.FETCHED:
+                continue
+            urls.update(
+                value
+                for value in (source.url, source.final_url, source.canonical_url)
+                if value
+            )
+            urls.update(artifact.final_url for artifact in source.artifacts if artifact.final_url)
+        return tuple(sorted(urls))
 
     def _accept_direct_source(
         self,
@@ -421,6 +527,7 @@ class HardenedCatalogueIngestionService(CatalogueIngestionService):
             budget=budget,
             result=result,
         )
+        plan_json["round_index"] = len(self._acquisition_snapshots(run, candidate)) + 1
         self.session.add(
             CatalogueAcquisitionSnapshot(
                 run_id=run.id,

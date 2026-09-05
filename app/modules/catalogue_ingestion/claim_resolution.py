@@ -14,6 +14,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     SUPPORTED_CLAIM_FIELDS,
     ClaimConflictRecord,
     ClaimEntityType,
+    ClaimObjective,
     ClaimRejectionRecord,
     ClaimResolution,
     ExtractedClaim,
@@ -36,6 +37,7 @@ def resolve_claims(
     require_detail: bool = False,
     objective_coverage: dict[str, str] | None = None,
     evidence_frontier_complete: bool = False,
+    closed_objectives: Iterable[ClaimObjective | str] = (),
 ) -> ClaimResolution:
     extracted_items = list(extracted)
     cycle_aliases = _cycle_aliases(extracted_items)
@@ -284,6 +286,7 @@ def resolve_claims(
         resolution=resolution,
         provider_objective_coverage=provider_signals,
         evidence_frontier_complete=evidence_frontier_complete,
+        closed_objectives=closed_objectives,
     )
 
 

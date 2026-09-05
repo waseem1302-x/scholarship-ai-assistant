@@ -40,6 +40,8 @@ def crawl_budget_for_run(run: CatalogueIngestionRun, settings: Settings) -> Craw
             max_browser_renders=(attempts if settings.catalogue_browser_fetching_enabled else 0),
             max_document_conversions=attempts,
             max_links_per_page=500,
+            minimum_link_score=30,
+            max_round_fetch_attempts=12,
             per_host_interval_seconds=float(settings.source_monitor_per_host_interval_seconds),
         )
 
@@ -103,6 +105,8 @@ def acquisition_snapshot_payload(
         "max_browser_renders": budget.max_browser_renders,
         "max_document_conversions": budget.max_document_conversions,
         "max_links_per_page": budget.max_links_per_page,
+        "minimum_link_score": budget.minimum_link_score,
+        "max_round_fetch_attempts": budget.max_round_fetch_attempts,
         "per_host_interval_seconds": budget.per_host_interval_seconds,
     }
     result_json = {
@@ -128,6 +132,10 @@ def acquisition_snapshot_payload(
         "budget_reasons": list(result.budget_reasons),
         "unresolved_frontier": list(result.unresolved_frontier),
         "frontier_exhausted": result.frontier_exhausted,
+        "deferred_frontier": [asdict(item) for item in result.deferred_frontier],
+        "closed_objectives": list(result.closed_objectives),
+        "pending_objectives": list(result.pending_objectives),
+        "sitemap_attempted": result.sitemap_attempted,
     }
     return plan_json, budget_json, result_json
 

@@ -79,6 +79,18 @@ _NEGATIVE_TERMS = (
     "noticias",
     "berita",
 )
+_HIGH_VALUE_LINK_TERMS = (
+    "frequently asked question",
+    "faq",
+    "rules",
+    "regulation",
+    "participation",
+    "participating universities",
+    "participating institutions",
+    "selection criteria",
+    "selection process",
+    "how to apply",
+)
 _DEFAULT_LEXICON: dict[str, tuple[str, ...]] = {
     "identity": (
         "scholarship",
@@ -329,6 +341,8 @@ class CrawlBudget:
     max_browser_renders: int = 0
     max_document_conversions: int = 4
     max_links_per_page: int = 100
+    minimum_link_score: int | None = None
+    max_round_fetch_attempts: int | None = None
     per_host_interval_seconds: float = 0.0
     max_pages: int | None = None
 
@@ -363,6 +377,10 @@ class CrawlBudget:
             raise ValueError("max_document_conversions cannot be negative")
         if not 1 <= self.max_links_per_page <= 500:
             raise ValueError("max_links_per_page must be between 1 and 500")
+        if self.minimum_link_score is not None and self.minimum_link_score < 0:
+            raise ValueError("minimum_link_score cannot be negative")
+        if self.max_round_fetch_attempts is not None and self.max_round_fetch_attempts < 1:
+            raise ValueError("max_round_fetch_attempts must be positive")
         if self.per_host_interval_seconds < 0:
             raise ValueError("per_host_interval_seconds cannot be negative")
 
@@ -400,6 +418,14 @@ class AcquisitionEscalation:
 
 
 @dataclass(frozen=True, slots=True)
+class CrawlFrontierItem:
+    url: str
+    depth: int
+    score: int
+    objectives: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class CrawlResult:
     root_url: str
     pages: tuple[CrawledPage, ...]
@@ -419,6 +445,10 @@ class CrawlResult:
     budget_reasons: tuple[str, ...] = ()
     unresolved_frontier: tuple[str, ...] = ()
     frontier_exhausted: bool = False
+    deferred_frontier: tuple[CrawlFrontierItem, ...] = ()
+    closed_objectives: tuple[str, ...] = ()
+    pending_objectives: tuple[str, ...] = ()
+    sitemap_attempted: bool = False
 
 
 @dataclass(order=True, slots=True)
@@ -429,6 +459,57 @@ class _QueuedLink:
     depth: int = field(compare=False)
     score: int = field(compare=False)
     is_seed: bool = field(compare=False, default=False)
+    objectives: tuple[str, ...] = field(compare=False, default=())
+
+
+def _matched_link_objectives(
+    link: FetchedLink,
+    *,
+    frontier_needs: tuple[AcquisitionFrontierNeed, ...],
+    lexicon: AcquisitionLexicon,
+) -> tuple[str, ...]:
+    active = tuple(dict.fromkeys(need.objective for need in frontier_needs))
+    if not active:
+        active = tuple(lexicon.terms_by_objective)
+    combined = " ".join(
+        part
+        for part in (
+            link.url,
+            link.text,
+            link.title or "",
+            _link_relation(link),
+            " ".join(str(item) for item in getattr(link, "context_tags", ()) or ()),
+        )
+        if part
+    ).casefold()
+    matched = {
+        objective
+        for objective in active
+        if any(
+            term.casefold() in combined
+            for term in lexicon.terms_by_objective.get(objective, ())
+        )
+    }
+    broad_terms = ("frequently asked question", "faq", "rules", "regulation")
+    if any(term in combined for term in broad_terms):
+        matched.update(active)
+    if "participating universit" in combined or "participating institution" in combined:
+        matched.update(
+            objective
+            for objective in active
+            if objective in {"identity", "programmes", "programme_details", "routes"}
+        )
+    if "selection criteria" in combined or "selection process" in combined:
+        matched.update(
+            objective
+            for objective in active
+            if objective in {"eligibility", "eligibility_context", "application_timeline"}
+        )
+    if _looks_like_calendar(link.url) and "application_timeline" in active:
+        matched.add("application_timeline")
+    if _looks_like_document(link.url) and not matched:
+        matched.update(active)
+    return tuple(objective for objective in active if objective in matched)
 
 
 def normalize_crawl_url(value: str) -> str | None:
@@ -476,8 +557,13 @@ def score_crawl_link(
     score += _structural_link_score(link)
     if not link.text.strip() and not (link.title or "").strip() and not _looks_like_document(
         link.url
+    ) and not _looks_like_calendar(
+        link.url
     ):
         score -= 40
+
+    if any(term in combined for term in _HIGH_VALUE_LINK_TERMS):
+        score += 24
 
     needs = tuple(frontier_needs)
     objectives = tuple(dict.fromkeys(need.objective for need in needs))
@@ -673,6 +759,8 @@ class BoundedOfficialSiteCrawler:
         primary_root: str | None = None,
         enqueue_auxiliary_roots: bool = True,
         enqueue_seed_sitemaps: bool = False,
+        resume_frontier: Iterable[CrawlFrontierItem] = (),
+        completed_urls: Iterable[str] = (),
     ) -> CrawlResult:
         """Crawl multiple explicitly-authorized roots through one deduplicated frontier."""
 
@@ -721,8 +809,14 @@ class BoundedOfficialSiteCrawler:
             for reason in need.reasons
         }
         budget_reasons: set[str] = set()
-        seen_urls: set[str] = set()
-        completed_urls: set[str] = set()
+        blocked_objectives: set[str] = set()
+        normalized_completed_urls = {
+            normalized
+            for value in completed_urls
+            if (normalized := normalize_crawl_url(value)) is not None
+        }
+        seen_urls: set[str] = set(normalized_completed_urls)
+        completed_url_set: set[str] = set(normalized_completed_urls)
         seen_hashes: set[str] = set()
         signatures: list[tuple[str, frozenset[int], frozenset[str]]] = []
         queue: list[_QueuedLink] = []
@@ -756,10 +850,11 @@ class BoundedOfficialSiteCrawler:
             depth: int,
             score: int,
             is_seed: bool = False,
+            objectives: tuple[str, ...] = (),
         ) -> None:
             nonlocal insertion_order
             normalized = normalize_crawl_url(url)
-            if normalized is None or normalized in seen_urls or normalized in completed_urls:
+            if normalized is None or normalized in seen_urls or normalized in completed_url_set:
                 return
             host = _host(normalized)
             if host not in authority_by_host:
@@ -792,6 +887,7 @@ class BoundedOfficialSiteCrawler:
                     depth=depth,
                     score=score,
                     is_seed=is_seed,
+                    objectives=objectives,
                 ),
             )
             insertion_order += 1
@@ -799,7 +895,12 @@ class BoundedOfficialSiteCrawler:
         def enqueue_sitemap(seed_url: str) -> None:
             parsed = urlsplit(seed_url)
             sitemap = urlunsplit((parsed.scheme, parsed.netloc, "/sitemap.xml", "", ""))
-            enqueue(sitemap, depth=1, score=95)
+            enqueue(
+                sitemap,
+                depth=1,
+                score=95,
+                objectives=tuple(dict.fromkeys(need.objective for need in needs)),
+            )
 
         def enqueue_links(links: tuple[FetchedLink, ...], *, depth: int) -> None:
             considered = 0
@@ -835,14 +936,32 @@ class BoundedOfficialSiteCrawler:
                         )
                     )
                     continue
+                score = score_crawl_link(
+                    link,
+                    frontier_needs=needs,
+                    lexicon=active_lexicon,
+                )
+                matched_objectives = _matched_link_objectives(
+                    link,
+                    frontier_needs=needs,
+                    lexicon=active_lexicon,
+                )
+                if limits.minimum_link_score is not None and (
+                    score < limits.minimum_link_score or not matched_objectives
+                ):
+                    rejected.append(
+                        RejectedCrawlLink(
+                            url=normalized,
+                            depth=depth,
+                            reason="not_scholarship_relevant",
+                        )
+                    )
+                    continue
                 enqueue(
                     normalized,
                     depth=depth,
-                    score=score_crawl_link(
-                        link,
-                        frontier_needs=needs,
-                        lexicon=active_lexicon,
-                    ),
+                    score=score,
+                    objectives=matched_objectives,
                 )
 
         def add_escalation(
@@ -943,6 +1062,7 @@ class BoundedOfficialSiteCrawler:
                 fetched = _fetch_with_limit(self.fetcher, item.url, max_bytes=remaining_bytes)
             except SourceFetchError as exc:
                 pulse()
+                blocked_objectives.update(item.objectives)
                 failure_code = _failure_code(exc)
                 failures.append(CrawlFailure(url=item.url, depth=item.depth, reason=failure_code))
                 escalation = _escalation_for_failure(item.url, str(exc))
@@ -999,8 +1119,8 @@ class BoundedOfficialSiteCrawler:
                     raise SourceFetchError("crawler_root_redirect_left_verified_domain")
                 return True
 
-            completed_urls.add(item.url)
-            completed_urls.add(final_url)
+            completed_url_set.add(item.url)
+            completed_url_set.add(final_url)
             seen_urls.add(final_url)
             sufficiency = classify_static_page(fetched)
             if sufficiency is StaticPageSufficiency.CHALLENGE:
@@ -1102,6 +1222,11 @@ class BoundedOfficialSiteCrawler:
                     mark_budget("document_conversions")
                     return False
 
+            if _looks_like_sitemap(final_url, fetched.content_type):
+                if limits.max_depth is None or item.depth < limits.max_depth:
+                    enqueue_links(fetched.links, depth=item.depth + 1)
+                return True
+
             content_hash = fetched.normalized_content_hash or fetched.content_hash
             if content_hash in seen_hashes:
                 duplicates.append(final_url)
@@ -1148,14 +1273,33 @@ class BoundedOfficialSiteCrawler:
 
         roots_to_enqueue = normalized_seeds if enqueue_auxiliary_roots else normalized_seeds[:1]
         for index, seed in enumerate(roots_to_enqueue):
-            enqueue(seed.url, depth=0, score=100 - index, is_seed=True)
+            enqueue(
+                seed.url,
+                depth=0,
+                score=100 - index,
+                is_seed=True,
+                objectives=tuple(dict.fromkeys(need.objective for need in needs)),
+            )
             if enqueue_seed_sitemaps and (limits.max_depth is None or limits.max_depth > 0):
                 enqueue_sitemap(seed.url)
 
+        for item in resume_frontier:
+            enqueue(
+                item.url,
+                depth=item.depth,
+                score=item.score,
+                objectives=item.objectives,
+            )
+
         while queue and not budget_exhausted:
             pulse()
+            if (
+                limits.max_round_fetch_attempts is not None
+                and fetch_attempts >= limits.max_round_fetch_attempts
+            ):
+                break
             item = heapq.heappop(queue)
-            if item.url in completed_urls:
+            if item.url in completed_url_set:
                 continue
             if not fetch_page(item):
                 break
@@ -1172,6 +1316,20 @@ class BoundedOfficialSiteCrawler:
                 mark_budget("wall_time")
         pulse()
 
+        deferred = tuple(
+            CrawlFrontierItem(
+                url=item.url,
+                depth=item.depth,
+                score=item.score,
+                objectives=item.objectives,
+            )
+            for item in sorted(queue)
+        )
+        requested_objectives = set(need.objective for need in needs)
+        pending_objectives = set(blocked_objectives)
+        pending_objectives.update(
+            objective for item in deferred for objective in item.objectives
+        )
         return CrawlResult(
             root_url=normalized_primary,
             pages=tuple(pages),
@@ -1191,6 +1349,10 @@ class BoundedOfficialSiteCrawler:
             budget_reasons=tuple(sorted(budget_reasons)),
             unresolved_frontier=tuple(sorted(unresolved)),
             frontier_exhausted=not queue and not budget_exhausted,
+            deferred_frontier=deferred,
+            closed_objectives=tuple(sorted(requested_objectives - pending_objectives)),
+            pending_objectives=tuple(sorted(pending_objectives)),
+            sitemap_attempted=enqueue_seed_sitemaps,
         )
 
 
@@ -1236,6 +1398,17 @@ def _structural_link_score(link: FetchedLink) -> int:
 def _looks_like_document(url: str) -> bool:
     path = urlsplit(url).path.casefold()
     return any(path.endswith(extension) for extension in _DOCUMENT_EXTENSIONS)
+
+
+def _looks_like_calendar(url: str) -> bool:
+    return urlsplit(url).path.casefold().endswith(".ics")
+
+
+def _looks_like_sitemap(url: str, content_type: str) -> bool:
+    path = urlsplit(url).path.casefold()
+    return path.endswith("sitemap.xml") or (
+        "xml" in content_type.casefold() and "sitemap" in path
+    )
 
 
 def _is_non_content_link(url: str) -> bool:

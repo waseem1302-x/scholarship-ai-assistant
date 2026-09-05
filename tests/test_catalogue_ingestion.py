@@ -3,6 +3,7 @@ import json
 import urllib.error
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -71,10 +72,13 @@ from app.modules.catalogue_ingestion.provider import (
     estimate_cost,
     extraction_retry_delay,
 )
+from app.modules.catalogue_ingestion.provider_config import catalogue_provider_profile
 from app.modules.catalogue_ingestion.repository import CatalogueIngestionRepository
 from app.modules.catalogue_ingestion.rich_graph_materializer import (
     CatalogueGraphMaterializer,
     _claim_groups,
+    _evidence_backed_degree_levels,
+    _required_bool,
 )
 from app.modules.catalogue_ingestion.schemas import (
     CatalogueExtractionOutput,
@@ -1646,6 +1650,7 @@ def test_rich_materializer_preserves_supported_scoped_fields(db_session) -> None
         resolved(ClaimEntityType.ELIGIBILITY, "age", "rule_type", "age"),
         resolved(ClaimEntityType.ELIGIBILITY, "age", "operator", "less_than"),
         resolved(ClaimEntityType.ELIGIBILITY, "age", "value", 30),
+        resolved(ClaimEntityType.ELIGIBILITY, "age", "required", True),
         resolved(ClaimEntityType.ELIGIBILITY, "age", "critical", True),
         resolved(ClaimEntityType.ELIGIBILITY, "age", "original_text", "Under 30"),
         resolved(ClaimEntityType.FUNDING, "stipend", "component_type", "stipend"),
@@ -1670,17 +1675,57 @@ def test_rich_materializer_preserves_supported_scoped_fields(db_session) -> None
         resolved(ClaimEntityType.RESOURCE, "help", "phone", "+81 1 2345 6789"),
         resolved(ClaimEntityType.RESOURCE, "help", "address", "Tokyo"),
         resolved(ClaimEntityType.RESOURCE, "help", "original_text", "Contact the help desk"),
+        resolved(ClaimEntityType.GUIDANCE, "selection", "title", "Selection criteria"),
+        resolved(
+            ClaimEntityType.GUIDANCE,
+            "selection",
+            "guidance_type",
+            "selection_criteria",
+        ),
+        resolved(
+            ClaimEntityType.GUIDANCE,
+            "selection",
+            "text",
+            "Candidates are assessed on academic achievement.",
+        ),
+        resolved(
+            ClaimEntityType.INSTITUTION,
+            "alpha_university",
+            "canonical_name",
+            "Alpha University",
+        ),
+        resolved(
+            ClaimEntityType.INSTITUTION,
+            "alpha_university",
+            "role",
+            "participating_university",
+        ),
     ]
     materializer = CatalogueGraphMaterializer(db_session)
+    groups = _claim_groups(claims)
+    institutions = materializer._materialize_institutions(groups, {})
+    materializer._materialize_institution_participation(
+        opportunity,
+        cycle,
+        groups,
+        track_by_key={},
+        institution_by_key=institutions,
+        source_by_artifact={
+            item.artifact_id: SimpleNamespace(id=None)
+            for item in claims
+            if item.claim.entity_type is ClaimEntityType.INSTITUTION
+        },
+        field_entity={},
+    )
     materializer._materialize_scoped_entities(
         uuid.uuid4(),
         "a" * 64,
         opportunity,
         cycle,
-        _claim_groups(claims),
+        groups,
         {},
         track_by_key={},
-        institution_by_key={},
+        institution_by_key=institutions,
         programmes_by_key={},
     )
     db_session.flush()
@@ -1688,7 +1733,10 @@ def test_rich_materializer_preserves_supported_scoped_fields(db_session) -> None
     eligibility = db_session.scalar(select(ScholarshipEligibilityRule))
     funding = db_session.scalar(select(FundingComponent))
     step = db_session.scalar(select(ApplicationStep))
-    resource = db_session.scalar(select(OpportunityResource))
+    resources = list(db_session.scalars(select(OpportunityResource)))
+    resource = next(item for item in resources if item.resource_key == "help")
+    guidance = next(item for item in resources if item.resource_key == "selection")
+    participation = db_session.scalar(select(InstitutionParticipation))
     assert eligibility is not None
     assert eligibility.critical is True
     assert eligibility.original_text == "Under 30"
@@ -1724,6 +1772,26 @@ def test_rich_materializer_preserves_supported_scoped_fields(db_session) -> None
         "Tokyo",
         "Contact the help desk",
     )
+    assert guidance.resource_type == "selection_criteria"
+    assert guidance.original_text == "Candidates are assessed on academic achievement."
+    assert guidance.url == OFFICIAL_URL
+    assert participation is not None
+    assert participation.track_id is None
+    assert participation.role == "participating_university"
+
+
+def test_materialization_never_invents_degree_or_requiredness() -> None:
+    without_degree = ClaimResolution(
+        resolved=[],
+        conflicts=[],
+        rejected=[],
+        completeness_errors=[],
+    )
+
+    with pytest.raises(ValueError, match="degree level"):
+        _evidence_backed_degree_levels(without_degree)
+    with pytest.raises(ValueError, match="evidence-backed boolean"):
+        _required_bool({}, "required")
 
 
 def test_claim_resolution_separates_events_and_validates_resource_links() -> None:
@@ -1937,6 +2005,210 @@ def test_frontier_proof_closes_open_ended_persisted_coverage(db_session) -> None
     assert unresolved_funding.state.value == "partial"
     assert closed_funding.state.value == "complete"
     assert closed_funding.missing_frontier_reasons == []
+
+
+def test_frontier_proof_can_close_one_objective_without_closing_others(db_session) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert candidate is not None
+    source = candidate.sources[0]
+    source.status = CandidateSourceStatus.FETCHED
+    artifact = CatalogueSourceArtifact(
+        source=source,
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="8" * 64,
+        normalized_text=MEXT_TEXT,
+        extraction_method="normalized_text",
+        byte_count=len(MEXT_TEXT),
+        character_count=len(MEXT_TEXT),
+    )
+    db_session.add(artifact)
+    db_session.flush()
+    coverage = {objective.value: "complete" for objective in ClaimObjective}
+
+    resolution = resolve_claims(
+        [(artifact, 1, claim_output().claims)],
+        require_detail=True,
+        objective_coverage=coverage,
+        closed_objectives={ClaimObjective.FUNDING},
+    )
+
+    root_states = {
+        item.objective: item.state.value
+        for item in resolution.scope_coverage
+        if item.scope_type == "scholarship_family"
+    }
+    assert root_states[ClaimObjective.FUNDING] == "complete"
+    assert root_states[ClaimObjective.ELIGIBILITY] == "partial"
+
+
+def test_participating_institution_count_detects_an_incomplete_official_list(
+    db_session,
+) -> None:
+    service = CatalogueIngestionService(
+        db_session,
+        enabled_settings(),
+        fetcher=FakeFetcher(MEXT_TEXT),
+        claim_extractor=FakeClaimProvider(claim_output()),
+    )
+    run = service.create_run_from_url(
+        OFFICIAL_URL,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == run.id)
+    )
+    assert candidate is not None
+    source = candidate.sources[0]
+    source.status = CandidateSourceStatus.FETCHED
+    text = (
+        "Open Doors Scholarship is provided by the Government of Russia for masters. "
+        "2027 intake. There are 3 participating universities: Alpha University, "
+        "Beta University, Gamma University."
+    )
+    artifact = CatalogueSourceArtifact(
+        source=source,
+        final_url=OFFICIAL_URL,
+        content_type="text/html",
+        content_hash="6" * 64,
+        normalized_text=text,
+        extraction_method="normalized_text",
+        byte_count=len(text),
+        character_count=len(text),
+    )
+    db_session.add(artifact)
+    db_session.flush()
+
+    def extracted(
+        entity_type: ClaimEntityType,
+        entity_key: str,
+        field_path: str,
+        value: str | int | list[str],
+        excerpt: str,
+    ):
+        typed = {
+            "string_value": None,
+            "decimal_value": None,
+            "integer_value": None,
+            "boolean_value": None,
+            "string_list_value": None,
+        }
+        if isinstance(value, int):
+            typed["integer_value"] = value
+        elif isinstance(value, list):
+            typed["string_list_value"] = value
+        else:
+            typed["string_value"] = value
+        start = text.index(excerpt)
+        return claim_output().claims[0].model_copy(
+            update={
+                "entity_type": entity_type,
+                "entity_key": entity_key,
+                "field_path": field_path,
+                "value": ClaimValue(**typed),
+                "scope": ClaimScope(cycle_key="2027"),
+                "excerpt": excerpt,
+                "excerpt_start": start,
+                "excerpt_end": start + len(excerpt),
+            }
+        )
+
+    claims = [
+        extracted(
+            ClaimEntityType.SCHOLARSHIP,
+            "open_doors",
+            "name",
+            "Open Doors Scholarship",
+            "Open Doors Scholarship",
+        ),
+        extracted(
+            ClaimEntityType.SCHOLARSHIP,
+            "open_doors",
+            "provider_name",
+            "Government of Russia",
+            "Government of Russia",
+        ),
+        extracted(
+            ClaimEntityType.SCHOLARSHIP,
+            "open_doors",
+            "country_code",
+            "RU",
+            "Russia",
+        ),
+        extracted(
+            ClaimEntityType.SCHOLARSHIP,
+            "open_doors",
+            "degree_levels",
+            ["masters"],
+            "masters",
+        ),
+        extracted(ClaimEntityType.CYCLE, "2027", "intake_year", 2027, "2027 intake"),
+        extracted(
+            ClaimEntityType.SCHOLARSHIP,
+            "open_doors",
+            "participating_institution_count",
+            3,
+            "3 participating universities",
+        ),
+    ]
+    for name in ("Alpha University", "Beta University", "Gamma University"):
+        key = name.casefold().replace(" ", "_")
+        claims.extend(
+            (
+                extracted(ClaimEntityType.INSTITUTION, key, "canonical_name", name, name),
+                extracted(
+                    ClaimEntityType.INSTITUTION,
+                    key,
+                    "role",
+                    "participating_university",
+                    name,
+                ),
+            )
+        )
+
+    incomplete = resolve_claims(
+        [(artifact, 1, claims[:-2])],
+        require_detail=True,
+        objective_coverage={"identity": "complete"},
+        closed_objectives={ClaimObjective.IDENTITY},
+    )
+    complete = resolve_claims(
+        [(artifact, 1, claims)],
+        require_detail=True,
+        objective_coverage={"identity": "complete"},
+        closed_objectives={ClaimObjective.IDENTITY},
+    )
+
+    incomplete_root = next(
+        item
+        for item in incomplete.scope_coverage
+        if item.objective is ClaimObjective.IDENTITY
+        and item.scope_type == "scholarship_family"
+    )
+    complete_root = next(
+        item
+        for item in complete.scope_coverage
+        if item.objective is ClaimObjective.IDENTITY
+        and item.scope_type == "scholarship_family"
+    )
+    assert (incomplete_root.expected_item_count, incomplete_root.resolved_item_count) == (3, 2)
+    assert incomplete_root.state.value == "partial"
+    assert (complete_root.expected_item_count, complete_root.resolved_item_count) == (3, 3)
+    assert complete_root.state.value == "complete"
 
 
 def test_objective_coverage_is_partial_when_any_official_source_is_partial() -> None:
@@ -2367,6 +2639,7 @@ def test_open_provider_circuit_defers_candidate_without_calling_provider(
     CatalogueProviderScheduler(db_session, settings).record_failure(
         provider=extractor.name,
         deployment=settings.catalogue_ai_model,
+        endpoint_fingerprint=catalogue_provider_profile(settings).endpoint_fingerprint,
         failure_class=ProviderFailureClass.AUTHENTICATION_CONFIGURATION_ERROR,
     )
 

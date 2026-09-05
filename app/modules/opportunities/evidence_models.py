@@ -241,7 +241,7 @@ class ScopedDeadline(Base):
     deadline_precision: Mapped[str] = mapped_column(
         String(16), default="datetime", server_default="datetime"
     )
-    timezone: Mapped[str] = mapped_column(String(64), default="UTC", server_default="UTC")
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     varies_by: Mapped[str | None] = mapped_column(String(255))
     label: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)

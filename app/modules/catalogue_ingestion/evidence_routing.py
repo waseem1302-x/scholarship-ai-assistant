@@ -142,10 +142,12 @@ class CatalogueEvidenceRouter:
                         target.scope_node_id is not None and link_key in explicit_scopes
                     ),
                 )
-                selected = score >= self.selection_threshold and (
-                    target.scope_type == ScopeNodeType.SCHOLARSHIP_FAMILY.value
-                    or scope_signal
-                    or target.state is ScopedCoverageState.CONFLICTING
+                selected = _route_is_selected(
+                    score=score,
+                    reasons=reasons,
+                    target=target,
+                    scope_signal=scope_signal,
+                    selection_threshold=self.selection_threshold,
                 )
                 fingerprint = _coverage_route_fingerprint(target)
                 decisions.append(
@@ -340,6 +342,35 @@ def _score_block(
     if block.language_hints:
         reasons.add("language_metadata_available")
     return score, reasons, scope_signal
+
+
+def _route_is_selected(
+    *,
+    score: int,
+    reasons: set[str],
+    target: _RouteTarget,
+    scope_signal: bool,
+    selection_threshold: int,
+) -> bool:
+    topic_signal = bool(
+        reasons
+        & {
+            "objective_lexicon_match",
+            "objective_heading_match",
+            "missing_frontier_match",
+        }
+    )
+    if target.state is ScopedCoverageState.CONFLICTING:
+        topic_signal = True
+    return bool(
+        score >= selection_threshold
+        and topic_signal
+        and (
+            target.scope_type == ScopeNodeType.SCHOLARSHIP_FAMILY.value
+            or scope_signal
+            or target.state is ScopedCoverageState.CONFLICTING
+        )
+    )
 
 
 def _scope_tokens(target: _RouteTarget) -> set[str]:

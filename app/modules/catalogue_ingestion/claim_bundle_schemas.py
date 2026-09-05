@@ -18,7 +18,7 @@ from app.modules.catalogue_ingestion.claim_schemas import (
     StrictClaimModel,
 )
 
-CLAIM_BUNDLE_SCHEMA_VERSION = "catalogue-claim-bundle.v1"
+CLAIM_BUNDLE_SCHEMA_VERSION = "catalogue-claim-bundle.v2"
 
 
 class BundleEvidenceReference(StrictClaimModel):
@@ -100,7 +100,7 @@ def expand_claim_bundle(
     blocks_by_key: Mapping[str, EvidenceBlockSpan],
     allowed_entity_types: Mapping[ClaimObjective, frozenset[ClaimEntityType]],
     allowed_field_paths: Mapping[ClaimObjective, frozenset[str]],
-    max_claims_per_objective: int = 48,
+    max_claims_per_objective: int | None = None,
 ) -> ExpandedClaimBundle:
     """Expand shared references into independently-validatable atomic claim outputs."""
 
@@ -177,7 +177,7 @@ def expand_claim_bundle(
         )
         unknown = list(coverage_item.unknown_objectives) if coverage_item is not None else []
         objective_warnings: list[str] = []
-        if len(claims) > max_claims_per_objective:
+        if max_claims_per_objective is not None and len(claims) > max_claims_per_objective:
             objective_warnings.append(
                 f"claim_limit_applied:{len(claims)}:{max_claims_per_objective}"
             )

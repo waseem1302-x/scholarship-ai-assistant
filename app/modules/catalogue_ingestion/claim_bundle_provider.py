@@ -38,7 +38,7 @@ from app.modules.catalogue_ingestion.provider import (
 from app.modules.catalogue_ingestion.provider_transport import send_json_request
 from app.modules.catalogue_ingestion.schemas import ExtractionUsage
 
-CLAIM_BUNDLE_PROMPT_VERSION = "catalogue-claim-bundle-prompt.v1"
+CLAIM_BUNDLE_PROMPT_VERSION = "catalogue-claim-bundle-prompt.v2"
 CLAIM_BUNDLE_SYSTEM_INSTRUCTION = f"""{CLAIM_SYSTEM_INSTRUCTION}
 
 This request may contain several compatible OBJECTIVES at once. Every atomic claim MUST include its

@@ -121,6 +121,15 @@ def _should_run_gap_pass(
     )
 
 
+def _coverage_error_objectives(resolution: ClaimResolution) -> set[str]:
+    objectives: set[str] = set()
+    for error in resolution.completeness_errors:
+        parts = error.split(":")
+        if len(parts) >= 5 and parts[0] == "coverage":
+            objectives.add(parts[-2])
+    return objectives
+
+
 @dataclass(slots=True)
 class _BundleGroupAccumulator:
     source: CatalogueCandidateSource
@@ -733,8 +742,6 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             blockers.append("acquisition_snapshot_missing")
         else:
             result = snapshot.result_json or {}
-            if result.get("frontier_exhausted") is not True:
-                blockers.append("acquisition_frontier_incomplete")
             if result.get("budget_exhausted"):
                 reasons = result.get("budget_reasons") or ["unknown"]
                 blockers.extend(f"acquisition_budget:{reason}" for reason in reasons)
@@ -764,6 +771,45 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
                     f"extraction_job_non_terminal:{job.job_key}:{job.state.value}"
                 )
         return list(dict.fromkeys(blockers))
+
+    def _acquisition_progress(
+        self,
+        run: CatalogueIngestionRun,
+        candidate: CatalogueCandidate,
+    ) -> tuple[set[str], set[str], bool, bool]:
+        snapshots = list(
+            self.session.scalars(
+                select(CatalogueAcquisitionSnapshot)
+                .where(
+                    CatalogueAcquisitionSnapshot.run_id == run.id,
+                    CatalogueAcquisitionSnapshot.candidate_id == candidate.id,
+                )
+                .order_by(
+                    CatalogueAcquisitionSnapshot.created_at,
+                    CatalogueAcquisitionSnapshot.id,
+                )
+            )
+        )
+        snapshots.sort(
+            key=lambda item: (
+                int((item.plan_json or {}).get("round_index") or 0),
+                item.created_at,
+                str(item.id),
+            )
+        )
+        closed: set[str] = set()
+        sitemap_attempted = False
+        for snapshot in snapshots:
+            result = snapshot.result_json or {}
+            closed.difference_update(
+                str(value) for value in result.get("pending_objectives") or ()
+            )
+            closed.update(str(value) for value in result.get("closed_objectives") or ())
+            sitemap_attempted = sitemap_attempted or bool(result.get("sitemap_attempted"))
+        latest = snapshots[-1].result_json or {} if snapshots else {}
+        pending = {str(value) for value in latest.get("pending_objectives") or ()}
+        has_deferred = bool(latest.get("deferred_frontier"))
+        return closed, pending, has_deferred, sitemap_attempted
 
     def _job_routes(
         self,
@@ -896,6 +942,9 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             candidate,
             terminal_failures,
         )
+        closed_objectives, pending_objectives, has_deferred, sitemap_attempted = (
+            self._acquisition_progress(run, candidate)
+        )
         extracted: list[tuple[CatalogueSourceArtifact, int, list[Any]]] = []
         unknown_objectives: set[str] = set()
         warnings: set[str] = set()
@@ -974,9 +1023,10 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             extracted,
             require_detail=True,
             objective_coverage=aggregate_coverage,
-            evidence_frontier_complete=(
-                self.settings.catalogue_completeness_mode_enabled
-                and not completeness_blockers
+            closed_objectives=(
+                closed_objectives
+                if self.settings.catalogue_completeness_mode_enabled
+                else ()
             ),
         ).model_copy(
             update={
@@ -1003,6 +1053,23 @@ class ProductionCatalogueIngestionService(HardenedCatalogueIngestionService):
             )
             is not None
         )
+        missing_objectives = _coverage_error_objectives(resolution)
+        should_continue_acquisition = bool(
+            self.settings.catalogue_completeness_mode_enabled
+            and not completeness_blockers
+            and not resolution.conflicts
+            and not resolution.rejected
+            and missing_objectives
+            and (
+                (has_deferred and bool(missing_objectives & pending_objectives))
+                or (not has_deferred and not sitemap_attempted)
+            )
+        )
+        if should_continue_acquisition:
+            candidate.status = CandidateStatus.OFFICIAL_SOURCE_CANDIDATE
+            self.repository.release_candidate(candidate)
+            self.session.commit()
+            return
         if _should_run_gap_pass(
             completeness_mode=self.settings.catalogue_completeness_mode_enabled,
             resolution=resolution,

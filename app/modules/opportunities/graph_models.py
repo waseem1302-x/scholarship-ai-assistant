@@ -240,8 +240,8 @@ class InstitutionParticipation(Base):
     cycle_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("opportunity_cycles.id", ondelete="CASCADE"), index=True
     )
-    track_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("application_tracks.id", ondelete="CASCADE"), index=True
+    track_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("application_tracks.id", ondelete="CASCADE"), index=True, nullable=True
     )
     institution_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("institutions.id", ondelete="CASCADE"), index=True

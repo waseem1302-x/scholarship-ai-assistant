@@ -27,7 +27,7 @@ from app.modules.catalogue_ingestion.pipeline_versions import (
     BUNDLE_VALIDATOR_VERSION,
 )
 
-CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v3"
+CATALOGUE_CONFIGURATION_REVISION = "catalogue-provider-profile.v4"
 
 
 class CatalogueDeploymentMap(BaseModel):
@@ -140,6 +140,9 @@ def catalogue_configuration_fingerprint(settings: Settings) -> str:
             "completeness_mode_enabled": settings.catalogue_completeness_mode_enabled,
             "browser_fetching_enabled": settings.catalogue_browser_fetching_enabled,
             "document_intelligence_enabled": settings.catalogue_document_intelligence_enabled,
+            "docling_enabled": settings.catalogue_docling_enabled,
+            "docling_do_ocr": settings.catalogue_docling_do_ocr,
+            "docling_table_mode": settings.catalogue_docling_table_mode,
             "reviewed_official_domain_fingerprint": reviewed_domain_fingerprint,
         },
         "limits": {

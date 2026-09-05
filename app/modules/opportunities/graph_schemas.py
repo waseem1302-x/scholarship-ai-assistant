@@ -37,7 +37,7 @@ class GraphInstitutionResponse(GraphModel):
 
 class GraphInstitutionParticipationResponse(GraphModel):
     id: uuid.UUID
-    track_id: uuid.UUID
+    track_id: uuid.UUID | None
     institution_id: uuid.UUID
     role: str
     participation_status: str | None
@@ -53,7 +53,7 @@ class GraphDeadlineResponse(GraphModel):
     deadline_at: datetime
     local_date: date | None
     deadline_precision: str
-    timezone: str
+    timezone: str | None
     label: str | None
     notes: str | None
 

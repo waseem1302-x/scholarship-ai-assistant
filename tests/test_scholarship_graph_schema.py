@@ -123,6 +123,46 @@ def test_graph_children_do_not_increase_scholarship_count(db_session: Session) -
     assert db_session.scalar(select(func.count()).select_from(AcademicProgramme)) == 1
 
 
+def test_participating_institution_can_be_scholarship_level_without_a_route(
+    db_session: Session,
+) -> None:
+    scholarship = create_scholarship(
+        db_session,
+        name="Open Doors Scholarship",
+        canonical_slug="open-doors-scholarship-level-institution",
+    )
+    cycle = OpportunityCycle(
+        opportunity_id=scholarship.id,
+        label="2027",
+        timezone="UTC",
+        is_current=True,
+    )
+    institution = Institution(
+        canonical_name="Scholarship-level participating university",
+        slug="scholarship-level-participating-university",
+        institution_type="university",
+        country_code="RU",
+        identity_status="fixture_only",
+    )
+    db_session.add_all([cycle, institution])
+    db_session.flush()
+    db_session.add(
+        InstitutionParticipation(
+            scholarship_id=scholarship.id,
+            cycle_id=cycle.id,
+            track_id=None,
+            institution_id=institution.id,
+            role="participating_university",
+            participation_status="fixture_only",
+        )
+    )
+    db_session.commit()
+
+    participation = db_session.scalar(select(InstitutionParticipation))
+    assert participation is not None
+    assert participation.track_id is None
+
+
 def test_canonical_slug_is_unique_when_present(db_session: Session) -> None:
     create_scholarship(db_session, canonical_slug="canonical-csc")
 

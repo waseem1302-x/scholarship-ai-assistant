@@ -50,20 +50,26 @@ must cite an excerpt present in the fetched normalized source. Inferred model kn
 ## Supported and deliberately deferred adapters
 
 Seed-supplied URLs are implemented as discovery leads. When
-`APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED=true`, an already-classified official root may be explored by
-the bounded crawler and successfully fetched child pages are staged as candidate sources for later
-evidence/classification work. The flag defaults to true with a 10-page accepted-artifact budget and
-may be configured up to 25 pages. Child source texts are not concatenated
-into the root extraction input: the current extraction contract still processes the selected root
-source only so field-level evidence cannot be misattributed across pages.
+`APP_CATALOGUE_BOUNDED_CRAWLING_ENABLED=true`, an already-classified official root is expanded in
+small resumable rounds. Links are admitted only when they can support a missing scholarship
+objective such as funding, eligibility, documents, application steps, dates, programmes, official
+FAQ/rules, or the participating-institution list. News, generic navigation, legal pages, and
+individual participating-university profile sites are not part of the scholarship crawl. Sitemap
+discovery is a fallback after visible relevant links are exhausted and uses the same admission gate.
+
+Each fetched official HTML page or PDF remains a separate evidence artifact. Extraction routes only
+objective-relevant blocks to a model job and feeds objective closure back into the next acquisition
+round. The run stops when the scholarship contract is covered and no relevant frontier remains;
+explicit run-wide fetch, model-call, cost, and wall-time ceilings remain emergency failures rather
+than normal completeness targets.
 
 Autonomous Foundry web search is not wired in this version;
 `APP_CATALOGUE_WEB_DISCOVERY_ENABLED` remains false and an absent official URL goes to manual review.
 The `WebDiscoveryProvider` interface allows a later reviewed adapter without changing verification.
 
-Normal text PDF parsing is implemented. `AzureDocumentIntelligenceParser` is a fail-closed interface,
-not a paid implementation; image-only or encrypted PDFs require manual handling while
-`APP_CATALOGUE_DOCUMENT_INTELLIGENCE_ENABLED=false`.
+Normal text PDF parsing uses `pypdf` first. Docling is attempted only when native PDF text is sparse
+or absent; its OCR option therefore applies to likely scanned/image PDFs rather than every PDF.
+`AzureDocumentIntelligenceParser` remains a fail-closed optional interface, not a paid default.
 
 ## Local operation
 
@@ -163,8 +169,8 @@ stop ingestion and monitoring, confirm no old application revision uses them, ex
 required, then apply the Alembic downgrade. The upgrade is additive and does not rewrite catalogue
 truth.
 
-Known limitations: no autonomous web-search adapter, no provenance-safe multi-source extraction
-aggregation yet, no Document Intelligence implementation, no browser/login/CAPTCHA acquisition,
-exact duplicate detection is canonical-URL based before the existing review workflow's broader
-duplicate suggestions, and production quality cannot be asserted until the private gold evaluation
-and real Azure staging run are completed.
+Known limitations: no autonomous web-search adapter, no login/CAPTCHA acquisition, and no paid
+Document Intelligence implementation. Exact duplicate detection is canonical-URL based before the
+existing review workflow's broader duplicate suggestions. Facts absent from official evidence stay
+unknown, and production quality still requires private-gold evaluation plus controlled live runs
+across several structurally different scholarships.

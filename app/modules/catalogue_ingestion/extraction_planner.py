@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.catalogue_ingestion.claim_schemas import ClaimObjective
+from app.modules.catalogue_ingestion.crawler import AcquisitionLexicon
 from app.modules.catalogue_ingestion.evidence_block_models import (
     CatalogueEvidenceBlock,
     CatalogueEvidenceRoute,
@@ -249,7 +251,8 @@ def split_extraction_job(
 ) -> tuple[ExtractionJobPlan, ...]:
     """Deterministically split a truncated job without losing evidence coverage."""
 
-    if len(job.evidence) > 1:
+    split_single_block = len(job.evidence) == 1
+    if not split_single_block:
         midpoint = len(job.evidence) // 2
         parts = (job.evidence[:midpoint], job.evidence[midpoint:])
     else:
@@ -264,7 +267,12 @@ def split_extraction_job(
         )
     children: list[ExtractionJobPlan] = []
     objective_set = set(job.objectives)
-    for part in parts:
+    slice_objectives = (
+        _objectives_for_slices(parts, job.objectives, blocks_by_id)
+        if split_single_block
+        else None
+    )
+    for part_index, part in enumerate(parts):
         part_ids = {item.block_id for item in part}
         part_routes = [
             route
@@ -272,6 +280,7 @@ def split_extraction_job(
             if route.selected
             and route.evidence_block_id in part_ids
             and route.objective in objective_set
+            and (slice_objectives is None or route.objective in slice_objectives[part_index])
         ]
         objectives = tuple(
             objective
@@ -293,6 +302,38 @@ def split_extraction_job(
             )
         )
     return tuple(children)
+
+
+def _objectives_for_slices(
+    parts: tuple[tuple[ExtractionEvidenceRef, ...], ...],
+    objectives: tuple[ClaimObjective, ...],
+    blocks_by_id: Mapping[uuid.UUID, CatalogueEvidenceBlock],
+) -> tuple[set[ClaimObjective], ...]:
+    """Route a split block by terms in each actual slice, retaining a safe tie fallback."""
+
+    lexicon = AcquisitionLexicon.defaults()
+    assigned = [set() for _part in parts]
+    texts: list[str] = []
+    for part in parts:
+        fragments: list[str] = []
+        for evidence in part:
+            block = blocks_by_id[evidence.block_id]
+            start = evidence.start_offset - block.start_offset
+            end = evidence.end_offset - block.start_offset
+            fragments.append(block.block_text[start:end].casefold())
+        texts.append("\n".join(fragments))
+    for objective in objectives:
+        terms = lexicon.terms_by_objective.get(objective.value, ())
+        scores = [sum(text.count(term.casefold()) for term in terms) for text in texts]
+        best = max(scores, default=0)
+        if best == 0:
+            for target in assigned:
+                target.add(objective)
+            continue
+        for index, score in enumerate(scores):
+            if score == best:
+                assigned[index].add(objective)
+    return tuple(assigned)
 
 
 def _chunk_blocks(
@@ -389,13 +430,13 @@ def _build_job_from_evidence(
             ),
         )
     )
-    entity_estimate = max(1, len(scopes), len(blocks))
+    entity_estimate = max(1, len(scopes), len(blocks), _enumerated_row_estimate(evidence_text))
     max_output_tokens = min(
         run_max_output_tokens,
         max(
             output_token_floor,
             600,
-            500 + len(objectives) * 450 + min(entity_estimate, 24) * 120,
+            500 + len(objectives) * 450 + entity_estimate * 120,
         ),
     )
     estimated_input_tokens = max(1, (len(evidence_text) + _DEFAULT_PROMPT_RESERVE_CHARS) // 4)
@@ -418,6 +459,15 @@ def _build_job_from_evidence(
         max_output_tokens=max_output_tokens,
         estimated_cost_upper=estimated_cost_upper,
     )
+
+
+def _enumerated_row_estimate(text: str) -> int:
+    rows = 0
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if re.match(r"^(?:[-*•]|\d{1,3}[.)]|\|)\s*\S", line):
+            rows += 1
+    return rows
 
 
 def _render_block(block: CatalogueEvidenceBlock) -> str:

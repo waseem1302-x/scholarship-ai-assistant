@@ -1,5 +1,6 @@
 import hashlib
 import uuid
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -227,3 +228,53 @@ def test_recovery_child_rejects_evidence_outside_its_supplied_span() -> None:
         service._expand_bundle(raw_output, job=left, blocks=[block])
 
     assert "invalid_evidence_span:outside" in str(exc_info.value)
+
+
+def test_truncation_recovery_routes_objectives_to_the_matching_text_slice() -> None:
+    job, block, timeline_route = _single_block_job()
+    text = ("Funding stipend tuition benefits. " * 220) + "\n\n" + (
+        "Eligibility age nationality language requirements. " * 180
+    )
+    block.block_text = text
+    block.end_offset = len(text)
+    block.block_hash = hashlib.sha256(text.encode()).hexdigest()
+    evidence = replace(job.evidence[0], end_offset=len(text), block_hash=block.block_hash)
+
+    def route(objective: ClaimObjective, marker: str) -> CatalogueEvidenceRoute:
+        return CatalogueEvidenceRoute(
+            id=uuid.uuid4(),
+            route_key=marker * 64,
+            candidate_id=timeline_route.candidate_id,
+            evidence_block_id=block.id,
+            coverage_cell_id=None,
+            scope_node_id=None,
+            objective=objective,
+            scope_type="opportunity",
+            scope_key="root",
+            relevance_score=100,
+            relevance_reasons=["objective match"],
+            selected=True,
+            coverage_input_fingerprint=marker * 64,
+        )
+
+    funding_route = route(ClaimObjective.FUNDING, "f")
+    eligibility_route = route(ClaimObjective.ELIGIBILITY, "e")
+    job = replace(
+        job,
+        evidence=(evidence,),
+        objectives=(ClaimObjective.ELIGIBILITY, ClaimObjective.FUNDING),
+        evidence_text=text,
+        evidence_character_count=len(text),
+    )
+
+    left, right = split_extraction_job(
+        job,
+        blocks_by_id={block.id: block},
+        routes=[funding_route, eligibility_route],
+        run_max_output_tokens=6_000,
+        input_cost_per_million=Decimal("0.25"),
+        output_cost_per_million=Decimal("2.00"),
+    )
+
+    assert left.objectives == (ClaimObjective.FUNDING,)
+    assert right.objectives == (ClaimObjective.ELIGIBILITY,)

@@ -82,3 +82,56 @@ def test_half_open_circuit_allows_only_one_probe(db_session) -> None:
     assert first.allowed is True
     assert second.allowed is False
     assert second.reason == "provider_circuit_open"
+
+
+def test_provider_circuit_is_isolated_by_endpoint(db_session) -> None:
+    from app.modules.catalogue_ingestion.scheduling import CatalogueProviderScheduler
+
+    settings = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="test-secret-that-is-at-least-32-characters-long",
+    )
+    scheduler = CatalogueProviderScheduler(db_session, settings)
+    scheduler.record_failure(
+        provider="fake_provider",
+        deployment="extract-v1",
+        endpoint_fingerprint="a" * 64,
+        failure_class=ProviderFailureClass.AUTHENTICATION_CONFIGURATION_ERROR,
+    )
+
+    other_endpoint = scheduler.admit(
+        provider="fake_provider",
+        deployment="extract-v1",
+        endpoint_fingerprint="b" * 64,
+        logical_job_key="other-endpoint",
+    )
+
+    assert other_endpoint.allowed is True
+
+
+def test_schema_failure_does_not_open_provider_health_circuit(db_session) -> None:
+    from app.modules.catalogue_ingestion.scheduling import CatalogueProviderScheduler
+
+    settings = Settings(
+        env="test",
+        database_url="sqlite+pysqlite:///:memory:",
+        jwt_secret="test-secret-that-is-at-least-32-characters-long",
+        catalogue_provider_circuit_failure_threshold=1,
+    )
+    scheduler = CatalogueProviderScheduler(db_session, settings)
+    scheduler.record_failure(
+        provider="fake_provider",
+        deployment="extract-v1",
+        endpoint_fingerprint="a" * 64,
+        failure_class=ProviderFailureClass.SCHEMA_VALIDATION_FAILURE,
+    )
+
+    admission = scheduler.admit(
+        provider="fake_provider",
+        deployment="extract-v1",
+        endpoint_fingerprint="a" * 64,
+        logical_job_key="schema-recovery",
+    )
+
+    assert admission.allowed is True

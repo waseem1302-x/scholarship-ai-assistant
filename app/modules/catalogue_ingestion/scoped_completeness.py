@@ -67,6 +67,7 @@ _OBJECTIVE_BRANCH_TYPES: dict[ClaimObjective, set[ScopeNodeType]] = {
     ClaimObjective.ROUTES: {ScopeNodeType.ROUTE},
 }
 _ENUMERATED_BRANCH_OBJECTIVES: dict[ClaimObjective, ScopeNodeType] = {
+    ClaimObjective.IDENTITY: ScopeNodeType.INSTITUTION,
     ClaimObjective.PROGRAMMES: ScopeNodeType.PROGRAMME,
     ClaimObjective.ROUTES: ScopeNodeType.ROUTE,
 }
@@ -136,6 +137,7 @@ def evaluate_scoped_completeness(
     resolution: ClaimResolution,
     provider_objective_coverage: dict[str, str] | None = None,
     evidence_frontier_complete: bool = False,
+    closed_objectives: Iterable[ClaimObjective | str] = (),
 ) -> ClaimResolution:
     """Compute scoped coverage from validated claims and persisted topology.
 
@@ -145,6 +147,12 @@ def evaluate_scoped_completeness(
 
     artifact_list = list(artifacts)
     provider_signals = dict(provider_objective_coverage or {})
+    closed = {
+        item if isinstance(item, ClaimObjective) else ClaimObjective(item)
+        for item in closed_objectives
+    }
+    if evidence_frontier_complete:
+        closed.update(ClaimObjective)
     session, candidate_id = _attached_candidate_context(artifact_list)
     if session is None or candidate_id is None:
         return _detached_evaluation(resolution, provider_signals)
@@ -152,7 +160,7 @@ def evaluate_scoped_completeness(
         candidate_id=candidate_id,
         resolution=resolution,
         provider_signals=provider_signals,
-        evidence_frontier_complete=evidence_frontier_complete,
+        closed_objectives=closed,
     )
 
 
@@ -166,7 +174,7 @@ class _PersistentCoverageEvaluator:
         candidate_id: uuid.UUID,
         resolution: ClaimResolution,
         provider_signals: dict[str, str],
-        evidence_frontier_complete: bool,
+        closed_objectives: set[ClaimObjective],
     ) -> ClaimResolution:
         candidate = self.session.get(CatalogueCandidate, candidate_id)
         if candidate is None:
@@ -265,6 +273,7 @@ class _PersistentCoverageEvaluator:
         decisions: list[ScopeCoverageDecision] = []
         root_results: dict[ClaimObjective, _CoverageResult] = {}
         for objective in ClaimObjective:
+            objective_frontier_complete = objective in closed_objectives
             target_nodes = self._target_nodes(
                 root=root,
                 nodes=all_nodes,
@@ -286,7 +295,7 @@ class _PersistentCoverageEvaluator:
                     edges=edges,
                     source_by_id=source_by_id,
                     provider_signal=provider_signals.get(objective.value),
-                    evidence_frontier_complete=evidence_frontier_complete,
+                    evidence_frontier_complete=objective_frontier_complete,
                 )
                 scoped_results.append((node, result))
 
@@ -297,7 +306,7 @@ class _PersistentCoverageEvaluator:
                 objective=objective,
                 direct=direct_root,
                 children=children,
-                evidence_frontier_complete=evidence_frontier_complete,
+                evidence_frontier_complete=objective_frontier_complete,
             )
             root_results[objective] = root_result
 
@@ -312,7 +321,7 @@ class _PersistentCoverageEvaluator:
                     edges=edges,
                     sources=source_by_id,
                     provider_signal=provider_signals.get(objective.value),
-                    evidence_frontier_complete=evidence_frontier_complete,
+                    evidence_frontier_complete=objective_frontier_complete,
                 )
                 cell = self._upsert_cell(
                     candidate_id=candidate.id,
@@ -623,6 +632,30 @@ class _PersistentCoverageEvaluator:
             or candidate.seed_cycle
             or (str(candidate.seed_intake_year) if candidate.seed_intake_year is not None else "")
         )
+        if (
+            claim.entity_type is ClaimEntityType.SCHOLARSHIP
+            and claim.field_path == "participating_institution_count"
+        ):
+            root = next(
+                (
+                    node
+                    for (node_type, canonical_key, _node_lifecycle), node in nodes.items()
+                    if node_type is ScopeNodeType.SCHOLARSHIP_FAMILY
+                    and canonical_key == "scholarship"
+                ),
+                None,
+            )
+            if root is not None:
+                expected = dict(root.expected_child_counts or {})
+                expected[ScopeNodeType.INSTITUTION.value] = int(claim.value.primitive())
+                provenance = dict(root.expectation_provenance or {})
+                provenance[ScopeNodeType.INSTITUTION.value] = {
+                    "source_artifact_id": item.artifact_id,
+                    "claim_id": item.claim_id or _claim_id(item),
+                    "excerpt": claim.excerpt,
+                }
+                root.expected_child_counts = expected
+                root.expectation_provenance = provenance
         if claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "parent_track_key":
             parent = nodes.get(
                 (
@@ -967,6 +1000,20 @@ class _PersistentCoverageEvaluator:
             ]
             expected = _expected_child_count(root, enumerated_type)
             actual = len({node.canonical_key for node in enumerated_children})
+            if objective is ClaimObjective.IDENTITY and expected is None:
+                if _coverage_result_is_complete(base):
+                    return _aggregate_result(
+                        base,
+                        state=base.state,
+                        reason="identity and applicable institution scopes are complete",
+                        frontier=[],
+                    )
+                return _aggregate_result(
+                    base,
+                    state=ScopedCoverageState.PARTIAL,
+                    reason="institution scopes are complete but identity remains unresolved",
+                    frontier=["close_root_objective_frontier"],
+                )
             if expected is None:
                 if evidence_frontier_complete:
                     return _aggregate_result(
@@ -1297,6 +1344,9 @@ def _add_ref(
 def _source_relationship_for_claim(claim: ExtractedClaim) -> SourceScopeRelationship:
     if (claim.entity_type is ClaimEntityType.PROGRAMME and claim.field_path == "name") or (
         claim.entity_type is ClaimEntityType.TRACK and claim.field_path == "name"
+    ) or (
+        claim.entity_type is ClaimEntityType.INSTITUTION
+        and claim.field_path == "canonical_name"
     ):
         return SourceScopeRelationship.ENUMERATES
     return SourceScopeRelationship.SUPPORTS
@@ -1409,6 +1459,8 @@ def _objectives_for_record(
             if getattr(scope, "track_key", None)
             else {ClaimObjective.IDENTITY}
         )
+    if entity_type is ClaimEntityType.GUIDANCE:
+        return {ClaimObjective.IDENTITY, ClaimObjective.ELIGIBILITY_CONTEXT}
     if entity_type is ClaimEntityType.ELIGIBILITY:
         if field_path in {"condition", "is_exclusion", "notes"}:
             return {ClaimObjective.ELIGIBILITY_CONTEXT}

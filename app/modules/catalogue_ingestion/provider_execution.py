@@ -166,6 +166,7 @@ class CatalogueProviderExecutor:
             admission = self.scheduler.admit(
                 provider=provider.name,
                 deployment=profile.extraction_deployment,
+                endpoint_fingerprint=profile.endpoint_fingerprint,
                 logical_job_key=job_key,
                 run_id=run.id,
                 candidate_id=candidate.id,
@@ -253,6 +254,7 @@ class CatalogueProviderExecutor:
                     provider=provider.name,
                     deployment=profile.extraction_deployment,
                     failure_class=_failure_class(exc.failure_class),
+                    endpoint_fingerprint=profile.endpoint_fingerprint,
                     retry_after_seconds=exc.retry_after_seconds,
                 )
                 exc.provider_attempt_id = ledger.id
@@ -295,6 +297,7 @@ class CatalogueProviderExecutor:
                     provider=provider.name,
                     deployment=profile.extraction_deployment,
                     failure_class=ProviderFailureClass.UNKNOWN_POTENTIALLY_BILLABLE_FAILURE,
+                    endpoint_fingerprint=profile.endpoint_fingerprint,
                 )
                 wrapped.provider_attempt_id = ledger.id
                 raise wrapped from exc
@@ -328,6 +331,7 @@ class CatalogueProviderExecutor:
                     provider=provider.name,
                     deployment=profile.extraction_deployment,
                     failure_class=ProviderFailureClass.MALFORMED_PROVIDER_RESPONSE,
+                    endpoint_fingerprint=profile.endpoint_fingerprint,
                 )
                 wrapped.provider_attempt_id = ledger.id
                 raise wrapped
@@ -356,6 +360,7 @@ class CatalogueProviderExecutor:
             self.scheduler.record_success(
                 provider=provider.name,
                 deployment=profile.extraction_deployment,
+                endpoint_fingerprint=profile.endpoint_fingerprint,
             )
             return ProviderExecutionResult(result=result, provider_attempt_id=ledger.id)
 

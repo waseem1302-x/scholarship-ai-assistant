@@ -110,26 +110,7 @@ class CatalogueGraphMaterializer:
         ).upper()
         intake_year = int(_required_value(resolution, ClaimEntityType.CYCLE, "intake_year"))
 
-        # Degree Levels: Top-level scholarship field or aggregated from programmes/tracks
-        raw_degree = _optional_value(resolution, ClaimEntityType.SCHOLARSHIP, "degree_levels")
-        if raw_degree is None:
-            prog_degrees = [
-                item.claim.value.primitive()
-                for item in resolution.resolved
-                if item.claim.entity_type in (ClaimEntityType.PROGRAMME, ClaimEntityType.TRACK)
-                and item.claim.field_path in ("degree_levels", "degree_level")
-            ]
-            if prog_degrees:
-                flattened = []
-                for entry in prog_degrees:
-                    if isinstance(entry, list):
-                        flattened.extend(entry)
-                    else:
-                        flattened.append(entry)
-                raw_degree = flattened or ["masters"]
-            else:
-                raw_degree = ["masters"]
-        degree_levels = _degree_levels(raw_degree)
+        degree_levels = _evidence_backed_degree_levels(resolution)
         primary_degree = _primary_degree_level(degree_levels)
         source_excerpt = _source_excerpt(primary_artifact)
 
@@ -459,7 +440,7 @@ class CatalogueGraphMaterializer:
         source_by_artifact: dict[str, Source],
         field_entity: dict[_FieldEntityKey, _FieldEntityTarget],
     ) -> None:
-        seen: dict[tuple[uuid.UUID, uuid.UUID, str], InstitutionParticipation] = {}
+        seen: dict[tuple[uuid.UUID | None, uuid.UUID, str], InstitutionParticipation] = {}
         for key, items in sorted(
             groups.items(),
             key=lambda value: (value[0][0].value, value[0][1], value[0][2]),
@@ -467,22 +448,20 @@ class CatalogueGraphMaterializer:
             if key[0] is not ClaimEntityType.INSTITUTION:
                 continue
             scope = items[0].claim.scope
-            if not scope.track_key:
-                continue
-            track = track_by_key.get(scope.track_key)
+            track = _resolve_track(scope.track_key, track_by_key)
             institution = institution_by_key.get(key[1])
-            if track is None or institution is None:
-                raise ValueError(f"Institution {key[1]} references unresolved track scope")
+            if institution is None:
+                raise ValueError(f"Institution {key[1]} was not materialized")
             fields = _fields(items)
-            role = _optional_single_text(fields, "role") or "participating"
-            identity = (track.id, institution.id, role)
+            role = _required_text(fields, "role")
+            identity = (track.id if track else None, institution.id, role)
             participation = seen.get(identity)
             if participation is None:
                 support = min(items, key=lambda item: (item.trust_tier, item.artifact_id))
                 participation = InstitutionParticipation(
                     scholarship_id=opportunity.id,
                     cycle_id=cycle.id,
-                    track_id=track.id,
+                    track_id=track.id if track else None,
                     institution_id=institution.id,
                     role=role,
                     participation_status="needs_review",
@@ -581,6 +560,7 @@ class CatalogueGraphMaterializer:
             ClaimEntityType.DOCUMENT,
             ClaimEntityType.STEP,
             ClaimEntityType.RESOURCE,
+            ClaimEntityType.GUIDANCE,
         }
         for key, items in sorted(
             groups.items(),
@@ -618,7 +598,7 @@ class CatalogueGraphMaterializer:
                     operator=_required_text(fields, "operator"),
                     value_json={"value": _required_primitive(fields, "value")},
                     unit=_optional_single_text(fields, "unit"),
-                    required=_optional_bool(fields, "required", default=True),
+                    required=_required_bool(fields, "required"),
                     condition=_joined_text(fields, "condition"),
                     is_exclusion=_optional_bool(fields, "is_exclusion", default=False),
                     critical=_optional_bool(fields, "critical", default=False),
@@ -648,7 +628,7 @@ class CatalogueGraphMaterializer:
                     deadline_text=deadline_text,
                     local_date=deadline_at.date() if deadline_at else None,
                     deadline_precision=precision,
-                    timezone=_optional_single_text(fields, "timezone") or "UTC",
+                    timezone=_optional_single_text(fields, "timezone"),
                     varies_by=_optional_single_text(fields, "varies_by"),
                     label=_optional_single_text(fields, "label"),
                     notes=_joined_text(fields, "notes"),
@@ -695,7 +675,7 @@ class CatalogueGraphMaterializer:
                     scholarship_programme_id=programme.id if programme else None,
                     document_key=entity_key,
                     name=_required_text(fields, "name"),
-                    required=_optional_bool(fields, "required", default=True),
+                    required=_required_bool(fields, "required"),
                     condition=_joined_text(fields, "condition"),
                     submission_stage=_optional_single_text(fields, "submission_stage"),
                     original_count=_optional_int(fields, "original_count"),
@@ -714,7 +694,7 @@ class CatalogueGraphMaterializer:
                     step_code=entity_key,
                     title=_required_text(fields, "title"),
                     stage_type=_optional_single_text(fields, "stage_type"),
-                    required=_optional_bool(fields, "required", default=True),
+                    required=_required_bool(fields, "required"),
                     actor_type=_optional_single_text(fields, "actor_type"),
                     actor_name=_optional_single_text(fields, "actor_name"),
                     outcome=_joined_text(fields, "outcome"),
@@ -723,7 +703,7 @@ class CatalogueGraphMaterializer:
                     application_url=_optional_single_text(fields, "application_url"),
                     display_order=_optional_int(fields, "display_order") or 0,
                 )
-            else:
+            elif entity_type is ClaimEntityType.RESOURCE:
                 entity = OpportunityResource(
                     **common,
                     programme_id=programme.id if programme else None,
@@ -743,6 +723,22 @@ class CatalogueGraphMaterializer:
                     original_text=_joined_text(fields, "original_text"),
                     required=_optional_bool(fields, "required", default=False),
                     notes=_joined_text(fields, "notes"),
+                    display_order=_optional_int(fields, "display_order") or 0,
+                )
+            else:
+                support = min(items, key=lambda item: (item.trust_tier, item.artifact_id))
+                entity = OpportunityResource(
+                    **common,
+                    programme_id=programme.id if programme else None,
+                    identity_key=_entity_identity_key(
+                        candidate_id, proposal_hash, entity_type, entity_key, scope
+                    ),
+                    resource_key=entity_key,
+                    title=_required_text(fields, "title"),
+                    resource_type=_required_text(fields, "guidance_type"),
+                    url=support.source_url,
+                    original_text=_joined_text(fields, "text"),
+                    required=False,
                     display_order=_optional_int(fields, "display_order") or 0,
                 )
             self.session.add(entity)
@@ -1027,6 +1023,13 @@ def _optional_bool(
     return bool(unique[0])
 
 
+def _required_bool(fields: dict[str, list[ResolvedClaim]], name: str) -> bool:
+    items = fields.get(name) or []
+    if not items:
+        raise ValueError(f"Missing required evidence-backed boolean field {name}")
+    return _optional_bool(fields, name, default=False)
+
+
 def _optional_decimal(fields: dict[str, list[ResolvedClaim]], name: str) -> Decimal | None:
     items = fields.get(name) or []
     if not items:
@@ -1054,6 +1057,27 @@ def _optional_value(
     if len(normalized) != 1:
         return values[0]
     return values[0]
+
+
+def _evidence_backed_degree_levels(resolution: ClaimResolution) -> list[str]:
+    raw_degree = _optional_value(resolution, ClaimEntityType.SCHOLARSHIP, "degree_levels")
+    if raw_degree is None:
+        programme_degrees = [
+            item.claim.value.primitive()
+            for item in resolution.resolved
+            if item.claim.entity_type in (ClaimEntityType.PROGRAMME, ClaimEntityType.TRACK)
+            and item.claim.field_path in ("degree_levels", "degree_level")
+        ]
+        flattened: list[object] = []
+        for entry in programme_degrees:
+            if isinstance(entry, list):
+                flattened.extend(entry)
+            else:
+                flattened.append(entry)
+        raw_degree = flattened or None
+    if raw_degree is None:
+        raise ValueError("Missing evidence-backed scholarship degree level")
+    return _degree_levels(raw_degree)
 
 
 def _optional_datetime(fields: dict[str, list[ResolvedClaim]], name: str) -> datetime | None:

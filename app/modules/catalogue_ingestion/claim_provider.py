@@ -52,7 +52,7 @@ string_list_value for lists. Set the other four value fields to null. Use `expli
 wording and `normalized` only for deterministic representations such as Japan -> JP, master's ->
 masters, or a written date -> ISO date.
 
-Return every fact requested by OBJECTIVE, up to 48 claims. Do not stop after one document, funding
+Return every fact requested by OBJECTIVE. Do not stop after one document, funding
 component, eligibility rule, programme, route, deadline, event, step, or resource. Set
 coverage_state=complete only when every requested item stated in this source has been emitted;
 partial when output limits or ambiguity prevented exhaustive extraction; not_stated when the source
@@ -252,7 +252,11 @@ Extract only scholarship name, provider_name, destination country_code, aliases,
 named administering institutions. Do not enumerate programmes, routes, requirements, or benefits
 in this pass. The scholarship title may contain a programme qualifier; preserve that qualifier only
 when this official source is programme-specific. Use scholarship.country_code and scholarship.alias;
-emit intake_year as cycle.intake_year and each administering body as its own institution entity.""",
+emit intake_year as cycle.intake_year. Extract every named administering or participating
+institution as its own institution entity with role. Emit
+scholarship.participating_institution_count when the official source states a total. Preserve
+official programme purpose and FAQ answers as guidance entities with guidance_type, title, text,
+and display_order.""",
     ClaimObjective.PROGRAMMES: """OBJECTIVE: programmes.
 Extract every explicitly named scholarship programme/category. Emit name for every programme, plus
 programme_type, degree_levels, and display_order when stated. Do not extract track, institution,
@@ -277,7 +281,9 @@ Preserve programme, route, cycle, and institution scope. Do not extract document
     ClaimObjective.ELIGIBILITY_CONTEXT: """OBJECTIVE: eligibility_context.
 For every eligibility rule whose context is stated, emit only condition, is_exclusion, and notes.
 Use the same stable eligibility entity keys and programme/route/cycle/institution scopes supported
-by the source. Do not repeat core rule fields or invent exclusions and conditions.""",
+by the source. Preserve official selection criteria and candidate-profile statements as guidance
+entities with guidance_type, title, text, and display_order. Do not repeat core rule fields or
+invent exclusions and conditions.""",
     ClaimObjective.DOCUMENTS_CORE: """OBJECTIVE: documents_core.
 Extract the complete required-document table/list, including conditional documents. For each
 document emit only name and display_order when stated. Preserve programme, route, cycle, and
@@ -319,13 +325,16 @@ OBJECTIVE_ENTITY_TYPES: dict[ClaimObjective, frozenset[ClaimEntityType]] = {
             ClaimEntityType.SCHOLARSHIP,
             ClaimEntityType.CYCLE,
             ClaimEntityType.INSTITUTION,
+            ClaimEntityType.GUIDANCE,
         }
     ),
     ClaimObjective.PROGRAMMES: frozenset({ClaimEntityType.PROGRAMME}),
     ClaimObjective.PROGRAMME_DETAILS: frozenset({ClaimEntityType.PROGRAMME}),
     ClaimObjective.ROUTES: frozenset({ClaimEntityType.TRACK, ClaimEntityType.INSTITUTION}),
     ClaimObjective.ELIGIBILITY: frozenset({ClaimEntityType.ELIGIBILITY}),
-    ClaimObjective.ELIGIBILITY_CONTEXT: frozenset({ClaimEntityType.ELIGIBILITY}),
+    ClaimObjective.ELIGIBILITY_CONTEXT: frozenset(
+        {ClaimEntityType.ELIGIBILITY, ClaimEntityType.GUIDANCE}
+    ),
     ClaimObjective.DOCUMENTS_CORE: frozenset({ClaimEntityType.DOCUMENT}),
     ClaimObjective.DOCUMENTS_REQUIREMENTS: frozenset({ClaimEntityType.DOCUMENT}),
     ClaimObjective.DOCUMENTS_COUNTS: frozenset({ClaimEntityType.DOCUMENT}),
@@ -352,7 +361,17 @@ OBJECTIVE_FIELD_PATHS: dict[ClaimObjective, frozenset[str]] = {
     ClaimObjective.ELIGIBILITY: frozenset(
         {"rule_type", "operator", "value", "unit", "required", "display_order"}
     ),
-    ClaimObjective.ELIGIBILITY_CONTEXT: frozenset({"condition", "is_exclusion", "notes"}),
+    ClaimObjective.ELIGIBILITY_CONTEXT: frozenset(
+        {
+            "condition",
+            "is_exclusion",
+            "notes",
+            "title",
+            "guidance_type",
+            "text",
+            "display_order",
+        }
+    ),
     ClaimObjective.DOCUMENTS_CORE: frozenset({"name", "display_order"}),
     ClaimObjective.DOCUMENTS_REQUIREMENTS: frozenset({"required", "condition", "submission_stage"}),
     ClaimObjective.DOCUMENTS_COUNTS: frozenset({"original_count", "copy_count", "form_year"}),
@@ -729,15 +748,7 @@ def _normalize_claim_output(
         if item.entity_type in allowed
         and (allowed_fields is None or item.field_path in allowed_fields)
     ]
-    claims = claims[:48]
     warnings = list(output.warnings)
-    allowed_count = sum(
-        item.entity_type in allowed
-        and (allowed_fields is None or item.field_path in allowed_fields)
-        for item in normalized_claims
-    )
-    if allowed_count > len(claims):
-        warnings.append(f"claim_limit_applied:{allowed_count}:48")
     return output.model_copy(
         update={
             "objective": objective,

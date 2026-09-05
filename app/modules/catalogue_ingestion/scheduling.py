@@ -42,6 +42,7 @@ class CatalogueProviderScheduler:
         *,
         provider: str,
         deployment: str | None,
+        endpoint_fingerprint: str | None = None,
         logical_job_key: str,
         run_id: uuid.UUID | None = None,
         candidate_id: uuid.UUID | None = None,
@@ -49,7 +50,8 @@ class CatalogueProviderScheduler:
         commit: bool = True,
     ) -> ProviderAdmission:
         now = observed_at or datetime.now(UTC)
-        lane = self._lane_for_update(provider, deployment)
+        lane = self._lane_for_update(provider, deployment, endpoint_fingerprint)
+        active_deployment = (deployment or "").strip()
         open_circuits = list(
             self.session.scalars(
                 select(CatalogueProviderCircuit)
@@ -78,7 +80,7 @@ class CatalogueProviderScheduler:
                 .select_from(CatalogueProviderAttempt)
                 .where(
                     CatalogueProviderAttempt.provider == provider,
-                    func.coalesce(CatalogueProviderAttempt.deployment, "") == lane.deployment,
+                    func.coalesce(CatalogueProviderAttempt.deployment, "") == active_deployment,
                     CatalogueProviderAttempt.state.in_(
                         {
                             ProviderAttemptState.RESERVED,
@@ -131,11 +133,14 @@ class CatalogueProviderScheduler:
         provider: str,
         deployment: str | None,
         failure_class: ProviderFailureClass,
+        endpoint_fingerprint: str | None = None,
         retry_after_seconds: float | None = None,
         observed_at: datetime | None = None,
     ) -> None:
         now = observed_at or datetime.now(UTC)
-        lane = self._lane_for_update(provider, deployment)
+        if failure_class not in _CIRCUIT_FAILURE_CLASSES:
+            return
+        lane = self._lane_for_update(provider, deployment, endpoint_fingerprint)
         circuit = self.session.scalar(
             select(CatalogueProviderCircuit)
             .where(
@@ -168,10 +173,11 @@ class CatalogueProviderScheduler:
         *,
         provider: str,
         deployment: str | None,
+        endpoint_fingerprint: str | None = None,
         observed_at: datetime | None = None,
     ) -> None:
         now = observed_at or datetime.now(UTC)
-        lane = self._lane_for_update(provider, deployment)
+        lane = self._lane_for_update(provider, deployment, endpoint_fingerprint)
         circuits = list(
             self.session.scalars(
                 select(CatalogueProviderCircuit)
@@ -190,9 +196,13 @@ class CatalogueProviderScheduler:
         self,
         provider: str,
         deployment: str | None,
+        endpoint_fingerprint: str | None = None,
     ) -> CatalogueProviderLane:
         provider_key = provider.strip()
         deployment_key = (deployment or "").strip()
+        endpoint_key = (endpoint_fingerprint or "").strip()
+        if endpoint_key:
+            deployment_key = f"{deployment_key}@{endpoint_key[:32]}"
         if not provider_key or len(provider_key) > 100 or len(deployment_key) > 255:
             raise ValueError("provider lane identity is invalid")
         lane = self.session.scalar(
@@ -226,3 +236,16 @@ class CatalogueProviderScheduler:
 
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+_CIRCUIT_FAILURE_CLASSES = frozenset(
+    {
+        ProviderFailureClass.CONNECTION_ESTABLISHMENT_FAILURE,
+        ProviderFailureClass.POST_DISPATCH_RESPONSE_INTERRUPTION,
+        ProviderFailureClass.TIMEOUT,
+        ProviderFailureClass.RATE_LIMIT,
+        ProviderFailureClass.PROVIDER_SERVER_ERROR,
+        ProviderFailureClass.AUTHENTICATION_CONFIGURATION_ERROR,
+        ProviderFailureClass.UNKNOWN_POTENTIALLY_BILLABLE_FAILURE,
+    }
+)

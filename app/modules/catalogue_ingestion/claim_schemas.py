@@ -10,14 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.modules.catalogue_ingestion.trust_domains import EvidenceTrustDomain
 
-CLAIM_SCHEMA_VERSION = "catalogue-claims.v5"
-PREVIOUS_CLAIM_SCHEMA_VERSION = "catalogue-claims.v4"
+CLAIM_SCHEMA_VERSION = "catalogue-claims.v6"
+PREVIOUS_CLAIM_SCHEMA_VERSION = "catalogue-claims.v5"
 V3_CLAIM_SCHEMA_VERSION = "catalogue-claims.v3"
 LEGACY_CLAIM_SCHEMA_VERSION = "catalogue-claims.v2"
 CLAIM_SCHEMA_VERSIONS = frozenset(
     {
         LEGACY_CLAIM_SCHEMA_VERSION,
         V3_CLAIM_SCHEMA_VERSION,
+        "catalogue-claims.v4",
         PREVIOUS_CLAIM_SCHEMA_VERSION,
         CLAIM_SCHEMA_VERSION,
     }
@@ -72,11 +73,19 @@ class ClaimEntityType(StrEnum):
     DOCUMENT = "document"
     STEP = "step"
     RESOURCE = "resource"
+    GUIDANCE = "guidance"
 
 
 SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
     ClaimEntityType.SCHOLARSHIP: frozenset(
-        {"name", "provider_name", "country_code", "degree_levels", "alias"}
+        {
+            "name",
+            "provider_name",
+            "country_code",
+            "degree_levels",
+            "alias",
+            "participating_institution_count",
+        }
     ),
     ClaimEntityType.CYCLE: frozenset({"intake_year"}),
     ClaimEntityType.PROGRAMME: frozenset(
@@ -210,6 +219,9 @@ SUPPORTED_CLAIM_FIELDS: dict[ClaimEntityType, frozenset[str]] = {
             "display_order",
         }
     ),
+    ClaimEntityType.GUIDANCE: frozenset(
+        {"title", "guidance_type", "text", "display_order"}
+    ),
 }
 
 CLAIM_FIELD_ALIASES: dict[ClaimEntityType, dict[str, str]] = {
@@ -250,6 +262,12 @@ CLAIM_FIELD_ALIASES: dict[ClaimEntityType, dict[str, str]] = {
         "email_address": "email",
         "telephone": "phone",
         "contact_person": "contact_name",
+    },
+    ClaimEntityType.GUIDANCE: {
+        "answer": "text",
+        "description": "text",
+        "question": "title",
+        "type": "guidance_type",
     },
 }
 
@@ -393,6 +411,7 @@ class ClaimResolution(StrictClaimModel):
         "catalogue-claims.v3",
         "catalogue-claims.v4",
         "catalogue-claims.v5",
+        "catalogue-claims.v6",
     ] = CLAIM_SCHEMA_VERSION
     resolved: list[ResolvedClaim]
     conflicts: list[str]

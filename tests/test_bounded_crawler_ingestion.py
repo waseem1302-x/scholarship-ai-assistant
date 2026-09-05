@@ -264,6 +264,158 @@ def test_hardened_resume_reuses_persisted_artifact_without_recrawling(
     assert claim_calls == ["claims"]
 
 
+def test_hardened_resume_filters_frontier_to_still_missing_objectives(
+    db_session,
+) -> None:
+    configured = settings(crawling=True, completeness=True)
+    base_service = CatalogueIngestionService(db_session, configured, fetcher=MappingFetcher())
+    response = base_service.create_run_from_url(
+        ROOT,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == response.id)
+    )
+    assert candidate is not None
+    snapshot = CatalogueAcquisitionSnapshot(
+        run_id=response.id,
+        candidate_id=candidate.id,
+        result_json={
+            "deferred_frontier": [
+                {
+                    "url": FUNDING,
+                    "depth": 1,
+                    "score": 80,
+                    "objectives": ["funding"],
+                },
+                {
+                    "url": DEADLINE,
+                    "depth": 1,
+                    "score": 75,
+                    "objectives": ["application_timeline"],
+                },
+            ]
+        },
+    )
+
+    resumed = HardenedCatalogueIngestionService._resume_frontier(
+        snapshot,
+        ("funding",),
+    )
+
+    assert [item.url for item in resumed] == [FUNDING]
+    assert resumed[0].objectives == ("funding",)
+
+
+def test_acquisition_progress_preserves_closed_objectives_across_rounds(
+    db_session,
+) -> None:
+    configured = settings(crawling=True, completeness=True)
+    base_service = CatalogueIngestionService(db_session, configured, fetcher=MappingFetcher())
+    response = base_service.create_run_from_url(
+        ROOT,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    run = base_service.repository.get_run(response.id)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == response.id)
+    )
+    assert run is not None
+    assert candidate is not None
+    db_session.add_all(
+        (
+            CatalogueAcquisitionSnapshot(
+                run_id=run.id,
+                candidate_id=candidate.id,
+                plan_json={"round_index": 1},
+                result_json={
+                    "closed_objectives": ["identity", "funding"],
+                    "pending_objectives": ["eligibility"],
+                    "deferred_frontier": [{"url": FUNDING}],
+                    "sitemap_attempted": False,
+                },
+            ),
+            CatalogueAcquisitionSnapshot(
+                run_id=run.id,
+                candidate_id=candidate.id,
+                plan_json={"round_index": 2},
+                result_json={
+                    "closed_objectives": ["eligibility"],
+                    "pending_objectives": ["documents_core"],
+                    "deferred_frontier": [{"url": DEADLINE}],
+                    "sitemap_attempted": True,
+                },
+            ),
+        )
+    )
+    db_session.flush()
+    service = object.__new__(ProductionCatalogueIngestionService)
+    service.session = db_session
+
+    closed, pending, deferred, sitemap_attempted = service._acquisition_progress(
+        run,
+        candidate,
+    )
+
+    assert closed == {"identity", "funding", "eligibility"}
+    assert pending == {"documents_core"}
+    assert deferred is True
+    assert sitemap_attempted is True
+
+
+def test_acquisition_progress_reopens_an_objective_reported_pending_later(
+    db_session,
+) -> None:
+    configured = settings(crawling=True, completeness=True)
+    base_service = CatalogueIngestionService(db_session, configured, fetcher=MappingFetcher())
+    response = base_service.create_run_from_url(
+        ROOT,
+        mode=IngestionMode.EXTRACTION,
+        dry_run=True,
+    )
+    run = base_service.repository.get_run(response.id)
+    candidate = db_session.scalar(
+        select(CatalogueCandidate).where(CatalogueCandidate.run_id == response.id)
+    )
+    assert run is not None
+    assert candidate is not None
+    db_session.add_all(
+        (
+            CatalogueAcquisitionSnapshot(
+                run_id=run.id,
+                candidate_id=candidate.id,
+                plan_json={"round_index": 1},
+                result_json={
+                    "closed_objectives": ["funding"],
+                    "pending_objectives": [],
+                },
+            ),
+            CatalogueAcquisitionSnapshot(
+                run_id=run.id,
+                candidate_id=candidate.id,
+                plan_json={"round_index": 2},
+                result_json={
+                    "closed_objectives": [],
+                    "pending_objectives": ["funding"],
+                },
+            ),
+        )
+    )
+    db_session.flush()
+    service = object.__new__(ProductionCatalogueIngestionService)
+    service.session = db_session
+
+    closed, pending, _deferred, _sitemap_attempted = service._acquisition_progress(
+        run,
+        candidate,
+    )
+
+    assert "funding" not in closed
+    assert pending == {"funding"}
+
+
 def test_completeness_blockers_include_acquisition_and_terminal_failures(
     db_session,
 ) -> None:
@@ -375,7 +527,7 @@ def test_completeness_blockers_are_empty_after_clean_frontier_and_terminal_jobs(
     assert service._completeness_blockers(run, candidate, []) == []
 
 
-def test_completeness_blockers_reject_an_unfinished_acquisition_frontier(
+def test_unfinished_acquisition_round_is_progress_not_a_terminal_blocker(
     db_session,
 ) -> None:
     configured = settings(crawling=True, completeness=True)
@@ -408,9 +560,7 @@ def test_completeness_blockers_reject_an_unfinished_acquisition_frontier(
     service.session = db_session
     service.settings = configured
 
-    assert "acquisition_frontier_incomplete" in service._completeness_blockers(
-        run, candidate, []
-    )
+    assert service._completeness_blockers(run, candidate, []) == []
 
 
 def test_ingestion_keeps_single_page_behavior_when_bounded_crawling_is_disabled(
